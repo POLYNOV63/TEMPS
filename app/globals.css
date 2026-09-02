@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --polynov-red: #c00000;
+  --polynov-dark: #8f0000;
+}
+
+.font-calibri {
+  font-family: Calibri, Arial, Helvetica, sans-serif;
+}
+
+.bg-polynov-red {
+  background-color: var(--polynov-red);
+}
+
+.text-polynov-red {
+  color: var(--polynov-red);
+}
+
+.border-polynov-red {
+  border-color: var(--polynov-red);
+}
+
+.bg-polynov-dark {
+  background-color: var(--polynov-dark);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Calibri, Arial, Helvetica, sans-serif;
+}
