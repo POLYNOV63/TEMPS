@@ -1,10 +1,21 @@
 "use client";
 
-"use client";
-
-import { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+
+/* ============================================================
+   TYPES
+============================================================ */
+
+type JourKey =
+  | "lundi"
+  | "mardi"
+  | "mercredi"
+  | "jeudi"
+  | "vendredi"
+  | "samedi"
+  | "dimanche";
 
 type ProfilHoraire = {
   id: string;
@@ -42,26 +53,31 @@ type Collaborateur = {
   created_at: string;
   updated_at: string;
   trigramme: string | null;
+  compteur_recuperation?: number | null;
   profil?: ProfilHoraire | null;
   historique?: Historique[];
+  date_entree: string | null;
+  date_sortie: string | null;
 };
 
-const JOURS = [
-  { key: "lundi", label: "Lundi" },
-  { key: "mardi", label: "Mardi" },
-  { key: "mercredi", label: "Mercredi" },
-  { key: "jeudi", label: "Jeudi" },
-  { key: "vendredi", label: "Vendredi" },
-  { key: "samedi", label: "Samedi" },
-  { key: "dimanche", label: "Dimanche" },
-] as const;
+/* ============================================================
+   CONSTANTES
+============================================================ */
 
-type JourKey = (typeof JOURS)[number]["key"];
+const JOURS: {
+  key: JourKey;
+  label: string;
+  court: string;
+}[] = [
+  { key: "lundi", label: "Lundi", court: "Lun." },
+  { key: "mardi", label: "Mardi", court: "Mar." },
+  { key: "mercredi", label: "Mercredi", court: "Mer." },
+  { key: "jeudi", label: "Jeudi", court: "Jeu." },
+  { key: "vendredi", label: "Vendredi", court: "Ven." },
+  { key: "samedi", label: "Samedi", court: "Sam." },
+  { key: "dimanche", label: "Dimanche", court: "Dim." },
+];
 
-/*
- * Ce sont les seuls rythmes qui doivent être proposés
- * dans les listes de sélection.
- */
 const RYTHMES_AUTORISES = [
   "POLYNOV ETAM/Cadre",
   "POLYNOV Cadre forfait",
@@ -71,82 +87,88 @@ const RYTHMES_AUTORISES = [
 ];
 
 /* ============================================================
-   OUTILS
-   ============================================================ */
+   HELPERS
+============================================================ */
 
 function formatHeures(value: number | null | undefined) {
-  if (value === null || value === undefined) return "—";
-
-  return Number(value).toLocaleString("fr-FR", {
-    minimumFractionDigits: 0,
+  if (value === null || value === undefined) return "0";
+  return new Intl.NumberFormat("fr-FR", {
     maximumFractionDigits: 2,
-  });
+  }).format(value);
 }
 
-/*
- * IMPORTANT :
- * On ne fait volontairement PAS :
- *
- * new Date("2026-09-01")
- *
- * car cela peut provoquer des décalages de date selon le fuseau.
- *
- * On traite ici la date SQL comme une simple date calendaire.
- */
 function formatDate(date: string | null | undefined) {
   if (!date) return "—";
 
-  const morceaux = date.split("-");
+  const [annee, mois, jour] = date.split("-");
 
-  if (morceaux.length !== 3) return date;
+  if (!annee || !mois || !jour) return date;
 
-  return `${morceaux[2]}/${morceaux[1]}/${morceaux[0]}`;
+  return `${jour}/${mois}/${annee}`;
 }
 
 function dateInputToday() {
-  const maintenant = new Date();
+  const d = new Date();
 
-  const annee = maintenant.getFullYear();
-  const mois = String(maintenant.getMonth() + 1).padStart(2, "0");
-  const jour = String(maintenant.getDate()).padStart(2, "0");
+  const annee = d.getFullYear();
+  const mois = String(d.getMonth() + 1).padStart(2, "0");
+  const jour = String(d.getDate()).padStart(2, "0");
 
   return `${annee}-${mois}-${jour}`;
+}
+
+function ajouterUnJour(date: string) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + 1);
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function retirerUnJour(date: string) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function normaliserTexte(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
     .trim();
 }
 
 function genererEmail(prenom: string, nom: string) {
-  const p = normaliserTexte(prenom)
-    .replace(/[^a-zA-Z-]/g, "")
-    .toLowerCase();
-
-  const n = normaliserTexte(nom)
-    .replace(/[^a-zA-Z-]/g, "")
-    .replace(/-/g, "")
-    .toLowerCase();
+  const p = normaliserTexte(prenom).replace(/[^a-z0-9-]/g, "");
+  const n = normaliserTexte(nom).replace(/[^a-z0-9-]/g, "");
 
   if (!p || !n) return "";
 
-  const prenomCompose = p.includes("-");
+  const morceauxPrenom = p.split("-").filter(Boolean);
 
-  const prefixe = prenomCompose
-    ? p
-        .split("-")
-        .filter(Boolean)
-        .map((partie) => partie.substring(0, 1))
-        .join("")
-    : p.substring(0, 1);
+  let initiales = morceauxPrenom
+    .map((morceau) => morceau.charAt(0))
+    .join("");
 
-  return `${prefixe}${n}@polynov.fr`;
+  if (!initiales) {
+    initiales = p.charAt(0);
+  }
+
+  return `${initiales}${n.replace(/-/g, "")}@polynov.fr`;
 }
 
-function estPersonnalise(nom: string) {
-  return nom === "Personnalisé" || nom.startsWith("Personnalisé -");
+function estPersonnalise(nom: string | null | undefined) {
+  if (!nom) return false;
+
+  return (
+    nom === "Personnalisé" ||
+    nom.startsWith("Personnalisé -")
+  );
 }
 
 function estRythmeAutorise(nom: string) {
@@ -156,7 +178,9 @@ function estRythmeAutorise(nom: string) {
   );
 }
 
-function nomAfficheProfil(profil: ProfilHoraire | null | undefined) {
+function nomAfficheProfil(
+  profil: ProfilHoraire | null | undefined
+) {
   if (!profil) return "Aucun rythme";
 
   if (estPersonnalise(profil.nom)) {
@@ -166,85 +190,116 @@ function nomAfficheProfil(profil: ProfilHoraire | null | undefined) {
   return profil.nom;
 }
 
-function totalHeuresProfil(profil: Partial<ProfilHoraire>) {
+function totalHeuresProfil(
+  profil:
+    | ProfilHoraire
+    | Record<JourKey, number>
+    | null
+    | undefined
+) {
+  if (!profil) return 0;
+
   return JOURS.reduce((total, jour) => {
-    return total + Number(profil[jour.key] ?? 0);
+    return total + Number(profil[jour.key] || 0);
   }, 0);
 }
 
-/*
- * Retourne le rythme réellement applicable aujourd'hui.
- *
- * On ne se base volontairement pas sur collaborateurs.profil_horaire_id
- * car celui-ci peut correspondre à un rythme futur.
- */
 function trouverRythmeActuel(
   historique: Historique[] | undefined
 ) {
-  if (!historique || historique.length === 0) return null;
+  if (!historique?.length) return null;
 
   const aujourdHui = dateInputToday();
 
   return (
-    historique.find((item) => {
-      const apresDebut = item.date_debut <= aujourdHui;
-      const avantFin =
-        !item.date_fin || aujourdHui <= item.date_fin;
-
-      return apresDebut && avantFin;
-    }) ?? null
+    historique.find(
+      (item) =>
+        item.date_debut <= aujourdHui &&
+        (!item.date_fin ||
+          item.date_fin >= aujourdHui)
+    ) ?? null
   );
 }
 
-/*
- * Retourne le prochain rythme programmé.
- */
 function trouverProchainRythme(
   historique: Historique[] | undefined
 ) {
-  if (!historique || historique.length === 0) return null;
+  if (!historique?.length) return null;
 
   const aujourdHui = dateInputToday();
 
-  const futurs = historique
-    .filter((item) => item.date_debut > aujourdHui)
-    .sort((a, b) =>
-      a.date_debut.localeCompare(b.date_debut)
-    );
-
-  return futurs[0] ?? null;
+  return (
+    historique
+      .filter(
+        (item) => item.date_debut > aujourdHui
+      )
+      .sort((a, b) =>
+        a.date_debut.localeCompare(b.date_debut)
+      )[0] ?? null
+  );
 }
 
 /* ============================================================
-   COMPOSANT
-   ============================================================ */
+   COMPOSANT PRINCIPAL
+============================================================ */
 
 export default function CollaborateursPage() {
-const router = useRouter();
+  const router = useRouter();
+
+  /* ----------------------------------------------------------
+     DONNÉES
+  ---------------------------------------------------------- */
+
   const [collaborateurs, setCollaborateurs] = useState<
     Collaborateur[]
   >([]);
 
-  const [profils, setProfils] = useState<ProfilHoraire[]>([]);
+  const [profils, setProfils] = useState<
+    ProfilHoraire[]
+  >([]);
 
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
+  /* ----------------------------------------------------------
+     RECHERCHE
+  ---------------------------------------------------------- */
+
+  const [recherche, setRecherche] = useState("");
+
+  /* ----------------------------------------------------------
+     MODALE COLLABORATEUR
+  ---------------------------------------------------------- */
+
   const [formOuvert, setFormOuvert] = useState(false);
+  const [editionOuverte, setEditionOuverte] = useState(false);
+
+  const [
+    collaborateurSelectionne,
+    setCollaborateurSelectionne,
+  ] = useState<Collaborateur | null>(null);
 
   const [prenom, setPrenom] = useState("");
   const [nom, setNom] = useState("");
   const [email, setEmail] = useState("");
+  const [emailManuel, setEmailManuel] = useState(false);
+
   const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("COLLABORATEUR");
 
-  const [
-  compteurRecuperation,
-  setCompteurRecuperation,
-] = useState("0");
+  const [compteurRecuperation, setCompteurRecuperation] =
+    useState("0");
 
   const [profilSelectionne, setProfilSelectionne] =
     useState("");
+
+  const [dateDebut, setDateDebut] =
+    useState(dateInputToday());
+
+  const [dateEntree, setDateEntree] =
+    useState(dateInputToday());
+
+  const [dateSortie, setDateSortie] = useState("");
 
   const [horaires, setHoraires] =
     useState<Record<JourKey, number>>({
@@ -257,15 +312,9 @@ const router = useRouter();
       dimanche: 0,
     });
 
-  const [dateDebut, setDateDebut] =
-    useState(dateInputToday());
-
-  const [recherche, setRecherche] = useState("");
-
-  const [
-    collaborateurSelectionne,
-    setCollaborateurSelectionne,
-  ] = useState<Collaborateur | null>(null);
+  /* ----------------------------------------------------------
+     MODALE RYTHME
+  ---------------------------------------------------------- */
 
   const [rythmeOuvert, setRythmeOuvert] =
     useState(false);
@@ -287,18 +336,18 @@ const router = useRouter();
       dimanche: 0,
     });
 
-  /* ============================================================
+  /* ----------------------------------------------------------
      CHARGEMENT
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   async function chargerDonnees() {
     setChargement(true);
     setErreur("");
 
     const [
-      { data: collaborateursData, error: collaborateursError },
-      { data: profilsData, error: profilsError },
-      { data: historiqueData, error: historiqueError },
+      collaborateursResult,
+      profilsResult,
+      historiqueResult,
     ] = await Promise.all([
       supabase
         .from("collaborateurs")
@@ -306,20 +355,27 @@ const router = useRouter();
         .order("actif", { ascending: false })
         .order("nom", { ascending: true }),
 
+      // IMPORTANT :
+      // On charge TOUS les profils pour que l'historique
+      // continue de fonctionner même si un ancien profil
+      // est devenu inactif.
       supabase
         .from("profils_horaires")
         .select("*")
-        .eq("actif", true)
         .order("nom", { ascending: true }),
 
       supabase
         .from("historique_profils_horaires")
         .select("*")
-        .order("date_debut", { ascending: false }),
+        .order("date_debut", {
+          ascending: false,
+        }),
     ]);
 
-    if (collaborateursError) {
-      console.error(collaborateursError);
+    if (collaborateursResult.error) {
+      console.error(
+        collaborateursResult.error
+      );
       setErreur(
         "Impossible de charger les collaborateurs."
       );
@@ -327,8 +383,8 @@ const router = useRouter();
       return;
     }
 
-    if (profilsError) {
-      console.error(profilsError);
+    if (profilsResult.error) {
+      console.error(profilsResult.error);
       setErreur(
         "Impossible de charger les rythmes horaires."
       );
@@ -336,8 +392,10 @@ const router = useRouter();
       return;
     }
 
-    if (historiqueError) {
-      console.error(historiqueError);
+    if (historiqueResult.error) {
+      console.error(
+        historiqueResult.error
+      );
       setErreur(
         "Impossible de charger l'historique des rythmes."
       );
@@ -345,22 +403,26 @@ const router = useRouter();
       return;
     }
 
-    /*
-     * On conserve tous les profils existants pour que
-     * l'historique puisse être affiché correctement.
-     *
-     * Mais les listes de sélection seront filtrées plus bas.
-     */
-    const profilsMap = new Map<string, ProfilHoraire>();
+    const profilsData =
+      (profilsResult.data ?? []) as ProfilHoraire[];
 
-    (profilsData ?? []).forEach((profil) => {
+    const historiquesData =
+      (historiqueResult.data ??
+        []) as Historique[];
+
+    const profilsMap = new Map<
+      string,
+      ProfilHoraire
+    >();
+
+    profilsData.forEach((profil) => {
       profilsMap.set(profil.id, profil);
     });
 
     const historiqueParCollaborateur =
       new Map<string, Historique[]>();
 
-    (historiqueData ?? []).forEach((item) => {
+    historiquesData.forEach((item) => {
       const liste =
         historiqueParCollaborateur.get(
           item.collaborateur_id
@@ -369,8 +431,9 @@ const router = useRouter();
       liste.push({
         ...item,
         profil:
-          profilsMap.get(item.profil_horaire_id) ??
-          null,
+          profilsMap.get(
+            item.profil_horaire_id
+          ) ?? null,
       });
 
       historiqueParCollaborateur.set(
@@ -379,33 +442,42 @@ const router = useRouter();
       );
     });
 
-    /*
-     * Tri chronologique décroissant :
-     * le plus récent en premier.
-     */
-    historiqueParCollaborateur.forEach((liste) => {
-      liste.sort((a, b) =>
-        b.date_debut.localeCompare(a.date_debut)
-      );
-    });
+    const collaborateursData =
+      (collaborateursResult.data ??
+        []) as Collaborateur[];
 
-    const collaborateursFinal =
-      (collaborateursData ?? []).map((collab) => {
+    const enrichis =
+      collaborateursData.map((collab) => {
         const historique =
-          historiqueParCollaborateur.get(collab.id) ?? [];
+          historiqueParCollaborateur.get(
+            collab.id
+          ) ?? [];
+
+        historique.sort((a, b) =>
+          b.date_debut.localeCompare(
+            a.date_debut
+          )
+        );
 
         const rythmeActuel =
-          trouverRythmeActuel(historique);
+          trouverRythmeActuel(
+            historique
+          );
 
         return {
           ...collab,
-          profil: rythmeActuel?.profil ?? null,
           historique,
+          profil:
+            rythmeActuel?.profil ??
+            profilsMap.get(
+              collab.profil_horaire_id ?? ""
+            ) ??
+            null,
         };
       });
 
-    setProfils(profilsData ?? []);
-    setCollaborateurs(collaborateursFinal);
+    setProfils(profilsData);
+    setCollaborateurs(enrichis);
     setChargement(false);
   }
 
@@ -413,56 +485,118 @@ const router = useRouter();
     chargerDonnees();
   }, []);
 
-  /* ============================================================
+  /* ----------------------------------------------------------
      EMAIL AUTOMATIQUE
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   useEffect(() => {
-    setEmail(genererEmail(prenom, nom));
-  }, [prenom, nom]);
+    if (
+      !editionOuverte &&
+      !emailManuel
+    ) {
+      setEmail(
+        genererEmail(prenom, nom)
+      );
+    }
+  }, [
+    prenom,
+    nom,
+    editionOuverte,
+    emailManuel,
+  ]);
 
-  /* ============================================================
-     PROFILS DISPONIBLES DANS LES LISTES
-     ============================================================ */
+  /* ----------------------------------------------------------
+     PROFILS DISPONIBLES
+  ---------------------------------------------------------- */
 
-  /*
-   * Les anciens profils :
-   * - Bureau
-   * - Client 37.5h
-   * - Base POLYNOV
-   * - Bureau 35h
-   * etc.
-   *
-   * ne doivent plus apparaître.
-   *
-   * Pour Personnalisé, on prend le premier profil
-   * "Personnalisé" disponible.
-   */
-  const profilsDisponibles = profils.filter((profil) =>
-    estRythmeAutorise(profil.nom)
+  const profilsDisponibles = useMemo(
+    () =>
+      profils.filter(
+        (profil) =>
+          profil.actif &&
+          estRythmeAutorise(
+            profil.nom
+          )
+      ),
+    [profils]
   );
 
-  const profilsSelection = [
-    ...profilsDisponibles
-      .filter((profil) => !estPersonnalise(profil.nom)),
-    ...profilsDisponibles
-      .filter((profil) => estPersonnalise(profil.nom))
-      .slice(0, 1),
-  ];
+  const profilsSelection = useMemo(
+    () => {
+      const standards =
+        profilsDisponibles.filter(
+          (profil) =>
+            !estPersonnalise(
+              profil.nom
+            )
+        );
 
-  /* ============================================================
+      const personnalise =
+        profilsDisponibles.find(
+          (profil) =>
+            profil.nom ===
+            "Personnalisé"
+        );
+
+      return personnalise
+        ? [...standards, personnalise]
+        : standards;
+    },
+    [profilsDisponibles]
+  );
+
+  const profilFormulaire =
+    profils.find(
+      (profil) =>
+        profil.id ===
+        profilSelectionne
+    ) ?? null;
+
+  const formulairePersonnalise =
+    profilFormulaire
+      ? estPersonnalise(
+          profilFormulaire.nom
+        )
+      : false;
+
+  const nouveauProfilObjet =
+    profils.find(
+      (profil) =>
+        profil.id ===
+        nouveauProfil
+    ) ?? null;
+
+  const nouveauProfilPersonnalise =
+    nouveauProfilObjet
+      ? estPersonnalise(
+          nouveauProfilObjet.nom
+        )
+      : false;
+
+  /* ----------------------------------------------------------
      RESET FORMULAIRE
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   function resetFormulaire() {
     setPrenom("");
     setNom("");
     setEmail("");
+    setEmailManuel(false);
     setTrigramme("");
     setRole("COLLABORATEUR");
     setCompteurRecuperation("0");
+
     setProfilSelectionne("");
-    setDateDebut(dateInputToday());
+
+    setDateDebut(
+      dateInputToday()
+    );
+
+    setDateEntree(
+      dateInputToday()
+    );
+
+    setDateSortie("");
 
     setHoraires({
       lundi: 7.5,
@@ -474,219 +608,276 @@ const router = useRouter();
       dimanche: 0,
     });
 
-    setErreur("");
+    setEditionOuverte(false);
+    setCollaborateurSelectionne(null);
   }
 
-  /* ============================================================
-     SELECTION PROFIL
-     ============================================================ */
+  function ouvrirNouveauCollaborateur() {
+    resetFormulaire();
+    setFormOuvert(true);
+  }
+
+  /* ----------------------------------------------------------
+     SÉLECTION PROFIL
+  ---------------------------------------------------------- */
 
   function selectionnerProfil(id: string) {
     setProfilSelectionne(id);
 
     const profil = profils.find(
-      (p) => p.id === id
+      (item) => item.id === id
     );
 
     if (!profil) return;
 
     setHoraires({
-      lundi: Number(profil.lundi),
-      mardi: Number(profil.mardi),
-      mercredi: Number(profil.mercredi),
-      jeudi: Number(profil.jeudi),
-      vendredi: Number(profil.vendredi),
-      samedi: Number(profil.samedi),
-      dimanche: Number(profil.dimanche),
+      lundi: Number(profil.lundi || 0),
+      mardi: Number(profil.mardi || 0),
+      mercredi: Number(
+        profil.mercredi || 0
+      ),
+      jeudi: Number(
+        profil.jeudi || 0
+      ),
+      vendredi: Number(
+        profil.vendredi || 0
+      ),
+      samedi: Number(
+        profil.samedi || 0
+      ),
+      dimanche: Number(
+        profil.dimanche || 0
+      ),
     });
   }
 
-  const profilFormulaire = profils.find(
-    (profil) =>
-      profil.id === profilSelectionne
-  );
-
-  const formulairePersonnalise =
-    profilFormulaire
-      ? estPersonnalise(profilFormulaire.nom)
-      : false;
-
-  /* ============================================================
-     NOM INTERNE PROFIL PERSONNALISE
-     ============================================================ */
+  /* ----------------------------------------------------------
+     CRÉATION PROFIL PERSONNALISÉ
+  ---------------------------------------------------------- */
 
   function genererNomInternePersonnalise(
     trig: string,
     date: string
   ) {
-    /*
-     * Permet plusieurs profils "Personnalisé"
-     * malgré la contrainte UNIQUE sur profils_horaires.nom.
-     *
-     * L'utilisateur verra toujours "Personnalisé".
-     */
-    return `Personnalisé - ${trig} - ${date}-${Date.now()}`;
+    const suffixe =
+      date.replace(/-/g, "");
+
+    return `Personnalisé - ${trig.toUpperCase()} - ${suffixe} - ${Date.now()}`;
   }
 
-  /* ============================================================
+  /* ----------------------------------------------------------
      AJOUT COLLABORATEUR
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   async function ajouterCollaborateur() {
     setErreur("");
 
-    const trig = trigramme
-      .trim()
-      .toUpperCase();
+    const prenomPropre =
+      prenom.trim();
 
-    if (!prenom.trim()) {
-      setErreur("Veuillez saisir le prénom.");
-      return;
-    }
+    const nomPropre =
+      nom.trim();
 
-    if (!nom.trim()) {
-      setErreur("Veuillez saisir le nom.");
-      return;
-    }
+    const trigPropre =
+      trigramme
+        .trim()
+        .toUpperCase();
 
-    if (!/^[A-Z0-9]{3}$/.test(trig)) {
+    const emailPropre =
+      email
+        .trim()
+        .toLowerCase();
+
+    if (!prenomPropre) {
       setErreur(
-        "Le trigramme doit contenir exactement 3 caractères."
+        "Le prénom est obligatoire."
       );
       return;
     }
 
-    if (!email.trim()) {
+    if (!nomPropre) {
       setErreur(
-        "Impossible de générer l'adresse e-mail."
+        "Le nom est obligatoire."
+      );
+      return;
+    }
+
+    if (!/^[A-Z0-9]{3}$/.test(
+      trigPropre
+    )) {
+      setErreur(
+        "Le trigramme doit comporter exactement 3 caractères."
+      );
+      return;
+    }
+
+    if (!emailPropre) {
+      setErreur(
+        "L'adresse e-mail est obligatoire."
       );
       return;
     }
 
     if (!profilSelectionne) {
       setErreur(
-        "Veuillez sélectionner un rythme horaire."
+        "Sélectionnez un rythme horaire."
       );
       return;
     }
 
     if (!dateDebut) {
       setErreur(
-        "Veuillez sélectionner une date de début."
+        "La date de début du rythme est obligatoire."
       );
       return;
     }
 
-    const profil = profils.find(
-      (p) => p.id === profilSelectionne
-    );
+    /* Vérification trigramme */
 
-    if (!profil) {
+    const { data: trigrammeExistant } =
+      await supabase
+        .from("collaborateurs")
+        .select("id")
+        .eq(
+          "trigramme",
+          trigPropre
+        )
+        .maybeSingle();
+
+    if (trigrammeExistant) {
       setErreur(
-        "Le rythme sélectionné est introuvable."
+        `Le trigramme ${trigPropre} est déjà utilisé.`
       );
       return;
     }
 
-    let profilId = profil.id;
+    /* Profil */
 
-    /*
-     * Personnalisé :
-     * création d'un profil indépendant.
-     */
-    if (estPersonnalise(profil.nom)) {
-      const { data: profilCree, error: erreurProfil } =
+    let profilId =
+      profilSelectionne;
+
+    if (
+      formulairePersonnalise
+    ) {
+      const { data, error } =
         await supabase
           .from("profils_horaires")
           .insert({
-            nom: genererNomInternePersonnalise(
-              trig,
-              dateDebut
-            ),
-            lundi: horaires.lundi,
-            mardi: horaires.mardi,
-            mercredi: horaires.mercredi,
-            jeudi: horaires.jeudi,
-            vendredi: horaires.vendredi,
-            samedi: horaires.samedi,
-            dimanche: horaires.dimanche,
+            nom:
+              genererNomInternePersonnalise(
+                trigPropre,
+                dateDebut
+              ),
+            lundi:
+              horaires.lundi,
+            mardi:
+              horaires.mardi,
+            mercredi:
+              horaires.mercredi,
+            jeudi:
+              horaires.jeudi,
+            vendredi:
+              horaires.vendredi,
+            samedi:
+              horaires.samedi,
+            dimanche:
+              horaires.dimanche,
+            total_hebdomadaire:
+              totalHeuresProfil(
+                horaires
+              ),
             forfait: false,
             actif: true,
           })
           .select()
           .single();
 
-      if (erreurProfil || !profilCree) {
-        console.error(erreurProfil);
-
+      if (error || !data) {
+        console.error(error);
         setErreur(
-          erreurProfil?.message ||
-            "Impossible de créer le profil horaire personnalisé."
+          "Impossible de créer le rythme personnalisé."
         );
-
         return;
       }
 
-      profilId = profilCree.id;
+      profilId = data.id;
     }
 
-    const {
-      data: collaborateur,
-      error: erreurCollaborateur,
-    } = await supabase
-      .from("collaborateurs")
-.insert({
-  prenom: prenom.trim(),
-  nom: nom.trim(),
-  email: email.trim().toLowerCase(),
-  trigramme: trig,
-  role,
-  profil_horaire_id: profilId,
+    /* Collaborateur */
 
-  compteur_recuperation: Number(
-    compteurRecuperation || 0
-  ),
+    const dateDebutEstAujourdhuiOuAvant =
+      dateDebut <=
+      dateInputToday();
 
-  actif: true,
-})
-      .select()
-      .single();
+    const { data: collaborateur, error } =
+      await supabase
+        .from("collaborateurs")
+        .insert({
+          prenom: prenomPropre,
+          nom: nomPropre,
+          email: emailPropre,
+          trigramme: trigPropre,
+          role,
+          date_entree:
+            dateEntree || null,
+          date_sortie:
+            dateSortie || null,
+          profil_horaire_id:
+            dateDebutEstAujourdhuiOuAvant
+              ? profilId
+              : null,
+          compteur_recuperation:
+            Number(
+              compteurRecuperation || 0
+            ),
+          actif: true,
+        })
+        .select()
+        .single();
 
-    if (
-      erreurCollaborateur ||
-      !collaborateur
-    ) {
-      console.error(erreurCollaborateur);
-
+    if (error || !collaborateur) {
+      console.error(error);
       setErreur(
-        erreurCollaborateur?.message ||
-          "Impossible de créer le collaborateur."
+        "Impossible de créer le collaborateur."
       );
-
       return;
     }
 
-    const {
-      error: erreurHistorique,
-    } = await supabase
-      .from("historique_profils_horaires")
-      .insert({
-        collaborateur_id: collaborateur.id,
-        profil_horaire_id: profilId,
-        date_debut: dateDebut,
-        date_fin: null,
-      });
+    /* Historique */
 
-    if (erreurHistorique) {
-      console.error(erreurHistorique);
+    const { error: historiqueError } =
+      await supabase
+        .from(
+          "historique_profils_horaires"
+        )
+        .insert({
+          collaborateur_id:
+            collaborateur.id,
+          profil_horaire_id:
+            profilId,
+          date_debut:
+            dateDebut,
+          date_fin: null,
+        });
 
-      setErreur(
-        "Collaborateur créé, mais impossible de créer son historique horaire : " +
-          (erreurHistorique.message ||
-            "erreur inconnue")
+    if (historiqueError) {
+      console.error(
+        historiqueError
       );
 
-      await chargerDonnees();
+      // On évite de laisser un collaborateur
+      // sans historique exploitable.
+      await supabase
+        .from("collaborateurs")
+        .delete()
+        .eq(
+          "id",
+          collaborateur.id
+        );
+
+      setErreur(
+        "Le collaborateur n'a pas pu être finalisé : impossible de créer son historique de rythme."
+      );
       return;
     }
 
@@ -696,41 +887,182 @@ const router = useRouter();
     await chargerDonnees();
   }
 
-  /* ============================================================
-     ACTIVER / DESACTIVER
-     ============================================================ */
+  /* ----------------------------------------------------------
+     MODIFICATION
+  ---------------------------------------------------------- */
+
+  async function modifierCollaborateur() {
+    if (
+      !collaborateurSelectionne
+    )
+      return;
+
+    setErreur("");
+
+    const trigPropre =
+      trigramme
+        .trim()
+        .toUpperCase();
+
+    if (!/^[A-Z0-9]{3}$/.test(
+      trigPropre
+    )) {
+      setErreur(
+        "Le trigramme doit comporter exactement 3 caractères."
+      );
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from("collaborateurs")
+        .update({
+          prenom: prenom.trim(),
+          nom: nom.trim(),
+          email: email
+            .trim()
+            .toLowerCase(),
+          trigramme: trigPropre,
+          role,
+          date_entree:
+            dateEntree || null,
+          date_sortie:
+            dateSortie || null,
+          compteur_recuperation:
+            Number(
+              compteurRecuperation ||
+                0
+            ),
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          collaborateurSelectionne.id
+        );
+
+    if (error) {
+      console.error(error);
+      setErreur(
+        "Impossible de modifier le collaborateur."
+      );
+      return;
+    }
+
+    setFormOuvert(false);
+    setEditionOuverte(false);
+    setCollaborateurSelectionne(
+      null
+    );
+
+    await chargerDonnees();
+  }
+
+  /* ----------------------------------------------------------
+     OUVRIR MODIFICATION
+  ---------------------------------------------------------- */
+
+  function ouvrirEditionCollaborateur(
+    collaborateur: Collaborateur
+  ) {
+    setCollaborateurSelectionne(
+      collaborateur
+    );
+
+    setPrenom(
+      collaborateur.prenom ?? ""
+    );
+
+    setNom(
+      collaborateur.nom ?? ""
+    );
+
+    setEmail(
+      collaborateur.email ?? ""
+    );
+
+    setEmailManuel(true);
+
+    setTrigramme(
+      collaborateur.trigramme ??
+        ""
+    );
+
+    setRole(
+      collaborateur.role ??
+        "COLLABORATEUR"
+    );
+
+    setCompteurRecuperation(
+      String(
+        collaborateur.compteur_recuperation ??
+          0
+      )
+    );
+
+    setDateEntree(
+      collaborateur.date_entree ??
+        ""
+    );
+
+    setDateSortie(
+      collaborateur.date_sortie ??
+        ""
+    );
+
+    setEditionOuverte(true);
+    setFormOuvert(true);
+  }
+
+  /* ----------------------------------------------------------
+     ACTIVER / DÉSACTIVER
+  ---------------------------------------------------------- */
 
   async function changerEtatCollaborateur(
     collaborateur: Collaborateur
   ) {
-    setErreur("");
+    const nouvelEtat =
+      !collaborateur.actif;
 
-    const { error } = await supabase
-      .from("collaborateurs")
-      .update({
-        actif: !collaborateur.actif,
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("id", collaborateur.id);
+    const action =
+      nouvelEtat
+        ? "réactiver"
+        : "désactiver";
+
+    const confirme =
+      window.confirm(
+        `Voulez-vous vraiment ${action} ${collaborateur.prenom} ${collaborateur.nom} ?`
+      );
+
+    if (!confirme) return;
+
+    const { error } =
+      await supabase
+        .from("collaborateurs")
+        .update({
+          actif: nouvelEtat,
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          collaborateur.id
+        );
 
     if (error) {
       console.error(error);
-
       setErreur(
-        error.message ||
-          "Impossible de modifier l'état du collaborateur."
+        "Impossible de modifier l'état du collaborateur."
       );
-
       return;
     }
 
     await chargerDonnees();
   }
 
-  /* ============================================================
-     OUVERTURE PROGRAMMATION
-     ============================================================ */
+  /* ----------------------------------------------------------
+     PROGRAMMATION RYTHME
+  ---------------------------------------------------------- */
 
   function ouvrirProgrammation(
     collaborateur: Collaborateur
@@ -738,8 +1070,6 @@ const router = useRouter();
     setCollaborateurSelectionne(
       collaborateur
     );
-
-    setRythmeOuvert(true);
 
     setNouveauProfil("");
 
@@ -756,11 +1086,9 @@ const router = useRouter();
       samedi: 0,
       dimanche: 0,
     });
-  }
 
-  /* ============================================================
-     SELECTION NOUVEAU RYTHME
-     ============================================================ */
+    setRythmeOuvert(true);
+  }
 
   function selectionnerNouveauProfil(
     id: string
@@ -768,105 +1096,103 @@ const router = useRouter();
     setNouveauProfil(id);
 
     const profil = profils.find(
-      (p) => p.id === id
+      (item) => item.id === id
     );
 
     if (!profil) return;
 
     setNouveauxHoraires({
-      lundi: Number(profil.lundi),
-      mardi: Number(profil.mardi),
-      mercredi: Number(profil.mercredi),
-      jeudi: Number(profil.jeudi),
-      vendredi: Number(profil.vendredi),
-      samedi: Number(profil.samedi),
-      dimanche: Number(profil.dimanche),
+      lundi: Number(
+        profil.lundi || 0
+      ),
+      mardi: Number(
+        profil.mardi || 0
+      ),
+      mercredi: Number(
+        profil.mercredi || 0
+      ),
+      jeudi: Number(
+        profil.jeudi || 0
+      ),
+      vendredi: Number(
+        profil.vendredi || 0
+      ),
+      samedi: Number(
+        profil.samedi || 0
+      ),
+      dimanche: Number(
+        profil.dimanche || 0
+      ),
     });
   }
 
-  const nouveauProfilObjet =
-    profils.find(
-      (profil) =>
-        profil.id === nouveauProfil
-    );
-
-  const nouveauProfilPersonnalise =
-    nouveauProfilObjet
-      ? estPersonnalise(
-          nouveauProfilObjet.nom
-        )
-      : false;
-
-  /* ============================================================
+  /* ----------------------------------------------------------
      PROGRAMMER NOUVEAU RYTHME
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   async function programmerNouveauRythme() {
-    if (!collaborateurSelectionne)
+    if (
+      !collaborateurSelectionne
+    )
       return;
 
     setErreur("");
 
     if (!nouveauProfil) {
       setErreur(
-        "Veuillez sélectionner un rythme."
+        "Sélectionnez un rythme."
       );
       return;
     }
 
     if (!nouvelleDateDebut) {
       setErreur(
-        "Veuillez sélectionner une date de début."
+        "Sélectionnez une date de début."
       );
       return;
     }
 
-    const profil = profils.find(
-      (p) => p.id === nouveauProfil
+    const historique = [
+      ...(collaborateurSelectionne.historique ??
+        []),
+    ].sort((a, b) =>
+      a.date_debut.localeCompare(
+        b.date_debut
+      )
     );
 
-    if (!profil) {
-      setErreur(
-        "Rythme introuvable."
+    /*
+     * Si une programmation existe exactement
+     * à cette date, on la remplace.
+     */
+
+    const periodeMemeDate =
+      historique.find(
+        (item) =>
+          item.date_debut ===
+          nouvelleDateDebut
       );
-      return;
-    }
 
-    const historique =
-      collaborateurSelectionne.historique ?? [];
+    let profilId =
+      nouveauProfil;
 
     /*
-     * On cherche la période qui contient
-     * la nouvelle date.
+     * Création du profil personnalisé
      */
-    const periodeActuelle =
-      historique.find((item) => {
-        const debut = item.date_debut;
-        const fin = item.date_fin;
 
-        if (nouvelleDateDebut < debut)
-          return false;
-
-        if (!fin) return true;
-
-        return nouvelleDateDebut <= fin;
-      });
-
-    let profilId = profil.id;
-
-    /*
-     * Personnalisé = nouveau profil réel.
-     */
-    if (estPersonnalise(profil.nom)) {
-      const { data: profilCree, error: erreurProfil } =
+    if (
+      nouveauProfilPersonnalise
+    ) {
+      const { data, error } =
         await supabase
           .from("profils_horaires")
           .insert({
-            nom: genererNomInternePersonnalise(
-              collaborateurSelectionne.trigramme ||
-                "COL",
-              nouvelleDateDebut
-            ),
+            nom:
+              genererNomInternePersonnalise(
+                collaborateurSelectionne.trigramme ??
+                  "XXX",
+                nouvelleDateDebut
+              ),
             lundi:
               nouveauxHoraires.lundi,
             mardi:
@@ -881,107 +1207,122 @@ const router = useRouter();
               nouveauxHoraires.samedi,
             dimanche:
               nouveauxHoraires.dimanche,
+            total_hebdomadaire:
+              totalHeuresProfil(
+                nouveauxHoraires
+              ),
             forfait: false,
             actif: true,
           })
           .select()
           .single();
 
-      if (
-        erreurProfil ||
-        !profilCree
-      ) {
-        console.error(erreurProfil);
-
+      if (error || !data) {
+        console.error(error);
         setErreur(
-          erreurProfil?.message ||
-            "Impossible de créer le rythme personnalisé."
+          "Impossible de créer le rythme personnalisé."
         );
-
         return;
       }
 
-      profilId = profilCree.id;
+      profilId = data.id;
     }
 
     /*
      * CAS 1 :
-     * une période existe déjà à cette date.
+     * même date => on remplace le profil
      */
-    if (periodeActuelle) {
+
+    if (periodeMemeDate) {
+      const { error } =
+        await supabase
+          .from(
+            "historique_profils_horaires"
+          )
+          .update({
+            profil_horaire_id:
+              profilId,
+          })
+          .eq(
+            "id",
+            periodeMemeDate.id
+          );
+
+      if (error) {
+        console.error(error);
+        setErreur(
+          "Impossible de modifier la programmation existante."
+        );
+        return;
+      }
+    } else {
       /*
-       * On remplace directement si la nouvelle date
-       * est exactement le début de la période existante.
+       * CAS 2 :
+       * insertion dans l'historique
        */
-      if (
-        nouvelleDateDebut ===
-        periodeActuelle.date_debut
-      ) {
+
+      const periodeAvant =
+        [...historique]
+          .reverse()
+          .find(
+            (item) =>
+              item.date_debut <
+              nouvelleDateDebut
+          );
+
+      const periodeApres =
+        historique.find(
+          (item) =>
+            item.date_debut >
+            nouvelleDateDebut
+        );
+
+      /*
+       * On ferme la période précédente.
+       */
+
+      if (periodeAvant) {
+        const nouvelleFin =
+          retirerUnJour(
+            nouvelleDateDebut
+          );
+
         const { error } =
           await supabase
             .from(
               "historique_profils_horaires"
             )
             .update({
-              profil_horaire_id: profilId,
+              date_fin:
+                nouvelleFin,
             })
             .eq(
               "id",
-              periodeActuelle.id
+              periodeAvant.id
             );
 
         if (error) {
           console.error(error);
-
           setErreur(
-            error.message ||
-              "Impossible de modifier le rythme existant."
+            "Impossible de clôturer l'ancien rythme."
           );
-
           return;
         }
-      } else {
-        /*
-         * On termine l'ancien rythme la veille
-         * du nouveau.
-         *
-         * Calcul sans Date() pour éviter tout problème
-         * de fuseau horaire.
-         */
-        const dateVeille =
-          calculerDatePrecedente(
-            nouvelleDateDebut
-          );
+      }
 
-        const {
-          error: erreurFin,
-        } = await supabase
-          .from(
-            "historique_profils_horaires"
-          )
-          .update({
-            date_fin: dateVeille,
-          })
-          .eq(
-            "id",
-            periodeActuelle.id
-          );
+      /*
+       * Nouvelle période.
+       */
 
-        if (erreurFin) {
-          console.error(erreurFin);
+      const nouvelleFin =
+        periodeApres
+          ? retirerUnJour(
+              periodeApres.date_debut
+            )
+          : null;
 
-          setErreur(
-            erreurFin.message ||
-              "Impossible de clôturer l'ancien rythme."
-          );
-
-          return;
-        }
-
-        const {
-          error:
-            erreurNouvellePeriode,
-        } = await supabase
+      const { error } =
+        await supabase
           .from(
             "historique_profils_horaires"
           )
@@ -993,90 +1334,28 @@ const router = useRouter();
             date_debut:
               nouvelleDateDebut,
             date_fin:
-              periodeActuelle.date_fin,
+              nouvelleFin,
           });
-
-        if (erreurNouvellePeriode) {
-          console.error(
-            erreurNouvellePeriode
-          );
-
-          /*
-           * Restauration de l'ancien rythme.
-           */
-          await supabase
-            .from(
-              "historique_profils_horaires"
-            )
-            .update({
-              date_fin:
-                periodeActuelle.date_fin,
-            })
-            .eq(
-              "id",
-              periodeActuelle.id
-            );
-
-          setErreur(
-            erreurNouvellePeriode.message ||
-              "Impossible de programmer le nouveau rythme."
-          );
-
-          return;
-        }
-      }
-    } else {
-      /*
-       * CAS 2 :
-       * aucune période n'existe à cette date.
-       */
-      const {
-        error,
-      } = await supabase
-        .from(
-          "historique_profils_horaires"
-        )
-        .insert({
-          collaborateur_id:
-            collaborateurSelectionne.id,
-          profil_horaire_id:
-            profilId,
-          date_debut:
-            nouvelleDateDebut,
-          date_fin: null,
-        });
 
       if (error) {
         console.error(error);
-
         setErreur(
-          error.message ||
-            "Impossible de créer la nouvelle période horaire."
+          "Impossible de programmer le nouveau rythme."
         );
-
         return;
       }
     }
 
     /*
-     * IMPORTANT :
-     *
-     * Si le nouveau rythme commence dans le futur,
-     * on NE modifie PAS le profil courant du collaborateur.
-     *
-     * Sinon le tableau principal afficherait le futur rythme
-     * comme s'il était déjà actif.
+     * Le profil courant du collaborateur
+     * doit correspondre au rythme actuel.
      */
-    const aujourdHui =
-      dateInputToday();
 
     if (
       nouvelleDateDebut <=
-      aujourdHui
+      dateInputToday()
     ) {
-      const {
-        error: erreurCollaborateur,
-      } = await supabase
+      await supabase
         .from("collaborateurs")
         .update({
           profil_horaire_id:
@@ -1088,164 +1367,102 @@ const router = useRouter();
           "id",
           collaborateurSelectionne.id
         );
-
-      if (erreurCollaborateur) {
-        console.error(
-          erreurCollaborateur
-        );
-
-        setErreur(
-          erreurCollaborateur.message ||
-            "Le rythme a été créé mais le collaborateur n'a pas pu être mis à jour."
-        );
-
-        return;
-      }
     }
 
     setRythmeOuvert(false);
-    setCollaborateurSelectionne(null);
+    setCollaborateurSelectionne(
+      null
+    );
 
     await chargerDonnees();
   }
 
-  /* ============================================================
-     CALCUL DATE VEILLE
-     ============================================================ */
-
-  function calculerDatePrecedente(
-    date: string
-  ) {
-    const morceaux =
-      date.split("-");
-
-    if (morceaux.length !== 3)
-      return date;
-
-    let annee =
-      Number(morceaux[0]);
-
-    let mois =
-      Number(morceaux[1]);
-
-    let jour =
-      Number(morceaux[2]);
-
-    jour--;
-
-    if (jour >= 1) {
-      return [
-        annee,
-        String(mois).padStart(2, "0"),
-        String(jour).padStart(2, "0"),
-      ].join("-");
-    }
-
-    mois--;
-
-    if (mois < 1) {
-      mois = 12;
-      annee--;
-    }
-
-    const joursDansMois =
-      new Date(
-        annee,
-        mois,
-        0
-      ).getDate();
-
-    return [
-      annee,
-      String(mois).padStart(2, "0"),
-      String(joursDansMois).padStart(
-        2,
-        "0"
-      ),
-    ].join("-");
-  }
-
-  /* ============================================================
+  /* ----------------------------------------------------------
      SUPPRESSION PROGRAMMATION
-     ============================================================ */
+  ---------------------------------------------------------- */
 
   async function supprimerProgrammation(
     historique: Historique
   ) {
-    if (!collaborateurSelectionne)
+    if (
+      !collaborateurSelectionne
+    )
       return;
 
-    const confirmation =
+    const confirme =
       window.confirm(
         `Supprimer la programmation du ${formatDate(
           historique.date_debut
-        )} ?\n\nCette action modifiera l'historique du collaborateur.`
+        )} ?`
       );
 
-    if (!confirmation) return;
+    if (!confirme) return;
 
-    setErreur("");
-
-    const historiqueCollaborateur =
-      collaborateurSelectionne.historique ??
-      [];
+    const liste = [
+      ...(collaborateurSelectionne.historique ??
+        []),
+    ].sort((a, b) =>
+      a.date_debut.localeCompare(
+        b.date_debut
+      )
+    );
 
     const index =
-      historiqueCollaborateur.findIndex(
+      liste.findIndex(
         (item) =>
           item.id === historique.id
       );
 
-    const periodePrecedente =
-      index >= 0
-        ? historiqueCollaborateur[
-            index + 1
-          ]
-        : undefined;
+    if (index === -1) return;
 
-    const periodeSuivante =
+    const precedent =
       index > 0
-        ? historiqueCollaborateur[
-            index - 1
-          ]
-        : undefined;
+        ? liste[index - 1]
+        : null;
+
+    const suivant =
+      index <
+      liste.length - 1
+        ? liste[index + 1]
+        : null;
 
     /*
-     * Si on supprime une période intermédiaire,
-     * on fusionne la période précédente et la suivante.
+     * Si on supprime une période au milieu,
+     * la précédente récupère la date de fin
+     * de la suivante.
      */
+
     if (
-      periodePrecedente &&
-      periodeSuivante
+      precedent &&
+      suivant
     ) {
-      const {
-        error: erreurMaj,
-      } = await supabase
-        .from(
-          "historique_profils_horaires"
-        )
-        .update({
-          date_fin:
-            periodeSuivante.date_fin,
-        })
-        .eq(
-          "id",
-          periodePrecedente.id
-        );
+      const { error } =
+        await supabase
+          .from(
+            "historique_profils_horaires"
+          )
+          .update({
+            date_fin:
+              suivant.date_fin,
+          })
+          .eq(
+            "id",
+            precedent.id
+          );
 
-      if (erreurMaj) {
-        console.error(
-          erreurMaj
-        );
-
+      if (error) {
+        console.error(error);
         setErreur(
-          erreurMaj.message ||
-            "Impossible de rétablir l'ancien rythme."
+          "Impossible de reconstruire l'historique."
         );
-
         return;
       }
     }
+
+    /*
+     * Si on supprime le premier élément,
+     * la période suivante devient la première.
+     */
 
     const { error } =
       await supabase
@@ -1260,69 +1477,90 @@ const router = useRouter();
 
     if (error) {
       console.error(error);
-
       setErreur(
-        error.message ||
-          "Impossible de supprimer la programmation."
+        "Impossible de supprimer la programmation."
       );
-
       return;
     }
 
     /*
-     * On recharge depuis la base.
-     * Cela évite les incohérences d'état local.
+     * Recharger permet également de recalculer
+     * automatiquement le profil courant.
      */
-    setRythmeOuvert(false);
-    setCollaborateurSelectionne(null);
 
     await chargerDonnees();
+
+    const { data: nouveauCollab } =
+      await supabase
+        .from("collaborateurs")
+        .select("*")
+        .eq(
+          "id",
+          collaborateurSelectionne.id
+        )
+        .single();
+
+    if (
+      nouveauCollab
+    ) {
+      const collabMisAJour =
+        collaborateurs.find(
+          (item) =>
+            item.id ===
+            nouveauCollab.id
+        );
+
+      if (collabMisAJour) {
+        setCollaborateurSelectionne(
+          collabMisAJour
+        );
+      }
+    }
   }
 
-  /* ============================================================
-     FILTRAGE
-     ============================================================ */
+  /* ----------------------------------------------------------
+     FILTRES
+  ---------------------------------------------------------- */
 
-  const actifs =
-    collaborateurs.filter(
-      (c) => c.actif
+  const termeRecherche =
+    normaliserTexte(recherche);
+
+  function filtrer(
+    liste: Collaborateur[]
+  ) {
+    if (!termeRecherche) {
+      return liste;
+    }
+
+    return liste.filter(
+      (collab) => {
+        const texte =
+          normaliserTexte(
+            [
+              collab.prenom,
+              collab.nom,
+              collab.trigramme,
+              collab.email,
+            ]
+              .filter(Boolean)
+              .join(" ")
+          );
+
+        return texte.includes(
+          termeRecherche
+        );
+      }
     );
+  }
+
+  const actifs = collaborateurs.filter(
+    (c) => c.actif
+  );
 
   const inactifs =
     collaborateurs.filter(
       (c) => !c.actif
     );
-
-  function filtrer(
-    liste: Collaborateur[]
-  ) {
-    const rechercheNormalisee =
-      recherche
-        .trim()
-        .toLowerCase();
-
-    if (!rechercheNormalisee)
-      return liste;
-
-    return liste.filter(
-      (collab) =>
-        collab.prenom
-          ?.toLowerCase()
-          .includes(
-            rechercheNormalisee
-          ) ||
-        collab.nom
-          ?.toLowerCase()
-          .includes(
-            rechercheNormalisee
-          ) ||
-        collab.trigramme
-          ?.toLowerCase()
-          .includes(
-            rechercheNormalisee
-          )
-    );
-  }
 
   const actifsFiltres =
     filtrer(actifs);
@@ -1330,311 +1568,604 @@ const router = useRouter();
   const inactifsFiltres =
     filtrer(inactifs);
 
-  /* ============================================================
-     RENDER
-     ============================================================ */
+  const rythmesProgrammes =
+    actifs.filter((collab) =>
+      (collab.historique ?? []).some(
+        (item) =>
+          item.date_debut >
+          dateInputToday()
+      )
+    ).length;
+
+  /* ----------------------------------------------------------
+     RENDU
+  ---------------------------------------------------------- */
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f5f5f5",
-        fontFamily:
-          "Calibri, Arial, sans-serif",
-        color: "#222",
-      }}
-    >
+    <main style={pageStyle}>
       {/* ======================================================
           HEADER
       ====================================================== */}
 
-      <header
-        style={{
-          background: "#c00000",
-          color: "white",
-          padding: "22px 32px",
-          display: "flex",
-          justifyContent:
-            "space-between",
-          alignItems: "center",
-        }}
-      >
-<div>
-  <button
-    onClick={() =>
-      router.push("/dashboard")
-    }
-    style={{
-      background:
-        "rgba(255,255,255,.15)",
-      border:
-        "1px solid rgba(255,255,255,.3)",
-      color: "white",
-      borderRadius: 8,
-      padding: "8px 14px",
-      cursor: "pointer",
-      fontWeight: 700,
-      marginBottom: 10,
-    }}
-  >
-    🏠 Retour au tableau de bord
-  </button>
+      <header style={headerStyle}>
+        <div>
+          <div style={brandStyle}>
+            POLYNOV
+          </div>
 
-  <div
-    style={{
-      fontSize: 27,
-      fontWeight: 700,
-      letterSpacing: 0.3,
-    }}
-  >
-    POLYNOV
-  </div>
+          <h1 style={titleStyle}>
+            Gestion des collaborateurs
+          </h1>
 
-  <div
-    style={{
-      fontSize: 16,
-      marginTop: 3,
-      opacity: 0.95,
-    }}
-  >
-    Gestion des collaborateurs
-  </div>
-</div>
+          <div style={subtitleStyle}>
+            Collaborateurs, rythmes horaires
+            et historique
+          </div>
+        </div>
 
-        <button
-          onClick={() => {
-            resetFormulaire();
-            setFormOuvert(true);
-          }}
-          style={{
-            background: "white",
-            color: "#c00000",
-            border: "none",
-            borderRadius: 7,
-            padding:
-              "11px 18px",
-            fontSize: 15,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          + Nouveau collaborateur
-        </button>
+        <div style={headerActionsStyle}>
+          <button
+            onClick={() =>
+              router.push("/dashboard")
+            }
+            style={buttonSecondary}
+          >
+            🏠 Tableau de bord
+          </button>
+
+          <button
+            onClick={
+              ouvrirNouveauCollaborateur
+            }
+            style={buttonPrimary}
+          >
+            ＋ Nouveau collaborateur
+          </button>
+        </div>
       </header>
 
       {/* ======================================================
-          CONTENU
+          ERREUR
       ====================================================== */}
 
-      <div
-        style={{
-          maxWidth: 1400,
-          margin: "0 auto",
-          padding: 30,
-        }}
-      >
-        {erreur && (
-          <div
-            style={{
-              background: "#ffe7e7",
-              border:
-                "1px solid #e0a0a0",
-              color: "#a00000",
-              borderRadius: 7,
-              padding:
-                "12px 15px",
-              marginBottom: 20,
-            }}
-          >
-            {erreur}
-          </div>
-        )}
+      {erreur && (
+        <div style={errorBoxStyle}>
+          <strong>Attention</strong>
+          <span>{erreur}</span>
 
-        {/* RECHERCHE */}
-
-        <div
-          style={{
-            background: "white",
-            borderRadius: 10,
-            padding: 16,
-            marginBottom: 24,
-            boxShadow:
-              "0 1px 4px rgba(0,0,0,0.08)",
-          }}
-        >
-          <input
-            value={recherche}
-            onChange={(e) =>
-              setRecherche(
-                e.target.value
-              )
+          <button
+            onClick={() =>
+              setErreur("")
             }
-            placeholder="Rechercher un collaborateur..."
-            style={{
-              width: "100%",
-              boxSizing:
-                "border-box",
-              padding:
-                "11px 13px",
-              border:
-                "1px solid #ccc",
-              borderRadius: 6,
-              fontSize: 15,
-            }}
-          />
+            style={errorCloseStyle}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* ======================================================
+          KPIs
+      ====================================================== */}
+
+      <section style={kpiGridStyle}>
+        <KpiCard
+          label="Collaborateurs actifs"
+          value={actifs.length}
+          icon="👥"
+          accent="#c00000"
+        />
+
+        <KpiCard
+          label="Collaborateurs inactifs"
+          value={inactifs.length}
+          icon="📁"
+          accent="#777"
+        />
+
+        <KpiCard
+          label="Rythmes programmés"
+          value={rythmesProgrammes}
+          icon="🗓️"
+          accent="#e08a00"
+        />
+
+        <KpiCard
+          label="Effectif total"
+          value={
+            collaborateurs.length
+          }
+          icon="📊"
+          accent="#333"
+        />
+      </section>
+
+      {/* ======================================================
+          RECHERCHE
+      ====================================================== */}
+
+      <section style={searchCardStyle}>
+        <div style={searchIconStyle}>
+          🔎
         </div>
 
-        {/* ====================================================
-            ACTIFS
-        ==================================================== */}
+        <input
+          value={recherche}
+          onChange={(e) =>
+            setRecherche(
+              e.target.value
+            )
+          }
+          placeholder="Rechercher un collaborateur, un trigramme ou une adresse e-mail..."
+          style={searchInputStyle}
+        />
 
-        <section
-          style={{
-            background: "white",
-            borderRadius: 10,
-            overflow: "hidden",
-            boxShadow:
-              "0 1px 4px rgba(0,0,0,0.08)",
-            marginBottom: 28,
-          }}
-        >
-          <div
-            style={{
-              padding:
-                "17px 20px",
-              borderBottom:
-                "1px solid #e5e5e5",
-              display: "flex",
-              justifyContent:
-                "space-between",
-              alignItems:
-                "center",
-            }}
+        {recherche && (
+          <button
+            onClick={() =>
+              setRecherche("")
+            }
+            style={searchClearStyle}
           >
-            <div>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 20,
-                }}
-              >
-                Collaborateurs actifs
-              </h2>
+            ×
+          </button>
+        )}
+      </section>
 
-              <div
-                style={{
-                  color: "#777",
-                  fontSize: 13,
-                  marginTop: 3,
-                }}
-              >
-                {actifsFiltres.length}{" "}
-                collaborateur
-                {actifsFiltres.length >
-                1
-                  ? "s"
-                  : ""}
-              </div>
-            </div>
+      {/* ======================================================
+          CHARGEMENT
+      ====================================================== */}
+
+      {chargement ? (
+        <div style={loadingStyle}>
+          <div style={spinnerStyle}>
+            ⟳
           </div>
 
-          {chargement ? (
-            <div
-              style={{
-                padding: 30,
-              }}
-            >
-              Chargement des
-              collaborateurs...
+          Chargement des collaborateurs...
+        </div>
+      ) : (
+        <>
+          {/* ==================================================
+              ACTIFS
+          ================================================== */}
+
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <div>
+                <div style={sectionTitleStyle}>
+                  Collaborateurs actifs
+                </div>
+
+                <div style={sectionSubtitleStyle}>
+                  {actifsFiltres.length}{" "}
+                  collaborateur
+                  {actifsFiltres.length >
+                  1
+                    ? "s"
+                    : ""}
+                  {recherche
+                    ? " trouvé(s)"
+                    : ""}
+                </div>
+              </div>
+
+              <div style={sectionBadgeStyle}>
+                {actifs.length}
+              </div>
             </div>
-          ) : actifsFiltres.length ===
+
+            {actifsFiltres.length ===
             0 ? (
-            <div
-              style={{
-                padding: 35,
-                textAlign:
-                  "center",
-                color: "#777",
-              }}
-            >
-              Aucun collaborateur
-              actif.
-            </div>
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse:
-                    "collapse",
-                }}
+              <EmptyState
+                icon="👤"
+                text={
+                  recherche
+                    ? "Aucun collaborateur ne correspond à la recherche."
+                    : "Aucun collaborateur actif."
+                }
+              />
+            ) : (
+              <div
+                style={
+                  tableWrapperStyle
+                }
               >
-                <thead>
-                  <tr
-                    style={{
-                      background:
-                        "#f7f7f7",
-                      textAlign:
-                        "left",
-                    }}
-                  >
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Trigramme
-                    </th>
+                <table
+                  style={tableStyle}
+                >
+                  <thead>
+                    <tr>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Collaborateur
+                      </th>
 
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Collaborateur
-                    </th>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Rythme actuel
+                      </th>
 
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Rythme actuel
-                    </th>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Semaine
+                      </th>
 
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Prochaine évolution
+                      </th>
 
-                <tbody>
-                  {actifsFiltres.map(
-                    (collab) => {
-                      const historique =
-                        collab.historique ??
-                        [];
+                      <th
+                        style={{
+                          ...thStyle,
+                          textAlign:
+                            "right",
+                        }}
+                      >
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
 
-                      const rythmeActuel =
-                        trouverRythmeActuel(
-                          historique
+                  <tbody>
+                    {actifsFiltres.map(
+                      (collab) => {
+                        const actuel =
+                          trouverRythmeActuel(
+                            collab.historique
+                          );
+
+                        const futur =
+                          trouverProchainRythme(
+                            collab.historique
+                          );
+
+                        const total =
+                          actuel?.profil
+                            ? totalHeuresProfil(
+                                actuel.profil
+                              )
+                            : 0;
+
+                        return (
+                          <tr
+                            key={
+                              collab.id
+                            }
+                            style={
+                              tableRowStyle
+                            }
+                          >
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              <div
+                                style={
+                                  collaboratorCellStyle
+                                }
+                              >
+                                <div
+                                  style={
+                                    trigrammeStyle
+                                  }
+                                >
+                                  {collab.trigramme ||
+                                    "—"}
+                                </div>
+
+                                <div>
+                                  <div
+                                    style={
+                                      collaboratorNameStyle
+                                    }
+                                  >
+                                    {
+                                      collab.prenom
+                                    }{" "}
+                                    {
+                                      collab.nom
+                                    }
+                                  </div>
+
+                                  <div
+                                    style={
+                                      collaboratorEmailStyle
+                                    }
+                                  >
+                                    {
+                                      collab.email
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              <div
+                                style={
+                                  rhythmNameStyle
+                                }
+                              >
+                                {nomAfficheProfil(
+                                  actuel?.profil
+                                )}
+                              </div>
+
+                              {actuel?.profil && (
+                                <div
+                                  style={
+                                    rhythmDetailsStyle
+                                  }
+                                >
+                                  {JOURS.slice(
+                                    0,
+                                    5
+                                  ).map(
+                                    (
+                                      jour
+                                    ) => (
+                                      <span
+                                        key={
+                                          jour.key
+                                        }
+                                      >
+                                        {
+                                          jour.court
+                                        }{" "}
+                                        {formatHeures(
+                                          actuel
+                                            .profil?.[
+                                            jour.key
+                                          ]
+                                        )}
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              <span
+                                style={
+                                  hoursBadgeStyle
+                                }
+                              >
+                                {formatHeures(
+                                  total
+                                )}{" "}
+                                h
+                              </span>
+                            </td>
+
+                            <td
+                              style={
+                                tdStyle
+                              }
+                            >
+                              {futur ? (
+                                <div
+                                  style={
+                                    futureRhythmStyle
+                                  }
+                                >
+                                  <div
+                                    style={
+                                      futureBadgeStyle
+                                    }
+                                  >
+                                    PROGRAMMÉ
+                                  </div>
+
+                                  <strong>
+                                    {nomAfficheProfil(
+                                      futur.profil
+                                    )}
+                                  </strong>
+
+                                  <div>
+                                    à partir du{" "}
+                                    {formatDate(
+                                      futur.date_debut
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span
+                                  style={{
+                                    color:
+                                      "#aaa",
+                                    fontSize:
+                                      13,
+                                  }}
+                                >
+                                  Aucun changement
+                                  programmé
+                                </span>
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...tdStyle,
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              <div
+                                style={
+                                  actionsStyle
+                                }
+                              >
+                                <button
+                                  onClick={() =>
+                                    ouvrirProgrammation(
+                                      collab
+                                    )
+                                  }
+                                  style={
+                                    actionButtonStyle
+                                  }
+                                  title="Gérer le rythme"
+                                >
+                                  🗓️
+                                </button>
+
+                                <button
+                                  onClick={() =>
+                                    ouvrirEditionCollaborateur(
+                                      collab
+                                    )
+                                  }
+                                  style={
+                                    actionButtonStyle
+                                  }
+                                  title="Modifier"
+                                >
+                                  ✏️
+                                </button>
+
+                                <button
+                                  onClick={() =>
+                                    changerEtatCollaborateur(
+                                      collab
+                                    )
+                                  }
+                                  style={{
+                                    ...actionButtonStyle,
+                                    color:
+                                      "#b00000",
+                                  }}
+                                  title="Désactiver"
+                                >
+                                  ⏻
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
                         );
+                      }
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
-                      const prochainRythme =
-                        trouverProchainRythme(
-                          historique
-                        );
+          {/* ==================================================
+              INACTIFS
+          ================================================== */}
 
-                      return (
+          <details
+            style={
+              inactiveSectionStyle
+            }
+          >
+            <summary
+              style={
+                inactiveSummaryStyle
+              }
+            >
+              <div>
+                <strong>
+                  📁 Collaborateurs inactifs
+                </strong>
+
+                <span
+                  style={{
+                    marginLeft: 8,
+                    color: "#777",
+                    fontWeight: 400,
+                  }}
+                >
+                  {inactifsFiltres.length}
+                </span>
+              </div>
+
+              <span
+                style={
+                  summaryArrowStyle
+                }
+              >
+                ▼
+              </span>
+            </summary>
+
+            {inactifsFiltres.length ===
+            0 ? (
+              <EmptyState
+                icon="📁"
+                text={
+                  recherche
+                    ? "Aucun collaborateur inactif ne correspond à la recherche."
+                    : "Aucun collaborateur inactif."
+                }
+              />
+            ) : (
+              <div
+                style={
+                  tableWrapperStyle
+                }
+              >
+                <table
+                  style={tableStyle}
+                >
+                  <thead>
+                    <tr>
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Collaborateur
+                      </th>
+
+                      <th
+                        style={
+                          thStyle
+                        }
+                      >
+                        Dernier rythme
+                      </th>
+
+                      <th
+                        style={{
+                          ...thStyle,
+                          textAlign:
+                            "right",
+                        }}
+                      >
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {inactifsFiltres.map(
+                      (collab) => (
                         <tr
                           key={
                             collab.id
@@ -1645,694 +2176,322 @@ const router = useRouter();
                               tdStyle
                             }
                           >
-                            <strong>
-                              {collab.trigramme ||
-                                "—"}
-                            </strong>
-                          </td>
-
-                          <td
-                            style={
-                              tdStyle
-                            }
-                          >
-                            <strong>
-                              {
-                                collab.prenom
-                              }{" "}
-                              {
-                                collab.nom
+                            <div
+                              style={
+                                collaboratorCellStyle
                               }
-                            </strong>
-                          </td>
-
-                          <td
-                            style={
-                              tdStyle
-                            }
-                          >
-                            {rythmeActuel
-                              ?.profil ? (
-                              <div>
-                                <strong>
-                                  {nomAfficheProfil(
-                                    rythmeActuel.profil
-                                  )}
-                                </strong>
-
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color:
-                                      "#777",
-                                    marginTop:
-                                      4,
-                                  }}
-                                >
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .lundi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .mardi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .mercredi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .jeudi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .vendredi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .samedi
-                                  )}{" "}
-                                  /{" "}
-                                  {formatHeures(
-                                    rythmeActuel
-                                      .profil
-                                      .dimanche
-                                  )}
-                                </div>
-
-                                {prochainRythme && (
-                                  <div
-                                    style={{
-                                      marginTop:
-                                        8,
-                                      padding:
-                                        "7px 9px",
-                                      background:
-                                        "#fff5e5",
-                                      border:
-                                        "1px solid #f0d39a",
-                                      borderRadius:
-                                        6,
-                                      fontSize:
-                                        12,
-                                    }}
-                                  >
-                                    <strong>
-                                      Programmé :
-                                    </strong>{" "}
-                                    {nomAfficheProfil(
-                                      prochainRythme.profil
-                                    )}{" "}
-                                    à partir
-                                    du{" "}
-                                    <strong>
-                                      {formatDate(
-                                        prochainRythme.date_debut
-                                      )}
-                                    </strong>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <span
+                            >
+                              <div
                                 style={{
+                                  ...trigrammeStyle,
+                                  background:
+                                    "#eee",
                                   color:
-                                    "#999",
+                                    "#777",
                                 }}
                               >
-                                Aucun rythme
-                              </span>
+                                {collab.trigramme ||
+                                  "—"}
+                              </div>
+
+                              <div>
+                                <div
+                                  style={
+                                    collaboratorNameStyle
+                                  }
+                                >
+                                  {
+                                    collab.prenom
+                                  }{" "}
+                                  {
+                                    collab.nom
+                                  }
+                                </div>
+
+                                <div
+                                  style={
+                                    collaboratorEmailStyle
+                                  }
+                                >
+                                  {
+                                    collab.email
+                                  }
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td
+                            style={
+                              tdStyle
+                            }
+                          >
+                            {nomAfficheProfil(
+                              collab.profil
                             )}
                           </td>
 
                           <td
-                            style={
-                              tdStyle
-                            }
+                            style={{
+                              ...tdStyle,
+                              textAlign:
+                                "right",
+                            }}
                           >
-                            <div
-                              style={{
-                                display:
-                                  "flex",
-                                gap: 7,
-                                flexWrap:
-                                  "wrap",
-                              }}
+                            <button
+                              onClick={() =>
+                                changerEtatCollaborateur(
+                                  collab
+                                )
+                              }
+                              style={
+                                buttonSecondary
+                              }
                             >
-                              <button
-                                onClick={() =>
-                                  ouvrirProgrammation(
-                                    collab
-                                  )
-                                }
-                                style={
-                                  buttonSecondary
-                                }
-                              >
-                                Rythme
-                              </button>
-
-                              <button
-                                onClick={() =>
-                                  changerEtatCollaborateur(
-                                    collab
-                                  )
-                                }
-                                title="Désactiver le collaborateur"
-                                style={{
-                                  ...buttonSecondary,
-                                  color:
-                                    "#b00000",
-                                  fontSize:
-                                    17,
-                                  padding:
-                                    "5px 10px",
-                                  fontWeight:
-                                    700,
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </div>
+                              Réactiver
+                            </button>
                           </td>
                         </tr>
-                      );
-                    }
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {/* ====================================================
-            INACTIFS
-        ==================================================== */}
-
-        <details
-          style={{
-            background: "white",
-            borderRadius: 10,
-            boxShadow:
-              "0 1px 4px rgba(0,0,0,0.08)",
-            overflow: "hidden",
-          }}
-        >
-          <summary
-            style={{
-              padding:
-                "17px 20px",
-              cursor: "pointer",
-              fontWeight: 700,
-              fontSize: 18,
-            }}
-          >
-            📁 Inactifs (
-            {inactifsFiltres.length})
-          </summary>
-
-          {inactifsFiltres.length ===
-          0 ? (
-            <div
-              style={{
-                padding: 30,
-                color: "#777",
-              }}
-            >
-              Aucun collaborateur
-              inactif.
-            </div>
-          ) : (
-            <div
-              style={{
-                overflowX:
-                  "auto",
-              }}
-            >
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse:
-                    "collapse",
-                }}
-              >
-                <thead>
-                  <tr
-                    style={{
-                      background:
-                        "#f7f7f7",
-                      textAlign:
-                        "left",
-                    }}
-                  >
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Trigramme
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Collaborateur
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Dernier rythme
-                    </th>
-
-                    <th
-                      style={
-                        thStyle
-                      }
-                    >
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {inactifsFiltres.map(
-                    (collab) => (
-                      <tr
-                        key={
-                          collab.id
-                        }
-                      >
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {collab.trigramme ||
-                            "—"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {
-                            collab.prenom
-                          }{" "}
-                          {
-                            collab.nom
-                          }
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          {collab.profil
-                            ? nomAfficheProfil(
-                                collab.profil
-                              )
-                            : "—"}
-                        </td>
-
-                        <td
-                          style={
-                            tdStyle
-                          }
-                        >
-                          <button
-                            onClick={() =>
-                              changerEtatCollaborateur(
-                                collab
-                              )
-                            }
-                            style={
-                              buttonSecondary
-                            }
-                          >
-                            Réactiver
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </details>
-      </div>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </details>
+        </>
+      )}
 
       {/* ======================================================
-          MODALE NOUVEAU COLLABORATEUR
+          MODALE COLLABORATEUR
       ====================================================== */}
 
       {formOuvert && (
-        <div
-          style={
-            overlayStyle
+        <Modal
+          title={
+            editionOuverte
+              ? "Modifier le collaborateur"
+              : "Nouveau collaborateur"
           }
+          subtitle={
+            editionOuverte
+              ? "Informations administratives et paramètres du collaborateur."
+              : "Création du collaborateur et de son premier rythme horaire."
+          }
+          onClose={() => {
+            setFormOuvert(false);
+            setEditionOuverte(false);
+            setCollaborateurSelectionne(
+              null
+            );
+          }}
         >
           <div
             style={
-              modalStyle
+              modalSectionStyle
             }
           >
             <div
               style={
-                modalHeaderStyle
+                modalSectionTitleStyle
               }
             >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                  }}
-                >
-                  Nouveau collaborateur
-                </h2>
-
-                <div
-                  style={{
-                    color:
-                      "#777",
-                    fontSize:
-                      13,
-                    marginTop:
-                      4,
-                  }}
-                >
-                  Création du
-                  collaborateur
-                  et de son
-                  premier
-                  rythme
-                  horaire
-                </div>
-              </div>
-
-              <button
-                onClick={() =>
-                  setFormOuvert(
-                    false
-                  )
-                }
-                style={
-                  closeButtonStyle
-                }
-              >
-                ×
-              </button>
+              👤 Identité
             </div>
 
+            <div style={formGrid}>
+              <FormField label="Prénom *">
+                <input
+                  value={prenom}
+                  onChange={(e) =>
+                    setPrenom(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                  placeholder="Pierre-Laurent"
+                />
+              </FormField>
+
+              <FormField label="Nom *">
+                <input
+                  value={nom}
+                  onChange={(e) =>
+                    setNom(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                  placeholder="GAUFIER"
+                />
+              </FormField>
+
+              <FormField label="Trigramme *">
+                <input
+                  value={trigramme}
+                  maxLength={3}
+                  onChange={(e) =>
+                    setTrigramme(
+                      e.target.value
+                        .replace(
+                          /[^a-zA-Z0-9]/g,
+                          ""
+                        )
+                        .toUpperCase()
+                        .slice(
+                          0,
+                          3
+                        )
+                    )
+                  }
+                  style={{
+                    ...inputStyle,
+                    fontWeight: 700,
+                    letterSpacing: 3,
+                    textTransform:
+                      "uppercase",
+                  }}
+                  placeholder="PLG"
+                />
+
+                <FieldHint>
+                  3 caractères obligatoires
+                </FieldHint>
+              </FormField>
+
+              <FormField label="Rôle *">
+                <select
+                  value={role}
+                  onChange={(e) =>
+                    setRole(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                >
+                  <option value="COLLABORATEUR">
+                    Collaborateur
+                  </option>
+
+                  <option value="ADMIN">
+                    Administrateur
+                  </option>
+                </select>
+              </FormField>
+
+              <FormField label="Compteur récupération initial">
+                <input
+                  type="number"
+                  step="0.5"
+                  value={
+                    compteurRecuperation
+                  }
+                  onChange={(e) =>
+                    setCompteurRecuperation(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                />
+              </FormField>
+
+              <FormField label="Adresse e-mail *">
+                <input
+                  value={email}
+                  onChange={(e) => {
+                    setEmailManuel(
+                      true
+                    );
+                    setEmail(
+                      e.target.value
+                    );
+                  }}
+                  style={inputStyle}
+                />
+
+                <FieldHint>
+                  Générée automatiquement,
+                  mais modifiable si nécessaire.
+                </FieldHint>
+              </FormField>
+            </div>
+          </div>
+
+          <div
+            style={
+              modalSectionStyle
+            }
+          >
             <div
               style={
-                modalContentStyle
+                modalSectionTitleStyle
+              }
+            >
+              📅 Dates
+            </div>
+
+            <div style={formGrid}>
+              <FormField label="Date d'entrée">
+                <input
+                  type="date"
+                  value={dateEntree}
+                  onChange={(e) =>
+                    setDateEntree(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                />
+              </FormField>
+
+              <FormField label="Date de sortie">
+                <input
+                  type="date"
+                  value={dateSortie}
+                  onChange={(e) =>
+                    setDateSortie(
+                      e.target.value
+                    )
+                  }
+                  style={inputStyle}
+                />
+              </FormField>
+            </div>
+          </div>
+
+          {!editionOuverte && (
+            <div
+              style={
+                modalSectionStyle
               }
             >
               <div
                 style={
-                  formGrid
+                  modalSectionTitleStyle
                 }
               >
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Prénom *
-                  </label>
+                ⏱️ Premier rythme horaire
+              </div>
 
-                  <input
-                    value={
-                      prenom
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setPrenom(
-                        e.target
-                          .value
-                      )
-                    }
-                    style={
-                      inputStyle
-                    }
-                    placeholder="Pierre-Laurent"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Nom *
-                  </label>
-
-                  <input
-                    value={nom}
-                    onChange={(
-                      e
-                    ) =>
-                      setNom(
-                        e.target
-                          .value
-                      )
-                    }
-                    style={
-                      inputStyle
-                    }
-                    placeholder="GAUFIER"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Trigramme *
-                  </label>
-
-                  <input
-                    value={
-                      trigramme
-                    }
-                    maxLength={
-                      3
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setTrigramme(
-                        e.target.value
-                          .replace(
-                            /[^a-zA-Z0-9]/g,
-                            ""
-                          )
-                          .toUpperCase()
-                          .slice(
-                            0,
-                            3
-                          )
-                      )
-                    }
-                    style={{
-                      ...inputStyle,
-                      textTransform:
-                        "uppercase",
-                      fontWeight:
-                        700,
-                      letterSpacing:
-                        2,
-                    }}
-                    placeholder="PLG"
-                  />
-
-                  <div
-                    style={{
-                      color:
-                        "#777",
-                      fontSize:
-                        11,
-                      marginTop:
-                        4,
-                    }}
-                  >
-                    3 caractères
-                    obligatoires
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Rôle *
-                  </label>
-
-                  <select
-                    value={
-                      role
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setRole(
-                        e.target
-                          .value
-                      )
-                    }
-                    style={
-                      inputStyle
-                    }
-                  >
-                    <option value="COLLABORATEUR">
-                      Collaborateur
-                    </option>
-
-                    <option value="ADMIN">
-                      Administrateur
-                    </option>
-                  </select>
-                </div>
-
-<div>
-  <label
-    style={labelStyle}
-  >
-    Compteur récupération initial
-  </label>
-
-  <input
-    type="number"
-    step="0.5"
-    value={
-      compteurRecuperation
-    }
-    onChange={(e) =>
-      setCompteurRecuperation(
-        e.target.value
-      )
-    }
-    style={
-      inputStyle
-    }
-    placeholder="0"
-  />
-</div>
-
-
-
-
-                <div
-                  style={{
-                    gridColumn:
-                      "1 / -1",
-                  }}
-                >
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Adresse
-                    e-mail *
-                  </label>
-
-                  <input
-                    value={
-                      email
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setEmail(
-                        e.target
-                          .value
-                      )
-                    }
-                    style={
-                      inputStyle
-                    }
-                  />
-
-                  <div
-                    style={{
-                      color:
-                        "#777",
-                      fontSize:
-                        11,
-                      marginTop:
-                        4,
-                    }}
-                  >
-                    Générée
-                    automatiquement
-                    à partir du
-                    prénom et du
-                    nom.
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Rythme horaire *
-                  </label>
-
+              <div style={formGrid}>
+                <FormField label="Rythme horaire *">
                   <select
                     value={
                       profilSelectionne
                     }
-                    onChange={(
-                      e
-                    ) =>
+                    onChange={(e) =>
                       selectionnerProfil(
-                        e.target
-                          .value
+                        e.target.value
                       )
                     }
-                    style={
-                      inputStyle
-                    }
+                    style={inputStyle}
                   >
                     <option value="">
-                      Sélectionner
-                      un rythme...
+                      Sélectionner un rythme...
                     </option>
 
                     {profilsSelection.map(
-                      (
-                        profil
-                      ) => (
+                      (profil) => (
                         <option
                           key={
                             profil.id
@@ -2351,220 +2510,488 @@ const router = useRouter();
                       )
                     )}
                   </select>
-                </div>
+                </FormField>
 
-                <div>
-                  <label
-                    style={
-                      labelStyle
-                    }
-                  >
-                    Date de
-                    début *
-                  </label>
-
+                <FormField label="Applicable à partir du *">
                   <input
                     type="date"
-                    value={
-                      dateDebut
-                    }
-                    onChange={(
-                      e
-                    ) =>
+                    value={dateDebut}
+                    onChange={(e) =>
                       setDateDebut(
-                        e.target
-                          .value
+                        e.target.value
                       )
                     }
-                    style={
-                      inputStyle
-                    }
+                    style={inputStyle}
                   />
-                </div>
+                </FormField>
               </div>
 
-              {/* HORAIRES */}
-
               {profilFormulaire && (
-                <div
-                  style={{
-                    marginTop:
-                      24,
-                    border:
-                      "1px solid #ddd",
-                    borderRadius:
-                      8,
-                    overflow:
-                      "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      background:
-                        "#f7f7f7",
-                      padding:
-                        "12px 15px",
-                      fontWeight:
-                        700,
-                    }}
-                  >
-                    Répartition
-                    hebdomadaire
-                  </div>
+                <WeeklyHours
+                  horaires={horaires}
+                  editable={
+                    formulairePersonnalise
+                  }
+                  onChange={(
+                    key,
+                    value
+                  ) =>
+                    setHoraires(
+                      (ancien) => ({
+                        ...ancien,
+                        [key]: value,
+                      })
+                    )
+                  }
+                  personalised={
+                    formulairePersonnalise
+                  }
+                />
+              )}
+            </div>
+          )}
+
+          <div
+            style={
+              modalFooterStyle
+            }
+          >
+            <button
+              onClick={() => {
+                setFormOuvert(false);
+                setEditionOuverte(false);
+                setCollaborateurSelectionne(
+                  null
+                );
+              }}
+              style={
+                buttonSecondary
+              }
+            >
+              Annuler
+            </button>
+
+            <button
+              onClick={
+                editionOuverte
+                  ? modifierCollaborateur
+                  : ajouterCollaborateur
+              }
+              style={
+                buttonPrimary
+              }
+            >
+              {editionOuverte
+                ? "Enregistrer les modifications"
+                : "Créer le collaborateur"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ======================================================
+          MODALE RYTHME
+      ====================================================== */}
+
+      {rythmeOuvert &&
+        collaborateurSelectionne && (
+          <Modal
+            maxWidth={980}
+            title="Gestion du rythme horaire"
+            subtitle={`${collaborateurSelectionne.trigramme ?? ""} — ${
+              collaborateurSelectionne.prenom ?? ""
+            } ${
+              collaborateurSelectionne.nom ?? ""
+            }`}
+            onClose={() => {
+              setRythmeOuvert(false);
+              setCollaborateurSelectionne(
+                null
+              );
+            }}
+          >
+            {(() => {
+              const historique =
+                collaborateurSelectionne.historique ??
+                [];
+
+              const actuel =
+                trouverRythmeActuel(
+                  historique
+                );
+
+              const futur =
+                trouverProchainRythme(
+                  historique
+                );
+
+              return (
+                <>
+                  {/* RYTHME ACTUEL */}
 
                   <div
-                    style={{
-                      display:
-                        "grid",
-                      gridTemplateColumns:
-                        "repeat(7, minmax(80px, 1fr))",
-                      gap: 1,
-                      background:
-                        "#ddd",
-                    }}
+                    style={
+                      currentRhythmCardStyle
+                    }
                   >
-                    {JOURS.map(
-                      (
-                        jour
-                      ) => (
+                    <div>
+                      <div
+                        style={
+                          smallLabelStyle
+                        }
+                      >
+                        RYTHME ACTUEL
+                      </div>
+
+                      <div
+                        style={
+                          currentRhythmNameStyle
+                        }
+                      >
+                        {nomAfficheProfil(
+                          actuel?.profil
+                        )}
+                      </div>
+
+                      {actuel?.profil && (
                         <div
-                          key={
-                            jour.key
+                          style={
+                            weeklySummaryStyle
                           }
+                        >
+                          {formatHeures(
+                            totalHeuresProfil(
+                              actuel.profil
+                            )
+                          )}{" "}
+                          h / semaine
+                        </div>
+                      )}
+                    </div>
+
+                    {futur && (
+                      <div
+                        style={
+                          nextRhythmCardStyle
+                        }
+                      >
+                        <div
+                          style={
+                            smallLabelStyle
+                          }
+                        >
+                          PROCHAIN RYTHME
+                        </div>
+
+                        <strong>
+                          {nomAfficheProfil(
+                            futur.profil
+                          )}
+                        </strong>
+
+                        <div
                           style={{
-                            background:
-                              "white",
-                            padding:
-                              10,
+                            marginTop: 3,
                           }}
                         >
-                          <div
-                            style={{
-                              fontSize:
-                                12,
-                              color:
-                                "#666",
-                              marginBottom:
-                                5,
-                            }}
-                          >
-                            {
-                              jour.label
-                            }
-                          </div>
-
-                          <input
-                            type="number"
-                            min={
-                              0
-                            }
-                            max={
-                              24
-                            }
-                            step={
-                              0.5
-                            }
-                            value={
-                              horaires[
-                                jour.key
-                              ]
-                            }
-                            disabled={
-                              !formulairePersonnalise
-                            }
-                            onChange={(
-                              e
-                            ) =>
-                              setHoraires(
-                                (
-                                  ancien
-                                ) => ({
-                                  ...ancien,
-                                  [jour.key]:
-                                    Number(
-                                      e
-                                        .target
-                                        .value
-                                    ),
-                                })
-                              )
-                            }
-                            style={{
-                              ...inputStyle,
-                              background:
-                                formulairePersonnalise
-                                  ? "white"
-                                  : "#f2f2f2",
-                            }}
-                          />
+                          À partir du{" "}
+                          <strong>
+                            {formatDate(
+                              futur.date_debut
+                            )}
+                          </strong>
                         </div>
-                      )
+                      </div>
                     )}
                   </div>
 
-                  <div
-                    style={{
-                      padding:
-                        "10px 15px",
-                      background:
-                        "#fafafa",
-                      display:
-                        "flex",
-                      justifyContent:
-                        "space-between",
-                      fontSize:
-                        13,
-                    }}
-                  >
-                    <span>
-                      Total
-                      hebdomadaire
-                    </span>
+                  {/* NOUVELLE PROGRAMMATION */}
 
-                    <strong>
-                      {formatHeures(
-                        totalHeuresProfil(
-                          horaires
-                        )
-                      )}{" "}
-                      h
-                    </strong>
+                  <div
+                    style={
+                      modalSectionStyle
+                    }
+                  >
+                    <div
+                      style={
+                        modalSectionTitleStyle
+                      }
+                    >
+                      ＋ Programmer un nouveau rythme
+                    </div>
+
+                    <div
+                      style={
+                        formGrid
+                      }
+                    >
+                      <FormField label="Nouveau rythme">
+                        <select
+                          value={
+                            nouveauProfil
+                          }
+                          onChange={(
+                            e
+                          ) =>
+                            selectionnerNouveauProfil(
+                              e.target
+                                .value
+                            )
+                          }
+                          style={
+                            inputStyle
+                          }
+                        >
+                          <option value="">
+                            Sélectionner...
+                          </option>
+
+                          {profilsSelection.map(
+                            (
+                              profil
+                            ) => (
+                              <option
+                                key={
+                                  profil.id
+                                }
+                                value={
+                                  profil.id
+                                }
+                              >
+                                {nomAfficheProfil(
+                                  profil
+                                )}
+                                {profil.forfait
+                                  ? " — forfait"
+                                  : ""}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </FormField>
+
+                      <FormField label="Applicable à partir du">
+                        <input
+                          type="date"
+                          value={
+                            nouvelleDateDebut
+                          }
+                          onChange={(
+                            e
+                          ) =>
+                            setNouvelleDateDebut(
+                              e.target
+                                .value
+                            )
+                          }
+                          style={
+                            inputStyle
+                          }
+                        />
+                      </FormField>
+                    </div>
+
+                    {nouveauProfilObjet && (
+                      <WeeklyHours
+                        horaires={
+                          nouveauxHoraires
+                        }
+                        editable={
+                          nouveauProfilPersonnalise
+                        }
+                        personalised={
+                          nouveauProfilPersonnalise
+                        }
+                        onChange={(
+                          key,
+                          value
+                        ) =>
+                          setNouveauxHoraires(
+                            (
+                              ancien
+                            ) => ({
+                              ...ancien,
+                              [key]:
+                                value,
+                            })
+                          )
+                        }
+                      />
+                    )}
                   </div>
 
-                  {!formulairePersonnalise && (
+                  {/* HISTORIQUE */}
+
+                  <div
+                    style={
+                      modalSectionStyle
+                    }
+                  >
                     <div
-                      style={{
-                        padding:
-                          "9px 15px",
-                        color:
-                          "#777",
-                        fontSize:
-                          12,
-                        borderTop:
-                          "1px solid #eee",
-                      }}
+                      style={
+                        modalSectionTitleStyle
+                      }
                     >
-                      Ce rythme
-                      est
-                      prédéfini.
-                      Les
-                      horaires
-                      ne sont
-                      pas
-                      modifiables
-                      ici.
-                      Sélectionnez
-                      «
-                      Personnalisé
-                      » pour
-                      définir
-                      un rythme
-                      spécifique.
+                      🕘 Historique des rythmes
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
+
+                    {historique.length ===
+                    0 ? (
+                      <EmptyState
+                        icon="🕘"
+                        text="Aucun historique de rythme."
+                      />
+                    ) : (
+                      <div
+                        style={
+                          timelineStyle
+                        }
+                      >
+                        {historique.map(
+                          (
+                            item,
+                            index
+                          ) => {
+                            const estFutur =
+                              item.date_debut >
+                              dateInputToday();
+
+                            const estActuel =
+                              trouverRythmeActuel(
+                                historique
+                              )?.id ===
+                              item.id;
+
+                            return (
+                              <div
+                                key={
+                                  item.id
+                                }
+                                style={
+                                  timelineItemStyle
+                                }
+                              >
+                                <div
+                                  style={
+                                    timelineDotStyle
+                                  }
+                                />
+
+                                <div
+                                  style={
+                                    timelineContentStyle
+                                  }
+                                >
+                                  <div
+                                    style={
+                                      timelineTopStyle
+                                    }
+                                  >
+                                    <div>
+                                      <strong
+                                        style={{
+                                          fontSize:
+                                            15,
+                                        }}
+                                      >
+                                        {nomAfficheProfil(
+                                          item.profil
+                                        )}
+                                      </strong>
+
+                                      {estActuel && (
+                                        <span
+                                          style={
+                                            currentBadgeStyle
+                                          }
+                                        >
+                                          ACTUEL
+                                        </span>
+                                      )}
+
+                                      {estFutur && (
+                                        <span
+                                          style={
+                                            futureBadgeStyle
+                                          }
+                                        >
+                                          PROGRAMMÉ
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      onClick={() =>
+                                        supprimerProgrammation(
+                                          item
+                                        )
+                                      }
+                                      style={
+                                        deleteButtonStyle
+                                      }
+                                      title="Supprimer"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+
+                                  <div
+                                    style={
+                                      timelineDateStyle
+                                    }
+                                  >
+                                    Du{" "}
+                                    {formatDate(
+                                      item.date_debut
+                                    )}{" "}
+                                    au{" "}
+                                    {item.date_fin
+                                      ? formatDate(
+                                          item.date_fin
+                                        )
+                                      : "aujourd'hui"}
+                                  </div>
+
+ {item.profil && (
+  <div
+    style={
+      timelineHoursStyle
+    }
+  >
+    {JOURS.map(
+      (jour) => (
+        <span
+          key={
+            jour.key
+          }
+        >
+          <b>
+            {
+              jour.court
+            }
+          </b>
+          :{" "}
+          {formatHeures(
+            item.profil?.[
+              jour.key
+            ]
+          )}
+        </span>
+      )
+    )}
+  </div>
+)}
+                                </div>
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
             <div
               style={
@@ -2572,857 +2999,738 @@ const router = useRouter();
               }
             >
               <button
-                onClick={() =>
-                  setFormOuvert(
-                    false
-                  )
-                }
+                onClick={() => {
+                  setRythmeOuvert(false);
+                  setCollaborateurSelectionne(
+                    null
+                  );
+                }}
                 style={
                   buttonSecondary
                 }
               >
-                Annuler
+                Fermer
               </button>
 
               <button
                 onClick={
-                  ajouterCollaborateur
+                  programmerNouveauRythme
                 }
                 style={
                   buttonPrimary
                 }
               >
-                Créer le
-                collaborateur
+                Programmer le rythme
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================
-          MODALE PROGRAMMATION
-      ====================================================== */}
-
-      {rythmeOuvert &&
-        collaborateurSelectionne && (
-          <div
-            style={
-              overlayStyle
-            }
-          >
-            <div
-              style={{
-                ...modalStyle,
-                maxWidth: 950,
-              }}
-            >
-              <div
-                style={
-                  modalHeaderStyle
-                }
-              >
-                <div>
-                  <h2
-                    style={{
-                      margin: 0,
-                    }}
-                  >
-                    Programmation
-                    du rythme
-                  </h2>
-
-                  <div
-                    style={{
-                      color:
-                        "#777",
-                      fontSize:
-                        13,
-                      marginTop:
-                        4,
-                    }}
-                  >
-                    {
-                      collaborateurSelectionne.trigramme
-                    }{" "}
-                    —{" "}
-                    {
-                      collaborateurSelectionne.prenom
-                    }{" "}
-                    {
-                      collaborateurSelectionne.nom
-                    }
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setRythmeOuvert(
-                      false
-                    );
-                    setCollaborateurSelectionne(
-                      null
-                    );
-                  }}
-                  style={
-                    closeButtonStyle
-                  }
-                >
-                  ×
-                </button>
-              </div>
-
-              <div
-                style={
-                  modalContentStyle
-                }
-              >
-                {/* RYTHME ACTUEL */}
-
-                {(() => {
-                  const historique =
-                    collaborateurSelectionne.historique ??
-                    [];
-
-                  const actuel =
-                    trouverRythmeActuel(
-                      historique
-                    );
-
-                  const futur =
-                    trouverProchainRythme(
-                      historique
-                    );
-
-                  return (
-                    <>
-                      <div
-                        style={{
-                          background:
-                            "#f7f7f7",
-                          borderRadius:
-                            8,
-                          padding:
-                            15,
-                          marginBottom:
-                            22,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize:
-                              12,
-                            color:
-                              "#777",
-                            marginBottom:
-                              4,
-                          }}
-                        >
-                          Rythme actuellement
-                          appliqué
-                        </div>
-
-                        <strong
-                          style={{
-                            fontSize:
-                              17,
-                          }}
-                        >
-                          {nomAfficheProfil(
-                            actuel?.profil
-                          )}
-                        </strong>
-
-                        {actuel?.profil && (
-                          <div
-                            style={{
-                              fontSize:
-                                13,
-                              color:
-                                "#666",
-                              marginTop:
-                                5,
-                            }}
-                          >
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .lundi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .mardi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .mercredi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .jeudi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .vendredi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .samedi
-                            )}{" "}
-                            /{" "}
-                            {formatHeures(
-                              actuel
-                                .profil
-                                .dimanche
-                            )}
-                          </div>
-                        )}
-
-                        {futur && (
-                          <div
-                            style={{
-                              marginTop:
-                                12,
-                              padding:
-                                "9px 11px",
-                              background:
-                                "#fff5e5",
-                              border:
-                                "1px solid #f0d39a",
-                              borderRadius:
-                                6,
-                              fontSize:
-                                13,
-                            }}
-                          >
-                            <strong>
-                              Prochain rythme
-                            </strong>
-
-                            <div
-                              style={{
-                                marginTop:
-                                  3,
-                              }}
-                            >
-                              {nomAfficheProfil(
-                                futur.profil
-                              )}{" "}
-                              à partir du{" "}
-                              <strong>
-                                {formatDate(
-                                  futur.date_debut
-                                )}
-                              </strong>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
-
-                <h3
-                  style={{
-                    margin:
-                      "0 0 12px",
-                    fontSize:
-                      16,
-                  }}
-                >
-                  Programmer un
-                  nouveau rythme
-                </h3>
-
-                <div
-                  style={
-                    formGrid
-                  }
-                >
-                  <div>
-                    <label
-                      style={
-                        labelStyle
-                      }
-                    >
-                      Nouveau
-                      rythme
-                    </label>
-
-                    <select
-                      value={
-                        nouveauProfil
-                      }
-                      onChange={(
-                        e
-                      ) =>
-                        selectionnerNouveauProfil(
-                          e.target
-                            .value
-                        )
-                      }
-                      style={
-                        inputStyle
-                      }
-                    >
-                      <option value="">
-                        Sélectionner...
-                      </option>
-
-                      {profilsSelection.map(
-                        (
-                          profil
-                        ) => (
-                          <option
-                            key={
-                              profil.id
-                            }
-                            value={
-                              profil.id
-                            }
-                          >
-                            {nomAfficheProfil(
-                              profil
-                            )}
-                            {profil.forfait
-                              ? " — forfait"
-                              : ""}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      style={
-                        labelStyle
-                      }
-                    >
-                      Applicable
-                      à partir
-                      du
-                    </label>
-
-                    <input
-                      type="date"
-                      value={
-                        nouvelleDateDebut
-                      }
-                      onChange={(
-                        e
-                      ) =>
-                        setNouvelleDateDebut(
-                          e.target
-                            .value
-                        )
-                      }
-                      style={
-                        inputStyle
-                      }
-                    />
-                  </div>
-                </div>
-
-                {nouveauProfilObjet && (
-                  <div
-                    style={{
-                      marginTop:
-                        20,
-                      border:
-                        "1px solid #ddd",
-                      borderRadius:
-                        8,
-                      overflow:
-                        "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        background:
-                          "#f7f7f7",
-                        padding:
-                          "12px 15px",
-                        fontWeight:
-                          700,
-                      }}
-                    >
-                      Nouveau rythme
-                    </div>
-
-                    <div
-                      style={{
-                        display:
-                          "grid",
-                        gridTemplateColumns:
-                          "repeat(7, minmax(80px, 1fr))",
-                        gap: 1,
-                        background:
-                          "#ddd",
-                      }}
-                    >
-                      {JOURS.map(
-                        (
-                          jour
-                        ) => (
-                          <div
-                            key={
-                              jour.key
-                            }
-                            style={{
-                              background:
-                                "white",
-                              padding:
-                                10,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize:
-                                  12,
-                                color:
-                                  "#666",
-                                marginBottom:
-                                  5,
-                              }}
-                            >
-                              {
-                                jour.label
-                              }
-                            </div>
-
-                            <input
-                              type="number"
-                              min={
-                                0
-                              }
-                              max={
-                                24
-                              }
-                              step={
-                                0.5
-                              }
-                              value={
-                                nouveauxHoraires[
-                                  jour.key
-                                ]
-                              }
-                              disabled={
-                                !nouveauProfilPersonnalise
-                              }
-                              onChange={(
-                                e
-                              ) =>
-                                setNouveauxHoraires(
-                                  (
-                                    ancien
-                                  ) => ({
-                                    ...ancien,
-                                    [jour.key]:
-                                      Number(
-                                        e
-                                          .target
-                                          .value
-                                      ),
-                                  })
-                                )
-                              }
-                              style={{
-                                ...inputStyle,
-                                background:
-                                  nouveauProfilPersonnalise
-                                    ? "white"
-                                    : "#f2f2f2",
-                              }}
-                            />
-                          </div>
-                        )
-                      )}
-                    </div>
-
-                    <div
-                      style={{
-                        padding:
-                          "10px 15px",
-                        background:
-                          "#fafafa",
-                        display:
-                          "flex",
-                        justifyContent:
-                          "space-between",
-                        fontSize:
-                          13,
-                      }}
-                    >
-                      <span>
-                        Total
-                        hebdomadaire
-                      </span>
-
-                      <strong>
-                        {formatHeures(
-                          totalHeuresProfil(
-                            nouveauxHoraires
-                          )
-                        )}{" "}
-                        h
-                      </strong>
-                    </div>
-
-                    {!nouveauProfilPersonnalise && (
-                      <div
-                        style={{
-                          padding:
-                            "9px 15px",
-                          color:
-                            "#777",
-                          fontSize:
-                            12,
-                          borderTop:
-                            "1px solid #eee",
-                        }}
-                      >
-                        Ce rythme
-                        est
-                        prédéfini.
-                        Les
-                        horaires
-                        ne sont
-                        pas
-                        modifiables.
-                        Sélectionnez
-                        «
-                        Personnalisé
-                        » pour
-                        modifier
-                        les jours.
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* HISTORIQUE */}
-
-                <div
-                  style={{
-                    marginTop:
-                      30,
-                  }}
-                >
-                  <h3
-                    style={{
-                      margin:
-                        "0 0 12px",
-                      fontSize:
-                        16,
-                    }}
-                  >
-                    Historique des
-                    rythmes
-                  </h3>
-
-                  {(
-                    collaborateurSelectionne.historique ??
-                    []
-                  ).length ===
-                  0 ? (
-                    <div
-                      style={{
-                        color:
-                          "#777",
-                        fontSize:
-                          13,
-                      }}
-                    >
-                      Aucun historique.
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        border:
-                          "1px solid #ddd",
-                        borderRadius:
-                          7,
-                        overflow:
-                          "hidden",
-                      }}
-                    >
-                      {(
-                        collaborateurSelectionne.historique ??
-                        []
-                      ).map(
-                        (
-                          item,
-                          index
-                        ) => {
-                          const aujourdHui =
-                            dateInputToday();
-
-                          const estFutur =
-                            item.date_debut >
-                            aujourdHui;
-
-                          return (
-                            <div
-                              key={
-                                item.id
-                              }
-                              style={{
-                                padding:
-                                  "12px 14px",
-                                borderBottom:
-                                  index <
-                                  (collaborateurSelectionne
-                                    .historique
-                                    ?.length ??
-                                    1) -
-                                    1
-                                    ? "1px solid #eee"
-                                    : "none",
-                                display:
-                                  "flex",
-                                alignItems:
-                                  "center",
-                                justifyContent:
-                                  "space-between",
-                                gap: 15,
-                                background:
-                                  estFutur
-                                    ? "#fffaf0"
-                                    : "white",
-                              }}
-                            >
-                              <div>
-                                <div
-                                  style={{
-                                    display:
-                                      "flex",
-                                    alignItems:
-                                      "center",
-                                    gap: 8,
-                                  }}
-                                >
-                                  <strong>
-                                    {nomAfficheProfil(
-                                      item.profil
-                                    )}
-                                  </strong>
-
-                                  {estFutur && (
-                                    <span
-                                      style={{
-                                        background:
-                                          "#fff0c9",
-                                        color:
-                                          "#8a6200",
-                                        borderRadius:
-                                          12,
-                                        padding:
-                                          "3px 8px",
-                                        fontSize:
-                                          11,
-                                        fontWeight:
-                                          700,
-                                      }}
-                                    >
-                                      PROGRAMMÉ
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div
-                                  style={{
-                                    color:
-                                      "#777",
-                                    fontSize:
-                                      12,
-                                    marginTop:
-                                      3,
-                                  }}
-                                >
-                                  Du{" "}
-                                  {formatDate(
-                                    item.date_debut
-                                  )}{" "}
-                                  au{" "}
-                                  {item.date_fin
-                                    ? formatDate(
-                                        item.date_fin
-                                      )
-                                    : "aujourd'hui"}
-                                </div>
-
-                                {item.profil && (
-                                  <div
-                                    style={{
-                                      color:
-                                        "#888",
-                                      fontSize:
-                                        11,
-                                      marginTop:
-                                        3,
-                                    }}
-                                  >
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .lundi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .mardi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .mercredi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .jeudi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .vendredi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .samedi
-                                    )}{" "}
-                                    /{" "}
-                                    {formatHeures(
-                                      item
-                                        .profil
-                                        .dimanche
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-
-                              <button
-                                onClick={() =>
-                                  supprimerProgrammation(
-                                    item
-                                  )
-                                }
-                                title="Supprimer cette programmation"
-                                style={{
-                                  border:
-                                    "1px solid #ddd",
-                                  background:
-                                    "white",
-                                  borderRadius:
-                                    6,
-                                  padding:
-                                    "7px 10px",
-                                  cursor:
-                                    "pointer",
-                                  fontSize:
-                                    16,
-                                }}
-                              >
-                                🗑️
-                              </button>
-                            </div>
-                          );
-                        }
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div
-                style={
-                  modalFooterStyle
-                }
-              >
-                <button
-                  onClick={() => {
-                    setRythmeOuvert(
-                      false
-                    );
-                    setCollaborateurSelectionne(
-                      null
-                    );
-                  }}
-                  style={
-                    buttonSecondary
-                  }
-                >
-                  Fermer
-                </button>
-
-                <button
-                  onClick={
-                    programmerNouveauRythme
-                  }
-                  style={
-                    buttonPrimary
-                  }
-                >
-                  Programmer le
-                  rythme
-                </button>
-              </div>
-            </div>
-          </div>
+          </Modal>
         )}
     </main>
   );
 }
 
 /* ============================================================
+   PETITS COMPOSANTS D'AFFICHAGE
+============================================================ */
+
+function KpiCard({
+  label,
+  value,
+  icon,
+  accent,
+}: {
+  label: string;
+  value: number;
+  icon: string;
+  accent: string;
+}) {
+  return (
+    <div style={kpiCardStyle}>
+      <div
+        style={{
+          ...kpiIconStyle,
+          borderColor: accent,
+        }}
+      >
+        {icon}
+      </div>
+
+      <div>
+        <div style={kpiLabelStyle}>
+          {label}
+        </div>
+
+        <div style={kpiValueStyle}>
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({
+  icon,
+  text,
+}: {
+  icon: string;
+  text: string;
+}) {
+  return (
+    <div style={emptyStateStyle}>
+      <div
+        style={{
+          fontSize: 28,
+          marginBottom: 8,
+        }}
+      >
+        {icon}
+      </div>
+
+      <div>{text}</div>
+    </div>
+  );
+}
+
+function FormField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label style={labelStyle}>
+        {label}
+      </label>
+
+      {children}
+    </div>
+  );
+}
+
+function FieldHint({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={fieldHintStyle}>
+      {children}
+    </div>
+  );
+}
+
+function WeeklyHours({
+  horaires,
+  editable,
+  personalised,
+  onChange,
+}: {
+  horaires: Record<
+    JourKey,
+    number
+  >;
+  editable: boolean;
+  personalised: boolean;
+  onChange: (
+    key: JourKey,
+    value: number
+  ) => void;
+}) {
+  return (
+    <div
+      style={
+        weeklyHoursContainerStyle
+      }
+    >
+      <div
+        style={
+          weeklyHoursHeaderStyle
+        }
+      >
+        <div>
+          <strong>
+            Répartition hebdomadaire
+          </strong>
+
+          <div
+            style={{
+              fontSize: 12,
+              color: "#777",
+              marginTop: 2,
+            }}
+          >
+            {editable
+              ? "Vous pouvez modifier les horaires."
+              : "Rythme prédéfini."}
+          </div>
+        </div>
+
+        <strong>
+          {formatHeures(
+            totalHeuresProfil(
+              horaires
+            )
+          )}{" "}
+          h / semaine
+        </strong>
+      </div>
+
+      <div
+        style={
+          weeklyHoursGridStyle
+        }
+      >
+        {JOURS.map((jour) => (
+          <div
+            key={jour.key}
+            style={
+              weeklyDayStyle
+            }
+          >
+            <div
+              style={
+                weeklyDayLabelStyle
+              }
+            >
+              {jour.court}
+            </div>
+
+            <input
+              type="number"
+              min={0}
+              max={24}
+              step={0.5}
+              value={
+                horaires[jour.key]
+              }
+              disabled={!editable}
+              onChange={(e) =>
+                onChange(
+                  jour.key,
+                  Number(
+                    e.target.value
+                  )
+                )
+              }
+              style={{
+                ...inputStyle,
+                textAlign: "center",
+                background:
+                  editable
+                    ? "white"
+                    : "#f2f2f2",
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {!personalised && (
+        <div
+          style={
+            weeklyHoursHintStyle
+          }
+        >
+          Ce rythme est prédéfini.
+          Pour modifier la répartition,
+          sélectionnez « Personnalisé ».
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Modal({
+  title,
+  subtitle,
+  children,
+  onClose,
+  maxWidth = 900,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  maxWidth?: number;
+}) {
+  return (
+    <div style={overlayStyle}>
+      <div
+        style={{
+          ...modalStyle,
+          maxWidth,
+        }}
+      >
+        <div
+          style={
+            modalHeaderStyle
+          }
+        >
+          <div>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 21,
+              }}
+            >
+              {title}
+            </h2>
+
+            {subtitle && (
+              <div
+                style={
+                  modalSubtitleStyle
+                }
+              >
+                {subtitle}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={onClose}
+            style={
+              closeButtonStyle
+            }
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          style={
+            modalContentStyle
+          }
+        >
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    STYLES
-   ============================================================ */
+============================================================ */
+
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "#f4f5f7",
+  fontFamily:
+    "Calibri, Arial, sans-serif",
+  color: "#222",
+  paddingBottom: 50,
+};
+
+const headerStyle: React.CSSProperties = {
+  background: "#c00000",
+  color: "white",
+  padding: "22px 30px",
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+  gap: 20,
+};
+
+const brandStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 800,
+  letterSpacing: 2,
+  opacity: 0.9,
+};
+
+const titleStyle: React.CSSProperties = {
+  margin: "3px 0 0",
+  fontSize: 25,
+  fontWeight: 700,
+};
+
+const subtitleStyle: React.CSSProperties = {
+  marginTop: 4,
+  opacity: 0.85,
+  fontSize: 14,
+};
+
+const headerActionsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+  flexWrap: "wrap",
+};
+
+const errorBoxStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "18px auto 0",
+  padding: "12px 15px",
+  background: "#fff0f0",
+  border: "1px solid #e5aaaa",
+  borderRadius: 8,
+  color: "#9c0000",
+  display: "flex",
+  gap: 10,
+  alignItems: "center",
+};
+
+const errorCloseStyle: React.CSSProperties = {
+  marginLeft: "auto",
+  border: "none",
+  background: "transparent",
+  fontSize: 20,
+  cursor: "pointer",
+  color: "#900",
+};
+
+const kpiGridStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "22px auto 0",
+  padding: "0 20px",
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(4, minmax(0, 1fr))",
+  gap: 15,
+};
+
+const kpiCardStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 10,
+  padding: "17px 18px",
+  boxShadow:
+    "0 1px 5px rgba(0,0,0,0.07)",
+  display: "flex",
+  alignItems: "center",
+  gap: 14,
+};
+
+const kpiIconStyle: React.CSSProperties = {
+  width: 42,
+  height: 42,
+  borderRadius: 9,
+  border: "2px solid",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 20,
+};
+
+const kpiLabelStyle: React.CSSProperties = {
+  color: "#777",
+  fontSize: 12,
+};
+
+const kpiValueStyle: React.CSSProperties = {
+  fontSize: 25,
+  fontWeight: 800,
+  marginTop: 1,
+};
+
+const searchCardStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "18px auto",
+  padding: "0 20px",
+  position: "relative",
+};
+
+const searchIconStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 35,
+  top: 10,
+  fontSize: 18,
+};
+
+const searchInputStyle: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  background: "white",
+  border: "1px solid #ddd",
+  borderRadius: 9,
+  padding: "12px 42px",
+  fontSize: 15,
+  fontFamily:
+    "Calibri, Arial, sans-serif",
+  outline: "none",
+  boxShadow:
+    "0 1px 4px rgba(0,0,0,0.04)",
+};
+
+const searchClearStyle: React.CSSProperties = {
+  position: "absolute",
+  right: 35,
+  top: 8,
+  border: "none",
+  background: "transparent",
+  fontSize: 24,
+  color: "#888",
+  cursor: "pointer",
+};
+
+const sectionStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "0 auto 20px",
+  padding: "0 20px",
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent:
+    "space-between",
+  marginBottom: 10,
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+  fontSize: 19,
+  fontWeight: 800,
+};
+
+const sectionSubtitleStyle: React.CSSProperties = {
+  color: "#777",
+  fontSize: 13,
+  marginTop: 2,
+};
+
+const sectionBadgeStyle: React.CSSProperties = {
+  minWidth: 30,
+  height: 30,
+  borderRadius: 15,
+  background: "#c00000",
+  color: "white",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontWeight: 800,
+  fontSize: 13,
+};
+
+const tableWrapperStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 10,
+  overflowX: "auto",
+  boxShadow:
+    "0 1px 5px rgba(0,0,0,0.07)",
+};
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  minWidth: 950,
+};
 
 const thStyle: React.CSSProperties = {
   padding: "12px 14px",
-  fontSize: 12,
-  color: "#666",
-  fontWeight: 700,
+  fontSize: 11,
+  color: "#777",
+  fontWeight: 800,
   borderBottom:
     "1px solid #ddd",
+  textTransform: "uppercase",
+  letterSpacing: 0.4,
   whiteSpace: "nowrap",
+  textAlign: "left",
 };
 
 const tdStyle: React.CSSProperties = {
-  padding: "13px 14px",
+  padding: "14px",
   borderBottom:
     "1px solid #eee",
   fontSize: 14,
-  verticalAlign:
-    "middle",
+  verticalAlign: "middle",
+};
+
+const tableRowStyle: React.CSSProperties = {
+  transition:
+    "background 0.15s ease",
+};
+
+const collaboratorCellStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 11,
+};
+
+const trigrammeStyle: React.CSSProperties = {
+  minWidth: 39,
+  height: 39,
+  borderRadius: 8,
+  background: "#c00000",
+  color: "white",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontWeight: 800,
+  fontSize: 11,
+  letterSpacing: 1,
+};
+
+const collaboratorNameStyle: React.CSSProperties = {
+  fontWeight: 700,
+  fontSize: 14,
+};
+
+const collaboratorEmailStyle: React.CSSProperties = {
+  color: "#999",
+  fontSize: 11,
+  marginTop: 2,
+};
+
+const rhythmNameStyle: React.CSSProperties = {
+  fontWeight: 700,
+};
+
+const rhythmDetailsStyle: React.CSSProperties = {
+  marginTop: 5,
+  display: "flex",
+  gap: 7,
+  flexWrap: "wrap",
+  color: "#888",
+  fontSize: 10,
+};
+
+const hoursBadgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  background: "#f2f2f2",
+  borderRadius: 6,
+  padding: "6px 9px",
+  fontWeight: 800,
+  fontSize: 13,
+};
+
+const futureRhythmStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "#765400",
+  background: "#fff9e8",
+  border: "1px solid #f0d58d",
+  borderRadius: 7,
+  padding: "7px 9px",
+  display: "inline-block",
+};
+
+const futureBadgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  marginRight: 6,
+  background: "#ffe8a3",
+  color: "#765400",
+  borderRadius: 9,
+  padding: "2px 6px",
+  fontSize: 9,
+  fontWeight: 800,
+};
+
+const actionsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 5,
+  justifyContent: "flex-end",
+};
+
+const actionButtonStyle: React.CSSProperties = {
+  width: 34,
+  height: 34,
+  borderRadius: 6,
+  border: "1px solid #ddd",
+  background: "white",
+  cursor: "pointer",
+  fontSize: 15,
+};
+
+const inactiveSectionStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "0 auto",
+  padding: "0 20px",
+};
+
+const inactiveSummaryStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 10,
+  padding: "15px 18px",
+  cursor: "pointer",
+  boxShadow:
+    "0 1px 5px rgba(0,0,0,0.06)",
+  listStyle: "none",
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+};
+
+const summaryArrowStyle: React.CSSProperties = {
+  color: "#999",
+  fontSize: 12,
+};
+
+const buttonPrimary: React.CSSProperties = {
+  background: "#c00000",
+  color: "white",
+  border: "none",
+  borderRadius: 7,
+  padding: "10px 15px",
+  fontWeight: 700,
+  cursor: "pointer",
+  fontFamily:
+    "Calibri, Arial, sans-serif",
+};
+
+const buttonSecondary: React.CSSProperties = {
+  background: "white",
+  color: "#333",
+  border: "1px solid #ccc",
+  borderRadius: 7,
+  padding: "9px 13px",
+  fontWeight: 600,
+  cursor: "pointer",
+  fontFamily:
+    "Calibri, Arial, sans-serif",
+};
+
+const emptyStateStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 10,
+  padding: 35,
+  textAlign: "center",
+  color: "#888",
+  boxShadow:
+    "0 1px 5px rgba(0,0,0,0.05)",
+};
+
+const loadingStyle: React.CSSProperties = {
+  maxWidth: 1400,
+  margin: "50px auto",
+  textAlign: "center",
+  color: "#777",
+  fontSize: 14,
+};
+
+const spinnerStyle: React.CSSProperties = {
+  fontSize: 28,
+  marginBottom: 8,
+};
+
+const modalSectionStyle: React.CSSProperties = {
+  marginBottom: 24,
+};
+
+const modalSectionTitleStyle: React.CSSProperties = {
+  fontSize: 16,
+  fontWeight: 800,
+  marginBottom: 13,
+  paddingBottom: 8,
+  borderBottom:
+    "1px solid #eee",
+};
+
+const modalSubtitleStyle: React.CSSProperties = {
+  color: "#777",
+  fontSize: 13,
+  marginTop: 4,
 };
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  boxSizing:
-    "border-box",
-  padding:
-    "9px 10px",
-  border:
-    "1px solid #ccc",
-  borderRadius: 6,
+  boxSizing: "border-box",
+  padding: "10px 11px",
+  border: "1px solid #ccc",
+  borderRadius: 7,
   fontSize: 14,
   fontFamily:
     "Calibri, Arial, sans-serif",
@@ -3435,6 +3743,12 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6,
 };
 
+const fieldHintStyle: React.CSSProperties = {
+  color: "#888",
+  fontSize: 11,
+  marginTop: 4,
+};
+
 const formGrid: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns:
@@ -3442,82 +3756,95 @@ const formGrid: React.CSSProperties = {
   gap: 16,
 };
 
-const buttonPrimary: React.CSSProperties = {
-  background: "#c00000",
-  color: "white",
-  border: "none",
-  borderRadius: 6,
-  padding:
-    "10px 16px",
-  fontWeight: 700,
-  cursor: "pointer",
-  fontFamily:
-    "Calibri, Arial, sans-serif",
+const weeklyHoursContainerStyle: React.CSSProperties = {
+  marginTop: 18,
+  border: "1px solid #ddd",
+  borderRadius: 9,
+  overflow: "hidden",
 };
 
-const buttonSecondary: React.CSSProperties = {
+const weeklyHoursHeaderStyle: React.CSSProperties = {
+  background: "#f7f7f7",
+  padding: "12px 15px",
+  display: "flex",
+  justifyContent:
+    "space-between",
+  alignItems: "center",
+  gap: 15,
+};
+
+const weeklyHoursGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(7, minmax(70px, 1fr))",
+  gap: 1,
+  background: "#ddd",
+};
+
+const weeklyDayStyle: React.CSSProperties = {
   background: "white",
-  color: "#333",
-  border:
-    "1px solid #ccc",
-  borderRadius: 6,
-  padding:
-    "7px 11px",
-  fontWeight: 600,
-  cursor: "pointer",
-  fontFamily:
-    "Calibri, Arial, sans-serif",
+  padding: 9,
+};
+
+const weeklyDayLabelStyle: React.CSSProperties = {
+  textAlign: "center",
+  fontSize: 11,
+  fontWeight: 700,
+  color: "#777",
+  marginBottom: 5,
+};
+
+const weeklyHoursHintStyle: React.CSSProperties = {
+  padding: "9px 14px",
+  background: "#fafafa",
+  color: "#777",
+  fontSize: 11,
+  borderTop:
+    "1px solid #eee",
 };
 
 const overlayStyle: React.CSSProperties = {
   position: "fixed",
   inset: 0,
   background:
-    "rgba(0,0,0,0.45)",
+    "rgba(0,0,0,0.48)",
   display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
+  alignItems: "center",
+  justifyContent: "center",
   padding: 20,
   zIndex: 1000,
 };
 
 const modalStyle: React.CSSProperties = {
   width: "100%",
-  maxWidth: 900,
   maxHeight: "92vh",
   background: "white",
-  borderRadius: 10,
+  borderRadius: 11,
   overflow: "hidden",
   display: "flex",
-  flexDirection:
-    "column",
+  flexDirection: "column",
   boxShadow:
-    "0 10px 40px rgba(0,0,0,0.25)",
+    "0 15px 50px rgba(0,0,0,0.28)",
 };
 
 const modalHeaderStyle: React.CSSProperties = {
-  padding:
-    "18px 22px",
+  padding: "18px 22px",
   borderBottom:
     "1px solid #e5e5e5",
   display: "flex",
   justifyContent:
     "space-between",
-  alignItems:
-    "center",
+  alignItems: "center",
+  gap: 20,
 };
 
 const modalContentStyle: React.CSSProperties = {
   padding: 22,
-  overflowY:
-    "auto",
+  overflowY: "auto",
 };
 
 const modalFooterStyle: React.CSSProperties = {
-  padding:
-    "14px 22px",
+  padding: "14px 22px",
   borderTop:
     "1px solid #e5e5e5",
   display: "flex",
@@ -3528,10 +3855,127 @@ const modalFooterStyle: React.CSSProperties = {
 
 const closeButtonStyle: React.CSSProperties = {
   border: "none",
-  background:
-    "transparent",
-  fontSize: 28,
+  background: "transparent",
+  fontSize: 29,
   lineHeight: 1,
   cursor: "pointer",
-  color: "#666",
+  color: "#777",
 };
+
+const currentRhythmCardStyle: React.CSSProperties = {
+  background: "#f7f8fa",
+  border: "1px solid #e5e5e5",
+  borderRadius: 9,
+  padding: 16,
+  display: "flex",
+  justifyContent:
+    "space-between",
+  gap: 20,
+  alignItems: "stretch",
+};
+
+const smallLabelStyle: React.CSSProperties = {
+  color: "#888",
+  fontSize: 10,
+  fontWeight: 800,
+  letterSpacing: 0.6,
+  marginBottom: 4,
+};
+
+const currentRhythmNameStyle: React.CSSProperties = {
+  fontSize: 19,
+  fontWeight: 800,
+};
+
+const weeklySummaryStyle: React.CSSProperties = {
+  color: "#777",
+  fontSize: 12,
+  marginTop: 4,
+};
+
+const nextRhythmCardStyle: React.CSSProperties = {
+  background: "#fff7df",
+  border: "1px solid #efd38d",
+  borderRadius: 7,
+  padding: "10px 13px",
+  color: "#765400",
+  minWidth: 230,
+};
+
+const timelineStyle: React.CSSProperties = {
+  borderLeft:
+    "2px solid #ddd",
+  marginLeft: 7,
+  paddingLeft: 18,
+};
+
+const timelineItemStyle: React.CSSProperties = {
+  position: "relative",
+  marginBottom: 13,
+};
+
+const timelineDotStyle: React.CSSProperties = {
+  position: "absolute",
+  left: -25,
+  top: 15,
+  width: 10,
+  height: 10,
+  borderRadius: "50%",
+  background: "#c00000",
+  border: "2px solid white",
+  boxShadow:
+    "0 0 0 1px #c00000",
+};
+
+const timelineContentStyle: React.CSSProperties = {
+  background: "white",
+  border: "1px solid #ddd",
+  borderRadius: 8,
+  padding: "12px 13px",
+};
+
+const timelineTopStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent:
+    "space-between",
+  gap: 10,
+};
+
+const currentBadgeStyle: React.CSSProperties = {
+  display: "inline-block",
+  marginLeft: 7,
+  background: "#e6f5e8",
+  color: "#26733b",
+  borderRadius: 10,
+  padding: "2px 7px",
+  fontSize: 9,
+  fontWeight: 800,
+};
+
+const timelineDateStyle: React.CSSProperties = {
+  color: "#777",
+  fontSize: 11,
+  marginTop: 4,
+};
+
+const timelineHoursStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  marginTop: 8,
+  color: "#888",
+  fontSize: 10,
+};
+
+const deleteButtonStyle: React.CSSProperties = {
+  border: "1px solid #ddd",
+  background: "white",
+  borderRadius: 6,
+  width: 31,
+  height: 31,
+  cursor: "pointer",
+};
+
+const weeklyDayStyleMobileFix =
+  weeklyDayStyle;
