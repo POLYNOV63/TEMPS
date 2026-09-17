@@ -51,6 +51,20 @@ export default function LoginPage() {
     router.push("/dashboard");
   }
 
+            async function connexionMicrosoft() {
+  if (chargement) return;
+
+  setErreur("");
+  setChargement(true);
+
+await supabase.auth.signInWithOAuth({
+  provider: "azure",
+  options: {
+    redirectTo:
+      `${window.location.origin}/auth/callback`,
+  },
+});
+}
   function gererToucheEntree(
     e: React.KeyboardEvent<HTMLInputElement>
   ) {
@@ -302,27 +316,46 @@ export default function LoginPage() {
           {/* BOUTON */}
           {/* ======================================================= */}
 
-          <button
-            type="button"
-            onClick={connexion}
-            disabled={chargement}
-            style={{
-              width: "100%",
-              height: 47,
-              border: "none",
-              borderRadius: 7,
-              background: chargement ? "#a00000" : "#c00000",
-              color: "#ffffff",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: chargement ? "default" : "pointer",
-              boxShadow: chargement
-                ? "none"
-                : "0 5px 12px rgba(192, 0, 0, 0.20)",
-            }}
-          >
-            {chargement ? "Connexion..." : "Se connecter"}
-          </button>
+<button
+  type="button"
+  onClick={connexion}
+  disabled={chargement}
+  style={{
+    width: "100%",
+    height: 47,
+    border: "none",
+    borderRadius: 7,
+    background: chargement ? "#a00000" : "#c00000",
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: chargement ? "default" : "pointer",
+  }}
+>
+  {chargement ? "Connexion..." : "Se connecter"}
+</button>
+
+<button
+  type="button"
+  onClick={connexionMicrosoft}
+  disabled={chargement}
+  style={{
+    width: "100%",
+    height: 47,
+    marginTop: 12,
+    border: "1px solid #d2d2d2",
+    borderRadius: 7,
+    background: "#ffffff",
+    color: "#222",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+  }}
+>
+  Se connecter avec Microsoft 365
+</button>
+
+
 
           {/* ======================================================= */}
           {/* FOOTER */}

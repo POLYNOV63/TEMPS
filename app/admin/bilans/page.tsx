@@ -56,8 +56,7 @@ type HistoriquePresence = {
 type FeuilleHeures = {
   id: string;
   collaborateur_id: string;
-  semaine: number;
-  annee: number;
+  semaine_debut: string;
   total_heures: number | null;
   total_theorique: number | null;
   heures_supplementaires: number | null;
@@ -67,7 +66,7 @@ type FeuilleHeures = {
 type FeuilleJour = {
   id: string;
   feuille_id: string;
-  date: string;
+  date_jour: string;
   presence: string | null;
   absence: string | null;
   ticket_restaurant?: boolean | null;
@@ -90,9 +89,12 @@ type Categorie =
   | "CBE"
   | "DBE"
   | "NI"
+  | "CN"
   | "FORMATION"
   | "AUTRES"
-  | "AFFAIRES_SANS_TYPE";
+  | "AFFAIRES_SANS_TYPE"
+  | "DIVERS_ABSENCES"
+  | "IGNORE";
 
 type SemaineConsolidee = {
   annee: number;
@@ -106,8 +108,10 @@ type SemaineConsolidee = {
   cbe: number;
   dbe: number;
   ni: number;
+  cn: number;
   formation: number;
   autres: number;
+  ignorees: number;
 
   affairesSansType: number;
 
@@ -131,8 +135,10 @@ type CollaborateurSemaine = {
   cbe: number;
   dbe: number;
   ni: number;
+  cn: number;
   formation: number;
   autres: number;
+  ignorees: number;
 
   affairesSansType: number;
 
@@ -151,8 +157,10 @@ type BilanCollaborateur = {
   cbe: number;
   dbe: number;
   ni: number;
+  cn: number;
   formation: number;
   autres: number;
+  ignorees: number;
 
   affairesSansType: number;
 
@@ -178,6 +186,7 @@ type LigneNonExpliquee = {
   ni: number;
   formation: number;
   autres: number;
+  ignorees: number;
 
   affairesSansType: number;
 
@@ -194,12 +203,41 @@ const CODE_NI = "NI";
 
 const CODES_FORMATION = ["FO", "FI"];
 
-const CODES_ABSENCE = [
-  "CP",
+// Divers de production : codes présents dans les lignes "Divers"
+// de l'ancien Excel mais qui correspondent bien à de l'activité de production.
+// Cette liste pourra être enrichie sans toucher au reste du bilan.
+const CODES_DIVERS_PRODUCTION = [
+  "RN",
+  "IF",
+];
+
+// Divers d'absences : on remonte volontairement uniquement ces codes.
+const CODES_DIVERS_ABSENCES = [
   "RE",
   "ML",
-  "RTT",
+  "VM",
+  "AA",
+  "AT",
+  "AI",
+];
+
+// Ces codes existent dans l'historique mais ne doivent ni apparaître
+// comme "Autres" ni gonfler le "Non expliqué".
+const CODES_A_IGNORER = [
   "FE",
+  "CP",
+  "GI",
+  "AC",
+  "AP",
+];
+
+const CODE_CN = "CN";
+
+// Codes d'absence utilisés par le nouveau système lorsqu'une journée
+// ne possède pas d'imputation détaillée.
+const CODES_ABSENCE = [
+  ...CODES_DIVERS_ABSENCES,
+  "RTT",
   "ABS",
   "ABSENCE",
 ];
@@ -375,6 +413,28 @@ function estNI(code: string): boolean {
   return normaliserTexte(code) === CODE_NI;
 }
 
+function estCN(code: string): boolean {
+  return normaliserTexte(code) === CODE_CN;
+}
+
+function estDiversProduction(code: string): boolean {
+  return CODES_DIVERS_PRODUCTION.includes(
+    normaliserTexte(code)
+  );
+}
+
+function estDiversAbsence(code: string): boolean {
+  return CODES_DIVERS_ABSENCES.includes(
+    normaliserTexte(code)
+  );
+}
+
+function estCodeIgnore(code: string): boolean {
+  return CODES_A_IGNORER.includes(
+    normaliserTexte(code)
+  );
+}
+
 /* =========================================================
    CBE / DBE HISTORIQUE
 ========================================================= */
@@ -447,27 +507,32 @@ function classifierHistorique(
   const affaire = ligne.affaire_code;
 
   /*
-    NI est prioritaire.
+    NI / CN / codes ignorés / formation.
+    Puis seulement on regarde le type d'affaire.
+
+    IMPORTANT :
+    si une ligne porte par exemple :
+      code = RN
+      affaire = DBE 2901
+
+    c'est bien une heure DBE.
+    RN ne doit devenir "Divers de production"
+    que lorsqu'il n'y a pas d'affaire CBE/DBE.
   */
   if (estNI(code)) {
     return "NI";
   }
 
-  /*
-    FO / FI sont toujours de la formation,
-    même si une donnée historique contient
-    exceptionnellement une affaire.
-  */
-  if (estFormation(code)) {
-    return "FORMATION";
+  if (estCN(code)) {
+    return "CN";
   }
 
-  /*
-    CP / RE / ML / RTT / FE ne sont pas
-    de la production.
-  */
-  if (estCodeAbsence(code)) {
-    return null;
+  if (estCodeIgnore(code)) {
+    return "IGNORE";
+  }
+
+  if (estFormation(code)) {
+    return "FORMATION";
   }
 
   const typeAffaire =
@@ -479,6 +544,23 @@ function classifierHistorique(
 
   if (typeAffaire === "DBE") {
     return "DBE";
+  }
+
+  if (estDiversAbsence(code)) {
+    return "DIVERS_ABSENCES";
+  }
+
+  if (estDiversProduction(code)) {
+    return "AFFAIRES_SANS_TYPE";
+  }
+
+  /*
+    Les autres codes d'absence restent hors
+    du bilan : ils ne doivent ni produire du
+    "non expliqué" ni devenir de la production.
+  */
+  if (estCodeAbsence(code)) {
+    return null;
   }
 
   /*
@@ -576,8 +658,15 @@ export default function BilansPage() {
   const [modePeriode, setModePeriode] =
     useState<ModePeriode>("EXERCICE");
 
+  // Exercice POLYNOV : du 1er novembre au 31 octobre.
+  // En septembre 2026, l'exercice en cours est donc 2025-2026.
+  const exerciceParDefaut =
+    maintenant.getMonth() >= 10
+      ? maintenant.getFullYear()
+      : maintenant.getFullYear() - 1;
+
   const [annee, setAnnee] =
-    useState(maintenant.getFullYear());
+    useState(exerciceParDefaut);
 
   const [mois, setMois] =
     useState(maintenant.getMonth());
@@ -608,19 +697,55 @@ export default function BilansPage() {
     setErreur("");
 
     try {
+      /*
+        Supabase limite souvent les résultats PostgREST à 1000 lignes.
+        Pour les historiques, on charge donc les lignes par paquets de 1000.
+      */
+      async function chargerToutesLesLignes<T>(
+        requeteBase: any
+      ): Promise<T[]> {
+        const taillePage = 1000;
+        const toutes: T[] = [];
+        let debut = 0;
+
+        while (true) {
+          const { data, error } = await requeteBase
+            .range(debut, debut + taillePage - 1);
+
+          if (error) {
+            throw error;
+          }
+
+          const lignes = (data ?? []) as T[];
+          toutes.push(...lignes);
+
+          if (lignes.length < taillePage) {
+            break;
+          }
+
+          debut += taillePage;
+        }
+
+        return toutes;
+      }
+
       const [
         collaborateursRes,
         profilsRes,
-        historiqueRes,
-        presenceRes,
+        historiqueToutes,
+        presenceToutes,
         feuillesRes,
       ] = await Promise.all([
+        /*
+          IMPORTANT : on charge aussi les anciens collaborateurs inactifs.
+          Un historique 2024/2025 peut appartenir à quelqu'un qui n'est plus
+          actif aujourd'hui. Le filtre actif=true supprimait alors ses données.
+        */
         supabase
           .from("collaborateurs")
           .select(
             "id,trigramme,prenom,nom,email,actif,role,profil_horaire_id"
           )
-          .eq("actif", true)
           .order("nom"),
 
         supabase
@@ -629,22 +754,30 @@ export default function BilansPage() {
             "id,nom,lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche"
           ),
 
-        supabase
-          .from("historique_imputations")
-          .select(
-            "id,collaborateur_id,annee,semaine,affaire_code,code_imputation,heures"
-          ),
+        chargerToutesLesLignes<HistoriqueImputation>(
+          supabase
+            .from("historique_imputations")
+            .select(
+              "id,collaborateur_id,annee,semaine,affaire_code,code_imputation,heures"
+            )
+            .order("annee", { ascending: true })
+            .order("semaine", { ascending: true })
+        ),
 
-        supabase
-          .from("historique_presence")
-          .select(
-            "id,collaborateur_id,annee,semaine,tickets_restaurant,jours_teletravail,jours_presentiel,jours_absent,heures_sup"
-          ),
+        chargerToutesLesLignes<HistoriquePresence>(
+          supabase
+            .from("historique_presence")
+            .select(
+              "id,collaborateur_id,annee,semaine,tickets_restaurant,jours_teletravail,jours_presentiel,jours_absent,heures_sup"
+            )
+            .order("annee", { ascending: true })
+            .order("semaine", { ascending: true })
+        ),
 
         supabase
           .from("feuilles_heures")
           .select(
-            "id,collaborateur_id,semaine,annee,total_heures,total_theorique,heures_supplementaires,statut"
+            "id,collaborateur_id,semaine_debut,total_heures,total_theorique,heures_supplementaires,statut"
           ),
       ]);
 
@@ -656,13 +789,7 @@ export default function BilansPage() {
         throw profilsRes.error;
       }
 
-      if (historiqueRes.error) {
-        throw historiqueRes.error;
-      }
-
-      if (presenceRes.error) {
-        throw presenceRes.error;
-      }
+      // Les historiques ont déjà été chargés intégralement ci-dessus.
 
       if (feuillesRes.error) {
         throw feuillesRes.error;
@@ -682,17 +809,48 @@ export default function BilansPage() {
           []) as ProfilHoraire[]
       );
 
-      setHistorique(
-        (historiqueRes.data ??
-          []) as HistoriqueImputation[]
+      setHistorique(historiqueToutes);
+
+      setPresencesHistorique(presenceToutes);
+
+      console.log(
+        "Historique imputations :",
+        historiqueToutes.length
       );
 
-      setPresencesHistorique(
-        (presenceRes.data ??
-          []) as HistoriquePresence[]
+      console.log(
+        "Historique présence :",
+        presenceToutes.length
       );
+``
+
+
+
+
+
 
       setFeuilles(feuillesChargees);
+
+      const idsCollaborateurs = new Set(
+        (collaborateursRes.data ?? []).map(
+          (c: any) => c.id
+        )
+      );
+
+      console.log(
+        "BILAN DEBUG correspondance collaborateurs",
+        {
+          collaborateurs: collaborateursRes.data?.length ?? 0,
+          historiquesImputations: historiqueToutes.length,
+          historiquesPresences: presenceToutes.length,
+          imputationsSansCollaborateur: historiqueToutes.filter(
+            (h) => !idsCollaborateurs.has(h.collaborateur_id)
+          ).length,
+          presencesSansCollaborateur: presenceToutes.filter(
+            (p) => !idsCollaborateurs.has(p.collaborateur_id)
+          ).length,
+        }
+      );
 
       /*
         Les jours / imputations du nouveau système
@@ -707,7 +865,7 @@ export default function BilansPage() {
         const joursRes = await supabase
           .from("feuilles_heures_jours")
           .select(
-            "id,feuille_id,date,presence,absence,ticket_restaurant,total_heures"
+            "id,feuille_id,date_jour,presence,absence,ticket_restaurant,total_heures"
           )
           .in("feuille_id", idsFeuilles);
 
@@ -862,11 +1020,21 @@ export default function BilansPage() {
         );
       });
 
-      feuilles.forEach((f) => {
-        set.add(
-          `${f.annee}-${f.semaine}`
-        );
-      });
+feuilles.forEach((f) => {
+  if (!f.semaine_debut) return;
+
+  const date = new Date(
+    `${f.semaine_debut}T00:00:00`
+  );
+
+  if (Number.isNaN(date.getTime())) return;
+
+  const { annee, semaine } = isoSemaine(date);
+
+  set.add(
+    `${annee}-${semaine}`
+  );
+});
 
       return Array.from(set)
         .map((value) => {
@@ -1029,6 +1197,17 @@ export default function BilansPage() {
         SemaineConsolidee
       >();
 
+      console.log("BILAN DEBUG consolidation", {
+        modePeriode,
+        annee,
+        historique: historique.length,
+        presences: presencesHistorique.length,
+        feuilles: feuilles.length,
+        jours: jours.length,
+        imputations: imputations.length,
+        periodeActive,
+      });
+
       function creerSemaine(
         anneeSemaine: number,
         semaine: number,
@@ -1051,8 +1230,10 @@ export default function BilansPage() {
           cbe: 0,
           dbe: 0,
           ni: 0,
+          cn: 0,
           formation: 0,
           autres: 0,
+          ignorees: 0,
 
           affairesSansType: 0,
 
@@ -1131,8 +1312,10 @@ export default function BilansPage() {
             cbe: 0,
             dbe: 0,
             ni: 0,
+            cn: 0,
             formation: 0,
             autres: 0,
+            ignorees: 0,
 
             affairesSansType: 0,
 
@@ -1157,11 +1340,31 @@ export default function BilansPage() {
         ----------------------------------------------
       */
 
+      const nouvellesSemainesCollaborateurs =
+        new Set<string>();
+
+      feuilles.forEach((feuille) => {
+        const dateDebut = new Date(`${feuille.semaine_debut}T00:00:00`);
+        const semaineFeuille = isoSemaine(dateDebut);
+
+        nouvellesSemainesCollaborateurs.add(
+          `${feuille.collaborateur_id}-${semaineFeuille.annee}-${semaineFeuille.semaine}`
+        );
+      });
+
       historique.forEach((ligne) => {
         if (
           !semaineDansPeriode(
             ligne.annee,
             ligne.semaine
+          )
+        ) {
+          return;
+        }
+
+        if (
+          nouvellesSemainesCollaborateurs.has(
+            `${ligne.collaborateur_id}-${ligne.annee}-${ligne.semaine}`
           )
         ) {
           return;
@@ -1201,6 +1404,9 @@ export default function BilansPage() {
             ligne
           );
 
+
+
+
         /*
           ABSENCES HISTORIQUES
 
@@ -1234,6 +1440,10 @@ export default function BilansPage() {
             semaine.ni += heuresLigne;
             break;
 
+          case "CN":
+            cs.cn += heuresLigne;
+            break;
+
           case "FORMATION":
             cs.formation += heuresLigne;
             semaine.formation +=
@@ -1246,6 +1456,15 @@ export default function BilansPage() {
 
             semaine.affairesSansType +=
               heuresLigne;
+            break;
+
+          case "DIVERS_ABSENCES":
+            cs.absence += heuresLigne;
+            semaine.heuresAbsence += heuresLigne;
+            break;
+
+          case "IGNORE":
+            cs.ignorees += heuresLigne;
             break;
 
           case "AUTRES":
@@ -1269,6 +1488,14 @@ export default function BilansPage() {
             !semaineDansPeriode(
               presence.annee,
               presence.semaine
+            )
+          ) {
+            return;
+          }
+
+          if (
+            nouvellesSemainesCollaborateurs.has(
+              `${presence.collaborateur_id}-${presence.annee}-${presence.semaine}`
             )
           ) {
             return;
@@ -1324,7 +1551,10 @@ export default function BilansPage() {
             semaine.collaborateurs
           ).forEach((cs) => {
             if (
-              cs.capacite <= 0
+              cs.capacite <= 0 &&
+              !nouvellesSemainesCollaborateurs.has(
+                `${cs.collaborateurId}-${semaine.annee}-${semaine.semaine}`
+              )
             ) {
               const collaborateur =
                 collaborateursMap.get(
@@ -1382,18 +1612,26 @@ export default function BilansPage() {
       const feuillesParSemaine =
         new Map<string, FeuilleHeures[]>();
 
+      /*
+        Une semaine peut exister dans l'historique ET dans le nouveau
+        système. Dans ce cas, on ne mélange pas les données du même
+        collaborateur : la feuille du nouveau système devient la source
+        de référence pour ce collaborateur/semaine.
+      */
       feuilles.forEach((feuille) => {
+        const dateDebut = new Date(`${feuille.semaine_debut}T00:00:00`);
+        const semaineFeuille = isoSemaine(dateDebut);
         if (
           !semaineDansPeriode(
-            feuille.annee,
-            feuille.semaine
+            semaineFeuille.annee,
+            semaineFeuille.semaine
           )
         ) {
           return;
         }
 
         const key =
-          `${feuille.annee}-${feuille.semaine}`;
+          `${semaineFeuille.annee}-${semaineFeuille.semaine}`;
 
         if (
           !feuillesParSemaine.has(key)
@@ -1422,10 +1660,13 @@ export default function BilansPage() {
                 return;
               }
 
+              const dateDebut = new Date(`${feuille.semaine_debut}T00:00:00`);
+              const semaineFeuille = isoSemaine(dateDebut);
+
               const semaine =
                 getSemaine(
-                  feuille.annee,
-                  feuille.semaine,
+                  semaineFeuille.annee,
+                  semaineFeuille.semaine,
                   "NOUVEAU"
                 );
 
@@ -1435,15 +1676,32 @@ export default function BilansPage() {
                   feuille.collaborateur_id
                 );
 
-              const capacite =
-                nombre(
-                  feuille.total_theorique
+              const profil =
+                collaborateur.profil_horaire_id
+                  ? profilsMap.get(
+                      collaborateur.profil_horaire_id
+                    )
+                  : null;
+
+              const capaciteCadreForfait =
+                estCadreForfait(
+                  collaborateur,
+                  profil
                 );
+
+              const capacite =
+                capaciteCadreForfait
+                  ? 0
+                  : nombre(
+                      feuille.total_theorique
+                    );
 
               /*
                 Pour le nouveau système,
                 total_theorique est la meilleure
                 source de capacité réelle.
+                Exception : un cadre au forfait n'est
+                pas transformé en capacité productive.
               */
 
               cs.capacite =
@@ -1513,14 +1771,16 @@ export default function BilansPage() {
                 }
 
                 /*
-                  Une absence n'est pas une heure
-                  travaillée.
+                  CN = vignette dédiée.
+                  CN est normalement pointé dans Divers.
                 */
-                if (
-                  estCodeAbsence(code)
-                ) {
-                  cs.absence += h;
-                  semaine.heuresAbsence += h;
+                if (estCN(code)) {
+                  cs.cn += h;
+                  return;
+                }
+
+                if (estCodeIgnore(code)) {
+                  cs.ignorees += h;
                   return;
                 }
 
@@ -1536,8 +1796,14 @@ export default function BilansPage() {
                   ).trim();
 
                 /*
-                  Le nouveau système possède
-                  normalement type_affaire.
+                  IMPORTANT :
+                  le type CBE/DBE passe AVANT RN/IF.
+                  Ainsi :
+                    DBE + RN = DBE
+                  et non Divers de production.
+
+                  RN / IF deviennent Divers de production
+                  uniquement lorsqu'il n'y a pas de CBE/DBE.
                 */
 
                 if (
@@ -1553,6 +1819,46 @@ export default function BilansPage() {
                 ) {
                   cs.dbe += h;
                   semaine.dbe += h;
+                  return;
+                }
+
+                if (
+                  /^CBE/i.test(numero)
+                ) {
+                  cs.cbe += h;
+                  semaine.cbe += h;
+                  return;
+                }
+
+                if (
+                  /^DBE/i.test(numero)
+                ) {
+                  cs.dbe += h;
+                  semaine.dbe += h;
+                  return;
+                }
+
+                if (estDiversAbsence(code)) {
+                  cs.absence += h;
+                  semaine.heuresAbsence += h;
+                  return;
+                }
+
+                if (estDiversProduction(code)) {
+                  cs.affairesSansType += h;
+                  semaine.affairesSansType += h;
+                  return;
+                }
+
+                /*
+                  Une absence n'est pas une heure
+                  travaillée.
+                */
+                if (
+                  estCodeAbsence(code)
+                ) {
+                  cs.absence += h;
+                  semaine.heuresAbsence += h;
                   return;
                 }
 
@@ -1603,6 +1909,12 @@ export default function BilansPage() {
                     return;
                   }
 
+                  // FE / CP / CN / GI / AC / AP ne doivent
+                  // ni alimenter les absences ni le non expliqué.
+                  if (estCodeIgnore(absence)) {
+                    return;
+                  }
+
                   const totalJour =
                     nombre(
                       jour.total_heures
@@ -1642,7 +1954,7 @@ export default function BilansPage() {
 
                     const date =
                       new Date(
-                        `${jour.date}T12:00:00`
+                        `${jour.date_jour}T12:00:00`
                       );
 
                     const jourSemaine =
@@ -1749,15 +2061,18 @@ export default function BilansPage() {
               0,
               cs.capacite -
                 cs.travaille -
-                cs.absence
+                cs.absence -
+                cs.ignorees
             );
         });
 
         semaine.cbe = 0;
         semaine.dbe = 0;
         semaine.ni = 0;
+        semaine.cn = 0;
         semaine.formation = 0;
         semaine.autres = 0;
+        semaine.ignorees = 0;
         semaine.affairesSansType = 0;
         semaine.heuresAbsence = 0;
 
@@ -1767,9 +2082,11 @@ export default function BilansPage() {
           semaine.cbe += cs.cbe;
           semaine.dbe += cs.dbe;
           semaine.ni += cs.ni;
+          semaine.cn += cs.cn;
           semaine.formation +=
             cs.formation;
           semaine.autres += cs.autres;
+          semaine.ignorees += cs.ignorees;
           semaine.affairesSansType +=
             cs.affairesSansType;
           semaine.heuresAbsence +=
@@ -1793,6 +2110,19 @@ export default function BilansPage() {
             0
           );
       });
+
+
+
+
+
+      console.log(
+  "Semaines consolidées :",
+  map.size
+);
+
+
+
+
 
       return Array.from(map.values()).sort(
         (a, b) => {
@@ -1851,6 +2181,7 @@ export default function BilansPage() {
               ni: 0,
               formation: 0,
               autres: 0,
+              ignorees: 0,
               affairesSansType: 0,
               heuresAbsence: 0,
               totalTravaille: 0,
@@ -1866,6 +2197,7 @@ export default function BilansPage() {
             ni: cs.ni,
             formation: cs.formation,
             autres: cs.autres,
+            ignorees: cs.ignorees,
             affairesSansType:
               cs.affairesSansType,
             heuresAbsence: cs.absence,
@@ -1878,7 +2210,14 @@ export default function BilansPage() {
         .filter(
           (s) =>
             s.capacite > 0 ||
-            s.totalTravaille > 0
+            s.totalTravaille > 0 ||
+            s.heuresAbsence > 0 ||
+            s.cbe > 0 ||
+            s.dbe > 0 ||
+            s.ni > 0 ||
+            s.formation > 0 ||
+            s.autres > 0 ||
+            s.affairesSansType > 0
         );
     }, [
       semainesConsolidees,
@@ -1913,6 +2252,7 @@ export default function BilansPage() {
         cbe: 0,
         dbe: 0,
         ni: 0,
+        cn: 0,
         formation: 0,
         autres: 0,
         affairesSansType: 0,
@@ -1921,6 +2261,8 @@ export default function BilansPage() {
       }
     );
   }, [semainesFiltrees]);
+
+
 
   /* =====================================================
      LIGNES NON EXPLIQUEES
@@ -1978,6 +2320,7 @@ export default function BilansPage() {
               formation:
                 cs.formation,
               autres: cs.autres,
+              ignorees: cs.ignorees,
 
               affairesSansType:
                 cs.affairesSansType,
@@ -2056,8 +2399,10 @@ export default function BilansPage() {
                   cbe: 0,
                   dbe: 0,
                   ni: 0,
+                  cn: 0,
                   formation: 0,
                   autres: 0,
+                  ignorees: 0,
 
                   affairesSansType: 0,
 
@@ -2082,6 +2427,8 @@ export default function BilansPage() {
               cs.formation;
             b.autres +=
               cs.autres;
+            b.ignorees +=
+              cs.ignorees;
             b.affairesSansType +=
               cs.affairesSansType;
             b.absence +=
@@ -2695,6 +3042,17 @@ export default function BilansPage() {
           />
 
           <Kpi
+            label="CN"
+            value={heures(
+              global.cn
+            )}
+            sub="Code CN — Divers"
+            color={
+              COULEURS.gris
+            }
+          />
+
+          <Kpi
             label="Formation"
             value={heures(
               global.formation
@@ -2702,6 +3060,28 @@ export default function BilansPage() {
             sub="FO / FI"
             color={
               COULEURS.violet
+            }
+          />
+
+          <Kpi
+            label="Divers d'absences"
+            value={heures(
+              global.absence
+            )}
+            sub="RE / ML / VM / AA / AT / AI"
+            color={
+              COULEURS.orange
+            }
+          />
+
+          <Kpi
+            label="Divers de production"
+            value={heures(
+              global.affairesSansType
+            )}
+            sub="RN / IF"
+            color={
+              COULEURS.texteSecondaire
             }
           />
 
@@ -2843,10 +3223,6 @@ export default function BilansPage() {
                 }
               >
                 <table
-  className="polynov-bilans-table"
-  style={styles.table}
-></table>
-                <table
                   style={
                     styles.table
                   }
@@ -2872,13 +3248,16 @@ export default function BilansPage() {
                         NI
                       </th>
                       <th>
+                        CN
+                      </th>
+                      <th>
                         Formation
                       </th>
                       <th>
                         Autres
                       </th>
                       <th>
-                        Sans type
+                        Divers de production
                       </th>
                       <th>
                         Non expliqué
@@ -2926,7 +3305,7 @@ export default function BilansPage() {
                               />
                             </td>
 
-                            <td>
+                            <td style={styles.diagnosticNumberCell}>
                               <strong>
                                 {heures(
                                   s.capacite
@@ -2936,6 +3315,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 color:
                                   COULEURS.rouge,
                                 fontWeight: 700,
@@ -2948,6 +3328,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 color:
                                   COULEURS.orange,
                                 fontWeight: 700,
@@ -2960,6 +3341,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 color:
                                   COULEURS.gris,
                               }}
@@ -2971,6 +3353,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 color:
                                   COULEURS.violet,
                               }}
@@ -2980,7 +3363,7 @@ export default function BilansPage() {
                               )}
                             </td>
 
-                            <td>
+                            <td style={styles.diagnosticNumberCell}>
                               {heures(
                                 s.autres
                               )}
@@ -2988,6 +3371,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 color:
                                   s.affairesSansType >
                                   0
@@ -3007,6 +3391,7 @@ export default function BilansPage() {
 
                             <td
                               style={{
+                                ...styles.diagnosticNumberCell,
                                 fontWeight: 800,
                                 color:
                                   s.nonExplique >
@@ -3027,7 +3412,7 @@ export default function BilansPage() {
                       0 && (
                       <tr>
                         <td
-                          colSpan={10}
+                          colSpan={11}
                           style={
                             styles.emptyCell
                           }
@@ -3272,7 +3657,7 @@ export default function BilansPage() {
                         }
                       >
                         <span>
-                          Production vendue
+                          Production (CBE + DBE)
                         </span>
 
                         <strong>
@@ -3484,7 +3869,9 @@ function ChargeTimeline({
           >
             Les barres sont normalisées
             par rapport à la capacité
-            disponible de la semaine.
+            disponible de la semaine. Les
+            codes FE / CP / CN / GI / AC / AP
+            sont volontairement hors périmètre.
           </p>
         </div>
 
@@ -3522,9 +3909,19 @@ function ChargeTimeline({
           />
 
           <Legend
+            color="#e7b24b"
+            label="Divers d'absences"
+          />
+
+          <Legend
             color={
               COULEURS.grisClair
             }
+            label="Divers de production"
+          />
+
+          <Legend
+            color="#dddddd"
             label="Autres"
           />
 
@@ -3617,10 +4014,21 @@ function ChargeTimeline({
                       capacite
                     );
 
+                  const diversAbsencesPct =
+                    taux(
+                      s.heuresAbsence,
+                      capacite
+                    );
+
+                  const diversProductionPct =
+                    taux(
+                      s.affairesSansType,
+                      capacite
+                    );
+
                   const autresPct =
                     taux(
-                      s.autres +
-                        s.affairesSansType,
+                      s.autres,
                       capacite
                     );
 
@@ -3685,11 +4093,25 @@ function ChargeTimeline({
 
                           <BarSegment
                             pct={
-                              autresPct
+                              diversAbsencesPct
+                            }
+                            color="#e7b24b"
+                          />
+
+                          <BarSegment
+                            pct={
+                              diversProductionPct
                             }
                             color={
                               COULEURS.grisClair
                             }
+                          />
+
+                          <BarSegment
+                            pct={
+                              autresPct
+                            }
+                            color="#dddddd"
                           />
 
                           <BarSegment
@@ -4044,6 +4466,7 @@ function NonExpliqueTable({
 
                         <div
                           style={
+                            
                             styles.smallText
                           }
                         >
@@ -4053,7 +4476,7 @@ function NonExpliqueTable({
                         </div>
                       </td>
 
-                      <td>
+<td style={styles.diagnosticNumberCell}>
                         <SourceBadge
                           source={
                             ligne.source
@@ -4061,37 +4484,31 @@ function NonExpliqueTable({
                         />
                       </td>
 
-                      <td>
-                        {heures(
-                          ligne.capacite
-                        )}
-                      </td>
+<td style={styles.diagnosticNumberCell}>
+  {heures(ligne.capacite)}
+</td>
 
-                      <td>
-                        {heures(
-                          ligne.cbe
-                        )}
-                      </td>
+                      <td style={styles.diagnosticNumberCell}>
+{heures(ligne.cbe)}
+</td>
 
-                      <td>
-                        {heures(
-                          ligne.dbe
-                        )}
-                      </td>
+<td style={styles.diagnosticNumberCell}>
+{heures(ligne.dbe)}
+</td>
 
-                      <td>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.ni
                         )}
                       </td>
 
-                      <td>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.formation
                         )}
                       </td>
 
-                      <td>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.autres
                         )}
@@ -4099,6 +4516,7 @@ function NonExpliqueTable({
 
                       <td
                         style={{
+                          ...styles.diagnosticNumberCell,
                           color:
                             ligne.affairesSansType >
                             0
@@ -4118,6 +4536,7 @@ function NonExpliqueTable({
 
                       <td
                         style={{
+                          ...styles.diagnosticNumberCell,
                           color:
                             COULEURS.rouge,
                           fontWeight: 800,
@@ -4165,7 +4584,7 @@ function NonExpliqueTable({
                             />
 
                             <DetailBox
-                              label="Affaires sans type"
+                              label="Divers de production"
                               value={heures(
                                 ligne.affairesSansType
                               )}
@@ -4809,6 +5228,11 @@ const styles: Record<
   },
 
   tableHeader: {},
+
+  diagnosticNumberCell: {
+    textAlign: "center",
+    whiteSpace: "nowrap",
+  },
 
   smallText: {
     fontSize: 11,
