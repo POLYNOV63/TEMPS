@@ -184,6 +184,7 @@ type LigneNonExpliquee = {
   cbe: number;
   dbe: number;
   ni: number;
+  cn: number;
   formation: number;
   autres: number;
   ignorees: number;
@@ -207,8 +208,27 @@ const CODES_FORMATION = ["FO", "FI"];
 // de l'ancien Excel mais qui correspondent bien à de l'activité de production.
 // Cette liste pourra être enrichie sans toucher au reste du bilan.
 const CODES_DIVERS_PRODUCTION = [
-  "RN",
+  "EM",
+  "EI",
   "IF",
+  "IM",
+  "MP",
+  "RN",
+  "DT",
+  "SC",
+  "DM",
+  "SU",
+  "LI",
+  "EE",
+  "EP",
+  "CO",
+  "CM",
+  "ET",
+  "HT",
+  "BD",
+  "RS",
+  "NC",
+  "TQ",
 ];
 
 // Divers d'absences : on remonte volontairement uniquement ces codes.
@@ -334,9 +354,9 @@ function lundiSemaine(
 
   d.setUTCDate(
     d.getUTCDate() -
-      jour +
-      1 +
-      (semaine - 1) * 7
+    jour +
+    1 +
+    (semaine - 1) * 7
   );
 
   return d;
@@ -388,7 +408,7 @@ function isoSemaine(date: Date) {
 
   const semaine = Math.ceil(
     ((d.getTime() - debut.getTime()) / 86400000 + 1) /
-      7
+    7
   );
 
   return {
@@ -601,8 +621,7 @@ function estCadreForfait(
   profil?: ProfilHoraire | null
 ): boolean {
   const texte = normaliserTexte(
-    `${collaborateur.role ?? ""} ${
-      profil?.nom ?? ""
+    `${collaborateur.role ?? ""} ${profil?.nom ?? ""
     }`
   );
 
@@ -822,7 +841,7 @@ export default function BilansPage() {
         "Historique présence :",
         presenceToutes.length
       );
-``
+      ``
 
 
 
@@ -911,7 +930,7 @@ export default function BilansPage() {
 
       setErreur(
         e?.message ??
-          "Impossible de charger les données."
+        "Impossible de charger les données."
       );
     } finally {
       setChargement(false);
@@ -984,8 +1003,8 @@ export default function BilansPage() {
     const profil =
       collaborateur.profil_horaire_id
         ? profilsMap.get(
-            collaborateur.profil_horaire_id
-          )
+          collaborateur.profil_horaire_id
+        )
         : null;
 
     if (
@@ -1020,21 +1039,21 @@ export default function BilansPage() {
         );
       });
 
-feuilles.forEach((f) => {
-  if (!f.semaine_debut) return;
+      feuilles.forEach((f) => {
+        if (!f.semaine_debut) return;
 
-  const date = new Date(
-    `${f.semaine_debut}T00:00:00`
-  );
+        const date = new Date(
+          `${f.semaine_debut}T00:00:00`
+        );
 
-  if (Number.isNaN(date.getTime())) return;
+        if (Number.isNaN(date.getTime())) return;
 
-  const { annee, semaine } = isoSemaine(date);
+        const { annee, semaine } = isoSemaine(date);
 
-  set.add(
-    `${annee}-${semaine}`
-  );
-});
+        set.add(
+          `${annee}-${semaine}`
+        );
+      });
 
       return Array.from(set)
         .map((value) => {
@@ -1176,13 +1195,13 @@ feuilles.forEach((f) => {
 
     return (
       dimanche >=
-        new Date(
-          periodeActive.debut.getFullYear(),
-          periodeActive.debut.getMonth(),
-          periodeActive.debut.getDate()
-        ) &&
+      new Date(
+        periodeActive.debut.getFullYear(),
+        periodeActive.debut.getMonth(),
+        periodeActive.debut.getDate()
+      ) &&
       lundi <=
-        periodeActive.fin
+      periodeActive.fin
     );
   }
 
@@ -1277,7 +1296,7 @@ feuilles.forEach((f) => {
       ) {
         if (
           !semaineData.collaborateurs[
-            collaborateurId
+          collaborateurId
           ]
         ) {
           const c =
@@ -1288,8 +1307,8 @@ feuilles.forEach((f) => {
           const profil =
             c?.profil_horaire_id
               ? profilsMap.get(
-                  c.profil_horaire_id
-                )
+                c.profil_horaire_id
+              )
               : null;
 
           semaineData.collaborateurs[
@@ -1302,9 +1321,8 @@ feuilles.forEach((f) => {
               "???",
 
             nom:
-              `${c?.prenom ?? ""} ${
-                c?.nom ?? ""
-              }`.trim() ||
+              `${c?.prenom ?? ""} ${c?.nom ?? ""
+                }`.trim() ||
               "Inconnu",
 
             capacite: 0,
@@ -1567,8 +1585,8 @@ feuilles.forEach((f) => {
                   collaborateur,
                   collaborateur.profil_horaire_id
                     ? profilsMap.get(
-                        collaborateur.profil_horaire_id
-                      )
+                      collaborateur.profil_horaire_id
+                    )
                     : null
                 )
               ) {
@@ -1679,8 +1697,8 @@ feuilles.forEach((f) => {
               const profil =
                 collaborateur.profil_horaire_id
                   ? profilsMap.get(
-                      collaborateur.profil_horaire_id
-                    )
+                    collaborateur.profil_horaire_id
+                  )
                   : null;
 
               const capaciteCadreForfait =
@@ -1693,8 +1711,8 @@ feuilles.forEach((f) => {
                 capaciteCadreForfait
                   ? 0
                   : nombre(
-                      feuille.total_theorique
-                    );
+                    feuille.total_theorique
+                  );
 
               /*
                 Pour le nouveau système,
@@ -1792,7 +1810,7 @@ feuilles.forEach((f) => {
                 const numero =
                   String(
                     imp.numero_affaire ??
-                      ""
+                    ""
                   ).trim();
 
                 /*
@@ -1838,13 +1856,13 @@ feuilles.forEach((f) => {
                   return;
                 }
 
-                if (estDiversAbsence(code)) {
+                if (type === "DIVERS" && estDiversAbsence(code)) {
                   cs.absence += h;
                   semaine.heuresAbsence += h;
                   return;
                 }
 
-                if (estDiversProduction(code)) {
+                if (type === "DIVERS" && estDiversProduction(code)) {
                   cs.affairesSansType += h;
                   semaine.affairesSansType += h;
                   return;
@@ -1946,8 +1964,8 @@ feuilles.forEach((f) => {
                       collaborateur
                         .profil_horaire_id
                         ? profilsMap.get(
-                            collaborateur.profil_horaire_id
-                          )
+                          collaborateur.profil_horaire_id
+                        )
                         : null;
 
                     let hJour = 0;
@@ -2042,6 +2060,7 @@ feuilles.forEach((f) => {
             cs.cbe +
             cs.dbe +
             cs.ni +
+            cs.cn +
             cs.formation +
             cs.autres +
             cs.affairesSansType;
@@ -2060,9 +2079,9 @@ feuilles.forEach((f) => {
             Math.max(
               0,
               cs.capacite -
-                cs.travaille -
-                cs.absence -
-                cs.ignorees
+              cs.travaille -
+              cs.absence -
+              cs.ignorees
             );
         });
 
@@ -2116,9 +2135,9 @@ feuilles.forEach((f) => {
 
 
       console.log(
-  "Semaines consolidées :",
-  map.size
-);
+        "Semaines consolidées :",
+        map.size
+      );
 
 
 
@@ -2169,7 +2188,7 @@ feuilles.forEach((f) => {
         .map((s) => {
           const cs =
             s.collaborateurs[
-              collaborateurFiltre
+            collaborateurFiltre
             ];
 
           if (!cs) {
@@ -2179,6 +2198,7 @@ feuilles.forEach((f) => {
               cbe: 0,
               dbe: 0,
               ni: 0,
+              cn: 0,
               formation: 0,
               autres: 0,
               ignorees: 0,
@@ -2195,6 +2215,7 @@ feuilles.forEach((f) => {
             cbe: cs.cbe,
             dbe: cs.dbe,
             ni: cs.ni,
+            cn: cs.cn,
             formation: cs.formation,
             autres: cs.autres,
             ignorees: cs.ignorees,
@@ -2215,6 +2236,7 @@ feuilles.forEach((f) => {
             s.cbe > 0 ||
             s.dbe > 0 ||
             s.ni > 0 ||
+            s.cn > 0 ||
             s.formation > 0 ||
             s.autres > 0 ||
             s.affairesSansType > 0
@@ -2235,6 +2257,7 @@ feuilles.forEach((f) => {
         g.cbe += s.cbe;
         g.dbe += s.dbe;
         g.ni += s.ni;
+        g.cn += s.cn;
         g.formation +=
           s.formation;
         g.autres += s.autres;
@@ -2280,9 +2303,9 @@ feuilles.forEach((f) => {
           ).forEach((cs) => {
             if (
               collaborateurFiltre !==
-                "TOUS" &&
+              "TOUS" &&
               cs.collaborateurId !==
-                collaborateurFiltre
+              collaborateurFiltre
             ) {
               return;
             }
@@ -2291,7 +2314,7 @@ feuilles.forEach((f) => {
               cs.nonExplique <=
               0.01 &&
               cs.affairesSansType <=
-                0.01
+              0.01
             ) {
               return;
             }
@@ -2317,6 +2340,8 @@ feuilles.forEach((f) => {
               cbe: cs.cbe,
               dbe: cs.dbe,
               ni: cs.ni,
+              cn: cs.cn,
+              
               formation:
                 cs.formation,
               autres: cs.autres,
@@ -2423,6 +2448,7 @@ feuilles.forEach((f) => {
             b.cbe += cs.cbe;
             b.dbe += cs.dbe;
             b.ni += cs.ni;
+            b.cn += cs.cn;
             b.formation +=
               cs.formation;
             b.autres +=
@@ -2469,10 +2495,8 @@ feuilles.forEach((f) => {
 
           const texte =
             normaliserTexte(
-              `${c?.prenom ?? ""} ${
-                c?.nom ?? ""
-              } ${
-                c?.trigramme ?? ""
+              `${c?.prenom ?? ""} ${c?.nom ?? ""
+              } ${c?.trigramme ?? ""
               }`
             );
 
@@ -2493,6 +2517,14 @@ feuilles.forEach((f) => {
               collaborateursMap.get(
                 b.collaborateurId
               );
+
+            // Actifs d'abord, puis anciens/inactifs.
+            if (
+              Boolean(ca?.actif) !==
+              Boolean(cb?.actif)
+            ) {
+              return ca?.actif ? -1 : 1;
+            }
 
             return (
               `${ca?.nom ?? ""}`.localeCompare(
@@ -2685,10 +2717,10 @@ feuilles.forEach((f) => {
             <strong>
               {periodeActive
                 ? `${formatDate(
-                    periodeActive.debut
-                  )} → ${formatDate(
-                    periodeActive.fin
-                  )}`
+                  periodeActive.debut
+                )} → ${formatDate(
+                  periodeActive.fin
+                )}`
                 : "À définir"}
             </strong>
           </div>
@@ -2750,19 +2782,19 @@ feuilles.forEach((f) => {
                 style={{
                   ...styles.periodButton,
                   ...(modePeriode ===
-                  mode
+                    mode
                     ? styles.periodButtonActive
                     : {}),
                 }}
               >
                 {mode ===
-                "EXERCICE"
+                  "EXERCICE"
                   ? "Exercice"
                   : mode === "ANNEE"
-                  ? "Année"
-                  : mode === "MOIS"
-                  ? "Mois"
-                  : "Libre"}
+                    ? "Année"
+                    : mode === "MOIS"
+                      ? "Mois"
+                      : "Libre"}
               </button>
             ))}
           </div>
@@ -2775,162 +2807,161 @@ feuilles.forEach((f) => {
             {(modePeriode ===
               "EXERCICE" ||
               modePeriode ===
-                "ANNEE" ||
+              "ANNEE" ||
               modePeriode ===
-                "MOIS") && (
-              <label
-                style={
-                  styles.field
-                }
-              >
-                <span>
-                  {modePeriode ===
-                  "EXERCICE"
-                    ? "Exercice"
-                    : "Année"}
-                </span>
-
-                <select
-                  value={annee}
-                  onChange={(e) =>
-                    setAnnee(
-                      Number(
-                        e.target.value
-                      )
-                    )
-                  }
+              "MOIS") && (
+                <label
                   style={
-                    styles.select
+                    styles.field
                   }
                 >
-                  {Array.from(
-                    {
-                      length: 5,
-                    },
-                    (_, i) =>
-                      maintenant.getFullYear() -
-                      2 +
-                      i
-                  ).map((a) => (
-                    <option
-                      key={a}
-                      value={a}
-                    >
-                      {modePeriode ===
+                  <span>
+                    {modePeriode ===
                       "EXERCICE"
-                        ? `${a} / ${
-                            a + 1
+                      ? "Exercice"
+                      : "Année"}
+                  </span>
+
+                  <select
+                    value={annee}
+                    onChange={(e) =>
+                      setAnnee(
+                        Number(
+                          e.target.value
+                        )
+                      )
+                    }
+                    style={
+                      styles.select
+                    }
+                  >
+                    {Array.from(
+                      {
+                        length: 5,
+                      },
+                      (_, i) =>
+                        maintenant.getFullYear() -
+                        2 +
+                        i
+                    ).map((a) => (
+                      <option
+                        key={a}
+                        value={a}
+                      >
+                        {modePeriode ===
+                          "EXERCICE"
+                          ? `${a} / ${a + 1
                           }`
-                        : a}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+                          : a}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
 
             {modePeriode ===
               "MOIS" && (
-              <label
-                style={
-                  styles.field
-                }
-              >
-                <span>
-                  Mois
-                </span>
-
-                <select
-                  value={mois}
-                  onChange={(e) =>
-                    setMois(
-                      Number(
-                        e.target.value
-                      )
-                    )
-                  }
+                <label
                   style={
-                    styles.select
+                    styles.field
                   }
                 >
-                  {MOIS.map(
-                    (
-                      libelle,
-                      index
-                    ) => (
-                      <option
-                        key={
-                          libelle
-                        }
-                        value={
-                          index
-                        }
-                      >
-                        {libelle}
-                      </option>
-                    )
-                  )}
-                </select>
-              </label>
-            )}
+                  <span>
+                    Mois
+                  </span>
+
+                  <select
+                    value={mois}
+                    onChange={(e) =>
+                      setMois(
+                        Number(
+                          e.target.value
+                        )
+                      )
+                    }
+                    style={
+                      styles.select
+                    }
+                  >
+                    {MOIS.map(
+                      (
+                        libelle,
+                        index
+                      ) => (
+                        <option
+                          key={
+                            libelle
+                          }
+                          value={
+                            index
+                          }
+                        >
+                          {libelle}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+              )}
 
             {modePeriode ===
               "LIBRE" && (
-              <>
-                <label
-                  style={
-                    styles.field
-                  }
-                >
-                  <span>
-                    Du
-                  </span>
-
-                  <input
-                    type="date"
-                    value={
-                      dateDebutLibre
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setDateDebutLibre(
-                        e.target.value
-                      )
-                    }
+                <>
+                  <label
                     style={
-                      styles.input
+                      styles.field
                     }
-                  />
-                </label>
+                  >
+                    <span>
+                      Du
+                    </span>
 
-                <label
-                  style={
-                    styles.field
-                  }
-                >
-                  <span>
-                    Au
-                  </span>
+                    <input
+                      type="date"
+                      value={
+                        dateDebutLibre
+                      }
+                      onChange={(
+                        e
+                      ) =>
+                        setDateDebutLibre(
+                          e.target.value
+                        )
+                      }
+                      style={
+                        styles.input
+                      }
+                    />
+                  </label>
 
-                  <input
-                    type="date"
-                    value={
-                      dateFinLibre
-                    }
-                    onChange={(
-                      e
-                    ) =>
-                      setDateFinLibre(
-                        e.target.value
-                      )
-                    }
+                  <label
                     style={
-                      styles.input
+                      styles.field
                     }
-                  />
-                </label>
-              </>
-            )}
+                  >
+                    <span>
+                      Au
+                    </span>
+
+                    <input
+                      type="date"
+                      value={
+                        dateFinLibre
+                      }
+                      onChange={(
+                        e
+                      ) =>
+                        setDateFinLibre(
+                          e.target.value
+                        )
+                      }
+                      style={
+                        styles.input
+                      }
+                    />
+                  </label>
+                </>
+              )}
 
             <label
               style={
@@ -2961,10 +2992,18 @@ feuilles.forEach((f) => {
                 {collaborateurs
                   .slice()
                   .sort(
-                    (a, b) =>
-                      `${a.nom ?? ""}`.localeCompare(
+                    (a, b) => {
+                      if (
+                        Boolean(a.actif) !==
+                        Boolean(b.actif)
+                      ) {
+                        return a.actif ? -1 : 1;
+                      }
+
+                      return `${a.nom ?? ""}`.localeCompare(
                         `${b.nom ?? ""}`
-                      )
+                      );
+                    }
                   )
                   .map((c) => (
                     <option
@@ -3079,7 +3118,7 @@ feuilles.forEach((f) => {
             value={heures(
               global.affairesSansType
             )}
-            sub="RN / IF"
+            sub="Tout code affaire pointé en Divers"
             color={
               COULEURS.texteSecondaire
             }
@@ -3115,7 +3154,7 @@ feuilles.forEach((f) => {
             style={{
               ...styles.tab,
               ...(onglet ===
-              "PILOTAGE"
+                "PILOTAGE"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3132,7 +3171,7 @@ feuilles.forEach((f) => {
             style={{
               ...styles.tab,
               ...(onglet ===
-              "NON_EXPLIQUE"
+                "NON_EXPLIQUE"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3145,23 +3184,23 @@ feuilles.forEach((f) => {
             🔎 Non expliqué
             {lignesNonExpliquees.length >
               0 && (
-              <span
-                style={
-                  styles.tabBadge
-                }
-              >
-                {
-                  lignesNonExpliquees.length
-                }
-              </span>
-            )}
+                <span
+                  style={
+                    styles.tabBadge
+                  }
+                >
+                  {
+                    lignesNonExpliquees.length
+                  }
+                </span>
+              )}
           </button>
 
           <button
             style={{
               ...styles.tab,
               ...(onglet ===
-              "COLLABORATEURS"
+                "COLLABORATEURS"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3181,13 +3220,286 @@ feuilles.forEach((f) => {
 
         {onglet ===
           "PILOTAGE" && (
-          <>
-            <ChargeTimeline
-              semaines={
-                semainesFiltrees
+            <>
+              <ChargeTimeline
+                semaines={
+                  semainesFiltrees
+                }
+              />
+
+              <section
+                style={
+                  styles.card
+                }
+              >
+                <div
+                  style={
+                    styles.cardHeader
+                  }
+                >
+                  <div>
+                    <div
+                      style={
+                        styles.sectionEyebrow
+                      }
+                    >
+                      Détail hebdomadaire
+                    </div>
+
+                    <h2
+                      style={
+                        styles.cardTitle
+                      }
+                    >
+                      Où part la capacité ?
+                    </h2>
+                  </div>
+                </div>
+
+                <div
+                  style={
+                    styles.tableWrap
+                  }
+                >
+                  <table
+                    style={
+                      styles.table
+                    }
+                  >
+                    <thead>
+                      <tr>
+                        <th>
+                          Semaine
+                        </th>
+                        <th>
+                          Source
+                        </th>
+                        <th>
+                          Capacité
+                        </th>
+                        <th>
+                          CBE
+                        </th>
+                        <th>
+                          DBE
+                        </th>
+                        <th>
+                          NI
+                        </th>
+                        <th>
+                          CN
+                        </th>
+                        <th>
+                          Formation
+                        </th>
+                        <th>
+                          Autres
+                        </th>
+                        <th>
+                          Divers de production
+                        </th>
+                        <th>
+                          Non expliqué
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {semainesFiltrees
+                        .slice()
+                        .reverse()
+                        .map(
+                          (s) => (
+                            <tr
+                              key={`${s.annee}-${s.semaine}`}
+                            >
+                              <td>
+                                <strong>
+                                  S
+                                  {
+                                    s.semaine
+                                  }
+                                </strong>
+
+                                <div
+                                  style={
+                                    styles.smallText
+                                  }
+                                >
+                                  {
+                                    s.debut
+                                  }{" "}
+                                  →{" "}
+                                  {
+                                    s.fin
+                                  }
+                                </div>
+                              </td>
+
+                              <td>
+                                <SourceBadge
+                                  source={
+                                    s.source
+                                  }
+                                />
+                              </td>
+
+                              <td style={styles.diagnosticNumberCell}>
+                                <strong>
+                                  {heures(
+                                    s.capacite
+                                  )}
+                                </strong>
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    COULEURS.rouge,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {heures(
+                                  s.cbe
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    COULEURS.orange,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {heures(
+                                  s.dbe
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    COULEURS.gris,
+                                }}
+                              >
+                                {heures(
+                                  s.ni
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    COULEURS.gris,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {heures(
+                                  s.cn
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    COULEURS.violet,
+                                }}
+                              >
+                                {heures(
+                                  s.formation
+                                )}
+                              </td>
+
+                              <td style={styles.diagnosticNumberCell}>
+                                {heures(
+                                  s.autres
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  color:
+                                    s.affairesSansType >
+                                      0
+                                      ? COULEURS.orange
+                                      : COULEURS.texteSecondaire,
+                                  fontWeight:
+                                    s.affairesSansType >
+                                      0
+                                      ? 700
+                                      : 400,
+                                }}
+                              >
+                                {heures(
+                                  s.affairesSansType
+                                )}
+                              </td>
+
+                              <td
+                                style={{
+                                  ...styles.diagnosticNumberCell,
+                                  fontWeight: 800,
+                                  color:
+                                    s.nonExplique >
+                                      0
+                                      ? COULEURS.rouge
+                                      : COULEURS.vert,
+                                }}
+                              >
+                                {heures(
+                                  s.nonExplique
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        )}
+
+                      {semainesFiltrees.length ===
+                        0 && (
+                          <tr>
+                            <td
+                              colSpan={11}
+                              style={
+                                styles.emptyCell
+                              }
+                            >
+                              Aucune donnée sur
+                              cette période.
+                            </td>
+                          </tr>
+                        )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </>
+          )}
+
+        {/* =================================================
+            NON EXPLIQUE
+        ================================================= */}
+
+        {onglet ===
+          "NON_EXPLIQUE" && (
+            <NonExpliqueTable
+              lignes={
+                lignesNonExpliquees
               }
             />
+          )}
 
+        {/* =================================================
+            COLLABORATEURS
+        ================================================= */}
+
+        {onglet ===
+          "COLLABORATEURS" && (
             <section
               style={
                 styles.card
@@ -3204,7 +3516,7 @@ feuilles.forEach((f) => {
                       styles.sectionEyebrow
                     }
                   >
-                    Détail hebdomadaire
+                    Équipe
                   </div>
 
                   <h2
@@ -3212,479 +3524,219 @@ feuilles.forEach((f) => {
                       styles.cardTitle
                     }
                   >
-                    Où part la capacité ?
+                    Vision par collaborateur
                   </h2>
                 </div>
+
+                <input
+                  value={
+                    recherche
+                  }
+                  onChange={(e) =>
+                    setRecherche(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Rechercher…"
+                  style={{
+                    ...styles.input,
+                    maxWidth: 260,
+                  }}
+                />
               </div>
 
               <div
                 style={
-                  styles.tableWrap
+                  styles.collaborateursGrid
                 }
               >
-                <table
-                  style={
-                    styles.table
-                  }
-                >
-                  <thead>
-                    <tr>
-                      <th>
-                        Semaine
-                      </th>
-                      <th>
-                        Source
-                      </th>
-                      <th>
-                        Capacité
-                      </th>
-                      <th>
-                        CBE
-                      </th>
-                      <th>
-                        DBE
-                      </th>
-                      <th>
-                        NI
-                      </th>
-                      <th>
-                        CN
-                      </th>
-                      <th>
-                        Formation
-                      </th>
-                      <th>
-                        Autres
-                      </th>
-                      <th>
-                        Divers de production
-                      </th>
-                      <th>
-                        Non expliqué
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {semainesFiltrees
-                      .slice()
-                      .reverse()
-                      .map(
-                        (s) => (
-                          <tr
-                            key={`${s.annee}-${s.semaine}`}
-                          >
-                            <td>
-                              <strong>
-                                S
-                                {
-                                  s.semaine
-                                }
-                              </strong>
-
-                              <div
-                                style={
-                                  styles.smallText
-                                }
-                              >
-                                {
-                                  s.debut
-                                }{" "}
-                                →{" "}
-                                {
-                                  s.fin
-                                }
-                              </div>
-                            </td>
-
-                            <td>
-                              <SourceBadge
-                                source={
-                                  s.source
-                                }
-                              />
-                            </td>
-
-                            <td style={styles.diagnosticNumberCell}>
-                              <strong>
-                                {heures(
-                                  s.capacite
-                                )}
-                              </strong>
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                color:
-                                  COULEURS.rouge,
-                                fontWeight: 700,
-                              }}
-                            >
-                              {heures(
-                                s.cbe
-                              )}
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                color:
-                                  COULEURS.orange,
-                                fontWeight: 700,
-                              }}
-                            >
-                              {heures(
-                                s.dbe
-                              )}
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                color:
-                                  COULEURS.gris,
-                              }}
-                            >
-                              {heures(
-                                s.ni
-                              )}
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                color:
-                                  COULEURS.violet,
-                              }}
-                            >
-                              {heures(
-                                s.formation
-                              )}
-                            </td>
-
-                            <td style={styles.diagnosticNumberCell}>
-                              {heures(
-                                s.autres
-                              )}
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                color:
-                                  s.affairesSansType >
-                                  0
-                                    ? COULEURS.orange
-                                    : COULEURS.texteSecondaire,
-                                fontWeight:
-                                  s.affairesSansType >
-                                  0
-                                    ? 700
-                                    : 400,
-                              }}
-                            >
-                              {heures(
-                                s.affairesSansType
-                              )}
-                            </td>
-
-                            <td
-                              style={{
-                                ...styles.diagnosticNumberCell,
-                                fontWeight: 800,
-                                color:
-                                  s.nonExplique >
-                                  0
-                                    ? COULEURS.rouge
-                                    : COULEURS.vert,
-                              }}
-                            >
-                              {heures(
-                                s.nonExplique
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      )}
-
-                    {semainesFiltrees.length ===
-                      0 && (
-                      <tr>
-                        <td
-                          colSpan={11}
-                          style={
-                            styles.emptyCell
-                          }
-                        >
-                          Aucune donnée sur
-                          cette période.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
-        )}
-
-        {/* =================================================
-            NON EXPLIQUE
-        ================================================= */}
-
-        {onglet ===
-          "NON_EXPLIQUE" && (
-          <NonExpliqueTable
-            lignes={
-              lignesNonExpliquees
-            }
-          />
-        )}
-
-        {/* =================================================
-            COLLABORATEURS
-        ================================================= */}
-
-        {onglet ===
-          "COLLABORATEURS" && (
-          <section
-            style={
-              styles.card
-            }
-          >
-            <div
-              style={
-                styles.cardHeader
-              }
-            >
-              <div>
-                <div
-                  style={
-                    styles.sectionEyebrow
-                  }
-                >
-                  Équipe
-                </div>
-
-                <h2
-                  style={
-                    styles.cardTitle
-                  }
-                >
-                  Vision par collaborateur
-                </h2>
-              </div>
-
-              <input
-                value={
-                  recherche
-                }
-                onChange={(e) =>
-                  setRecherche(
-                    e.target.value
-                  )
-                }
-                placeholder="Rechercher…"
-                style={{
-                  ...styles.input,
-                  maxWidth: 260,
-                }}
-              />
-            </div>
-
-            <div
-              style={
-                styles.collaborateursGrid
-              }
-            >
-              {bilansCollaborateurs.map(
-                (b) => {
-                  const c =
-                    collaborateursMap.get(
-                      b.collaborateurId
-                    );
-
-                  const productif =
-                    b.cbe +
-                    b.dbe;
-
-                  const tauxProductif =
-                    taux(
-                      productif,
-                      b.capacite
-                    );
-
-                  return (
-                    <div
-                      key={
+                {bilansCollaborateurs.map(
+                  (b) => {
+                    const c =
+                      collaborateursMap.get(
                         b.collaborateurId
-                      }
-                      style={
-                        styles.collaborateurCard
-                      }
-                    >
+                      );
+
+                    const productif =
+                      b.cbe +
+                      b.dbe;
+
+                    const tauxProductif =
+                      taux(
+                        productif,
+                        b.capacite
+                      );
+
+                    return (
                       <div
+                        key={
+                          b.collaborateurId
+                        }
                         style={
-                          styles.collaborateurTop
+                          styles.collaborateurCard
                         }
                       >
                         <div
                           style={
-                            styles.avatar
+                            styles.collaborateurTop
                           }
                         >
-                          {(
-                            c?.trigramme ??
-                            "?"
-                          ).slice(
-                            0,
-                            3
-                          )}
-                        </div>
-
-                        <div>
-                          <strong
-                            style={{
-                              fontSize: 17,
-                            }}
-                          >
-                            {
-                              c?.prenom
-                            }{" "}
-                            {
-                              c?.nom
-                            }
-                          </strong>
-
                           <div
                             style={
-                              styles.smallText
+                              styles.avatar
                             }
                           >
-                            {
-                              c?.trigramme
-                            }
+                            {(
+                              c?.trigramme ??
+                              "?"
+                            ).slice(
+                              0,
+                              3
+                            )}
+                          </div>
+
+                          <div>
+                            <strong
+                              style={{
+                                fontSize: 17,
+                              }}
+                            >
+                              {
+                                c?.prenom
+                              }{" "}
+                              {
+                                c?.nom
+                              }
+                            </strong>
+
+                            <div
+                              style={
+                                styles.smallText
+                              }
+                            >
+                              {
+                                c?.trigramme
+                              }
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div
-                        style={
-                          styles.collaborateurStats
-                        }
-                      >
-                        <StatLine
-                          label="Capacité"
-                          value={heures(
-                            b.capacite
-                          )}
-                        />
-
-                        <StatLine
-                          label="CBE"
-                          value={heures(
-                            b.cbe
-                          )}
-                          color={
-                            COULEURS.rouge
-                          }
-                        />
-
-                        <StatLine
-                          label="DBE"
-                          value={heures(
-                            b.dbe
-                          )}
-                          color={
-                            COULEURS.orange
-                          }
-                        />
-
-                        <StatLine
-                          label="NI"
-                          value={heures(
-                            b.ni
-                          )}
-                          color={
-                            COULEURS.gris
-                          }
-                        />
-
-                        <StatLine
-                          label="Formation"
-                          value={heures(
-                            b.formation
-                          )}
-                          color={
-                            COULEURS.violet
-                          }
-                        />
-
-                        <StatLine
-                          label="Non expliqué"
-                          value={heures(
-                            b.nonExplique
-                          )}
-                          color={
-                            COULEURS.rouge
-                          }
-                        />
-                      </div>
-
-                      <div
-                        style={
-                          styles.progressBackground
-                        }
-                      >
                         <div
-                          style={{
-                            ...styles.progressBar,
-                            width: `${Math.min(
-                              100,
-                              Math.max(
-                                0,
-                                tauxProductif
-                              )
-                            )}%`,
-                          }}
-                        />
+                          style={
+                            styles.collaborateurStats
+                          }
+                        >
+                          <StatLine
+                            label="Capacité"
+                            value={heures(
+                              b.capacite
+                            )}
+                          />
+
+                          <StatLine
+                            label="CBE"
+                            value={heures(
+                              b.cbe
+                            )}
+                            color={
+                              COULEURS.rouge
+                            }
+                          />
+
+                          <StatLine
+                            label="DBE"
+                            value={heures(
+                              b.dbe
+                            )}
+                            color={
+                              COULEURS.orange
+                            }
+                          />
+
+                          <StatLine
+                            label="NI"
+                            value={heures(
+                              b.ni
+                            )}
+                            color={
+                              COULEURS.gris
+                            }
+                          />
+
+                          <StatLine
+                            label="Formation"
+                            value={heures(
+                              b.formation
+                            )}
+                            color={
+                              COULEURS.violet
+                            }
+                          />
+
+                          <StatLine
+                            label="Non expliqué"
+                            value={heures(
+                              b.nonExplique
+                            )}
+                            color={
+                              COULEURS.rouge
+                            }
+                          />
+                        </div>
+
+                        <div
+                          style={
+                            styles.progressBackground
+                          }
+                        >
+                          <div
+                            style={{
+                              ...styles.progressBar,
+                              width: `${Math.min(
+                                100,
+                                Math.max(
+                                  0,
+                                  tauxProductif
+                                )
+                              )}%`,
+                            }}
+                          />
+                        </div>
+
+                        <div
+                          style={
+                            styles.progressCaption
+                          }
+                        >
+                          <span>
+                            Production (CBE + DBE)
+                          </span>
+
+                          <strong>
+                            {pourcentage(
+                              tauxProductif
+                            )}
+                          </strong>
+                        </div>
                       </div>
-
-                      <div
-                        style={
-                          styles.progressCaption
-                        }
-                      >
-                        <span>
-                          Production (CBE + DBE)
-                        </span>
-
-                        <strong>
-                          {pourcentage(
-                            tauxProductif
-                          )}
-                        </strong>
-                      </div>
-                    </div>
-                  );
-                }
-              )}
-
-              {bilansCollaborateurs.length ===
-                0 && (
-                <div
-                  style={
-                    styles.emptyBox
+                    );
                   }
-                >
-                  Aucun collaborateur
-                  trouvé sur cette période.
-                </div>
-              )}
-            </div>
-          </section>
-        )}
+                )}
+
+                {bilansCollaborateurs.length ===
+                  0 && (
+                    <div
+                      style={
+                        styles.emptyBox
+                      }
+                    >
+                      Aucun collaborateur
+                      trouvé sur cette période.
+                    </div>
+                  )}
+              </div>
+            </section>
+          )}
       </main>
     </div>
   );
@@ -3710,9 +3762,8 @@ function Kpi({
       style={{
         ...styles.kpi,
         borderTop:
-          `4px solid ${
-            color ??
-            COULEURS.rouge
+          `4px solid ${color ??
+          COULEURS.rouge
           }`,
       }}
     >
@@ -3751,8 +3802,8 @@ function SourceBadge({
   source,
 }: {
   source:
-    | "HISTORIQUE"
-    | "NOUVEAU";
+  | "HISTORIQUE"
+  | "NOUVEAU";
 }) {
   return (
     <span
@@ -3760,18 +3811,18 @@ function SourceBadge({
         ...styles.sourceBadge,
         background:
           source ===
-          "HISTORIQUE"
+            "HISTORIQUE"
             ? "#eef0f2"
             : "#e8f5eb",
         color:
           source ===
-          "HISTORIQUE"
+            "HISTORIQUE"
             ? "#60666c"
             : "#217a38",
       }}
     >
       {source ===
-      "HISTORIQUE"
+        "HISTORIQUE"
         ? "Historique"
         : "Nouveau"}
     </span>
@@ -3934,7 +3985,7 @@ function ChargeTimeline({
       </div>
 
       {semaines.length ===
-      0 ? (
+        0 ? (
         <div
           style={
             styles.emptyBox
@@ -3954,7 +4005,7 @@ function ChargeTimeline({
               minWidth: Math.max(
                 760,
                 semaines.length *
-                  95
+                95
               ),
             }}
           >
@@ -4390,6 +4441,10 @@ function NonExpliqueTable({
               </th>
 
               <th>
+                CN
+              </th>
+
+              <th>
                 Formation
               </th>
 
@@ -4466,7 +4521,7 @@ function NonExpliqueTable({
 
                         <div
                           style={
-                            
+
                             styles.smallText
                           }
                         >
@@ -4476,7 +4531,7 @@ function NonExpliqueTable({
                         </div>
                       </td>
 
-<td style={styles.diagnosticNumberCell}>
+                      <td style={styles.diagnosticNumberCell}>
                         <SourceBadge
                           source={
                             ligne.source
@@ -4484,31 +4539,37 @@ function NonExpliqueTable({
                         />
                       </td>
 
-<td style={styles.diagnosticNumberCell}>
-  {heures(ligne.capacite)}
-</td>
+                      <td style={styles.diagnosticNumberCell}>
+                        {heures(ligne.capacite)}
+                      </td>
 
                       <td style={styles.diagnosticNumberCell}>
-{heures(ligne.cbe)}
-</td>
+                        {heures(ligne.cbe)}
+                      </td>
 
-<td style={styles.diagnosticNumberCell}>
-{heures(ligne.dbe)}
-</td>
+                      <td style={styles.diagnosticNumberCell}>
+                        {heures(ligne.dbe)}
+                      </td>
 
-<td style={styles.diagnosticNumberCell}>
+                      <td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.ni
                         )}
                       </td>
 
-<td style={styles.diagnosticNumberCell}>
+                      <td style={styles.diagnosticNumberCell}>
+                        {heures(
+                          ligne.cn
+                        )}
+                      </td>
+
+                      <td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.formation
                         )}
                       </td>
 
-<td style={styles.diagnosticNumberCell}>
+                      <td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.autres
                         )}
@@ -4519,12 +4580,12 @@ function NonExpliqueTable({
                           ...styles.diagnosticNumberCell,
                           color:
                             ligne.affairesSansType >
-                            0
+                              0
                               ? COULEURS.orange
                               : undefined,
                           fontWeight:
                             ligne.affairesSansType >
-                            0
+                              0
                               ? 700
                               : undefined,
                         }}
@@ -4551,7 +4612,7 @@ function NonExpliqueTable({
                     {isOpen && (
                       <tr>
                         <td
-                          colSpan={11}
+                          colSpan={12}
                           style={{
                             background:
                               "#fafafa",
@@ -4575,11 +4636,11 @@ function NonExpliqueTable({
                               label="Heures classées"
                               value={heures(
                                 ligne.cbe +
-                                  ligne.dbe +
-                                  ligne.ni +
-                                  ligne.formation +
-                                  ligne.autres +
-                                  ligne.affairesSansType
+                                ligne.dbe +
+                                ligne.ni +
+                                ligne.formation +
+                                ligne.autres +
+                                ligne.affairesSansType
                               )}
                             />
 
@@ -4615,18 +4676,18 @@ function NonExpliqueTable({
 
             {lignes.length ===
               0 && (
-              <tr>
-                <td
-                  colSpan={11}
-                  style={
-                    styles.emptyCell
-                  }
-                >
-                  🎉 Rien à expliquer sur
-                  cette période.
-                </td>
-              </tr>
-            )}
+                <tr>
+                  <td
+                    colSpan={12}
+                    style={
+                      styles.emptyCell
+                    }
+                  >
+                    🎉 Rien à expliquer sur
+                    cette période.
+                  </td>
+                </tr>
+              )}
           </tbody>
         </table>
       </div>
@@ -4648,10 +4709,9 @@ function DetailBox({
       style={{
         ...styles.detailBox,
         borderLeft:
-          `4px solid ${
-            warning
-              ? COULEURS.orange
-              : COULEURS.bordure
+          `4px solid ${warning
+            ? COULEURS.orange
+            : COULEURS.bordure
           }`,
       }}
     >
