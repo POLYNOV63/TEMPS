@@ -181,11 +181,11 @@ type LigneNonExpliquee = {
 
   capacite: number;
 
-  cbe: number;
-  dbe: number;
-  ni: number;
-  cn: number;
-  formation: number;
+cbe: number;
+dbe: number;
+ni: number;
+cn: number;
+formation: number;
   autres: number;
   ignorees: number;
 
@@ -354,9 +354,9 @@ function lundiSemaine(
 
   d.setUTCDate(
     d.getUTCDate() -
-    jour +
-    1 +
-    (semaine - 1) * 7
+      jour +
+      1 +
+      (semaine - 1) * 7
   );
 
   return d;
@@ -408,7 +408,7 @@ function isoSemaine(date: Date) {
 
   const semaine = Math.ceil(
     ((d.getTime() - debut.getTime()) / 86400000 + 1) /
-    7
+      7
   );
 
   return {
@@ -491,8 +491,8 @@ function typeAffaireHistorique(
   }
 
   if (
-    /\bCBE\s*[-:]?\s*\d+\b/.test(a) ||
-    /^CBE\d+$/.test(a)
+    /\b(?:CBE|CAS)\s*[-:]?\s*\d+\b/.test(a) ||
+    /^(?:CBE|CAS)\d+$/.test(a)
   ) {
     return "CBE";
   }
@@ -507,7 +507,7 @@ function numeroAffaireHistorique(
 
   return a
     .replace(
-      /^(?:CBE|DBE)\s*[-:]?\s*/i,
+      /^(?:CBE|CAS|DBE)\s*[-:]?\s*/i,
       ""
     )
     .trim();
@@ -527,18 +527,27 @@ function classifierHistorique(
   const affaire = ligne.affaire_code;
 
   /*
-    NI / CN / codes ignorés / formation.
-    Puis seulement on regarde le type d'affaire.
+    HISTORIQUE :
+    le type d'affaire est porté par affaire_code.
 
-    IMPORTANT :
-    si une ligne porte par exemple :
-      code = RN
-      affaire = DBE 2901
+    CAS = ancien préfixe utilisé pour certaines affaires
+    et doit être regroupé avec les CBE.
 
-    c'est bien une heure DBE.
-    RN ne doit devenir "Divers de production"
-    que lorsqu'il n'y a pas d'affaire CBE/DBE.
+    Une affaire CBE / CAS / DBE est prioritaire sur le code
+    d'imputation : par exemple une heure HA sur un CBE reste
+    une heure CBE.
   */
+  const typeAffaire =
+    typeAffaireHistorique(affaire);
+
+  if (typeAffaire === "CBE") {
+    return "CBE";
+  }
+
+  if (typeAffaire === "DBE") {
+    return "DBE";
+  }
+
   if (estNI(code)) {
     return "NI";
   }
@@ -555,17 +564,6 @@ function classifierHistorique(
     return "FORMATION";
   }
 
-  const typeAffaire =
-    typeAffaireHistorique(affaire);
-
-  if (typeAffaire === "CBE") {
-    return "CBE";
-  }
-
-  if (typeAffaire === "DBE") {
-    return "DBE";
-  }
-
   if (estDiversAbsence(code)) {
     return "DIVERS_ABSENCES";
   }
@@ -574,22 +572,11 @@ function classifierHistorique(
     return "AFFAIRES_SANS_TYPE";
   }
 
-  /*
-    Les autres codes d'absence restent hors
-    du bilan : ils ne doivent ni produire du
-    "non expliqué" ni devenir de la production.
-  */
   if (estCodeAbsence(code)) {
     return null;
   }
 
-  /*
-    Une affaire existe mais son type est inconnu.
-    On ne fabrique pas un CBE.
-  */
-  if (
-    String(affaire ?? "").trim() !== ""
-  ) {
+  if (String(affaire ?? "").trim() !== "") {
     return "AFFAIRES_SANS_TYPE";
   }
 
@@ -621,7 +608,8 @@ function estCadreForfait(
   profil?: ProfilHoraire | null
 ): boolean {
   const texte = normaliserTexte(
-    `${collaborateur.role ?? ""} ${profil?.nom ?? ""
+    `${collaborateur.role ?? ""} ${
+      profil?.nom ?? ""
     }`
   );
 
@@ -841,7 +829,7 @@ export default function BilansPage() {
         "Historique présence :",
         presenceToutes.length
       );
-      ``
+``
 
 
 
@@ -930,7 +918,7 @@ export default function BilansPage() {
 
       setErreur(
         e?.message ??
-        "Impossible de charger les données."
+          "Impossible de charger les données."
       );
     } finally {
       setChargement(false);
@@ -1003,8 +991,8 @@ export default function BilansPage() {
     const profil =
       collaborateur.profil_horaire_id
         ? profilsMap.get(
-          collaborateur.profil_horaire_id
-        )
+            collaborateur.profil_horaire_id
+          )
         : null;
 
     if (
@@ -1039,21 +1027,21 @@ export default function BilansPage() {
         );
       });
 
-      feuilles.forEach((f) => {
-        if (!f.semaine_debut) return;
+feuilles.forEach((f) => {
+  if (!f.semaine_debut) return;
 
-        const date = new Date(
-          `${f.semaine_debut}T00:00:00`
-        );
+  const date = new Date(
+    `${f.semaine_debut}T00:00:00`
+  );
 
-        if (Number.isNaN(date.getTime())) return;
+  if (Number.isNaN(date.getTime())) return;
 
-        const { annee, semaine } = isoSemaine(date);
+  const { annee, semaine } = isoSemaine(date);
 
-        set.add(
-          `${annee}-${semaine}`
-        );
-      });
+  set.add(
+    `${annee}-${semaine}`
+  );
+});
 
       return Array.from(set)
         .map((value) => {
@@ -1195,13 +1183,13 @@ export default function BilansPage() {
 
     return (
       dimanche >=
-      new Date(
-        periodeActive.debut.getFullYear(),
-        periodeActive.debut.getMonth(),
-        periodeActive.debut.getDate()
-      ) &&
+        new Date(
+          periodeActive.debut.getFullYear(),
+          periodeActive.debut.getMonth(),
+          periodeActive.debut.getDate()
+        ) &&
       lundi <=
-      periodeActive.fin
+        periodeActive.fin
     );
   }
 
@@ -1296,7 +1284,7 @@ export default function BilansPage() {
       ) {
         if (
           !semaineData.collaborateurs[
-          collaborateurId
+            collaborateurId
           ]
         ) {
           const c =
@@ -1307,8 +1295,8 @@ export default function BilansPage() {
           const profil =
             c?.profil_horaire_id
               ? profilsMap.get(
-                c.profil_horaire_id
-              )
+                  c.profil_horaire_id
+                )
               : null;
 
           semaineData.collaborateurs[
@@ -1321,8 +1309,9 @@ export default function BilansPage() {
               "???",
 
             nom:
-              `${c?.prenom ?? ""} ${c?.nom ?? ""
-                }`.trim() ||
+              `${c?.prenom ?? ""} ${
+                c?.nom ?? ""
+              }`.trim() ||
               "Inconnu",
 
             capacite: 0,
@@ -1585,8 +1574,8 @@ export default function BilansPage() {
                   collaborateur,
                   collaborateur.profil_horaire_id
                     ? profilsMap.get(
-                      collaborateur.profil_horaire_id
-                    )
+                        collaborateur.profil_horaire_id
+                      )
                     : null
                 )
               ) {
@@ -1697,8 +1686,8 @@ export default function BilansPage() {
               const profil =
                 collaborateur.profil_horaire_id
                   ? profilsMap.get(
-                    collaborateur.profil_horaire_id
-                  )
+                      collaborateur.profil_horaire_id
+                    )
                   : null;
 
               const capaciteCadreForfait =
@@ -1711,8 +1700,8 @@ export default function BilansPage() {
                 capaciteCadreForfait
                   ? 0
                   : nombre(
-                    feuille.total_theorique
-                  );
+                      feuille.total_theorique
+                    );
 
               /*
                 Pour le nouveau système,
@@ -1768,40 +1757,6 @@ export default function BilansPage() {
                     imp.code
                   );
 
-                /*
-                  FO / FI = FORMATION
-                */
-                if (
-                  estFormation(code)
-                ) {
-                  cs.formation += h;
-                  semaine.formation += h;
-                  return;
-                }
-
-                /*
-                  NI = NI
-                */
-                if (estNI(code)) {
-                  cs.ni += h;
-                  semaine.ni += h;
-                  return;
-                }
-
-                /*
-                  CN = vignette dédiée.
-                  CN est normalement pointé dans Divers.
-                */
-                if (estCN(code)) {
-                  cs.cn += h;
-                  return;
-                }
-
-                if (estCodeIgnore(code)) {
-                  cs.ignorees += h;
-                  return;
-                }
-
                 const type =
                   normaliserTexte(
                     imp.type_affaire
@@ -1810,37 +1765,23 @@ export default function BilansPage() {
                 const numero =
                   String(
                     imp.numero_affaire ??
-                    ""
+                      ""
                   ).trim();
 
                 /*
-                  IMPORTANT :
-                  le type CBE/DBE passe AVANT RN/IF.
-                  Ainsi :
-                    DBE + RN = DBE
-                  et non Divers de production.
+                  NOUVEAU SYSTEME :
 
-                  RN / IF deviennent Divers de production
-                  uniquement lorsqu'il n'y a pas de CBE/DBE.
+                  Le type de ligne est prioritaire.
+
+                  CBE + n'importe quel code = CBE
+                  DBE + n'importe quel code = DBE
+
+                  Ensuite seulement, une ligne Divers est
+                  ventilée selon son code.
                 */
 
                 if (
-                  type === "CBE"
-                ) {
-                  cs.cbe += h;
-                  semaine.cbe += h;
-                  return;
-                }
-
-                if (
-                  type === "DBE"
-                ) {
-                  cs.dbe += h;
-                  semaine.dbe += h;
-                  return;
-                }
-
-                if (
+                  type === "CBE" ||
                   /^CBE/i.test(numero)
                 ) {
                   cs.cbe += h;
@@ -1849,6 +1790,7 @@ export default function BilansPage() {
                 }
 
                 if (
+                  type === "DBE" ||
                   /^DBE/i.test(numero)
                 ) {
                   cs.dbe += h;
@@ -1856,15 +1798,51 @@ export default function BilansPage() {
                   return;
                 }
 
-                if (type === "DIVERS" && estDiversAbsence(code)) {
-                  cs.absence += h;
-                  semaine.heuresAbsence += h;
-                  return;
-                }
+                if (type === "DIVERS") {
+                  if (estNI(code)) {
+                    cs.ni += h;
+                    semaine.ni += h;
+                    return;
+                  }
 
-                if (type === "DIVERS" && estDiversProduction(code)) {
-                  cs.affairesSansType += h;
-                  semaine.affairesSansType += h;
+                  if (estCN(code)) {
+                    cs.cn += h;
+                    semaine.cn += h;
+                    return;
+                  }
+
+                  if (estFormation(code)) {
+                    cs.formation += h;
+                    semaine.formation += h;
+                    return;
+                  }
+
+                  if (estDiversAbsence(code)) {
+                    cs.absence += h;
+                    semaine.heuresAbsence += h;
+                    return;
+                  }
+
+                  if (estDiversProduction(code)) {
+                    cs.affairesSansType += h;
+                    semaine.affairesSansType += h;
+                    return;
+                  }
+
+                  if (estCodeIgnore(code)) {
+                    cs.ignorees += h;
+                    semaine.ignorees += h;
+                    return;
+                  }
+
+                  if (estCodeAbsence(code)) {
+                    cs.absence += h;
+                    semaine.heuresAbsence += h;
+                    return;
+                  }
+
+                  cs.autres += h;
+                  semaine.autres += h;
                   return;
                 }
 
@@ -1964,8 +1942,8 @@ export default function BilansPage() {
                       collaborateur
                         .profil_horaire_id
                         ? profilsMap.get(
-                          collaborateur.profil_horaire_id
-                        )
+                            collaborateur.profil_horaire_id
+                          )
                         : null;
 
                     let hJour = 0;
@@ -2079,9 +2057,9 @@ export default function BilansPage() {
             Math.max(
               0,
               cs.capacite -
-              cs.travaille -
-              cs.absence -
-              cs.ignorees
+                cs.travaille -
+                cs.absence -
+                cs.ignorees
             );
         });
 
@@ -2135,9 +2113,9 @@ export default function BilansPage() {
 
 
       console.log(
-        "Semaines consolidées :",
-        map.size
-      );
+  "Semaines consolidées :",
+  map.size
+);
 
 
 
@@ -2188,7 +2166,7 @@ export default function BilansPage() {
         .map((s) => {
           const cs =
             s.collaborateurs[
-            collaborateurFiltre
+              collaborateurFiltre
             ];
 
           if (!cs) {
@@ -2303,9 +2281,9 @@ export default function BilansPage() {
           ).forEach((cs) => {
             if (
               collaborateurFiltre !==
-              "TOUS" &&
+                "TOUS" &&
               cs.collaborateurId !==
-              collaborateurFiltre
+                collaborateurFiltre
             ) {
               return;
             }
@@ -2314,7 +2292,7 @@ export default function BilansPage() {
               cs.nonExplique <=
               0.01 &&
               cs.affairesSansType <=
-              0.01
+                0.01
             ) {
               return;
             }
@@ -2337,13 +2315,12 @@ export default function BilansPage() {
               capacite:
                 cs.capacite,
 
-              cbe: cs.cbe,
-              dbe: cs.dbe,
-              ni: cs.ni,
-              cn: cs.cn,
-              
-              formation:
-                cs.formation,
+cbe: cs.cbe,
+dbe: cs.dbe,
+ni: cs.ni,
+cn: cs.cn,
+formation:
+  cs.formation,
               autres: cs.autres,
               ignorees: cs.ignorees,
 
@@ -2495,8 +2472,10 @@ export default function BilansPage() {
 
           const texte =
             normaliserTexte(
-              `${c?.prenom ?? ""} ${c?.nom ?? ""
-              } ${c?.trigramme ?? ""
+              `${c?.prenom ?? ""} ${
+                c?.nom ?? ""
+              } ${
+                c?.trigramme ?? ""
               }`
             );
 
@@ -2717,10 +2696,10 @@ export default function BilansPage() {
             <strong>
               {periodeActive
                 ? `${formatDate(
-                  periodeActive.debut
-                )} → ${formatDate(
-                  periodeActive.fin
-                )}`
+                    periodeActive.debut
+                  )} → ${formatDate(
+                    periodeActive.fin
+                  )}`
                 : "À définir"}
             </strong>
           </div>
@@ -2782,19 +2761,19 @@ export default function BilansPage() {
                 style={{
                   ...styles.periodButton,
                   ...(modePeriode ===
-                    mode
+                  mode
                     ? styles.periodButtonActive
                     : {}),
                 }}
               >
                 {mode ===
-                  "EXERCICE"
+                "EXERCICE"
                   ? "Exercice"
                   : mode === "ANNEE"
-                    ? "Année"
-                    : mode === "MOIS"
-                      ? "Mois"
-                      : "Libre"}
+                  ? "Année"
+                  : mode === "MOIS"
+                  ? "Mois"
+                  : "Libre"}
               </button>
             ))}
           </div>
@@ -2807,161 +2786,162 @@ export default function BilansPage() {
             {(modePeriode ===
               "EXERCICE" ||
               modePeriode ===
-              "ANNEE" ||
+                "ANNEE" ||
               modePeriode ===
-              "MOIS") && (
-                <label
+                "MOIS") && (
+              <label
+                style={
+                  styles.field
+                }
+              >
+                <span>
+                  {modePeriode ===
+                  "EXERCICE"
+                    ? "Exercice"
+                    : "Année"}
+                </span>
+
+                <select
+                  value={annee}
+                  onChange={(e) =>
+                    setAnnee(
+                      Number(
+                        e.target.value
+                      )
+                    )
+                  }
                   style={
-                    styles.field
+                    styles.select
                   }
                 >
-                  <span>
-                    {modePeriode ===
+                  {Array.from(
+                    {
+                      length: 5,
+                    },
+                    (_, i) =>
+                      maintenant.getFullYear() -
+                      2 +
+                      i
+                  ).map((a) => (
+                    <option
+                      key={a}
+                      value={a}
+                    >
+                      {modePeriode ===
                       "EXERCICE"
-                      ? "Exercice"
-                      : "Année"}
-                  </span>
-
-                  <select
-                    value={annee}
-                    onChange={(e) =>
-                      setAnnee(
-                        Number(
-                          e.target.value
-                        )
-                      )
-                    }
-                    style={
-                      styles.select
-                    }
-                  >
-                    {Array.from(
-                      {
-                        length: 5,
-                      },
-                      (_, i) =>
-                        maintenant.getFullYear() -
-                        2 +
-                        i
-                    ).map((a) => (
-                      <option
-                        key={a}
-                        value={a}
-                      >
-                        {modePeriode ===
-                          "EXERCICE"
-                          ? `${a} / ${a + 1
+                        ? `${a} / ${
+                            a + 1
                           }`
-                          : a}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+                        : a}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             {modePeriode ===
               "MOIS" && (
+              <label
+                style={
+                  styles.field
+                }
+              >
+                <span>
+                  Mois
+                </span>
+
+                <select
+                  value={mois}
+                  onChange={(e) =>
+                    setMois(
+                      Number(
+                        e.target.value
+                      )
+                    )
+                  }
+                  style={
+                    styles.select
+                  }
+                >
+                  {MOIS.map(
+                    (
+                      libelle,
+                      index
+                    ) => (
+                      <option
+                        key={
+                          libelle
+                        }
+                        value={
+                          index
+                        }
+                      >
+                        {libelle}
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+            )}
+
+            {modePeriode ===
+              "LIBRE" && (
+              <>
                 <label
                   style={
                     styles.field
                   }
                 >
                   <span>
-                    Mois
+                    Du
                   </span>
 
-                  <select
-                    value={mois}
-                    onChange={(e) =>
-                      setMois(
-                        Number(
-                          e.target.value
-                        )
+                  <input
+                    type="date"
+                    value={
+                      dateDebutLibre
+                    }
+                    onChange={(
+                      e
+                    ) =>
+                      setDateDebutLibre(
+                        e.target.value
                       )
                     }
                     style={
-                      styles.select
+                      styles.input
                     }
-                  >
-                    {MOIS.map(
-                      (
-                        libelle,
-                        index
-                      ) => (
-                        <option
-                          key={
-                            libelle
-                          }
-                          value={
-                            index
-                          }
-                        >
-                          {libelle}
-                        </option>
-                      )
-                    )}
-                  </select>
+                  />
                 </label>
-              )}
 
-            {modePeriode ===
-              "LIBRE" && (
-                <>
-                  <label
-                    style={
-                      styles.field
+                <label
+                  style={
+                    styles.field
+                  }
+                >
+                  <span>
+                    Au
+                  </span>
+
+                  <input
+                    type="date"
+                    value={
+                      dateFinLibre
                     }
-                  >
-                    <span>
-                      Du
-                    </span>
-
-                    <input
-                      type="date"
-                      value={
-                        dateDebutLibre
-                      }
-                      onChange={(
-                        e
-                      ) =>
-                        setDateDebutLibre(
-                          e.target.value
-                        )
-                      }
-                      style={
-                        styles.input
-                      }
-                    />
-                  </label>
-
-                  <label
-                    style={
-                      styles.field
+                    onChange={(
+                      e
+                    ) =>
+                      setDateFinLibre(
+                        e.target.value
+                      )
                     }
-                  >
-                    <span>
-                      Au
-                    </span>
-
-                    <input
-                      type="date"
-                      value={
-                        dateFinLibre
-                      }
-                      onChange={(
-                        e
-                      ) =>
-                        setDateFinLibre(
-                          e.target.value
-                        )
-                      }
-                      style={
-                        styles.input
-                      }
-                    />
-                  </label>
-                </>
-              )}
+                    style={
+                      styles.input
+                    }
+                  />
+                </label>
+              </>
+            )}
 
             <label
               style={
@@ -3154,7 +3134,7 @@ export default function BilansPage() {
             style={{
               ...styles.tab,
               ...(onglet ===
-                "PILOTAGE"
+              "PILOTAGE"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3171,7 +3151,7 @@ export default function BilansPage() {
             style={{
               ...styles.tab,
               ...(onglet ===
-                "NON_EXPLIQUE"
+              "NON_EXPLIQUE"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3184,23 +3164,23 @@ export default function BilansPage() {
             🔎 Non expliqué
             {lignesNonExpliquees.length >
               0 && (
-                <span
-                  style={
-                    styles.tabBadge
-                  }
-                >
-                  {
-                    lignesNonExpliquees.length
-                  }
-                </span>
-              )}
+              <span
+                style={
+                  styles.tabBadge
+                }
+              >
+                {
+                  lignesNonExpliquees.length
+                }
+              </span>
+            )}
           </button>
 
           <button
             style={{
               ...styles.tab,
               ...(onglet ===
-                "COLLABORATEURS"
+              "COLLABORATEURS"
                 ? styles.tabActive
                 : {}),
             }}
@@ -3220,286 +3200,13 @@ export default function BilansPage() {
 
         {onglet ===
           "PILOTAGE" && (
-            <>
-              <ChargeTimeline
-                semaines={
-                  semainesFiltrees
-                }
-              />
-
-              <section
-                style={
-                  styles.card
-                }
-              >
-                <div
-                  style={
-                    styles.cardHeader
-                  }
-                >
-                  <div>
-                    <div
-                      style={
-                        styles.sectionEyebrow
-                      }
-                    >
-                      Détail hebdomadaire
-                    </div>
-
-                    <h2
-                      style={
-                        styles.cardTitle
-                      }
-                    >
-                      Où part la capacité ?
-                    </h2>
-                  </div>
-                </div>
-
-                <div
-                  style={
-                    styles.tableWrap
-                  }
-                >
-                  <table
-                    style={
-                      styles.table
-                    }
-                  >
-                    <thead>
-                      <tr>
-                        <th>
-                          Semaine
-                        </th>
-                        <th>
-                          Source
-                        </th>
-                        <th>
-                          Capacité
-                        </th>
-                        <th>
-                          CBE
-                        </th>
-                        <th>
-                          DBE
-                        </th>
-                        <th>
-                          NI
-                        </th>
-                        <th>
-                          CN
-                        </th>
-                        <th>
-                          Formation
-                        </th>
-                        <th>
-                          Autres
-                        </th>
-                        <th>
-                          Divers de production
-                        </th>
-                        <th>
-                          Non expliqué
-                        </th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {semainesFiltrees
-                        .slice()
-                        .reverse()
-                        .map(
-                          (s) => (
-                            <tr
-                              key={`${s.annee}-${s.semaine}`}
-                            >
-                              <td>
-                                <strong>
-                                  S
-                                  {
-                                    s.semaine
-                                  }
-                                </strong>
-
-                                <div
-                                  style={
-                                    styles.smallText
-                                  }
-                                >
-                                  {
-                                    s.debut
-                                  }{" "}
-                                  →{" "}
-                                  {
-                                    s.fin
-                                  }
-                                </div>
-                              </td>
-
-                              <td>
-                                <SourceBadge
-                                  source={
-                                    s.source
-                                  }
-                                />
-                              </td>
-
-                              <td style={styles.diagnosticNumberCell}>
-                                <strong>
-                                  {heures(
-                                    s.capacite
-                                  )}
-                                </strong>
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    COULEURS.rouge,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {heures(
-                                  s.cbe
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    COULEURS.orange,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {heures(
-                                  s.dbe
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    COULEURS.gris,
-                                }}
-                              >
-                                {heures(
-                                  s.ni
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    COULEURS.gris,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {heures(
-                                  s.cn
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    COULEURS.violet,
-                                }}
-                              >
-                                {heures(
-                                  s.formation
-                                )}
-                              </td>
-
-                              <td style={styles.diagnosticNumberCell}>
-                                {heures(
-                                  s.autres
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  color:
-                                    s.affairesSansType >
-                                      0
-                                      ? COULEURS.orange
-                                      : COULEURS.texteSecondaire,
-                                  fontWeight:
-                                    s.affairesSansType >
-                                      0
-                                      ? 700
-                                      : 400,
-                                }}
-                              >
-                                {heures(
-                                  s.affairesSansType
-                                )}
-                              </td>
-
-                              <td
-                                style={{
-                                  ...styles.diagnosticNumberCell,
-                                  fontWeight: 800,
-                                  color:
-                                    s.nonExplique >
-                                      0
-                                      ? COULEURS.rouge
-                                      : COULEURS.vert,
-                                }}
-                              >
-                                {heures(
-                                  s.nonExplique
-                                )}
-                              </td>
-                            </tr>
-                          )
-                        )}
-
-                      {semainesFiltrees.length ===
-                        0 && (
-                          <tr>
-                            <td
-                              colSpan={11}
-                              style={
-                                styles.emptyCell
-                              }
-                            >
-                              Aucune donnée sur
-                              cette période.
-                            </td>
-                          </tr>
-                        )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            </>
-          )}
-
-        {/* =================================================
-            NON EXPLIQUE
-        ================================================= */}
-
-        {onglet ===
-          "NON_EXPLIQUE" && (
-            <NonExpliqueTable
-              lignes={
-                lignesNonExpliquees
+          <>
+            <ChargeTimeline
+              semaines={
+                semainesFiltrees
               }
             />
-          )}
 
-        {/* =================================================
-            COLLABORATEURS
-        ================================================= */}
-
-        {onglet ===
-          "COLLABORATEURS" && (
             <section
               style={
                 styles.card
@@ -3516,7 +3223,7 @@ export default function BilansPage() {
                       styles.sectionEyebrow
                     }
                   >
-                    Équipe
+                    Détail hebdomadaire
                   </div>
 
                   <h2
@@ -3524,219 +3231,492 @@ export default function BilansPage() {
                       styles.cardTitle
                     }
                   >
-                    Vision par collaborateur
+                    Où part la capacité ?
                   </h2>
                 </div>
-
-                <input
-                  value={
-                    recherche
-                  }
-                  onChange={(e) =>
-                    setRecherche(
-                      e.target.value
-                    )
-                  }
-                  placeholder="Rechercher…"
-                  style={{
-                    ...styles.input,
-                    maxWidth: 260,
-                  }}
-                />
               </div>
 
               <div
                 style={
-                  styles.collaborateursGrid
+                  styles.tableWrap
                 }
               >
-                {bilansCollaborateurs.map(
-                  (b) => {
-                    const c =
-                      collaborateursMap.get(
+                <table
+                  style={
+                    styles.table
+                  }
+                >
+                  <thead>
+                    <tr>
+                      <th>
+                        Semaine
+                      </th>
+                      <th>
+                        Source
+                      </th>
+                      <th>
+                        Capacité
+                      </th>
+                      <th>
+                        CBE
+                      </th>
+                      <th>
+                        DBE
+                      </th>
+                      <th>
+                        NI
+                      </th>
+                      <th>
+                        CN
+                      </th>
+                      <th>
+                        Formation
+                      </th>
+                      <th>
+                        Autres
+                      </th>
+                      <th>
+                        Divers de production
+                      </th>
+                      <th>
+                        Non expliqué
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {semainesFiltrees
+                      .slice()
+                      .reverse()
+                      .map(
+                        (s) => (
+                          <tr
+                            key={`${s.annee}-${s.semaine}`}
+                          >
+                            <td>
+                              <strong>
+                                S
+                                {
+                                  s.semaine
+                                }
+                              </strong>
+
+                              <div
+                                style={
+                                  styles.smallText
+                                }
+                              >
+                                {
+                                  s.debut
+                                }{" "}
+                                →{" "}
+                                {
+                                  s.fin
+                                }
+                              </div>
+                            </td>
+
+                            <td>
+                              <SourceBadge
+                                source={
+                                  s.source
+                                }
+                              />
+                            </td>
+
+                            <td style={styles.diagnosticNumberCell}>
+                              <strong>
+                                {heures(
+                                  s.capacite
+                                )}
+                              </strong>
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  COULEURS.rouge,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {heures(
+                                s.cbe
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  COULEURS.orange,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {heures(
+                                s.dbe
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  COULEURS.gris,
+                              }}
+                            >
+                              {heures(
+                                s.ni
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  COULEURS.gris,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {heures(
+                                s.cn
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  COULEURS.violet,
+                              }}
+                            >
+                              {heures(
+                                s.formation
+                              )}
+                            </td>
+
+                            <td style={styles.diagnosticNumberCell}>
+                              {heures(
+                                s.autres
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                color:
+                                  s.affairesSansType >
+                                  0
+                                    ? COULEURS.orange
+                                    : COULEURS.texteSecondaire,
+                                fontWeight:
+                                  s.affairesSansType >
+                                  0
+                                    ? 700
+                                    : 400,
+                              }}
+                            >
+                              {heures(
+                                s.affairesSansType
+                              )}
+                            </td>
+
+                            <td
+                              style={{
+                                ...styles.diagnosticNumberCell,
+                                fontWeight: 800,
+                                color:
+                                  s.nonExplique >
+                                  0
+                                    ? COULEURS.rouge
+                                    : COULEURS.vert,
+                              }}
+                            >
+                              {heures(
+                                s.nonExplique
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      )}
+
+                    {semainesFiltrees.length ===
+                      0 && (
+                      <tr>
+                        <td
+                          colSpan={11}
+                          style={
+                            styles.emptyCell
+                          }
+                        >
+                          Aucune donnée sur
+                          cette période.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* =================================================
+            NON EXPLIQUE
+        ================================================= */}
+
+        {onglet ===
+          "NON_EXPLIQUE" && (
+          <NonExpliqueTable
+            lignes={
+              lignesNonExpliquees
+            }
+          />
+        )}
+
+        {/* =================================================
+            COLLABORATEURS
+        ================================================= */}
+
+        {onglet ===
+          "COLLABORATEURS" && (
+          <section
+            style={
+              styles.card
+            }
+          >
+            <div
+              style={
+                styles.cardHeader
+              }
+            >
+              <div>
+                <div
+                  style={
+                    styles.sectionEyebrow
+                  }
+                >
+                  Équipe
+                </div>
+
+                <h2
+                  style={
+                    styles.cardTitle
+                  }
+                >
+                  Vision par collaborateur
+                </h2>
+              </div>
+
+              <input
+                value={
+                  recherche
+                }
+                onChange={(e) =>
+                  setRecherche(
+                    e.target.value
+                  )
+                }
+                placeholder="Rechercher…"
+                style={{
+                  ...styles.input,
+                  maxWidth: 260,
+                }}
+              />
+            </div>
+
+            <div
+              style={
+                styles.collaborateursGrid
+              }
+            >
+              {bilansCollaborateurs.map(
+                (b) => {
+                  const c =
+                    collaborateursMap.get(
+                      b.collaborateurId
+                    );
+
+                  const productif =
+                    b.cbe +
+                    b.dbe;
+
+                  const tauxProductif =
+                    taux(
+                      productif,
+                      b.capacite
+                    );
+
+                  return (
+                    <div
+                      key={
                         b.collaborateurId
-                      );
-
-                    const productif =
-                      b.cbe +
-                      b.dbe;
-
-                    const tauxProductif =
-                      taux(
-                        productif,
-                        b.capacite
-                      );
-
-                    return (
+                      }
+                      style={
+                        styles.collaborateurCard
+                      }
+                    >
                       <div
-                        key={
-                          b.collaborateurId
-                        }
                         style={
-                          styles.collaborateurCard
+                          styles.collaborateurTop
                         }
                       >
                         <div
                           style={
-                            styles.collaborateurTop
+                            styles.avatar
                           }
                         >
+                          {(
+                            c?.trigramme ??
+                            "?"
+                          ).slice(
+                            0,
+                            3
+                          )}
+                        </div>
+
+                        <div>
+                          <strong
+                            style={{
+                              fontSize: 17,
+                            }}
+                          >
+                            {
+                              c?.prenom
+                            }{" "}
+                            {
+                              c?.nom
+                            }
+                          </strong>
+
                           <div
                             style={
-                              styles.avatar
+                              styles.smallText
                             }
                           >
-                            {(
-                              c?.trigramme ??
-                              "?"
-                            ).slice(
-                              0,
-                              3
-                            )}
+                            {
+                              c?.trigramme
+                            }
                           </div>
-
-                          <div>
-                            <strong
-                              style={{
-                                fontSize: 17,
-                              }}
-                            >
-                              {
-                                c?.prenom
-                              }{" "}
-                              {
-                                c?.nom
-                              }
-                            </strong>
-
-                            <div
-                              style={
-                                styles.smallText
-                              }
-                            >
-                              {
-                                c?.trigramme
-                              }
-                            </div>
-                          </div>
-                        </div>
-
-                        <div
-                          style={
-                            styles.collaborateurStats
-                          }
-                        >
-                          <StatLine
-                            label="Capacité"
-                            value={heures(
-                              b.capacite
-                            )}
-                          />
-
-                          <StatLine
-                            label="CBE"
-                            value={heures(
-                              b.cbe
-                            )}
-                            color={
-                              COULEURS.rouge
-                            }
-                          />
-
-                          <StatLine
-                            label="DBE"
-                            value={heures(
-                              b.dbe
-                            )}
-                            color={
-                              COULEURS.orange
-                            }
-                          />
-
-                          <StatLine
-                            label="NI"
-                            value={heures(
-                              b.ni
-                            )}
-                            color={
-                              COULEURS.gris
-                            }
-                          />
-
-                          <StatLine
-                            label="Formation"
-                            value={heures(
-                              b.formation
-                            )}
-                            color={
-                              COULEURS.violet
-                            }
-                          />
-
-                          <StatLine
-                            label="Non expliqué"
-                            value={heures(
-                              b.nonExplique
-                            )}
-                            color={
-                              COULEURS.rouge
-                            }
-                          />
-                        </div>
-
-                        <div
-                          style={
-                            styles.progressBackground
-                          }
-                        >
-                          <div
-                            style={{
-                              ...styles.progressBar,
-                              width: `${Math.min(
-                                100,
-                                Math.max(
-                                  0,
-                                  tauxProductif
-                                )
-                              )}%`,
-                            }}
-                          />
-                        </div>
-
-                        <div
-                          style={
-                            styles.progressCaption
-                          }
-                        >
-                          <span>
-                            Production (CBE + DBE)
-                          </span>
-
-                          <strong>
-                            {pourcentage(
-                              tauxProductif
-                            )}
-                          </strong>
                         </div>
                       </div>
-                    );
-                  }
-                )}
 
-                {bilansCollaborateurs.length ===
-                  0 && (
-                    <div
-                      style={
-                        styles.emptyBox
-                      }
-                    >
-                      Aucun collaborateur
-                      trouvé sur cette période.
+                      <div
+                        style={
+                          styles.collaborateurStats
+                        }
+                      >
+                        <StatLine
+                          label="Capacité"
+                          value={heures(
+                            b.capacite
+                          )}
+                        />
+
+                        <StatLine
+                          label="CBE"
+                          value={heures(
+                            b.cbe
+                          )}
+                          color={
+                            COULEURS.rouge
+                          }
+                        />
+
+                        <StatLine
+                          label="DBE"
+                          value={heures(
+                            b.dbe
+                          )}
+                          color={
+                            COULEURS.orange
+                          }
+                        />
+
+                        <StatLine
+                          label="NI"
+                          value={heures(
+                            b.ni
+                          )}
+                          color={
+                            COULEURS.gris
+                          }
+                        />
+
+                        <StatLine
+                          label="Formation"
+                          value={heures(
+                            b.formation
+                          )}
+                          color={
+                            COULEURS.violet
+                          }
+                        />
+
+                        <StatLine
+                          label="Non expliqué"
+                          value={heures(
+                            b.nonExplique
+                          )}
+                          color={
+                            COULEURS.rouge
+                          }
+                        />
+                      </div>
+
+                      <div
+                        style={
+                          styles.progressBackground
+                        }
+                      >
+                        <div
+                          style={{
+                            ...styles.progressBar,
+                            width: `${Math.min(
+                              100,
+                              Math.max(
+                                0,
+                                tauxProductif
+                              )
+                            )}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div
+                        style={
+                          styles.progressCaption
+                        }
+                      >
+                        <span>
+                          Production (CBE + DBE)
+                        </span>
+
+                        <strong>
+                          {pourcentage(
+                            tauxProductif
+                          )}
+                        </strong>
+                      </div>
                     </div>
-                  )}
-              </div>
-            </section>
-          )}
+                  );
+                }
+              )}
+
+              {bilansCollaborateurs.length ===
+                0 && (
+                <div
+                  style={
+                    styles.emptyBox
+                  }
+                >
+                  Aucun collaborateur
+                  trouvé sur cette période.
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );
@@ -3762,8 +3742,9 @@ function Kpi({
       style={{
         ...styles.kpi,
         borderTop:
-          `4px solid ${color ??
-          COULEURS.rouge
+          `4px solid ${
+            color ??
+            COULEURS.rouge
           }`,
       }}
     >
@@ -3802,8 +3783,8 @@ function SourceBadge({
   source,
 }: {
   source:
-  | "HISTORIQUE"
-  | "NOUVEAU";
+    | "HISTORIQUE"
+    | "NOUVEAU";
 }) {
   return (
     <span
@@ -3811,18 +3792,18 @@ function SourceBadge({
         ...styles.sourceBadge,
         background:
           source ===
-            "HISTORIQUE"
+          "HISTORIQUE"
             ? "#eef0f2"
             : "#e8f5eb",
         color:
           source ===
-            "HISTORIQUE"
+          "HISTORIQUE"
             ? "#60666c"
             : "#217a38",
       }}
     >
       {source ===
-        "HISTORIQUE"
+      "HISTORIQUE"
         ? "Historique"
         : "Nouveau"}
     </span>
@@ -3953,6 +3934,11 @@ function ChargeTimeline({
           />
 
           <Legend
+            color="#b5b5b5"
+            label="CN"
+          />
+
+          <Legend
             color={
               COULEURS.violet
             }
@@ -3985,7 +3971,7 @@ function ChargeTimeline({
       </div>
 
       {semaines.length ===
-        0 ? (
+      0 ? (
         <div
           style={
             styles.emptyBox
@@ -4005,7 +3991,7 @@ function ChargeTimeline({
               minWidth: Math.max(
                 760,
                 semaines.length *
-                95
+                  95
               ),
             }}
           >
@@ -4056,6 +4042,12 @@ function ChargeTimeline({
                   const niPct =
                     taux(
                       s.ni,
+                      capacite
+                    );
+
+                  const cnPct =
+                    taux(
+                      s.cn,
                       capacite
                     );
 
@@ -4131,6 +4123,13 @@ function ChargeTimeline({
                             color={
                               COULEURS.gris
                             }
+                          />
+
+                          <BarSegment
+                            pct={
+                              cnPct
+                            }
+                            color="#b5b5b5"
                           />
 
                           <BarSegment
@@ -4521,7 +4520,7 @@ function NonExpliqueTable({
 
                         <div
                           style={
-
+                            
                             styles.smallText
                           }
                         >
@@ -4531,7 +4530,7 @@ function NonExpliqueTable({
                         </div>
                       </td>
 
-                      <td style={styles.diagnosticNumberCell}>
+<td style={styles.diagnosticNumberCell}>
                         <SourceBadge
                           source={
                             ligne.source
@@ -4539,37 +4538,37 @@ function NonExpliqueTable({
                         />
                       </td>
 
-                      <td style={styles.diagnosticNumberCell}>
-                        {heures(ligne.capacite)}
-                      </td>
+<td style={styles.diagnosticNumberCell}>
+  {heures(ligne.capacite)}
+</td>
 
                       <td style={styles.diagnosticNumberCell}>
-                        {heures(ligne.cbe)}
-                      </td>
+{heures(ligne.cbe)}
+</td>
 
-                      <td style={styles.diagnosticNumberCell}>
-                        {heures(ligne.dbe)}
-                      </td>
+<td style={styles.diagnosticNumberCell}>
+{heures(ligne.dbe)}
+</td>
 
-                      <td style={styles.diagnosticNumberCell}>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.ni
                         )}
                       </td>
 
-                      <td style={styles.diagnosticNumberCell}>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.cn
                         )}
                       </td>
 
-                      <td style={styles.diagnosticNumberCell}>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.formation
                         )}
                       </td>
 
-                      <td style={styles.diagnosticNumberCell}>
+<td style={styles.diagnosticNumberCell}>
                         {heures(
                           ligne.autres
                         )}
@@ -4580,12 +4579,12 @@ function NonExpliqueTable({
                           ...styles.diagnosticNumberCell,
                           color:
                             ligne.affairesSansType >
-                              0
+                            0
                               ? COULEURS.orange
                               : undefined,
                           fontWeight:
                             ligne.affairesSansType >
-                              0
+                            0
                               ? 700
                               : undefined,
                         }}
@@ -4636,11 +4635,11 @@ function NonExpliqueTable({
                               label="Heures classées"
                               value={heures(
                                 ligne.cbe +
-                                ligne.dbe +
-                                ligne.ni +
-                                ligne.formation +
-                                ligne.autres +
-                                ligne.affairesSansType
+                                  ligne.dbe +
+                                  ligne.ni +
+                                  ligne.formation +
+                                  ligne.autres +
+                                  ligne.affairesSansType
                               )}
                             />
 
@@ -4676,18 +4675,18 @@ function NonExpliqueTable({
 
             {lignes.length ===
               0 && (
-                <tr>
-                  <td
-                    colSpan={12}
-                    style={
-                      styles.emptyCell
-                    }
-                  >
-                    🎉 Rien à expliquer sur
-                    cette période.
-                  </td>
-                </tr>
-              )}
+              <tr>
+                <td
+                  colSpan={12}
+                  style={
+                    styles.emptyCell
+                  }
+                >
+                  🎉 Rien à expliquer sur
+                  cette période.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -4709,9 +4708,10 @@ function DetailBox({
       style={{
         ...styles.detailBox,
         borderLeft:
-          `4px solid ${warning
-            ? COULEURS.orange
-            : COULEURS.bordure
+          `4px solid ${
+            warning
+              ? COULEURS.orange
+              : COULEURS.bordure
           }`,
       }}
     >
