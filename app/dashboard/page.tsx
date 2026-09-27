@@ -79,11 +79,15 @@ export default function DashboardPage() {
           error: erreurUtilisateur,
         } = await supabase.auth.getUser();
 
+        console.log("USER DASHBOARD", user);
+console.log("ERREUR DASHBOARD", erreurUtilisateur);
+
         if (erreurUtilisateur) {
           throw erreurUtilisateur;
         }
 
         if (!user) {
+          alert("Dashboard : utilisateur non connecté");
           router.push("/login");
           return;
         }
@@ -103,15 +107,23 @@ export default function DashboardPage() {
           .eq("auth_user_id", user.id)
           .maybeSingle();
 
+          console.log("USER ID", user.id);
+console.log("COLLABORATEUR", collaborateur);
+
         if (erreurCollaborateur) {
           throw erreurCollaborateur;
         }
 
-        if (!collaborateur) {
-          throw new Error(
-            "Aucun collaborateur associé à votre compte."
-          );
-        }
+if (!collaborateur) {
+  alert(
+    "Collaborateur introuvable pour : " +
+    user.id
+  );
+
+  throw new Error(
+    "Aucun collaborateur associé à votre compte."
+  );
+}
 
         setPrenom(
           collaborateur.prenom ?? ""
