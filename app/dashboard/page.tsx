@@ -1178,6 +1178,17 @@ export default function DashboardPage() {
               />
 
               <Carte
+  icone="🧠"
+  titre="Export IA"
+  description="Générer un contexte complet du projet (code, base, architecture, droits, fonctions SQL)."
+  onClick={() =>
+    router.push(
+      "/admin/Export-IA"
+    )
+  }
+/>
+
+              <Carte
                 icone="🧑‍💼"
                 titre="Validation RH"
                 description="Valider les demandes RH nécessitant la double validation PLG / AMA"
