@@ -1,21 +1,16 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 
-/* =========================================================
-   TYPES
-========================================================= */
-
 type Collaborateur = {
   id: string;
-  trigramme: string;
+  trigramme: string | null;
   prenom: string;
   nom: string;
   actif: boolean;
-  date_entree?: string | null;
-  date_sortie?: string | null;
 };
 
 type Ventilation = {
@@ -23,140 +18,106 @@ type Ventilation = {
   heures: number;
 };
 
-type ImputationDetectee = {
-  type: "AFFAIRE" | "DIVERS";
-  code: string;
-
-  /*
-   * Total affiché dans la colonne D
-   */
-  totalExcel: number;
-
-  /*
-   * Total réellement trouvé dans les
-   * colonnes de ventilation
-   */
-  totalVentile: number;
-
-  /*
-   * Différence entre Excel et ventilation
-   */
-  ecartVentilation: number;
-
-  /*
-   * IMPORTANT :
-   * heures = heures réellement importables
-   * donc totalVentile et PAS totalExcel
-   */
-  heures: number;
-
+type Imputation = {
+  affaireCode: string | null;
+  type: "CBE" | "DBE" | "DIVERS";
   ventilations: Ventilation[];
-
-  ligneExcel: number;
 };
 
-type JourDetecte = {
-  date: Date | null;
-  jour: string;
+type Jour = {
   heures: number;
   statut: string;
 };
 
-type DonneesFeuille = {
+type DonneesCollaborateur = {
   collaborateur: Collaborateur;
-  trigramme?: string;
-
-  totalHeures: number;
-  totalTheorique: number;
-
-  jours: JourDetecte[];
-
-  imputations: ImputationDetectee[];
-
-  /*
-   * Somme des ventilations réellement détectées
-   */
-  totalImpute: number;
-
-  /*
-   * Différence entre TOTAL Excel
-   * et total des ventilations
-   */
-  ecart: number;
-
-  /*
-   * Nombre de lignes d'imputation
-   * présentant une incohérence
-   */
-  anomaliesVentilation: number;
+  ticketsRestaurant: number;
+  jours: Jour[];
+  heuresSup: number;
+  imputations: Imputation[];
 };
 
-type SemaineExcel = {
-  nomFeuille: string;
-  semaine: number;
+type SemaineAnalyse = {
+  feuille: string;
   annee: number;
-  donnees: DonneesFeuille[];
+  semaine: number;
+  donnees: DonneesCollaborateur[];
+  anomalies: Anomalie[];
+  heuresSource: number;
+  heuresCollaborateursIgnores: number;
+};
+
+type Anomalie = {
+  feuille: string;
+  semaine: number;
+  type: "COLLABORATEUR_INCONNU" | "ACTIVITE_SANS_COLLABORATEUR" | "CODE_SANS_ENTETE";
+  collaborateur: string;
+  detail: string;
+  heures: number;
 };
 
 type LigneHistorique = {
   annee: number;
   semaine: number;
   collaborateur_id: string;
+  affaire_code: string | null;
   code_imputation: string;
   heures: number;
   source: string;
-  affaire_code: string | null;
 };
 
-type ResultatImport = {
-  feuille: string;
-  statut: "OK" | "SKIP" | "ERREUR";
-  collaborateurs: number;
-  lignes: number;
-  heures: number;
-  message?: string;
+type LignePresence = {
+  annee: number;
+  semaine: number;
+  collaborateur_id: string;
+  heures_total: number;
+  heures_theoriques: number;
+  heures_presence: number;
+  heures_affaires: number;
+  heures_administratives: number;
+  heures_absences: number;
+  heures_non_vendues: number;
+  heures_sup: number;
+  tickets_restaurant: number;
+  jours_presentiel: number;
+  jours_teletravail: number;
+  jours_absent: number;
+  jours_travailles: number;
+  details_codes: Record<string, number>;
+  details_jours: Jour[];
+  source: string;
 };
 
-/* =========================================================
-   CONSTANTES EXCEL
-========================================================= */
-
-const COL_TOTAL = 3;
-
-/*
- * E:Y = affaires
- */
-const COL_AFFAIRES_DEBUT = 4;
-const COL_AFFAIRES_FIN = 24;
-
-/*
- * Z:AO = administratif
- */
-const COL_ADMIN_DEBUT = 25;
-const COL_ADMIN_FIN = 40;
-
-/*
- * H/Jour, J/Jour, L/Jour, N/Jour, P/Jour
- */
-const COL_JOURS = [41, 43, 45, 47, 49];
-
-/* =========================================================
-   CONSTANTES IMPORT
-========================================================= */
-
-const ANNEE_DEBUT_IMPORT = 2024;
-const SEMAINE_DEBUT_IMPORT = 1;
-
-const SOURCE_IMPORT = "IMPORT_EXCEL";
-
-/*
- * Tolérance pour les écarts de calcul.
- */
+const SOURCE = "IMPORT_EXCEL";
+const FIRST_YEAR = 2024;
+const FIRST_WEEK = 1;
 const TOLERANCE = 0.01;
 
-/* =========================================================
-   OUTILS GENERAUX
-========================================================= */
+// Excel : E:AO = colonnes de ventilation.
+// Excel : AP:BC = heures + codes de présence des 7 jours.
+const VENTILATION_START = 4; // E, index 0-based
+const VENTILATION_END = 40; // AO
+const PRESENCE_START = 41; // AP
+const PRESENCE_END = 54; // BC
+const DAILY_HOURS_OFFSET = 0;
+const DAILY_STATUS_OFFSET = 1;
+
+const CBE_PREFIXES = ["CBE", "CAS", "CIM", "COF"];
+const DBE_PREFIXES = ["DBE", "DAS", "DIM", "DOF"];
+const ABSENCE_CODES = new Set(["CP", "RE", "RTT", "ML", "FE", "AUTRE", "AA", "AT", "AI", "VM"]);
+// Les codes d'absence restent importés afin que le Bilan puisse expliquer
+// les heures (ex. CP = congés payés) au lieu de les faire apparaître
+// artificiellement en "Non expliqué". EC reste volontairement hors import.
+const IGNORED_CODES = new Set(["EC"]);
+
+// Collaboratrice volontairement exclue de l'import historique.
+// Ses heures sont comptabilisées séparément et ne constituent pas une anomalie.
+const COLLABORATEURS_IGNORES = new Set([
+  "AURELIE BERGNER",
+  "PHILIPPE BONETTI",
+  "REDA",
+  "SEBASTIEN VACHON",
+]);
 
 function normaliser(value: unknown): string {
   return String(value ?? "")
@@ -167,3316 +128,927 @@ function normaliser(value: unknown): string {
     .toUpperCase();
 }
 
+function normaliserCode(value: unknown): string {
+  return normaliser(value);
+}
+
+function estCollaborateurIgnoreNom(value: unknown): boolean {
+  return COLLABORATEURS_IGNORES.has(normaliser(value));
+}
+
 function nombre(value: unknown): number {
-  if (
-    value === null ||
-    value === undefined ||
-    value === ""
-  ) {
-    return 0;
-  }
-
-  if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? value
-      : 0;
-  }
-
-  const texte = String(value)
-    .replace(/\s/g, "")
-    .replace(",", ".");
-
-  const n = Number(texte);
-
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const n = Number(String(value).replace(/\s/g, "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
 
-function arrondir(
-  value: number,
-  decimals = 2
-): number {
-  const puissance = Math.pow(
-    10,
-    decimals
-  );
-
-  return (
-    Math.round(
-      (value + Number.EPSILON) *
-        puissance
-    ) / puissance
-  );
+function arrondir(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function formatHeures(
-  value: number
-): string {
-  return `${arrondir(value, 2)
-    .toFixed(2)
-    .replace(".", ",")} h`;
+function texteLigne(ligne: unknown[], debut = 0, fin = 3): string {
+  return ligne.slice(debut, fin + 1).map(normaliser).filter(Boolean).join(" ");
 }
 
-/*
- * Retourne une chaîne normalisée utilisable
- * pour un code d'imputation.
- */
-function normaliserCode(
-  value: unknown
-): string {
-  return normaliser(value)
-    .replace(/\s+/g, " ")
-    .trim();
+function extraireSemaineAnnee(nom: string): { semaine: number; annee: number } | null {
+  const m = normaliser(nom).match(/^S\s*(\d{1,2})[-_](\d{4})$/);
+  if (!m) return null;
+  const semaine = Number(m[1]);
+  const annee = Number(m[2]);
+  if (semaine < 1 || semaine > 53 || annee < FIRST_YEAR) return null;
+  return { semaine, annee };
 }
 
-/* =========================================================
-   SEMAINE / ANNEE
-========================================================= */
-
-function extraireSemaineAnnee(
-  nomFeuille: string
-): {
-  semaine: number;
-  annee: number;
-} | null {
-  const match =
-    normaliser(nomFeuille).match(
-      /^S\s*(\d{1,2})[-_](\d{4})$/
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const semaine = Number(match[1]);
-  const annee = Number(match[2]);
-
-  if (
-    !Number.isInteger(semaine) ||
-    semaine < 1 ||
-    semaine > 53 ||
-    !Number.isInteger(annee)
-  ) {
-    return null;
-  }
-
-  return {
-    semaine,
-    annee,
-  };
+function comparerSemaine(a: { semaine: number; annee: number }, b: { semaine: number; annee: number }) {
+  return a.annee - b.annee || a.semaine - b.semaine;
 }
 
-function comparerSemaines(
-  a: {
-    semaine: number;
-    annee: number;
-  },
-  b: {
-    semaine: number;
-    annee: number;
-  }
-): number {
-  if (a.annee !== b.annee) {
-    return a.annee - b.annee;
-  }
-
-  return a.semaine - b.semaine;
-}
-
-function obtenirFeuillesImportables(
-  sheetNames: string[]
-): string[] {
-  const debut = {
-    semaine: SEMAINE_DEBUT_IMPORT,
-    annee: ANNEE_DEBUT_IMPORT,
-  };
-
+function feuillesImportables(sheetNames: string[]): string[] {
+  const debut = { semaine: FIRST_WEEK, annee: FIRST_YEAR };
   return sheetNames
     .map((nom) => {
-      const info =
-        extraireSemaineAnnee(nom);
-
-      if (!info) {
-        return null;
-      }
-
-      return {
-        nom,
-        semaine: info.semaine,
-        annee: info.annee,
-      };
+      const info = extraireSemaineAnnee(nom);
+      return info ? { nom, ...info } : null;
     })
-    .filter(
-      (
-        feuille
-      ): feuille is {
-        nom: string;
-        semaine: number;
-        annee: number;
-      } => feuille !== null
-    )
-    .filter(
-      (feuille) =>
-        comparerSemaines(
-          feuille,
-          debut
-        ) >= 0
-    )
-    .sort((a, b) =>
-      comparerSemaines(a, b)
-    )
-    .map(
-      (feuille) => feuille.nom
-    );
+    .filter((x): x is { nom: string; semaine: number; annee: number } => !!x)
+    .filter((x) => comparerSemaine(x, debut) >= 0)
+    .sort(comparerSemaine)
+    .map((x) => x.nom);
 }
 
-/* =========================================================
-   COLLABORATEURS
-========================================================= */
+function cleCollaborateur(nom: string, prenom: string): string {
+  return normaliser(`${nom}|${prenom}`);
+}
 
-function trouverCollaborateur(
-  ligne: unknown[],
-  collaborateurs: Collaborateur[]
-): Collaborateur | null {
-  const valeurA = normaliser(
-    ligne[0]
-  );
-
-  if (!valeurA) {
-    return null;
-  }
-
-  for (const collaborateur of collaborateurs) {
-    const nomPrenom = normaliser(
-      `${collaborateur.nom} ${collaborateur.prenom}`
-    );
-
-    const prenomNom = normaliser(
-      `${collaborateur.prenom} ${collaborateur.nom}`
-    );
-
+function trouverCollaborateur(ligne: unknown[], collaborateurs: Collaborateur[]): Collaborateur | null {
+  const valeur = normaliser(ligne[0]);
+  if (!valeur) return null;
+  for (const c of collaborateurs) {
     if (
-      valeurA === nomPrenom ||
-      valeurA === prenomNom
+      valeur === normaliser(`${c.nom} ${c.prenom}`) ||
+      valeur === normaliser(`${c.prenom} ${c.nom}`)
     ) {
-      return collaborateur;
+      return c;
     }
   }
-
   return null;
 }
 
-function trouverBlocsCollaborateurs(
-  rows: unknown[][],
-  collaborateurs: Collaborateur[]
-): {
-  collaborateur: Collaborateur;
-  debut: number;
-  fin: number;
-}[] {
-  const blocs: {
-    collaborateur: Collaborateur;
-    debut: number;
-    fin: number;
-  }[] = [];
+function trouverBlocs(rows: unknown[][], collaborateurs: Collaborateur[]) {
+  const blocs: { collaborateur: Collaborateur; debut: number; fin: number }[] = [];
+  let courant: { collaborateur: Collaborateur; debut: number } | null = null;
+  const collaborateursDejaVus = new Set<string>();
+  let ignorerBlocDoublon = false;
 
-  let blocCourant:
-    | {
-        collaborateur: Collaborateur;
-        debut: number;
-      }
-    | null = null;
-
-  for (
-    let i = 0;
-    i < rows.length;
-    i++
-  ) {
-    const collaborateur =
-      trouverCollaborateur(
-        rows[i],
-        collaborateurs
-      );
-
-    if (collaborateur) {
-      if (blocCourant) {
+  for (let i = 0; i < rows.length; i++) {
+    // Aurélie BERGNER est volontairement ignorée.
+    // Elle ferme le bloc précédent pour que ses lignes ne soient jamais
+    // absorbées dans le bloc du collaborateur précédent.
+    if (estCollaborateurIgnoreNom(rows[i]?.[0])) {
+      if (courant) {
         blocs.push({
-          collaborateur:
-            blocCourant.collaborateur,
-          debut:
-            blocCourant.debut,
+          collaborateur: courant.collaborateur,
+          debut: courant.debut,
           fin: i - 1,
         });
+        courant = null;
+      }
+      continue;
+    }
+
+    const c = trouverCollaborateur(rows[i] ?? [], collaborateurs);
+    if (c) {
+      if (collaborateursDejaVus.has(c.id)) {
+        // Sécurité : un même collaborateur peut apparaître plusieurs fois
+        // dans une même feuille Excel. On conserve le PREMIER bloc rencontré
+        // et on ignore intégralement les suivants.
+        if (courant) {
+          blocs.push({
+            collaborateur: courant.collaborateur,
+            debut: courant.debut,
+            fin: i - 1,
+          });
+          courant = null;
+        }
+        ignorerBlocDoublon = true;
+        continue;
       }
 
-      blocCourant = {
-        collaborateur,
-        debut: i,
-      };
+      if (ignorerBlocDoublon) {
+        ignorerBlocDoublon = false;
+      }
+
+      collaborateursDejaVus.add(c.id);
+    } else {
+      if (ignorerBlocDoublon) continue;
+      continue;
     }
+
+    if (courant) {
+      blocs.push({
+        collaborateur: courant.collaborateur,
+        debut: courant.debut,
+        fin: i - 1,
+      });
+    }
+
+    courant = { collaborateur: c, debut: i };
   }
 
-  if (blocCourant) {
+  if (courant) {
     blocs.push({
-      collaborateur:
-        blocCourant.collaborateur,
-      debut:
-        blocCourant.debut,
-      fin:
-        rows.length - 1,
+      collaborateur: courant.collaborateur,
+      debut: courant.debut,
+      fin: rows.length - 1,
     });
   }
 
   return blocs;
 }
 
-/* =========================================================
-   AFFAIRES / DIVERS
-========================================================= */
-
-/*
- * On cherche dans les premières colonnes,
- * mais pas uniquement dans A:D.
- *
- * Cela permet de résister à quelques variations
- * de cellules fusionnées / décalées dans Excel.
- */
-function texteDebutLigne(
-  ligne: unknown[]
-): string {
-  return ligne
-    .slice(0, 10)
-    .map((v) =>
-      String(v ?? "")
-    )
-    .join(" ");
-}
-
-function detecterAffaire(
-  ligne: unknown[]
-): boolean {
-  const texte =
-    texteDebutLigne(ligne);
-
-  return /\b(CBE|DBE)\s*[-:]?\s*\d+\b/i.test(
-    texte
-  );
-}
-
-function extraireCodeAffaire(
-  ligne: unknown[]
-): string | null {
-  const texte =
-    texteDebutLigne(ligne);
-
-  const match = texte.match(
-    /\b(CBE|DBE)\s*[-:]?\s*(\d+)\b/i
-  );
-
-  if (!match) {
-    return null;
-  }
-
-  return `${match[1].toUpperCase()} ${match[2]}`;
-}
-
-function detecterDivers(
-  ligne: unknown[]
-): boolean {
-  const texte =
-    texteDebutLigne(ligne);
-
-  const normal =
-    normaliser(texte);
-
-  return (
-    /\bDIVERS\b/i.test(
-      normal
-    )
-  );
-}
-
-/* =========================================================
-   ENTETES
-========================================================= */
-
-function lireCodesEntete(
-  rows: unknown[][],
-  debut: number,
-  fin: number
-): string[] {
-  const entete = rows[1] ?? [];
-
+function lireCodesLigne2(rows: unknown[][]): string[] {
+  const ligne2 = rows[1] ?? [];
   const codes: string[] = [];
-
-  for (
-    let col = debut;
-    col <= fin;
-    col++
-  ) {
-    const code =
-      normaliserCode(
-        entete[col]
-      );
-
-    codes.push(code);
+  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+    codes[col] = normaliserCode(ligne2[col]);
   }
-
   return codes;
 }
 
-/* =========================================================
-   VENTILATION
-========================================================= */
+function parserAffaire(valeur: unknown): { type: "CBE" | "DBE"; code: string } | null {
+  const texte = normaliser(valeur);
+  if (!texte) return null;
 
-function extraireVentilation(
-  ligne: unknown[],
-  codes: string[],
-  debutCol: number
-): Ventilation[] {
-  const ventilations: Ventilation[] =
-    [];
+  const match = texte.match(/^([A-Z]+)\s*[-:]?\s*(.+)$/);
+  if (!match) return null;
 
-  for (
-    let i = 0;
-    i < codes.length;
-    i++
-  ) {
-    const code =
-      normaliserCode(
-        codes[i]
-      );
+  const prefixe = match[1];
+  const numero = match[2].trim();
 
-    if (!code) {
-      continue;
-    }
-
-    const heures =
-      nombre(
-        ligne[
-          debutCol + i
-        ]
-      );
-
-    if (
-      Math.abs(heures) <=
-      TOLERANCE
-    ) {
-      continue;
-    }
-
-    ventilations.push({
-      code,
-      heures: arrondir(
-        heures
-      ),
-    });
-  }
-
-  return ventilations;
-}
-
-/* =========================================================
-   DATE DU LUNDI
-========================================================= */
-
-function trouverDateLundi(
-  rows: unknown[][]
-): Date | null {
-  for (
-    let i = 0;
-    i <
-    Math.min(
-      rows.length,
-      20
-    );
-    i++
-  ) {
-    for (const valeur of
-      rows[i] ?? []) {
-      if (
-        valeur instanceof Date
-      ) {
-        const date =
-          new Date(valeur);
-
-        const jour =
-          date.getDay();
-
-        const decalage =
-          jour === 0
-            ? -6
-            : 1 - jour;
-
-        date.setDate(
-          date.getDate() +
-            decalage
-        );
-
-        return date;
-      }
-    }
-  }
-
+  if (CBE_PREFIXES.includes(prefixe)) return { type: "CBE", code: `${prefixe} ${numero}` };
+  if (DBE_PREFIXES.includes(prefixe)) return { type: "DBE", code: `${prefixe} ${numero}` };
   return null;
 }
 
-/* =========================================================
-   JOURS
-========================================================= */
-
-function extraireJours(
-  ligne: unknown[],
-  lundi: Date | null
-): JourDetecte[] {
-  const noms = [
-    "Lundi",
-    "Mardi",
-    "Mercredi",
-    "Jeudi",
-    "Vendredi",
-  ];
-
-  return COL_JOURS.map(
-    (col, index) => {
-      let date: Date | null =
-        null;
-
-      if (lundi) {
-        date =
-          new Date(lundi);
-
-        date.setDate(
-          lundi.getDate() +
-            index
-        );
-      }
-
-      const heures =
-        nombre(ligne[col]);
-
-      const statut =
-        String(
-          ligne[col + 1] ??
-            ""
-        ).trim();
-
-      return {
-        date,
-        jour: noms[index],
-        heures,
-        statut,
-      };
-    }
-  );
-}
-
-/* =========================================================
-   IMPUTATIONS
-========================================================= */
-
-function extraireImputations(
-  rows: unknown[][],
-  debut: number,
-  fin: number
-): ImputationDetectee[] {
-  const imputations: ImputationDetectee[] =
-    [];
-
-  const codesAffaires =
-    lireCodesEntete(
-      rows,
-      COL_AFFAIRES_DEBUT,
-      COL_AFFAIRES_FIN
-    );
-
-  const codesAdmin =
-    lireCodesEntete(
-      rows,
-      COL_ADMIN_DEBUT,
-      COL_ADMIN_FIN
-    );
-
-  for (
-    let i = debut;
-    i <= fin;
-    i++
-  ) {
-    const ligne =
-      rows[i] ?? [];
-
-    let type:
-      | "AFFAIRE"
-      | "DIVERS"
-      | null = null;
-
-    let code =
-      "";
-
-    let ventilations: Ventilation[] =
-      [];
-
-    /* =====================================================
-       AFFAIRE
-    ===================================================== */
-
-    if (
-      detecterAffaire(
-        ligne
-      )
-    ) {
-      const codeAffaire =
-        extraireCodeAffaire(
-          ligne
-        );
-
-      if (!codeAffaire) {
-        continue;
-      }
-
-      type = "AFFAIRE";
-      code = codeAffaire;
-
-      ventilations =
-        extraireVentilation(
-          ligne,
-          codesAffaires,
-          COL_AFFAIRES_DEBUT
-        );
-    }
-
-    /* =====================================================
-       DIVERS
-    ===================================================== */
-
-    else if (
-      detecterDivers(
-        ligne
-      )
-    ) {
-      type = "DIVERS";
-      code = "DIVERS";
-
-      ventilations =
-        extraireVentilation(
-          ligne,
-          codesAdmin,
-          COL_ADMIN_DEBUT
-        );
-    }
-
-    /*
-     * Ce n'est ni une affaire ni Divers.
-     */
-    if (!type) {
-      continue;
-    }
-
-    /* =====================================================
-       CALCUL DES TOTAUX
-    ===================================================== */
-
-    const totalExcel =
-      arrondir(
-        nombre(
-          ligne[COL_TOTAL]
-        )
-      );
-
-    const totalVentile =
-      arrondir(
-        ventilations.reduce(
-          (somme, ventilation) =>
-            somme +
-            ventilation.heures,
-          0
-        )
-      );
-
-    const ecartVentilation =
-      arrondir(
-        totalExcel -
-          totalVentile
-      );
-
-    /*
-     * IMPORTANT :
-     *
-     * Les heures réellement importables
-     * sont les heures ventilées.
-     *
-     * On ne prend JAMAIS automatiquement
-     * le total de la colonne D.
-     */
-    const heures =
-      totalVentile;
-
-    /*
-     * Cas totalement vide :
-     *
-     * Divers avec D vide et aucune ventilation
-     * CBE sans heures et sans ventilation
-     *
-     * => on ignore proprement.
-     */
-    if (
-      Math.abs(totalExcel) <=
-        TOLERANCE &&
-      Math.abs(totalVentile) <=
-        TOLERANCE
-    ) {
-      continue;
-    }
-
-    /*
-     * Cas dangereux :
-     *
-     * Excel dit 30 h
-     * mais on ne trouve que 25 h
-     *
-     * On conserve la ligne pour diagnostic,
-     * mais on n'invente PAS les 5 h manquantes.
-     */
-    if (
-      Math.abs(
-        ecartVentilation
-      ) > TOLERANCE
-    ) {
-      console.warn(
-        `[IMPORT] Écart ventilation ${code} ligne ${
-          i + 1
-        }`,
-        {
-          totalExcel,
-          totalVentile,
-          ecartVentilation,
-          ventilations,
-        }
-      );
-    }
-
-    /*
-     * On ne crée une imputation que si
-     * des heures sont réellement ventilées.
-     *
-     * Cela empêche d'importer une fausse ligne
-     * avec un total Excel mais aucune ventilation.
-     */
-    if (
-      totalVentile <=
-      TOLERANCE
-    ) {
-      continue;
-    }
-
-    imputations.push({
-      type,
-      code,
-      totalExcel,
-      totalVentile,
-      ecartVentilation,
-      heures,
-      ventilations,
-      ligneExcel: i + 1,
-    });
+function extraireVentilations(ligne: unknown[], codesLigne2: string[]): Ventilation[] {
+  const resultat: Ventilation[] = [];
+  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+    const code = codesLigne2[col];
+    if (!code || IGNORED_CODES.has(code)) continue;
+    const heures = nombre(ligne[col]);
+    if (Math.abs(heures) <= TOLERANCE) continue;
+    resultat.push({ code, heures: arrondir(heures) });
   }
-
-  return imputations;
+  return resultat;
 }
 
-/* =========================================================
-   ANALYSE D'UNE FEUILLE
-========================================================= */
+function extraireHeuresVentileesBrutes(ligne: unknown[], codesLigne2: string[]): number {
+  let total = 0;
+  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+    const code = codesLigne2[col];
+    if (!code || IGNORED_CODES.has(code)) continue;
+    total += nombre(ligne[col]);
+  }
+  return arrondir(total);
+}
 
-function analyserFeuille(
+function estLigneSpecialeNom(valeur: string): boolean {
+  return !valeur || /\bTR$/i.test(valeur) || /jour\(s\) TT/i.test(valeur) || /^(TOTAL|H\/JOUR|HEURES SUP)$/i.test(valeur);
+}
+
+function analyserAnomaliesBrutes(
   rows: unknown[][],
   nomFeuille: string,
-  collaborateurs: Collaborateur[]
-): SemaineExcel {
-  const info =
-    extraireSemaineAnnee(
-      nomFeuille
-    );
+  info: { semaine: number; annee: number },
+  collaborateurs: Collaborateur[],
+  codesLigne2: string[]
+): {
+  anomalies: Anomalie[];
+  heuresSource: number;
+  heuresCollaborateursIgnores: number;
+} {
+  const anomalies: Anomalie[] = [];
+  let heuresSource = 0;
+  let heuresCollaborateursIgnores = 0;
+  let collaborateurCourant: Collaborateur | null = null;
+  let nomInconnuCourant = "";
+  let collaborateurIgnoreCourant = false;
 
-  if (!info) {
-    throw new Error(
-      `Nom de feuille invalide : ${nomFeuille}`
-    );
-  }
+  for (const ligne of rows) {
+    const valeurA = String(ligne[0] ?? "").trim();
 
-  const blocs =
-    trouverBlocsCollaborateurs(
-      rows,
-      collaborateurs
-    );
-
-  const lundi =
-    trouverDateLundi(rows);
-
-  const donnees: DonneesFeuille[] =
-    [];
-
-  for (const bloc of blocs) {
-    let ligneHJour = -1;
-
-    /*
-     * Recherche de H/Jour
-     * dans les premières lignes du bloc.
-     */
-    for (
-      let i = bloc.debut;
-      i <=
-      Math.min(
-        bloc.fin,
-        bloc.debut + 10
-      );
-      i++
-    ) {
-      const ligne =
-        rows[i] ?? [];
-
-      const texte =
-        ligne
-          .slice(0, 10)
-          .map((v) =>
-            normaliser(v)
-          )
-          .join(" ");
-
-      if (
-        texte.includes(
-          "H/JOUR"
-        ) ||
-        texte.includes(
-          "H / JOUR"
-        )
-      ) {
-        ligneHJour = i;
-        break;
-      }
-    }
-
-    if (
-      ligneHJour === -1
-    ) {
-      console.warn(
-        `H/Jour introuvable pour ${bloc.collaborateur.nom} ${bloc.collaborateur.prenom}`
-      );
-
+    // Collaboratrice volontairement exclue.
+    if (estCollaborateurIgnoreNom(valeurA)) {
+      collaborateurCourant = null;
+      nomInconnuCourant = "";
+      collaborateurIgnoreCourant = true;
       continue;
     }
 
-    const ligneHeures =
-      rows[ligneHJour] ??
-      [];
+    const collab = trouverCollaborateur(ligne, collaborateurs);
 
-    let ligneTotal = -1;
-
-    /*
-     * Recherche de la ligne TOTAL.
-     */
-    for (
-      let i = ligneHJour;
-      i <= bloc.fin;
-      i++
+    if (
+      valeurA &&
+      !estLigneSpecialeNom(valeurA) &&
+      !estDivers(ligne) &&
+      !parserAffaire(ligne[2])
     ) {
-      const ligne =
-        rows[i] ?? [];
-
-      const texte =
-        ligne
-          .slice(0, 10)
-          .map((v) =>
-            normaliser(v)
-          )
-          .join(" ");
-
-      if (
-        texte.includes(
-          "TOTAL"
-        ) &&
-        nombre(
-          ligne[COL_TOTAL]
-        ) >= 0 &&
-        nombre(
-          ligne[COL_TOTAL]
-        ) <= 60
-      ) {
-        ligneTotal = i;
-        break;
+      if (collab) {
+        collaborateurCourant = collab;
+        nomInconnuCourant = "";
+        collaborateurIgnoreCourant = false;
+      } else {
+        collaborateurCourant = null;
+        nomInconnuCourant = valeurA;
+        collaborateurIgnoreCourant = false;
       }
     }
 
-    const totalHeures =
-      ligneTotal >= 0
-        ? arrondir(
-            nombre(
-              rows[
-                ligneTotal
-              ]?.[
-                COL_TOTAL
-              ]
-            )
-          )
-        : arrondir(
-            COL_JOURS.reduce(
-              (
-                somme,
-                col
-              ) =>
-                somme +
-                nombre(
-                  ligneHeures[
-                    col
-                  ]
-                ),
-              0
-            )
-          );
+    const estActivite = !!parserAffaire(ligne[2]) || estDivers(ligne);
+    if (!estActivite) continue;
 
-    const jours =
-      extraireJours(
-        ligneHeures,
-        lundi
+    const heures = extraireHeuresVentileesBrutes(ligne, codesLigne2);
+    if (heures <= TOLERANCE) continue;
+
+    // Les heures d'Aurélie sont volontairement sorties du périmètre importable.
+    if (collaborateurIgnoreCourant) {
+      heuresCollaborateursIgnores = arrondir(
+        heuresCollaborateursIgnores + heures
       );
+      continue;
+    }
 
-    /*
-     * IMPORTANT :
-     *
-     * On analyse TOUT le bloc
-     * du collaborateur.
-     *
-     * PAS seulement à partir de H/Jour.
-     */
-    const imputations =
-      extraireImputations(
-        rows,
-        bloc.debut,
-        bloc.fin
-      );
+    heuresSource = arrondir(heuresSource + heures);
 
-    /*
-     * Total des heures réellement ventilées.
-     */
-    const totalImpute =
-      arrondir(
-        imputations.reduce(
-          (
-            somme,
-            imputation
-          ) =>
-            somme +
-            imputation.totalVentile,
-          0
-        )
-      );
+    if (nomInconnuCourant) {
+      anomalies.push({
+        feuille: nomFeuille,
+        semaine: info.semaine,
+        type: "COLLABORATEUR_INCONNU",
+        collaborateur: nomInconnuCourant,
+        detail: String(ligne[2] ?? "DIVERS").trim() || "DIVERS",
+        heures,
+      });
+    } else if (!collaborateurCourant) {
+      anomalies.push({
+        feuille: nomFeuille,
+        semaine: info.semaine,
+        type: "ACTIVITE_SANS_COLLABORATEUR",
+        collaborateur: "—",
+        detail: String(ligne[2] ?? "DIVERS").trim() || "DIVERS",
+        heures,
+      });
+    }
 
-    /*
-     * Nombre d'imputations présentant
-     * un écart entre D et les ventilations.
-     */
-    const anomaliesVentilation =
-      imputations.filter(
-        (imputation) =>
-          Math.abs(
-            imputation.ecartVentilation
-          ) > TOLERANCE
-      ).length;
+    for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+      const code = codesLigne2[col];
+      const valeur = nombre(ligne[col]);
+      if (valeur <= TOLERANCE) continue;
 
-    /*
-     * Ecart global :
-     *
-     * TOTAL Excel
-     * -
-     * somme des ventilations
-     */
-    const ecart =
-      arrondir(
-        totalHeures -
-          totalImpute
-      );
-
-    console.log(
-      `[${nomFeuille}] ${bloc.collaborateur.nom} ${bloc.collaborateur.prenom}`,
-      {
-        bloc: `${bloc.debut + 1} → ${
-          bloc.fin + 1
-        }`,
-        totalExcel:
-          totalHeures,
-        totalVentile:
-          totalImpute,
-        ecart,
-        imputations:
-          imputations.length,
-        anomaliesVentilation,
+      if (!code) {
+        anomalies.push({
+          feuille: nomFeuille,
+          semaine: info.semaine,
+          type: "CODE_SANS_ENTETE",
+          collaborateur: collaborateurCourant
+            ? `${collaborateurCourant.prenom} ${collaborateurCourant.nom}`
+            : (nomInconnuCourant || "—"),
+          detail: `Colonne ${col + 1}`,
+          heures: arrondir(valeur),
+        });
       }
-    );
-
-    donnees.push({
-      collaborateur:
-        bloc.collaborateur,
-
-      trigramme:
-        bloc.collaborateur
-          .trigramme,
-
-      totalHeures,
-
-      /*
-       * On conserve 35 pour le moment,
-       * comme dans la version précédente.
-       *
-       * Ce champ n'est pas utilisé pour
-       * déterminer les heures historiques.
-       */
-      totalTheorique: 35,
-
-      jours,
-
-      imputations,
-
-      totalImpute,
-
-      ecart,
-
-      anomaliesVentilation,
-    });
+    }
   }
 
   return {
-    nomFeuille,
-    semaine: info.semaine,
-    annee: info.annee,
-    donnees,
+    anomalies,
+    heuresSource,
+    heuresCollaborateursIgnores,
   };
 }
 
-/* =========================================================
-   CONSTRUCTION HISTORIQUE
-========================================================= */
-
-function construireLignesHistorique(
-  semaine: SemaineExcel
-): LigneHistorique[] {
-  const lignes: LigneHistorique[] =
-    [];
-
-  for (const donnees of
-    semaine.donnees) {
-    for (const imputation of
-      donnees.imputations) {
-      /*
-       * On importe UNIQUEMENT les ventilations.
-       *
-       * Exemple :
-       *
-       * CBE 1631
-       * EE = 30
-       *
-       * devient :
-       *
-       * EE / 30 / CBE 1631
-       */
-
-      for (const ventilation of
-        imputation.ventilations) {
-        if (
-          ventilation.heures <=
-          TOLERANCE
-        ) {
-          continue;
-        }
-
-        lignes.push({
-          annee:
-            semaine.annee,
-
-          semaine:
-            semaine.semaine,
-
-          collaborateur_id:
-            donnees
-              .collaborateur
-              .id,
-
-          code_imputation:
-            ventilation.code,
-
-          heures:
-            arrondir(
-              ventilation.heures
-            ),
-
-          source:
-            SOURCE_IMPORT,
-
-          affaire_code:
-            imputation.type ===
-            "AFFAIRE"
-              ? imputation.code
-              : null,
-        });
-      }
-    }
-  }
-
-  return lignes;
+function estDivers(ligne: unknown[]): boolean {
+  return normaliser(ligne[2]) === "DIVERS" || /\bDIVERS\b/.test(texteLigne(ligne));
 }
 
-/* =========================================================
-   PAGE
-========================================================= */
+function estLigne(ligne: unknown[], libelle: string): boolean {
+  const cible = normaliser(libelle);
+  return normaliser(ligne[2]) === cible || normaliser(ligne[1]) === cible || normaliser(ligne[0]) === cible;
+}
 
-export default function ImportHistoriqueV2() {
-  const [
-    collaborateurs,
-    setCollaborateurs,
-  ] = useState<Collaborateur[]>([]);
+function extraireTickets(ligne: unknown[]): number {
+  const texte = normaliser(ligne[0]);
+  const m = texte.match(/(?:^|\s)(\d+)\s*TR(?:\s|$)/);
+  return m ? Number(m[1]) : 0;
+}
 
-  const [
-    fichier,
-    setFichier,
-  ] = useState<File | null>(
-    null
-  );
+function trouverLigneDansBloc(rows: unknown[][], debut: number, fin: number, libelle: string): number {
+  for (let i = debut; i <= fin; i++) {
+    if (estLigne(rows[i] ?? [], libelle)) return i;
+  }
+  return -1;
+}
 
-  const [
-    nomFichier,
-    setNomFichier,
-  ] = useState("");
+function extraireJours(rows: unknown[][], ligneHJour: number): Jour[] {
+  if (ligneHJour < 0) return [];
+  const ligneHeures = rows[ligneHJour] ?? [];
+  const ligneTotal = ligneHJour + 2;
+  const ligneStatuts = rows[ligneTotal] ?? [];
 
-  const [
-    feuillesDisponibles,
-    setFeuillesDisponibles,
-  ] = useState<string[]>([]);
+  const jours: Jour[] = [];
+  for (let i = 0; i < 7; i++) {
+    const colHeures = PRESENCE_START + i * 2 + DAILY_HOURS_OFFSET;
+    const colStatut = PRESENCE_START + i * 2 + DAILY_STATUS_OFFSET;
+    jours.push({
+      heures: arrondir(nombre(ligneHeures[colHeures])),
+      statut: normaliser(ligneStatuts[colHeures]),
+    });
+  }
+  return jours;
+}
 
-  const [
-    semainesAnalysees,
-    setSemainesAnalysees,
-  ] = useState<SemaineExcel[]>([]);
+function extraireHeuresSup(rows: unknown[][], debut: number, fin: number): number {
+  const ligne = trouverLigneDansBloc(rows, debut, fin, "HEURES SUP");
+  if (ligne < 0) return 0;
+  // Ici, et uniquement ici, la colonne D est utilisée.
+  const valeurD = nombre(rows[ligne]?.[3]);
+  if (Math.abs(valeurD) > TOLERANCE) return arrondir(valeurD);
 
-  const [
-    chargement,
-    setChargement,
-  ] = useState(false);
+  let total = 0;
+  for (let col = PRESENCE_START; col <= PRESENCE_END; col += 2) total += nombre(rows[ligne]?.[col]);
+  return arrondir(total);
+}
 
-  const [
-    importEnCours,
-    setImportEnCours,
-  ] = useState(false);
+function analyserBloc(rows: unknown[][], bloc: { collaborateur: Collaborateur; debut: number; fin: number }, codesLigne2: string[]): DonneesCollaborateur {
+  const imputations: Imputation[] = [];
+  let ticketsRestaurant = 0;
 
-  const [
-    progression,
-    setProgression,
-  ] = useState(0);
+  for (let i = bloc.debut; i <= bloc.fin; i++) {
+    const ligne = rows[i] ?? [];
+    const c = parserAffaire(ligne[2]);
 
-  const [
-    message,
-    setMessage,
-  ] = useState("");
+    if (c) {
+      ticketsRestaurant = Math.max(ticketsRestaurant, extraireTickets(ligne));
+      const ventilations = extraireVentilations(ligne, codesLigne2);
+      if (ventilations.length) imputations.push({ affaireCode: c.code, type: c.type, ventilations });
+      continue;
+    }
 
-  const [
-    erreur,
-    setErreur,
-  ] = useState("");
+    if (estDivers(ligne)) {
+      ticketsRestaurant = Math.max(ticketsRestaurant, extraireTickets(ligne));
+      const ventilations = extraireVentilations(ligne, codesLigne2);
+      if (ventilations.length) imputations.push({ affaireCode: null, type: "DIVERS", ventilations });
+    }
+  }
 
-  const [
-    resultatsImport,
-    setResultatsImport,
-  ] = useState<
-    ResultatImport[]
-  >([]);
+  const ligneHJour = trouverLigneDansBloc(rows, bloc.debut, bloc.fin, "H/JOUR");
+  const jours = extraireJours(rows, ligneHJour);
+  const heuresSup = extraireHeuresSup(rows, bloc.debut, bloc.fin);
 
-/* =======================================================
-   CHARGEMENT COLLABORATEURS
-======================================================= */
+  return { collaborateur: bloc.collaborateur, ticketsRestaurant, jours, heuresSup, imputations };
+}
 
-  useEffect(() => {
-    chargerCollaborateurs();
-  }, []);
+function analyserFeuille(rows: unknown[][], nomFeuille: string, collaborateurs: Collaborateur[]): SemaineAnalyse {
+  const info = extraireSemaineAnnee(nomFeuille);
+  if (!info) throw new Error(`Feuille invalide : ${nomFeuille}`);
+
+  const codesLigne2 = lireCodesLigne2(rows);
+  const blocs = trouverBlocs(rows, collaborateurs);
+  const donnees = blocs.map((bloc) => analyserBloc(rows, bloc, codesLigne2));
+  const controle = analyserAnomaliesBrutes(rows, nomFeuille, info, collaborateurs, codesLigne2);
+
+  return {
+    feuille: nomFeuille,
+    annee: info.annee,
+    semaine: info.semaine,
+    donnees,
+    anomalies: controle.anomalies,
+    heuresSource: controle.heuresSource,
+    heuresCollaborateursIgnores:
+      controle.heuresCollaborateursIgnores,
+  };
+}
+
+function construireLignesImputations(semaine: SemaineAnalyse): LigneHistorique[] {
+  const map = new Map<string, LigneHistorique>();
+
+  for (const d of semaine.donnees) {
+    for (const imp of d.imputations) {
+      for (const v of imp.ventilations) {
+        const key = [semaine.annee, semaine.semaine, d.collaborateur.id, imp.affaireCode ?? "", v.code].join("|");
+        const existante = map.get(key);
+        if (existante) {
+          existante.heures = arrondir(existante.heures + v.heures);
+        } else {
+          map.set(key, {
+            annee: semaine.annee,
+            semaine: semaine.semaine,
+            collaborateur_id: d.collaborateur.id,
+            affaire_code: imp.affaireCode,
+            code_imputation: v.code,
+            heures: arrondir(v.heures),
+            source: SOURCE,
+          });
+        }
+      }
+    }
+  }
+  return Array.from(map.values()).filter((x) => x.heures > TOLERANCE);
+}
+
+function construirePresence(semaine: SemaineAnalyse): LignePresence[] {
+  const map = new Map<string, LignePresence>();
+
+  for (const d of semaine.donnees) {
+    const heuresTotal = arrondir(d.jours.reduce((s, j) => s + j.heures, 0));
+    const joursPresentiel = d.jours.filter((j) => j.heures > TOLERANCE && j.statut === "PRESENTIEL").length;
+    const joursTeletravail = d.jours.filter((j) => j.heures > TOLERANCE && j.statut === "TELETRAVAIL").length;
+    const joursAbsent = d.jours.filter((j) => j.statut === "ABSENT" || (j.statut === "" && j.heures <= TOLERANCE)).length;
+    const joursTravailles = joursPresentiel + joursTeletravail;
+
+    const lignes = construireLignesImputations(semaine).filter((x) => x.collaborateur_id === d.collaborateur.id);
+    const heuresAffaires = arrondir(lignes.filter((x) => x.affaire_code !== null).reduce((s, x) => s + x.heures, 0));
+    const heuresAdministratives = arrondir(lignes.filter((x) => x.affaire_code === null).reduce((s, x) => s + x.heures, 0));
+
+    const detailsCodes: Record<string, number> = {};
+    for (const l of lignes) detailsCodes[l.code_imputation] = arrondir((detailsCodes[l.code_imputation] ?? 0) + l.heures);
+
+    const lignePresence: LignePresence = {
+      annee: semaine.annee,
+      semaine: semaine.semaine,
+      collaborateur_id: d.collaborateur.id,
+      heures_total: heuresTotal,
+      // Le fichier Excel ne donne pas la base théorique fiable du collaborateur.
+      // On ne fabrique donc pas 35 h : la valeur reste à 0 jusqu'à ce qu'on
+      // rattache l'historique aux anciens profils horaires.
+      heures_theoriques: 0,
+      heures_presence: heuresTotal,
+      heures_affaires: heuresAffaires,
+      heures_administratives: heuresAdministratives,
+      heures_absences: 0,
+      heures_non_vendues: 0,
+      heures_sup: d.heuresSup,
+      tickets_restaurant: d.ticketsRestaurant,
+      jours_presentiel: joursPresentiel,
+      jours_teletravail: joursTeletravail,
+      jours_absent: joursAbsent,
+      jours_travailles: joursTravailles,
+      details_codes: detailsCodes,
+      details_jours: d.jours,
+      source: SOURCE,
+    };
+
+    // Une présence doit être unique par semaine + collaborateur + source.
+    // Cette Map ajoute une seconde sécurité avant l'INSERT Supabase.
+    if (!map.has(d.collaborateur.id)) {
+      map.set(d.collaborateur.id, lignePresence);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+function statistiques(semaine: SemaineAnalyse[]) {
+  const lignes = semaine.flatMap(construireLignesImputations);
+  const anomalies = semaine.flatMap((x) => x.anomalies);
+  return {
+    semaines: semaine.length,
+    feuillesCollaborateurs: semaine.reduce((s, x) => s + x.donnees.length, 0),
+    lignes: lignes.length,
+    heures: arrondir(lignes.reduce((s, x) => s + x.heures, 0)),
+    presence: semaine.flatMap(construirePresence).length,
+    heuresSup: arrondir(semaine.reduce((s, x) => s + x.donnees.reduce((a, d) => a + d.heuresSup, 0), 0)),
+    heuresSource: arrondir(semaine.reduce((s, x) => s + x.heuresSource, 0)),
+    heuresCollaborateursIgnores: arrondir(
+      semaine.reduce(
+        (s, x) => s + x.heuresCollaborateursIgnores,
+        0
+      )
+    ),
+    anomalies: anomalies.length,
+    heuresAnomalies: arrondir(anomalies.reduce((s, x) => s + x.heures, 0)),
+  };
+}
+
+export default function ImportHistoriqueV3() {
+  const router = useRouter();
+  const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
+  const [fichier, setFichier] = useState<File | null>(null);
+  const [semaines, setSemaines] = useState<SemaineAnalyse[]>([]);
+  const [chargement, setChargement] = useState(false);
+  const [importEnCours, setImportEnCours] = useState(false);
+  const [progression, setProgression] = useState(0);
+  const [message, setMessage] = useState("");
+  const [erreur, setErreur] = useState("");
+  const [inconnus, setInconnus] = useState<string[]>([]);
+  const [codesInconnus, setCodesInconnus] = useState<string[]>([]);
+
+  const stats = useMemo(() => statistiques(semaines), [semaines]);
 
   async function chargerCollaborateurs() {
-    setChargement(true);
-    setErreur("");
-
-    const { data, error } =
-      await supabase
-        .from("collaborateurs")
-        .select(
-          `
-          id,
-          trigramme,
-          prenom,
-          nom,
-          actif,
-          date_entree,
-          date_sortie
-        `
-        )
-        .order("nom")
-        .order("prenom");
-
-    if (error) {
-      setErreur(
-        `Impossible de charger les collaborateurs : ${error.message}`
-      );
-
-      setChargement(false);
-      return;
-    }
-
-    setCollaborateurs(
-      (data ??
-        []) as Collaborateur[]
-    );
-
-    setChargement(false);
+    const { data, error } = await supabase.from("collaborateurs").select("id,trigramme,prenom,nom,actif").eq("actif", true).order("nom").order("prenom");
+    if (error) throw new Error(`Chargement collaborateurs : ${error.message}`);
+    setCollaborateurs((data ?? []) as Collaborateur[]);
   }
 
-/* =======================================================
-   SELECTION FICHIER
-======================================================= */
-
-  async function handleFichier(
-    event: React.ChangeEvent<HTMLInputElement>
-  ) {
-    const selected =
-      event.target.files?.[0];
-
-    if (!selected) {
-      return;
-    }
-
-    setFichier(selected);
-
-    setNomFichier(
-      selected.name
-    );
-
-    setSemainesAnalysees([]);
-
-    setResultatsImport([]);
-
-    setErreur("");
-
-    setMessage("");
-
-    setProgression(0);
-
-    try {
-      const buffer =
-        await selected.arrayBuffer();
-
-      const workbook =
-        XLSX.read(buffer, {
-          type: "array",
-          cellDates: true,
-        });
-
-      const feuilles =
-        obtenirFeuillesImportables(
-          workbook.SheetNames
-        );
-
-      if (
-        feuilles.length ===
-        0
-      ) {
-        throw new Error(
-          "Aucune feuille comprise entre S01-2024 et une feuille récente n'a été trouvée."
-        );
-      }
-
-      setFeuillesDisponibles(
-        feuilles
-      );
-
-      const premiere =
-        feuilles[0];
-
-      const derniere =
-        feuilles[
-          feuilles.length - 1
-        ];
-
-      setMessage(
-        `${feuilles.length} feuilles importables détectées : ${premiere} → ${derniere}.`
-      );
-    } catch (e) {
-      setErreur(
-        e instanceof Error
-          ? e.message
-          : "Erreur lors de la lecture du fichier."
-      );
-    }
-  }
-
-/* =======================================================
-   ANALYSE TOUT LE CLASSEUR
-======================================================= */
-
-  async function analyserToutLeClasseur() {
-    if (!fichier) {
-      setErreur(
-        "Sélectionne d'abord le fichier Excel."
-      );
-      return;
-    }
-
-    if (
-      collaborateurs.length ===
-      0
-    ) {
-      setErreur(
-        "Aucun collaborateur n'est chargé depuis Supabase."
-      );
-      return;
-    }
-
+  async function analyser(f: File) {
     setChargement(true);
     setErreur("");
     setMessage("");
-    setSemainesAnalysees([]);
-    setResultatsImport([]);
+    setSemaines([]);
     setProgression(0);
+    setInconnus([]);
+    setCodesInconnus([]);
 
     try {
-      const buffer =
-        await fichier.arrayBuffer();
+      await chargerCollaborateurs();
+      const buffer = await f.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+      const noms = feuillesImportables(wb.SheetNames);
+      if (!noms.length) throw new Error("Aucune feuille Sxx-aaaa à partir de S01-2024.");
 
-      const workbook =
-        XLSX.read(buffer, {
-          type: "array",
-          cellDates: true,
-        });
+      // On recharge localement les collaborateurs après le select pour garantir la correspondance.
+      const { data: collabsDB, error: collabError } =
+        await supabase
+          .from("collaborateurs")
+          .select("id,trigramme,prenom,nom,actif")
+          .order("nom")
+          .order("prenom");
+      if (collabError) throw new Error(collabError.message);
+      const collabs = (collabsDB ?? []) as Collaborateur[];
+      setCollaborateurs(collabs);
 
-      const feuilles =
-        obtenirFeuillesImportables(
-          workbook.SheetNames
-        );
+      const resultats: SemaineAnalyse[] = [];
+      const inconnusSet = new Set<string>();
 
-      const resultats: SemaineExcel[] =
-        [];
+      for (let i = 0; i < noms.length; i++) {
+        const nom = noms[i];
+        const sheet = wb.Sheets[nom];
+        if (!sheet) continue;
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true }) as unknown[][];
 
-      for (
-        let index = 0;
-        index <
-        feuilles.length;
-        index++
-      ) {
-        const nomFeuille =
-          feuilles[index];
-
-        const sheet =
-          workbook.Sheets[
-            nomFeuille
-          ];
-
-        if (!sheet) {
-          continue;
+        // Les noms inconnus sont maintenant contrôlés par le même moteur que
+        // les anomalies détaillées affichées sous le résumé.
+        for (const row of rows) {
+          const a = String(row[0] ?? "").trim();
+          if (!a || /TR$/i.test(a) || /jour\(s\) TT/i.test(a)) continue;
+          if (estCollaborateurIgnoreNom(a)) continue;
+          const c = trouverCollaborateur(row, collabs);
+          if (!c && row[2] == null && a.length > 2 && !/^(TOTAL|H\/JOUR|HEURES SUP)$/i.test(a)) inconnusSet.add(a);
         }
-
-        const rows =
-          XLSX.utils.sheet_to_json(
-            sheet,
-            {
-              header: 1,
-              defval: "",
-              raw: true,
-            }
-          ) as unknown[][];
 
         try {
-          const analyse =
-            analyserFeuille(
-              rows,
-              nomFeuille,
-              collaborateurs
-            );
-
-          resultats.push(
-            analyse
-          );
+          resultats.push(analyserFeuille(rows, nom, collabs));
         } catch (e) {
-          console.error(
-            `Erreur analyse ${nomFeuille}`,
-            e
-          );
+          console.error(`[IMPORT] Analyse ${nom}`, e);
         }
 
-        setProgression(
-          Math.round(
-            ((index + 1) /
-              feuilles.length) *
-              100
-          )
-        );
-
-        await new Promise(
-          (resolve) =>
-            setTimeout(
-              resolve,
-              0
-            )
-        );
+        setProgression(Math.round(((i + 1) / noms.length) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
 
-      setSemainesAnalysees(
-        resultats
-      );
+      // Vérification des codes réellement trouvés.
+      const codes = Array.from(new Set(resultats.flatMap(construireLignesImputations).map((x) => x.code_imputation)));
+      if (codes.length) {
+        const { data, error } = await supabase.from("codes_imputation").select("code").in("code", codes);
+        if (error) throw new Error(`Vérification des codes : ${error.message}`);
+        const existants = new Set((data ?? []).map((x: { code: string }) => normaliserCode(x.code)));
+        setCodesInconnus(codes.filter((x) => !existants.has(normaliserCode(x))));
+      }
 
-      const nbCollaborateurs =
-        resultats.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees
-              .length,
-          0
-        );
-
-      const nbImputations =
-        resultats.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.imputations
-                  .length,
-              0
-            ),
-          0
-        );
-
-      /*
-       * IMPORTANT :
-       * heures = heures réellement ventilées.
-       */
-      const heures =
-        resultats.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.totalImpute,
-              0
-            ),
-          0
-        );
-
-      const anomalies =
-        resultats.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.anomaliesVentilation,
-              0
-            ),
-          0
-        );
-
+      setInconnus(Array.from(inconnusSet).sort());
+      setSemaines(resultats);
+      const s = statistiques(resultats);
       setMessage(
-        `Analyse terminée : ${resultats.length} semaines, ${nbCollaborateurs} feuilles collaborateurs, ${nbImputations} imputations, ${formatHeures(
-          heures
-        )} ventilées${
-          anomalies > 0
-            ? `, ${anomalies} anomalie(s) de ventilation.`
-            : "."
-        }`
+        `Analyse terminée : ${s.semaines} feuilles, ${s.feuillesCollaborateurs} blocs collaborateurs, ${s.lignes} lignes atomiques, ${s.heures.toFixed(2)} h importables sur ${s.heuresSource.toFixed(2)} h détectées, ${s.heuresCollaborateursIgnores.toFixed(2)} h volontairement ignorées (Aurélie BERGNER), ${s.anomalies} anomalies (${s.heuresAnomalies.toFixed(2)} h), ${s.presence} présences et ${s.heuresSup.toFixed(2)} h sup.`
       );
     } catch (e) {
-      setErreur(
-        e instanceof Error
-          ? e.message
-          : "Erreur pendant l'analyse."
-      );
+      setErreur(e instanceof Error ? e.message : "Erreur pendant l'analyse.");
+    } finally {
+      setChargement(false);
     }
-
-    setChargement(false);
   }
 
-/* =======================================================
-   STATISTIQUES
-======================================================= */
-
-  const statistiques =
-    useMemo(() => {
-      const collaborateurs =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees
-              .length,
-          0
-        );
-
-      const heuresExcel =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.totalHeures,
-              0
-            ),
-          0
-        );
-
-      const heuresImputees =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.totalImpute,
-              0
-            ),
-          0
-        );
-
-      const lignes =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            construireLignesHistorique(
-              semaine
-            ).length,
-          0
-        );
-
-      const ecarts =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.filter(
-              (d) =>
-                Math.abs(
-                  d.ecart
-                ) > TOLERANCE
-            ).length,
-          0
-        );
-
-      const anomalies =
-        semainesAnalysees.reduce(
-          (
-            total,
-            semaine
-          ) =>
-            total +
-            semaine.donnees.reduce(
-              (
-                somme,
-                d
-              ) =>
-                somme +
-                d.anomaliesVentilation,
-              0
-            ),
-          0
-        );
-
-      return {
-        semaines:
-          semainesAnalysees.length,
-
-        collaborateurs,
-
-        heuresExcel,
-
-        heuresImputees,
-
-        lignes,
-
-        ecarts,
-
-        anomalies,
-      };
-    }, [
-      semainesAnalysees,
-    ]);
-
-/* =======================================================
-   VERIFICATION DES CODES
-======================================================= */
-
-  async function verifierCodes(
-    lignes: LigneHistorique[]
-  ) {
-    const codesUniques =
-      Array.from(
-        new Set(
-          lignes.map(
-            (ligne) =>
-              ligne.code_imputation
-          )
-        )
-      );
-
-    if (
-      codesUniques.length ===
-      0
-    ) {
-      return {
-        ok: false,
-        codesManquants: [],
-      };
-    }
-
-    const { data, error } =
-      await supabase
-        .from(
-          "codes_imputation"
-        )
-        .select("code")
-        .in(
-          "code",
-          codesUniques
-        );
-
-    if (error) {
-      throw new Error(
-        `Impossible de vérifier les codes d'imputation : ${error.message}`
-      );
-    }
-
-    const codesExistants =
-      new Set(
-        (data ?? []).map(
-          (ligne) =>
-            normaliserCode(
-              ligne.code
-            )
-        )
-      );
-
-    const codesManquants =
-      codesUniques.filter(
-        (code) =>
-          !codesExistants.has(
-            normaliserCode(
-              code
-            )
-          )
-      );
-
-    return {
-      ok:
-        codesManquants.length ===
-        0,
-
-      codesManquants,
-    };
-  }
-
-/* =======================================================
-   IMPORT D'UNE SEMAINE
-======================================================= */
-
-  async function importerSemaine(
-    semaine: SemaineExcel
-  ): Promise<ResultatImport> {
-    const lignes =
-      construireLignesHistorique(
-        semaine
-      );
-
-    if (
-      lignes.length ===
-      0
-    ) {
-      return {
-        feuille:
-          semaine.nomFeuille,
-
-        statut: "SKIP",
-
-        collaborateurs:
-          semaine.donnees
-            .length,
-
-        lignes: 0,
-
-        heures: 0,
-
-        message:
-          "Aucune ventilation importable.",
-      };
-    }
-
-    /*
-     * Vérification des codes
-     * AVANT toute suppression.
-     */
-    const verification =
-      await verifierCodes(
-        lignes
-      );
-
-    if (!verification.ok) {
-      return {
-        feuille:
-          semaine.nomFeuille,
-
-        statut: "ERREUR",
-
-        collaborateurs:
-          semaine.donnees
-            .length,
-
-        lignes: 0,
-
-        heures: 0,
-
-        message:
-          `Codes inconnus : ${verification.codesManquants.join(
-            ", "
-          )}`,
-      };
-    }
-
-    const collaborateursIds =
-      Array.from(
-        new Set(
-          lignes.map(
-            (ligne) =>
-              ligne.collaborateur_id
-          )
-        )
-      );
-
-    /*
-     * Recherche de données déjà importées.
-     */
-    const {
-      data: existantes,
-      error: errorExistantes,
-    } = await supabase
-      .from(
-        "historique_imputations"
-      )
-      .select(
-        "id, collaborateur_id"
-      )
-      .eq(
-        "annee",
-        semaine.annee
-      )
-      .eq(
-        "semaine",
-        semaine.semaine
-      )
-      .eq(
-        "source",
-        SOURCE_IMPORT
-      )
-      .in(
-        "collaborateur_id",
-        collaborateursIds
-      );
-
-    if (errorExistantes) {
-      return {
-        feuille:
-          semaine.nomFeuille,
-
-        statut: "ERREUR",
-
-        collaborateurs:
-          semaine.donnees
-            .length,
-
-        lignes: 0,
-
-        heures: 0,
-
-        message:
-          `Erreur lors du contrôle des doublons : ${errorExistantes.message}`,
-      };
-    }
-
-    /*
-     * Si la semaine existe déjà,
-     * on la remplace.
-     */
-    if (
-      existantes &&
-      existantes.length > 0
-    ) {
-      const {
-        error: errorDelete,
-      } = await supabase
-        .from(
-          "historique_imputations"
-        )
-        .delete()
-        .eq(
-          "annee",
-          semaine.annee
-        )
-        .eq(
-          "semaine",
-          semaine.semaine
-        )
-        .eq(
-          "source",
-          SOURCE_IMPORT
-        )
-        .in(
-          "collaborateur_id",
-          collaborateursIds
-        );
-
-      if (errorDelete) {
-        return {
-          feuille:
-            semaine.nomFeuille,
-
-          statut: "ERREUR",
-
-          collaborateurs:
-            semaine.donnees
-              .length,
-
-          lignes: 0,
-
-          heures: 0,
-
-          message:
-            `Impossible de remplacer les anciennes données : ${errorDelete.message}`,
-        };
-      }
-    }
-
-    /*
-     * Insertion par lots.
-     */
-    const TAILLE_LOT =
-      500;
-
-    for (
-      let i = 0;
-      i < lignes.length;
-      i +=
-        TAILLE_LOT
-    ) {
-      const lot =
-        lignes.slice(
-          i,
-          i +
-            TAILLE_LOT
-        );
-
-      const { error } =
-        await supabase
-          .from(
-            "historique_imputations"
-          )
-          .insert(lot);
-
-      if (error) {
-        /*
-         * Nettoyage de sécurité.
-         */
-        await supabase
-          .from(
-            "historique_imputations"
-          )
-          .delete()
-          .eq(
-            "annee",
-            semaine.annee
-          )
-          .eq(
-            "semaine",
-            semaine.semaine
-          )
-          .eq(
-            "source",
-            SOURCE_IMPORT
-          )
-          .in(
-            "collaborateur_id",
-            collaborateursIds
-          );
-
-        return {
-          feuille:
-            semaine.nomFeuille,
-
-          statut: "ERREUR",
-
-          collaborateurs:
-            semaine.donnees
-              .length,
-
-          lignes: 0,
-
-          heures: 0,
-
-          message:
-            `Erreur Supabase : ${error.message}`,
-        };
-      }
-    }
-
-    const heures =
-      lignes.reduce(
-        (
-          total,
-          ligne
-        ) =>
-          total +
-          ligne.heures,
-        0
-      );
-
-    return {
-      feuille:
-        semaine.nomFeuille,
-
-      statut: "OK",
-
-      collaborateurs:
-        semaine.donnees
-          .length,
-
-      lignes:
-        lignes.length,
-
-      heures:
-        arrondir(
-          heures
-        ),
-
-      message:
-        existantes &&
-        existantes.length > 0
-          ? "Semaine remplacée"
-          : "Importée",
-    };
-  }
-
-/* =======================================================
-   IMPORT GLOBAL
-======================================================= */
-
-  async function importerTout() {
-    if (
-      semainesAnalysees.length ===
-      0
-    ) {
-      setErreur(
-        "Il faut d'abord analyser le classeur."
-      );
+  async function handleFichier(event: React.ChangeEvent<HTMLInputElement>) {
+    const f = event.target.files?.[0];
+    if (!f) return;
+    if (!/\.(xlsx|xlsm)$/i.test(f.name)) {
+      setErreur("Le fichier doit être un .xlsx ou .xlsm.");
       return;
     }
+    setFichier(f);
+    await analyser(f);
+  }
 
-    /*
-     * On bloque l'import si l'analyse
-     * présente encore des écarts.
-     *
-     * Pourquoi ?
-     *
-     * Parce qu'on ne veut surtout pas
-     * mettre en base un historique incomplet
-     * sans que l'utilisateur le sache.
-     */
-    if (
-      statistiques.ecarts >
-      0
-    ) {
-      const continuer =
-        window.confirm(
-          `ATTENTION\n\n${statistiques.ecarts} feuille(s) présentent un écart entre le TOTAL Excel et les heures ventilées.\n\nLes heures non ventilées ne seront PAS inventées et ne seront PAS importées.\n\nVeux-tu malgré tout continuer ?`
-        );
+  async function verifierCodesFinal(lignes: LigneHistorique[]) {
+    const codes = Array.from(new Set(lignes.map((x) => x.code_imputation)));
+    if (!codes.length) return [];
+    const { data, error } = await supabase.from("codes_imputation").select("code").in("code", codes);
+    if (error) throw new Error(error.message);
+    const existants = new Set((data ?? []).map((x: { code: string }) => normaliserCode(x.code)));
+    return codes.filter((x) => !existants.has(normaliserCode(x)));
+  }
 
-      if (!continuer) {
-        return;
-      }
+  async function importer() {
+    if (!semaines.length) {
+      setErreur("Analyse d'abord le classeur.");
+      return;
     }
-
-    const premiere =
-      semainesAnalysees[0];
-
-    const derniere =
-      semainesAnalysees[
-        semainesAnalysees.length -
-          1
-      ];
-
-    const confirmation =
-      window.confirm(
-        `IMPORT MASSIF\n\n${semainesAnalysees.length} semaines vont être importées.\n\nPériode : ${premiere.nomFeuille} → ${derniere.nomFeuille}\n\nLes données IMPORT_EXCEL déjà présentes pour ces semaines seront remplacées.\n\nOn fonce ?`
-      );
-
-    if (!confirmation) {
+    if (codesInconnus.length) {
+      setErreur(`Import bloqué : codes inconnus dans codes_imputation : ${codesInconnus.join(", ")}`);
       return;
     }
 
     setImportEnCours(true);
-
     setErreur("");
-
     setMessage("");
-
-    setResultatsImport([]);
-
     setProgression(0);
 
-    const resultats: ResultatImport[] =
-      [];
-
-    for (
-      let i = 0;
-      i <
-      semainesAnalysees.length;
-      i++
-    ) {
-      const semaine =
-        semainesAnalysees[i];
-
-      try {
-        const resultat =
-          await importerSemaine(
-            semaine
-          );
-
-        resultats.push(
-          resultat
-        );
-      } catch (e) {
-        resultats.push({
-          feuille:
-            semaine.nomFeuille,
-
-          statut:
-            "ERREUR",
-
-          collaborateurs:
-            semaine.donnees
-              .length,
-
-          lignes: 0,
-
-          heures: 0,
-
-          message:
-            e instanceof Error
-              ? e.message
-              : "Erreur inconnue",
-        });
+    try {
+      // Chaque lancement repart d'un historique IMPORT_EXCEL propre.
+      // On ne touche jamais aux éventuelles données provenant d'une autre source.
+      const { error: purgeImputationsError } = await supabase
+        .from("historique_imputations")
+        .delete()
+        .eq("source", SOURCE);
+      if (purgeImputationsError) {
+        throw new Error(`Purge historique_imputations : ${purgeImputationsError.message}`);
       }
 
-      setResultatsImport([
-        ...resultats,
-      ]);
+      const { error: purgePresenceError } = await supabase
+        .from("historique_presence")
+        .delete()
+        .eq("source", SOURCE);
+      if (purgePresenceError) {
+        throw new Error(`Purge historique_presence : ${purgePresenceError.message}`);
+      }
 
-      setProgression(
-        Math.round(
-          ((i + 1) /
-            semainesAnalysees.length) *
-            100
-        )
-      );
+      const resultats = [] as string[];
 
-      await new Promise(
-        (resolve) =>
-          setTimeout(
-            resolve,
-            0
-          )
-      );
+      for (let i = 0; i < semaines.length; i++) {
+        const semaine = semaines[i];
+        const lignes = construireLignesImputations(semaine);
+        const presence = construirePresence(semaine);
+
+        const codesManquants = await verifierCodesFinal(lignes);
+        if (codesManquants.length) throw new Error(`${semaine.feuille} : codes inconnus : ${codesManquants.join(", ")}`);
+
+        if (lignes.length) {
+          const { error } = await supabase.from("historique_imputations").insert(lignes);
+          if (error) throw new Error(`${semaine.feuille} imputations : ${error.message}`);
+        }
+
+        if (presence.length) {
+          const { error } = await supabase.from("historique_presence").insert(presence);
+          if (error) throw new Error(`${semaine.feuille} présence : ${error.message}`);
+        }
+
+        resultats.push(`${semaine.feuille} OK`);
+        setProgression(Math.round(((i + 1) / semaines.length) * 100));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      setMessage(`Import terminé : ${resultats.length} semaines importées. Les imputations sont stockées de façon atomique et les données IMPORT_EXCEL des semaines/collaborateurs concernés ont été remplacées.`);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Erreur pendant l'import.");
+    } finally {
+      setImportEnCours(false);
     }
-
-    const ok =
-      resultats.filter(
-        (r) =>
-          r.statut ===
-          "OK"
-      );
-
-    const erreurs =
-      resultats.filter(
-        (r) =>
-          r.statut ===
-          "ERREUR"
-      );
-
-    const ignores =
-      resultats.filter(
-        (r) =>
-          r.statut ===
-          "SKIP"
-      );
-
-    const lignes =
-      ok.reduce(
-        (
-          total,
-          r
-        ) =>
-          total +
-          r.lignes,
-        0
-      );
-
-    const heures =
-      ok.reduce(
-        (
-          total,
-          r
-        ) =>
-          total +
-          r.heures,
-        0
-      );
-
-    if (
-      erreurs.length ===
-      0
-    ) {
-      setMessage(
-        `🎉 IMPORT TERMINÉ : ${ok.length} semaines importées, ${ignores.length} ignorées, ${lignes.toLocaleString(
-          "fr-FR"
-        )} lignes et ${formatHeures(
-          heures
-        )} importées dans historique_imputations.`
-      );
-    } else {
-      setErreur(
-        `Import terminé avec ${erreurs.length} erreur(s). ${ok.length} semaine(s) importée(s) correctement.`
-      );
-    }
-
-    setImportEnCours(false);
   }
 
-/* =======================================================
-   RESET
-======================================================= */
-
-  function reset() {
-    setFichier(null);
-    setNomFichier("");
-    setFeuillesDisponibles([]);
-    setSemainesAnalysees([]);
-    setResultatsImport([]);
-    setMessage("");
-    setErreur("");
-    setProgression(0);
-  }
-
-/* =======================================================
-   RENDU
-======================================================= */
+  const totalTickets = semaines.reduce((s, x) => s + x.donnees.reduce((a, d) => a + d.ticketsRestaurant, 0), 0);
+  const totalCBE = semaines.reduce((s, x) => s + construireLignesImputations(x).filter((l) => l.affaire_code !== null).reduce((a, l) => a + l.heures, 0), 0);
+  const totalDivers = semaines.reduce((s, x) => s + construireLignesImputations(x).filter((l) => l.affaire_code === null).reduce((a, l) => a + l.heures, 0), 0);
+  const anomalies = semaines.flatMap((s) => s.anomalies);
+  const anomaliesHeures = arrondir(anomalies.reduce((s, a) => s + a.heures, 0));
+  const anomaliesParType = anomalies.reduce<Record<string, number>>((acc, a) => {
+    acc[a.type] = (acc[a.type] ?? 0) + a.heures;
+    return acc;
+  }, {});
 
   return (
-    <div
-      style={{
-        minHeight:
-          "100vh",
-
-        background:
-          "#f4f5f7",
-
-        fontFamily:
-          "Calibri, Arial, sans-serif",
-
-        color:
-          "#222",
-      }}
-    >
-      {/* =================================================
-          HEADER
-      ================================================= */}
-
-      <div
-        style={{
-          background:
-            "#c00000",
-
-          color:
-            "white",
-
-          padding:
-            "24px 32px",
-
-          boxShadow:
-            "0 3px 10px rgba(0,0,0,0.12)",
-        }}
-      >
-        <div
-          style={{
-            maxWidth:
-              1400,
-
-            margin:
-              "0 auto",
-          }}
-        >
-          <div
-            style={{
-              fontSize:
-                30,
-
-              fontWeight:
-                700,
-            }}
-          >
-            Import historique
-          </div>
-
-          <div
-            style={{
-              marginTop:
-                5,
-
-              fontSize:
-                16,
-
-              opacity:
-                0.92,
-            }}
-          >
-            Import massif des
-            feuilles Excel vers
-            l'historique POLYNOV
-          </div>
+    <main style={styles.page}>
+      <div style={styles.header}>
+        <div>
+          <div style={styles.kicker}>POLYNOV · ADMINISTRATION</div>
+          <h1 style={styles.title}>Import historique Excel — V3</h1>
+          <p style={styles.subtitle}>Import du fichier « Récupération heures » à partir de S01-2024.</p>
+        </div>
+        <div style={styles.badge}>
+          {collaborateurs.filter((c) => c.actif).length} actifs
+          {" · "}
+          {collaborateurs.filter((c) => !c.actif).length} anciens
         </div>
       </div>
 
-      {/* =================================================
-          CONTENU
-      ================================================= */}
-
-      <div
-        style={{
-          maxWidth:
-            1400,
-
-          margin:
-            "30px auto",
-
-          padding:
-            "0 24px 50px",
-        }}
-      >
-        {/* =================================================
-            CHARGEMENT
-        ================================================= */}
-
-        {chargement && (
-          <div
-            style={{
-              background:
-                "white",
-
-              borderRadius:
-                12,
-
-              padding:
-                18,
-
-              marginBottom:
-                20,
-
-              border:
-                "1px solid #ddd",
-
-              fontWeight:
-                600,
-            }}
-          >
-            ⏳ Analyse en cours…
+      <section style={styles.card}>
+        <div style={styles.fileHeader}>
+          <div>
+            <h2 style={styles.h2}>1. Sélection du fichier</h2>
+            <p style={styles.fileHint}>Choisis le fichier Excel « Récupération heures » à importer.</p>
           </div>
-        )}
-
-        {/* =================================================
-            1 - FICHIER
-        ================================================= */}
-
-        <div
-          style={{
-            background:
-              "white",
-
-            borderRadius:
-              14,
-
-            padding:
-              24,
-
-            boxShadow:
-              "0 2px 10px rgba(0,0,0,0.06)",
-
-            marginBottom:
-              24,
-          }}
-        >
-          <div
-            style={{
-              display:
-                "flex",
-
-              justifyContent:
-                "space-between",
-
-              alignItems:
-                "center",
-
-              gap:
-                20,
-
-              flexWrap:
-                "wrap",
-            }}
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            style={styles.dashboardButton}
+            disabled={chargement || importEnCours}
           >
-            <div>
-              <div
-                style={{
-                  fontSize:
-                    21,
+            ← Retour au dashboard
+          </button>
+        </div>
 
-                  fontWeight:
-                    700,
+        <label style={styles.fileButton}>
+          <span>📂 Choisir le fichier Excel</span>
+          <input
+            type="file"
+            accept=".xlsx,.xlsm"
+            onChange={handleFichier}
+            disabled={chargement || importEnCours}
+            style={styles.hiddenInput}
+          />
+        </label>
 
-                  marginBottom:
-                    5,
-                }}
-              >
-                1. Sélectionner le
-                fichier Excel
-              </div>
+        {fichier && <div style={styles.file}>{fichier.name}</div>}
+      </section>
 
-              <div
-                style={{
-                  color:
-                    "#666",
-                }}
-              >
-                L'import démarre à{" "}
-                <strong>
-                  S01-2024
-                </strong>{" "}
-                et va jusqu'à la
-                feuille la plus
-                récente trouvée.
-              </div>
-            </div>
+      <section style={styles.grid}>
+        <Stat label="Feuilles" value={stats.semaines} />
+        <Stat label="Blocs collaborateurs" value={stats.feuillesCollaborateurs} />
+        <Stat label="Lignes atomiques" value={stats.lignes} />
+        <Stat label="Heures ventilées" value={`${stats.heures.toFixed(2)} h`} />
+        <Stat label="Présences" value={stats.presence} />
+        <Stat label="Heures sup" value={`${stats.heuresSup.toFixed(2)} h`} />
+      </section>
 
-            <label
-              style={{
-                display:
-                  "inline-flex",
-
-                alignItems:
-                  "center",
-
-                justifyContent:
-                  "center",
-
-                padding:
-                  "12px 20px",
-
-                background:
-                  "#c00000",
-
-                color:
-                  "white",
-
-                borderRadius:
-                  8,
-
-                cursor:
-                  "pointer",
-
-                fontWeight:
-                  700,
-
-                boxShadow:
-                  "0 2px 5px rgba(192,0,0,0.25)",
-              }}
-            >
-              📁 Choisir le fichier
-
-              <input
-                type="file"
-                accept=".xls,.xlsx,.xlsm"
-                onChange={
-                  handleFichier
-                }
-                style={{
-                  display:
-                    "none",
-                }}
-              />
-            </label>
+      {semaines.length > 0 && (
+        <section style={styles.card}>
+          <h2 style={styles.h2}>2. Contrôle avant import</h2>
+          <div style={styles.controlGrid}>
+            <div><strong>{totalCBE.toFixed(2)} h</strong><span>affaires</span></div>
+            <div><strong>{totalDivers.toFixed(2)} h</strong><span>divers</span></div>
+            <div><strong>{totalTickets}</strong><span>tickets restaurant</span></div>
+            <div><strong>{inconnus.length}</strong><span>collaborateurs inconnus</span></div>
+            <div><strong>{codesInconnus.length}</strong><span>codes inconnus</span></div>
+            <div><strong>{stats.heuresCollaborateursIgnores.toFixed(2)} h</strong><span>heures volontairement ignorées</span></div>
+            <div><strong>{anomaliesHeures.toFixed(2)} h</strong><span>heures en anomalie</span></div>
           </div>
 
-          {nomFichier && (
-            <div
-              style={{
-                marginTop:
-                  18,
+          {inconnus.length > 0 && <div style={styles.warning}><b>Collaborateurs inconnus :</b> {inconnus.join(", ")}</div>}
+          {codesInconnus.length > 0 && <div style={styles.error}><b>Codes inconnus :</b> {codesInconnus.join(", ")}</div>}
 
-                padding:
-                  14,
-
-                background:
-                  "#f7f7f7",
-
-                borderRadius:
-                  8,
-
-                border:
-                  "1px solid #e2e2e2",
-              }}
-            >
-              <strong>
-                Fichier :
-              </strong>{" "}
-              {nomFichier}
-
-              {feuillesDisponibles.length >
-                0 && (
-                <div
-                  style={{
-                    marginTop:
-                      8,
-
-                    color:
-                      "#555",
-                  }}
-                >
-                  <strong>
-                    Période détectée :
-                  </strong>{" "}
-                  {
-                    feuillesDisponibles[0]
-                  }{" "}
-                  →{" "}
-                  {
-                    feuillesDisponibles[
-                      feuillesDisponibles.length -
-                        1
-                    ]
-                  }{" "}
-                  (
-                  {
-                    feuillesDisponibles.length
-                  }{" "}
-                  feuilles)
+          {anomalies.length > 0 && (
+            <div style={styles.anomalyBox}>
+              <div style={styles.anomalyHeader}>
+                <div>
+                  <h3 style={styles.anomalyTitle}>Anomalies détectées</h3>
+                  <div style={styles.anomalySubtitle}>
+                    Les heures « D » ne servent plus à déclarer une anomalie. Ici, on affiche uniquement les problèmes qui peuvent expliquer une différence entre Excel et ce que l'import peut réellement stocker.
+                  </div>
                 </div>
-              )}
+                <div style={styles.anomalyTotal}>{anomaliesHeures.toFixed(2)} h</div>
+              </div>
+
+              <div style={styles.anomalySummary}>
+                {Object.entries(anomaliesParType).map(([type, heures]) => (
+                  <div key={type} style={styles.anomalyPill}>
+                    <strong>{heures.toFixed(2)} h</strong>
+                    <span>{libelleAnomalie(type)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr><th>Feuille</th><th>Sem.</th><th>Type</th><th>Collaborateur</th><th>Ligne / détail</th><th>Heures</th></tr>
+                  </thead>
+                  <tbody>
+                    {anomalies.map((a, index) => (
+                      <tr key={`${a.feuille}-${index}`}>
+                        <td>{a.feuille}</td>
+                        <td>{a.semaine}</td>
+                        <td>{libelleAnomalie(a.type)}</td>
+                        <td>{a.collaborateur}</td>
+                        <td>{a.detail}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{a.heures.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-        </div>
 
-        {/* =================================================
-            2 - ANALYSE
-        ================================================= */}
-
-        {fichier && (
-          <div
-            style={{
-              background:
-                "white",
-
-              borderRadius:
-                14,
-
-              padding:
-                24,
-
-              marginBottom:
-                24,
-
-              boxShadow:
-                "0 2px 10px rgba(0,0,0,0.06)",
-            }}
-          >
-            <div
+          <div style={styles.actions}>
+            <button
+              onClick={importer}
+              disabled={importEnCours || chargement || !!codesInconnus.length}
               style={{
-                fontSize:
-                  21,
-
-                fontWeight:
-                  700,
-
-                marginBottom:
-                  5,
+                ...styles.button,
+                ...(importEnCours || chargement || !!codesInconnus.length ? styles.buttonDisabled : {}),
               }}
             >
-              2. Analyser tout le
-              classeur
-            </div>
-
-            <div
-              style={{
-                color:
-                  "#666",
-
-                marginBottom:
-                  18,
-              }}
-            >
-              Les feuilles avant{" "}
-              <strong>
-                S01-2024
-              </strong>{" "}
-              seront ignorées.
-            </div>
-
-            <div
-              style={{
-                display:
-                  "flex",
-
-                gap:
-                  12,
-
-                flexWrap:
-                  "wrap",
-              }}
-            >
-              <button
-                onClick={
-                  analyserToutLeClasseur
-                }
-                disabled={
-                  chargement ||
-                  importEnCours
-                }
-                style={{
-                  border:
-                    "none",
-
-                  borderRadius:
-                    8,
-
-                  padding:
-                    "13px 22px",
-
-                  background:
-                    chargement
-                      ? "#aaa"
-                      : "#333",
-
-                  color:
-                    "white",
-
-                  fontWeight:
-                    700,
-
-                  fontSize:
-                    15,
-
-                  cursor:
-                    chargement
-                      ? "not-allowed"
-                      : "pointer",
-                }}
-              >
-                🔎 Analyser tout le
-                classeur
-              </button>
-
-              <button
-                onClick={
-                  reset
-                }
-                disabled={
-                  chargement ||
-                  importEnCours
-                }
-                style={{
-                  border:
-                    "1px solid #ccc",
-
-                  borderRadius:
-                    8,
-
-                  padding:
-                    "13px 22px",
-
-                  background:
-                    "white",
-
-                  color:
-                    "#555",
-
-                  fontWeight:
-                    700,
-
-                  fontSize:
-                    15,
-
-                  cursor:
-                    "pointer",
-                }}
-              >
-                ↺ Réinitialiser
-              </button>
-            </div>
+              {importEnCours ? "Import en cours…" : "Importer dans Supabase"}
+            </button>
           </div>
-        )}
+        </section>
+      )}
 
-        {/* =================================================
-            3 - STATISTIQUES
-        ================================================= */}
+      {(chargement || importEnCours) && (
+        <section style={styles.card}>
+          <div style={styles.progressTrack}><div style={{ ...styles.progressBar, width: `${progression}%` }} /></div>
+          <div style={styles.progressText}>{progression}%</div>
+        </section>
+      )}
 
-        {semainesAnalysees.length >
-          0 && (
-          <>
-            <div
-              style={{
-                fontSize:
-                  21,
+      {message && <div style={styles.success}>{message}</div>}
+      {erreur && <div style={styles.error}>{erreur}</div>}
 
-                fontWeight:
-                  700,
-
-                marginBottom:
-                  14,
-              }}
-            >
-              3. Résultat de
-              l'analyse
-            </div>
-
-            <div
-              style={{
-                display:
-                  "grid",
-
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(180px, 1fr))",
-
-                gap:
-                  14,
-
-                marginBottom:
-                  24,
-              }}
-            >
-              <StatCard
-                titre="Semaines"
-                valeur={String(
-                  statistiques.semaines
-                )}
-              />
-
-              <StatCard
-                titre="Feuilles collaborateurs"
-                valeur={String(
-                  statistiques.collaborateurs
-                )}
-              />
-
-              <StatCard
-                titre="Heures Excel"
-                valeur={formatHeures(
-                  statistiques.heuresExcel
-                )}
-              />
-
-              <StatCard
-                titre="Heures réellement ventilées"
-                valeur={formatHeures(
-                  statistiques.heuresImputees
-                )}
-              />
-
-              <StatCard
-                titre="Lignes à importer"
-                valeur={statistiques.lignes.toLocaleString(
-                  "fr-FR"
-                )}
-              />
-
-              <StatCard
-                titre="Écarts détectés"
-                valeur={String(
-                  statistiques.ecarts
-                )}
-                danger={
-                  statistiques.ecarts >
-                  0
-                }
-              />
-            </div>
-
-            {statistiques.anomalies >
-              0 && (
-              <div
-                style={{
-                  background:
-                    "#fff8e8",
-
-                  border:
-                    "1px solid #efd28a",
-
-                  color:
-                    "#7a5a00",
-
-                  borderRadius:
-                    10,
-
-                  padding:
-                    15,
-
-                  marginBottom:
-                    24,
-
-                  fontWeight:
-                    600,
-                }}
-              >
-                ⚠️{" "}
-                {
-                  statistiques.anomalies
-                }{" "}
-                ligne(s)
-                d'imputation
-                présentent une
-                différence entre
-                leur total Excel et
-                leur ventilation.
-                <br />
-                <span
-                  style={{
-                    fontWeight:
-                      400,
-
-                    fontSize:
-                      14,
-                  }}
-                >
-                  Les heures
-                  manquantes ne sont
-                  pas inventées : seules
-                  les heures réellement
-                  ventilées seront
-                  importées.
-                </span>
-              </div>
-            )}
-
-            {/* =================================================
-                4 - IMPORT
-            ================================================= */}
-
-            <div
-              style={{
-                background:
-                  "linear-gradient(135deg, #ffffff 0%, #fafafa 100%)",
-
-                borderRadius:
-                  14,
-
-                padding:
-                  28,
-
-                marginBottom:
-                  24,
-
-                border:
-                  "2px solid #c00000",
-
-                boxShadow:
-                  "0 4px 15px rgba(192,0,0,0.10)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize:
-                    23,
-
-                  fontWeight:
-                    700,
-
-                  marginBottom:
-                    6,
-                }}
-              >
-                4. Import massif
-              </div>
-
-              <div
-                style={{
-                  color:
-                    "#666",
-
-                  marginBottom:
-                    20,
-                }}
-              >
-                <strong>
-                  {
-                    statistiques.semaines
-                  }{" "}
-                  semaines
-                </strong>{" "}
-                vont être importées
-                dans{" "}
-                <strong>
-                  historique_imputations
-                </strong>
-                .
-              </div>
-
-              {progression >
-                0 &&
-                (importEnCours ||
-                  progression ===
-                    100) && (
-                  <div
-                    style={{
-                      marginBottom:
-                        20,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display:
-                          "flex",
-
-                        justifyContent:
-                          "space-between",
-
-                        marginBottom:
-                          7,
-
-                        fontWeight:
-                          700,
-                      }}
-                    >
-                      <span>
-                        Progression
-                      </span>
-
-                      <span>
-                        {
-                          progression
-                        }{" "}
-                        %
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        height:
-                          12,
-
-                        background:
-                          "#e5e5e5",
-
-                        borderRadius:
-                          20,
-
-                        overflow:
-                          "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${progression}%`,
-
-                          height:
-                            "100%",
-
-                          background:
-                            "#c00000",
-
-                          transition:
-                            "width 0.2s ease",
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-              <button
-                onClick={
-                  importerTout
-                }
-                disabled={
-                  importEnCours
-                }
-                style={{
-                  width:
-                    "100%",
-
-                  border:
-                    "none",
-
-                  borderRadius:
-                    10,
-
-                  padding:
-                    "17px 24px",
-
-                  background:
-                    importEnCours
-                      ? "#999"
-                      : "#c00000",
-
-                  color:
-                    "white",
-
-                  fontWeight:
-                    800,
-
-                  fontSize:
-                    18,
-
-                  cursor:
-                    importEnCours
-                      ? "not-allowed"
-                      : "pointer",
-
-                  boxShadow:
-                    importEnCours
-                      ? "none"
-                      : "0 4px 10px rgba(192,0,0,0.25)",
-                }}
-              >
-                {importEnCours
-                  ? "⏳ IMPORT EN COURS…"
-                  : "🚀 IMPORTER TOUT L'HISTORIQUE"}
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* =================================================
-            MESSAGES
-        ================================================= */}
-
-        {message && (
-          <div
-            style={{
-              background:
-                "#eaf7ee",
-
-              color:
-                "#176b35",
-
-              border:
-                "1px solid #b7dfc2",
-
-              borderRadius:
-                10,
-
-              padding:
-                16,
-
-              marginBottom:
-                18,
-
-              fontWeight:
-                600,
-            }}
-          >
-            {message}
+      {semaines.length > 0 && (
+        <section style={styles.card}>
+          <h2 style={styles.h2}>Résumé des feuilles</h2>
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead><tr><th>Feuille</th><th>Semaine</th><th>Collaborateurs</th><th>Lignes</th><th>Heures</th><th>H sup</th></tr></thead>
+              <tbody>
+                {semaines.map((s) => {
+                  const l = construireLignesImputations(s);
+                  const hs = s.donnees.reduce((a, d) => a + d.heuresSup, 0);
+                  return <tr key={s.feuille}><td>{s.feuille}</td><td>{s.semaine}</td><td>{s.donnees.length}</td><td>{l.length}</td><td>{l.reduce((a, x) => a + x.heures, 0).toFixed(2)}</td><td>{hs.toFixed(2)}</td></tr>;
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
-
-        {erreur && (
-          <div
-            style={{
-              background:
-                "#fff1f1",
-
-              color:
-                "#a00000",
-
-              border:
-                "1px solid #efb5b5",
-
-              borderRadius:
-                10,
-
-              padding:
-                16,
-
-              marginBottom:
-                18,
-
-              fontWeight:
-                600,
-
-              whiteSpace:
-                "pre-wrap",
-            }}
-          >
-            ❌ {erreur}
-          </div>
-        )}
-
-        {/* =================================================
-            RESULTATS IMPORT
-        ================================================= */}
-
-        {resultatsImport.length >
-          0 && (
-          <div
-            style={{
-              background:
-                "white",
-
-              borderRadius:
-                14,
-
-              padding:
-                24,
-
-              boxShadow:
-                "0 2px 10px rgba(0,0,0,0.06)",
-            }}
-          >
-            <div
-              style={{
-                fontSize:
-                  21,
-
-                fontWeight:
-                  700,
-
-                marginBottom:
-                  16,
-              }}
-            >
-              Suivi de l'import
-            </div>
-
-            <div
-              style={{
-                display:
-                  "flex",
-
-                flexDirection:
-                  "column",
-
-                gap:
-                  7,
-
-                maxHeight:
-                  600,
-
-                overflowY:
-                  "auto",
-              }}
-            >
-              {resultatsImport.map(
-                (
-                  resultat
-                ) => (
-                  <div
-                    key={
-                      resultat.feuille
-                    }
-                    style={{
-                      display:
-                        "grid",
-
-                      gridTemplateColumns:
-                        "100px 1fr 120px 130px 1fr",
-
-                      gap:
-                        12,
-
-                      alignItems:
-                        "center",
-
-                      padding:
-                        "10px 12px",
-
-                      borderRadius:
-                        7,
-
-                      background:
-                        resultat.statut ===
-                        "OK"
-                          ? "#f2faf4"
-                          : resultat.statut ===
-                            "SKIP"
-                          ? "#f7f7f7"
-                          : "#fff2f2",
-
-                      border:
-                        "1px solid #e5e5e5",
-                    }}
-                  >
-                    <strong>
-                      {
-                        resultat.feuille
-                      }
-                    </strong>
-
-                    <span>
-                      {resultat.statut ===
-                      "OK"
-                        ? "✓ Importée"
-                        : resultat.statut ===
-                          "SKIP"
-                        ? "— Ignorée"
-                        : "✕ Erreur"}
-                    </span>
-
-                    <span>
-                      {
-                        resultat.lignes
-                      }{" "}
-                      lignes
-                    </span>
-
-                    <span>
-                      {formatHeures(
-                        resultat.heures
-                      )}
-                    </span>
-
-                    <span
-                      style={{
-                        color:
-                          resultat.statut ===
-                          "ERREUR"
-                            ? "#a00000"
-                            : "#666",
-                      }}
-                    >
-                      {
-                        resultat.message
-                      }
-                    </span>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =================================================
-            APERCU DES SEMAINES
-        ================================================= */}
-
-        {semainesAnalysees.length >
-          0 && (
-          <div
-            style={{
-              marginTop:
-                24,
-
-              background:
-                "white",
-
-              borderRadius:
-                14,
-
-              padding:
-                24,
-
-              boxShadow:
-                "0 2px 10px rgba(0,0,0,0.06)",
-            }}
-          >
-            <div
-              style={{
-                fontSize:
-                  21,
-
-                fontWeight:
-                  700,
-
-                marginBottom:
-                  16,
-              }}
-            >
-              Semaines analysées
-            </div>
-
-            <div
-              style={{
-                display:
-                  "grid",
-
-                gridTemplateColumns:
-                  "repeat(auto-fill, minmax(150px, 1fr))",
-
-                gap:
-                  8,
-              }}
-            >
-              {semainesAnalysees.map(
-                (
-                  semaine
-                ) => (
-                  <div
-                    key={
-                      semaine.nomFeuille
-                    }
-                    style={{
-                      padding:
-                        12,
-
-                      borderRadius:
-                        8,
-
-                      background:
-                        "#f7f7f7",
-
-                      border:
-                        "1px solid #e4e4e4",
-                    }}
-                  >
-                    <strong>
-                      {
-                        semaine.nomFeuille
-                      }
-                    </strong>
-
-                    <div
-                      style={{
-                        marginTop:
-                          5,
-
-                        fontSize:
-                          13,
-
-                        color:
-                          "#666",
-                      }}
-                    >
-                      {
-                        semaine
-                          .donnees
-                          .length
-                      }{" "}
-                      collaborateurs
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+        </section>
+      )}
+    </main>
   );
 }
 
-/* =========================================================
-   STAT CARD
-========================================================= */
-
-function StatCard({
-  titre,
-  valeur,
-  danger = false,
-}: {
-  titre: string;
-  valeur: string;
-  danger?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        background:
-          "white",
-
-        borderRadius:
-          12,
-
-        padding:
-          18,
-
-        border: danger
-          ? "1px solid #e7aaaa"
-          : "1px solid #e4e4e4",
-
-        boxShadow:
-          "0 2px 7px rgba(0,0,0,0.04)",
-      }}
-    >
-      <div
-        style={{
-          color:
-            "#777",
-
-          fontSize:
-            14,
-
-          marginBottom:
-            7,
-        }}
-      >
-        {titre}
-      </div>
-
-      <div
-        style={{
-          fontSize:
-            25,
-
-          fontWeight:
-            800,
-
-          color: danger
-            ? "#c00000"
-            : "#222",
-        }}
-      >
-        {valeur}
-      </div>
-    </div>
-  );
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return <div style={styles.stat}><span>{label}</span><strong>{value}</strong></div>;
 }
+
+function libelleAnomalie(type: string): string {
+  switch (type) {
+    case "COLLABORATEUR_INCONNU": return "Collaborateur inconnu";
+    case "ACTIVITE_SANS_COLLABORATEUR": return "Activité sans collaborateur";
+    case "CODE_SANS_ENTETE": return "Code sans en-tête";
+    default: return type;
+  }
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: "100vh", background: "#f5f6f8", fontFamily: "Calibri, Arial, sans-serif", color: "#222", padding: 32 },
+  header: { background: "#c00000", color: "white", borderRadius: 14, padding: "24px 28px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, marginBottom: 22 },
+  kicker: { fontSize: 12, fontWeight: 700, letterSpacing: 1.2, opacity: 0.85 },
+  title: { margin: "5px 0", fontSize: 28 },
+  subtitle: { margin: 0, opacity: 0.9 },
+  badge: { background: "rgba(255,255,255,.15)", padding: "9px 13px", borderRadius: 999, whiteSpace: "nowrap" },
+  card: { background: "white", borderRadius: 14, padding: 22, marginBottom: 18, boxShadow: "0 2px 10px rgba(0,0,0,.05)" },
+  h2: { marginTop: 0, fontSize: 18 },
+  file: { marginTop: 12, fontWeight: 700 },
+  fileHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, marginBottom: 16 },
+  fileHint: { margin: "-8px 0 0", color: "#666", fontSize: 13 },
+  fileButton: { display: "inline-flex", alignItems: "center", padding: "12px 18px", borderRadius: 10, background: "#c00000", color: "white", fontWeight: 700, cursor: "pointer", boxShadow: "0 5px 14px rgba(192,0,0,.18)" },
+  hiddenInput: { display: "none" },
+  dashboardButton: { border: "1px solid #d7dce2", background: "white", color: "#333", borderRadius: 9, padding: "10px 14px", fontWeight: 700, cursor: "pointer" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 12, marginBottom: 18 },
+  stat: { background: "white", borderRadius: 12, padding: 16, boxShadow: "0 2px 10px rgba(0,0,0,.04)" },
+  controlGrid: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 12, marginBottom: 18 },
+  warning: { background: "#fff4dd", border: "1px solid #f0c36a", padding: 12, borderRadius: 9, marginBottom: 10 },
+  anomalyBox: { background: "#fffaf0", border: "1px solid #ead8aa", borderRadius: 12, padding: 16, marginTop: 16 },
+  anomalyHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 14 },
+  anomalyTitle: { margin: 0, fontSize: 17 },
+  anomalySubtitle: { marginTop: 5, color: "#666", fontSize: 13, lineHeight: 1.4 },
+  anomalyTotal: { fontWeight: 800, fontSize: 20, whiteSpace: "nowrap" },
+  anomalySummary: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 },
+  anomalyPill: { background: "white", border: "1px solid #e5d7b8", borderRadius: 9, padding: "8px 11px", display: "flex", flexDirection: "column", gap: 2 },
+  error: { background: "#ffe5e5", border: "1px solid #e0a0a0", padding: 12, borderRadius: 9, marginTop: 10 },
+  success: { background: "#e7f6ea", border: "1px solid #9ad3a3", padding: 14, borderRadius: 10, marginBottom: 18 },
+  actions: { marginTop: 20, display: "flex", justifyContent: "flex-end" },
+  button: {
+    border: 0,
+    background: "#c00000",
+    color: "white",
+    borderRadius: 10,
+    padding: "12px 22px",
+    fontWeight: 700,
+    fontSize: 14,
+    letterSpacing: 0.1,
+    cursor: "pointer",
+    boxShadow: "0 5px 14px rgba(192,0,0,.20)",
+    transition: "transform .15s ease, box-shadow .15s ease, opacity .15s ease",
+  },
+  buttonDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
+    boxShadow: "none",
+  },
+  progressTrack: { height: 12, background: "#eee", borderRadius: 999, overflow: "hidden" },
+  progressBar: { height: "100%", background: "#c00000", transition: "width .2s" },
+  progressText: { marginTop: 7, textAlign: "center" },
+  tableWrap: { overflowX: "auto" },
+  table: { width: "100%", borderCollapse: "collapse" },
+};

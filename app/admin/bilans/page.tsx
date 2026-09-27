@@ -73,6 +73,19 @@ type FeuilleJour = {
   total_heures: number | null;
 };
 
+type CodeImputation = {
+  code: string | null;
+  libelle: string | null;
+  categorie: string | null;
+  type_affaire_autorise: string | null;
+  vendable: boolean | null;
+  actif: boolean | null;
+  autorise_affaire: boolean | null;
+  autorise_devis: boolean | null;
+  autorise_divers: boolean | null;
+  historique_uniquement: boolean | null;
+};
+
 type FeuilleImputation = {
   id: string;
   jour_id: string;
@@ -181,11 +194,11 @@ type LigneNonExpliquee = {
 
   capacite: number;
 
-cbe: number;
-dbe: number;
-ni: number;
-cn: number;
-formation: number;
+  cbe: number;
+  dbe: number;
+  ni: number;
+  cn: number;
+  formation: number;
   autres: number;
   ignorees: number;
 
@@ -201,79 +214,35 @@ formation: number;
 ========================================================= */
 
 const CODE_NI = "NI";
-
-const CODES_FORMATION = ["FO", "FI"];
-
-// Divers de production : codes présents dans les lignes "Divers"
-// de l'ancien Excel mais qui correspondent bien à de l'activité de production.
-// Cette liste pourra être enrichie sans toucher au reste du bilan.
-const CODES_DIVERS_PRODUCTION = [
-  "EM",
-  "EI",
-  "IF",
-  "IM",
-  "MP",
-  "RN",
-  "DT",
-  "SC",
-  "DM",
-  "SU",
-  "LI",
-  "EE",
-  "EP",
-  "CO",
-  "CM",
-  "ET",
-  "HT",
-  "BD",
-  "RS",
-  "NC",
-  "TQ",
-];
-
-// Divers d'absences : on remonte volontairement uniquement ces codes.
-const CODES_DIVERS_ABSENCES = [
-  "RE",
-  "ML",
-  "VM",
-  "AA",
-  "AT",
-  "AI",
-];
-
-// Ces codes existent dans l'historique mais ne doivent ni apparaître
-// comme "Autres" ni gonfler le "Non expliqué".
-const CODES_A_IGNORER = [
-  "FE",
-  "CP",
-  "GI",
-  "AC",
-  "AP",
-];
-
 const CODE_CN = "CN";
 
-// Codes d'absence utilisés par le nouveau système lorsqu'une journée
-// ne possède pas d'imputation détaillée.
-const CODES_ABSENCE = [
-  ...CODES_DIVERS_ABSENCES,
-  "RTT",
-  "ABS",
-  "ABSENCE",
+// Les catégories métier viennent désormais de Gestion-code / codes_imputation.
+// Ces alias ne servent qu'à reconnaître des anciennes valeurs présentes dans
+// l'historique Excel et qui n'ont pas forcément un code métier équivalent.
+const CODES_ABSENCE_LEGACY = [
+  "RE", "ML", "VM", "AA", "AT", "AI", "RTT", "ABS", "ABSENCE",
+];
+
+const CODES_HORS_BILAN_LEGACY = [
+  "FE", "CP", "AC", "AP",
 ];
 
 const COULEURS = {
   rouge: "#c00000",
-  orange: "#e58a00",
-  gris: "#8a8a8a",
+  roseDevis: "#f2bfd0",
+  gris: "#414040",
+  bleuCN: "#85ef57",
   violet: "#8b6bb1",
+  turquoiseAbsence: "#1f9d8b",
+  vertProduction: "#f700cd",
+  ambre: "#d59b2a",
   grisClair: "#cfcfcf",
   blanc: "#ffffff",
   fond: "#f5f6f8",
   bordure: "#e2e5e9",
   texte: "#252525",
   texteSecondaire: "#6d737a",
-  vert: "#238636",
+  vert: "#19939e",
   rougeClair: "#fbe9e9",
   orangeClair: "#fff2df",
   grisTresClair: "#f0f0f0",
@@ -417,42 +386,56 @@ function isoSemaine(date: Date) {
   };
 }
 
-function estCodeAbsence(code: string): boolean {
-  return CODES_ABSENCE.includes(
-    normaliserTexte(code)
+function categorieCode(
+  code: string,
+  codesMap: Map<string, CodeImputation>
+): string | null {
+  const c = codesMap.get(normaliserTexte(code));
+  return c?.categorie ? normaliserTexte(c.categorie) : null;
+}
+
+function classerCode(
+  code: string,
+  codesMap: Map<string, CodeImputation>
+): Categorie | null {
+  const c = normaliserTexte(code);
+  const categorie = categorieCode(c, codesMap);
+
+  if (categorie === "NI") return "NI";
+  if (categorie === "COMMERCIAL") return "CN";
+  if (categorie === "FORMATION") return "FORMATION";
+  if (categorie === "ABSENCE") return "DIVERS_ABSENCES";
+  if (categorie === "HORS_BILAN") return "IGNORE";
+  if (categorie === "PRODUCTION") return "AFFAIRES_SANS_TYPE";
+
+  // Compatibilité avec les anciens historiques si un code n'existe plus
+  // dans Gestion-code.
+  if (CODES_ABSENCE_LEGACY.includes(c)) return "DIVERS_ABSENCES";
+  if (CODES_HORS_BILAN_LEGACY.includes(c)) return "IGNORE";
+  if (c === CODE_NI) return "NI";
+  if (c === CODE_CN) return "CN";
+
+  return null;
+}
+
+function estLigneDivers(affaire: string | null): boolean {
+  const a = normaliserTexte(affaire);
+  return (
+    a === "DIVERS" ||
+    a.startsWith("DIVERS ") ||
+    a.startsWith("DIVERS-") ||
+    a.startsWith("DIVERS:")
   );
 }
 
-function estFormation(code: string): boolean {
-  return CODES_FORMATION.includes(
-    normaliserTexte(code)
-  );
+function estCodeAbsence(code: string, codesMap?: Map<string, CodeImputation>): boolean {
+  if (codesMap) return classerCode(code, codesMap) === "DIVERS_ABSENCES";
+  return CODES_ABSENCE_LEGACY.includes(normaliserTexte(code));
 }
 
-function estNI(code: string): boolean {
-  return normaliserTexte(code) === CODE_NI;
-}
-
-function estCN(code: string): boolean {
-  return normaliserTexte(code) === CODE_CN;
-}
-
-function estDiversProduction(code: string): boolean {
-  return CODES_DIVERS_PRODUCTION.includes(
-    normaliserTexte(code)
-  );
-}
-
-function estDiversAbsence(code: string): boolean {
-  return CODES_DIVERS_ABSENCES.includes(
-    normaliserTexte(code)
-  );
-}
-
-function estCodeIgnore(code: string): boolean {
-  return CODES_A_IGNORER.includes(
-    normaliserTexte(code)
-  );
+function estCodeIgnore(code: string, codesMap?: Map<string, CodeImputation>): boolean {
+  if (codesMap) return classerCode(code, codesMap) === "IGNORE";
+  return CODES_HORS_BILAN_LEGACY.includes(normaliserTexte(code));
 }
 
 /* =========================================================
@@ -518,65 +501,24 @@ function numeroAffaireHistorique(
 ========================================================= */
 
 function classifierHistorique(
-  ligne: HistoriqueImputation
+  ligne: HistoriqueImputation,
+  codesMap: Map<string, CodeImputation>
 ): Categorie | null {
-  const code = normaliserTexte(
-    ligne.code_imputation
-  );
+  const code = normaliserTexte(ligne.code_imputation);
+  const typeAffaire = typeAffaireHistorique(ligne.affaire_code);
 
-  const affaire = ligne.affaire_code;
+  if (typeAffaire === "CBE") return "CBE";
+  if (typeAffaire === "DBE") return "DBE";
 
-  /*
-    HISTORIQUE :
-    le type d'affaire est porté par affaire_code.
+  const classe = classerCode(code, codesMap);
+  if (classe) return classe;
 
-    CAS = ancien préfixe utilisé pour certaines affaires
-    et doit être regroupé avec les CBE.
-
-    Une affaire CBE / CAS / DBE est prioritaire sur le code
-    d'imputation : par exemple une heure HA sur un CBE reste
-    une heure CBE.
-  */
-  const typeAffaire =
-    typeAffaireHistorique(affaire);
-
-  if (typeAffaire === "CBE") {
-    return "CBE";
-  }
-
-  if (typeAffaire === "DBE") {
-    return "DBE";
-  }
-
-  if (estNI(code)) {
-    return "NI";
-  }
-
-  if (estCN(code)) {
-    return "CN";
-  }
-
-  if (estCodeIgnore(code)) {
-    return "IGNORE";
-  }
-
-  if (estFormation(code)) {
-    return "FORMATION";
-  }
-
-  if (estDiversAbsence(code)) {
-    return "DIVERS_ABSENCES";
-  }
-
-  if (estDiversProduction(code)) {
-    return "AFFAIRES_SANS_TYPE";
-  }
-
-  if (estCodeAbsence(code)) {
-    return null;
-  }
-
-  if (String(affaire ?? "").trim() !== "") {
+  // Dans l'historique, une ligne explicitement en DIVERS qui n'est pas
+  // déjà reconnue par Gestion-code est volontairement considérée comme
+  // "Divers de production". C'est précisément le fourre-tout métier
+  // historique : on ne perd pas ces heures simplement parce qu'un nouveau
+  // code n'existait pas encore dans le référentiel.
+  if (estLigneDivers(ligne.affaire_code)) {
     return "AFFAIRES_SANS_TYPE";
   }
 
@@ -652,6 +594,9 @@ export default function BilansPage() {
   const [imputations, setImputations] =
     useState<FeuilleImputation[]>([]);
 
+  const [codesImputation, setCodesImputation] =
+    useState<CodeImputation[]>([]);
+
   const [chargement, setChargement] =
     useState(true);
 
@@ -694,6 +639,9 @@ export default function BilansPage() {
     useState<
       "PILOTAGE" | "NON_EXPLIQUE" | "COLLABORATEURS"
     >("PILOTAGE");
+
+  const [codeDetailFiltre, setCodeDetailFiltre] =
+    useState<string | null>(null);
 
   /* -----------------------------------------------
      CHARGEMENT
@@ -742,6 +690,7 @@ export default function BilansPage() {
         historiqueToutes,
         presenceToutes,
         feuillesRes,
+        codesRes,
       ] = await Promise.all([
         /*
           IMPORTANT : on charge aussi les anciens collaborateurs inactifs.
@@ -786,6 +735,13 @@ export default function BilansPage() {
           .select(
             "id,collaborateur_id,semaine_debut,total_heures,total_theorique,heures_supplementaires,statut"
           ),
+
+        supabase
+          .from("codes_imputation")
+          .select(
+            "code,libelle,categorie,type_affaire_autorise,vendable,actif,autorise_affaire,autorise_devis,autorise_divers,historique_uniquement"
+          )
+          .order("ordre_affichage", { ascending: true }),
       ]);
 
       if (collaborateursRes.error) {
@@ -800,6 +756,10 @@ export default function BilansPage() {
 
       if (feuillesRes.error) {
         throw feuillesRes.error;
+      }
+
+      if (codesRes.error) {
+        throw codesRes.error;
       }
 
       const feuillesChargees =
@@ -819,6 +779,7 @@ export default function BilansPage() {
       setHistorique(historiqueToutes);
 
       setPresencesHistorique(presenceToutes);
+      setCodesImputation((codesRes.data ?? []) as CodeImputation[]);
 
       console.log(
         "Historique imputations :",
@@ -975,6 +936,14 @@ export default function BilansPage() {
       return map;
     }, [feuilles]);
 
+  const codesMap = useMemo(() => {
+    const map = new Map<string, CodeImputation>();
+    codesImputation.forEach((c) => {
+      if (c.code) map.set(normaliserTexte(c.code), c);
+    });
+    return map;
+  }, [codesImputation]);
+
   /* =====================================================
      CAPACITE HISTORIQUE
   ===================================================== */
@@ -1004,7 +973,103 @@ export default function BilansPage() {
       return 0;
     }
 
-    return capaciteProfil(profil);
+    /*
+      HISTORIQUE 2024-2026 :
+
+      On ne cherche volontairement PAS à reconstituer le rythme
+      individuel 37,5 h / PE / PI à partir des profils horaires.
+
+      Le référentiel historique est la capacité normale POLYNOV :
+        35 h / semaine = 7 h / jour.
+
+      Les éventuelles heures supplémentaires (PE, PI, etc.) restent
+      séparées et ne gonflent donc pas la capacité théorique.
+    */
+    return 35;
+  }
+
+  function joursOuvresDansPeriode(
+    debut: Date,
+    fin: Date
+  ): number {
+    const d = new Date(debut);
+    d.setHours(0, 0, 0, 0);
+
+    const f = new Date(fin);
+    f.setHours(0, 0, 0, 0);
+
+    if (d > f) return 0;
+
+    let total = 0;
+
+    while (d <= f) {
+      const jour = d.getDay();
+
+      if (jour >= 1 && jour <= 5) {
+        total++;
+      }
+
+      d.setDate(d.getDate() + 1);
+    }
+
+    return total;
+  }
+
+  /*
+    Capacité historique d'une semaine.
+
+    - Exercice : référentiel simple de 35 h par semaine.
+    - Périodes bornées (année / mois / libre) :
+      on ne compte que les jours ouvrés réellement contenus
+      dans la période, à raison de 7 h / jour.
+
+    Cette distinction évite par exemple de transformer un mois
+    partiel en 25 jours × 7 h.
+  */
+  function capaciteHistoriqueSemaine(
+    anneeSemaine: number,
+    semaine: number
+  ): number {
+    if (!periodeActive) {
+      return 35;
+    }
+
+    if (modePeriode === "EXERCICE") {
+      return 35;
+    }
+
+    const lundi = lundiSemaine(
+      anneeSemaine,
+      semaine
+    );
+
+    const dimanche = new Date(lundi);
+    dimanche.setUTCDate(
+      dimanche.getUTCDate() + 6
+    );
+
+    const debut = new Date(
+      Math.max(
+        lundi.getTime(),
+        periodeActive.debut.getTime()
+      )
+    );
+
+    const fin = new Date(
+      Math.min(
+        dimanche.getTime(),
+        periodeActive.fin.getTime()
+      )
+    );
+
+    if (debut > fin) {
+      return 0;
+    }
+
+    return joursOuvresDansPeriode(
+      debut,
+      fin
+    ) * 7;
   }
 
   /* =====================================================
@@ -1408,7 +1473,8 @@ feuilles.forEach((f) => {
 
         const categorie =
           classifierHistorique(
-            ligne
+            ligne,
+            codesMap
           );
 
 
@@ -1424,7 +1490,7 @@ feuilles.forEach((f) => {
             ligne.code_imputation
           );
 
-        if (estCodeAbsence(code)) {
+        if (estCodeAbsence(code, codesMap)) {
           cs.absence += heuresLigne;
           semaine.heuresAbsence +=
             heuresLigne;
@@ -1799,50 +1865,42 @@ feuilles.forEach((f) => {
                 }
 
                 if (type === "DIVERS") {
-                  if (estNI(code)) {
+                  const classe = classerCode(code, codesMap);
+
+                  if (classe === "NI") {
                     cs.ni += h;
                     semaine.ni += h;
                     return;
                   }
 
-                  if (estCN(code)) {
+                  if (classe === "CN") {
                     cs.cn += h;
                     semaine.cn += h;
                     return;
                   }
 
-                  if (estFormation(code)) {
+                  if (classe === "FORMATION") {
                     cs.formation += h;
                     semaine.formation += h;
                     return;
                   }
 
-                  if (estDiversAbsence(code)) {
+                  if (classe === "DIVERS_ABSENCES") {
                     cs.absence += h;
                     semaine.heuresAbsence += h;
                     return;
                   }
 
-                  if (estDiversProduction(code)) {
-                    cs.affairesSansType += h;
-                    semaine.affairesSansType += h;
-                    return;
-                  }
-
-                  if (estCodeIgnore(code)) {
+                  if (classe === "IGNORE") {
                     cs.ignorees += h;
                     semaine.ignorees += h;
                     return;
                   }
 
-                  if (estCodeAbsence(code)) {
-                    cs.absence += h;
-                    semaine.heuresAbsence += h;
-                    return;
-                  }
-
-                  cs.autres += h;
-                  semaine.autres += h;
+                  // PRODUCTION ou code encore inconnu : une ligne DIVERS
+                  // est par nature du temps interne non affecté à une affaire.
+                  cs.affairesSansType += h;
+                  semaine.affairesSansType += h;
                   return;
                 }
 
@@ -1851,7 +1909,7 @@ feuilles.forEach((f) => {
                   travaillée.
                 */
                 if (
-                  estCodeAbsence(code)
+                  estCodeAbsence(code, codesMap)
                 ) {
                   cs.absence += h;
                   semaine.heuresAbsence += h;
@@ -1884,8 +1942,27 @@ feuilles.forEach((f) => {
                   return;
                 }
 
-                cs.autres += h;
-                semaine.autres += h;
+                const classe = classerCode(code, codesMap);
+
+                if (classe === "NI") {
+                  cs.ni += h;
+                  semaine.ni += h;
+                } else if (classe === "CN") {
+                  cs.cn += h;
+                  semaine.cn += h;
+                } else if (classe === "FORMATION") {
+                  cs.formation += h;
+                  semaine.formation += h;
+                } else if (classe === "DIVERS_ABSENCES") {
+                  cs.absence += h;
+                  semaine.heuresAbsence += h;
+                } else if (classe === "IGNORE") {
+                  cs.ignorees += h;
+                  semaine.ignorees += h;
+                } else {
+                  cs.affairesSansType += h;
+                  semaine.affairesSansType += h;
+                }
               });
 
               /*
@@ -2146,6 +2223,7 @@ feuilles.forEach((f) => {
       imputations,
       collaborateursMap,
       profilsMap,
+      codesMap,
       periodeActive,
     ]);
 
@@ -2265,6 +2343,74 @@ feuilles.forEach((f) => {
 
 
 
+  const detailCodes = useMemo(() => {
+    const result = new Map<string, {
+      code: string;
+      libelle: string;
+      categorie: string;
+      classification: Categorie | null;
+      heures: number;
+    }>();
+
+    const ajouter = (
+      codeBrut: string | null,
+      h: number,
+      classification: Categorie | null
+    ) => {
+      const code = normaliserTexte(codeBrut);
+      if (!code || h <= 0) return;
+      const ref = codesMap.get(code);
+      const cle = `${classification ?? "AUTRES"}::${code}`;
+      const existant = result.get(cle) ?? {
+        code,
+        libelle: ref?.libelle ?? "Code non référencé",
+        categorie: ref?.categorie ?? "NON CLASSE",
+        classification,
+        heures: 0,
+      };
+      existant.heures += h;
+      result.set(cle, existant);
+    };
+
+    const feuillesNouvelles = new Set(
+      feuilles.map((f) => {
+        const d = new Date(`${f.semaine_debut}T00:00:00`);
+        const w = isoSemaine(d);
+        return `${f.collaborateur_id}-${w.annee}-${w.semaine}`;
+      })
+    );
+
+    historique.forEach((l) => {
+      if (!semaineDansPeriode(l.annee, l.semaine)) return;
+      if (feuillesNouvelles.has(`${l.collaborateur_id}-${l.annee}-${l.semaine}`)) return;
+      const classification = classifierHistorique(l, codesMap);
+      ajouter(l.code_imputation, nombre(l.heures), classification);
+    });
+
+    const feuillesMap = new Map(feuilles.map((f) => [f.id, f]));
+    const joursMap = new Map(jours.map((j) => [j.id, j]));
+    imputations.forEach((imp) => {
+      const jour = joursMap.get(imp.jour_id);
+      const feuille = jour ? feuillesMap.get(jour.feuille_id) : undefined;
+      if (!feuille) return;
+      const d = new Date(`${feuille.semaine_debut}T00:00:00`);
+      const w = isoSemaine(d);
+      if (!semaineDansPeriode(w.annee, w.semaine)) return;
+
+      const type = normaliserTexte(imp.type_affaire);
+      const numero = String(imp.numero_affaire ?? "").trim();
+      let classification: Categorie | null = null;
+      if (type === "CBE" || /^CBE/i.test(numero)) classification = "CBE";
+      else if (type === "DBE" || /^DBE/i.test(numero)) classification = "DBE";
+      else if (type === "DIVERS") classification = classerCode(normaliserTexte(imp.code), codesMap) ?? "AFFAIRES_SANS_TYPE";
+      else classification = classerCode(normaliserTexte(imp.code), codesMap) ?? "AUTRES";
+
+      ajouter(imp.code, nombre(imp.heures), classification);
+    });
+
+    return Array.from(result.values()).sort((a, b) => b.heures - a.heures);
+  }, [historique, imputations, jours, feuilles, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
+
   /* =====================================================
      LIGNES NON EXPLIQUEES
   ===================================================== */
@@ -2288,12 +2434,16 @@ feuilles.forEach((f) => {
               return;
             }
 
-            if (
-              cs.nonExplique <=
-              0.01 &&
-              cs.affairesSansType <=
-                0.01
-            ) {
+            /*
+              Cette table s'appelle "Ce qui reste à expliquer" :
+              on n'y affiche donc QUE le reliquat réellement non expliqué.
+
+              Les heures de Divers de production et les heures Hors bilan
+              peuvent être affichées dans les détails du bilan, mais elles
+              ne doivent plus faire apparaître artificiellement une ligne
+              dans ce diagnostic.
+            */
+            if (cs.nonExplique <= 0.01) {
               return;
             }
 
@@ -2315,12 +2465,12 @@ feuilles.forEach((f) => {
               capacite:
                 cs.capacite,
 
-cbe: cs.cbe,
-dbe: cs.dbe,
-ni: cs.ni,
-cn: cs.cn,
-formation:
-  cs.formation,
+              cbe: cs.cbe,
+              dbe: cs.dbe,
+              ni: cs.ni,
+              cn: cs.cn,
+              formation:
+                cs.formation,
               autres: cs.autres,
               ignorees: cs.ignorees,
 
@@ -3014,7 +3164,7 @@ formation:
             value={heures(
               global.capacite
             )}
-            sub="100 % disponible"
+            sub={`${pourcentage(taux(global.capacite, global.capacite))} de la capacité`}
           />
 
           <Kpi
@@ -3031,7 +3181,9 @@ formation:
             color={
               COULEURS.rouge
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("CBE")}
+            clickable/>
 
           <Kpi
             label="Devis / DBE"
@@ -3045,64 +3197,76 @@ formation:
               )
             )} de la capacité`}
             color={
-              COULEURS.orange
+              COULEURS.roseDevis
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("DBE")}
+            clickable/>
 
           <Kpi
             label="NI"
             value={heures(
               global.ni
             )}
-            sub="Non imputable"
+            sub={`${pourcentage(taux(global.ni, global.capacite))} de la capacité`}
             color={
               COULEURS.gris
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("NI")}
+            clickable/>
 
           <Kpi
             label="CN"
             value={heures(
               global.cn
             )}
-            sub="Code CN — Divers"
+            sub={`${pourcentage(taux(global.cn, global.capacite))} de la capacité`}
             color={
-              COULEURS.gris
+              COULEURS.bleuCN
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("COMMERCIAL")}
+            clickable/>
 
           <Kpi
             label="Formation"
             value={heures(
               global.formation
             )}
-            sub="FO / FI"
+            sub={`${pourcentage(taux(global.formation, global.capacite))} de la capacité`}
             color={
               COULEURS.violet
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("FORMATION")}
+            clickable/>
 
           <Kpi
             label="Divers d'absences"
             value={heures(
               global.absence
             )}
-            sub="RE / ML / VM / AA / AT / AI"
+            sub={`${pourcentage(taux(global.absence, global.capacite))} de la capacité`}
             color={
-              COULEURS.orange
+              COULEURS.turquoiseAbsence
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("DIVERS_ABSENCES")}
+            clickable/>
 
           <Kpi
             label="Divers de production"
             value={heures(
               global.affairesSansType
             )}
-            sub="Tout code affaire pointé en Divers"
+            sub={`${pourcentage(taux(global.affairesSansType, global.capacite))} de la capacité`}
             color={
-              COULEURS.texteSecondaire
+              COULEURS.vertProduction
             }
-          />
+          
+            onClick={() => setCodeDetailFiltre("DIVERS_PRODUCTION")}
+            clickable/>
 
           <Kpi
             label="Non expliqué"
@@ -3116,10 +3280,33 @@ formation:
               )
             )} de la capacité`}
             color={
-              COULEURS.gris
+              COULEURS.texteSecondaire
             }
           />
         </section>
+
+        {codeDetailFiltre && (
+          <section style={{ ...styles.detailBox, marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <strong>Détail des codes — {codeDetailFiltre}</strong>
+              <button style={{ border: "none", background: "#eee", borderRadius: 6, padding: "6px 9px", cursor: "pointer" }} onClick={() => setCodeDetailFiltre(null)}>Fermer</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
+              {detailCodes
+                .filter((x) => {
+                  if (codeDetailFiltre === "DIVERS_PRODUCTION") return x.classification === "AFFAIRES_SANS_TYPE";
+                  if (codeDetailFiltre === "DIVERS_ABSENCES") return x.classification === "DIVERS_ABSENCES";
+                  return x.classification === codeDetailFiltre;
+                })
+                .map((x) => (
+                  <div key={x.code} style={{ border: `1px solid ${COULEURS.bordure}`, borderRadius: 8, padding: "9px 11px", background: "#fff" }}>
+                    <strong>{x.code}</strong> — {x.libelle}
+                    <div style={{ marginTop: 4, color: COULEURS.texteSecondaire }}>{heures(x.heures)}</div>
+                  </div>
+                ))}
+            </div>
+          </section>
+        )}
 
         {/* =================================================
             ONGLETS
@@ -3349,7 +3536,7 @@ formation:
                               style={{
                                 ...styles.diagnosticNumberCell,
                                 color:
-                                  COULEURS.orange,
+                                  COULEURS.roseDevis,
                                 fontWeight: 700,
                               }}
                             >
@@ -3407,7 +3594,7 @@ formation:
                                 color:
                                   s.affairesSansType >
                                   0
-                                    ? COULEURS.orange
+                                    ? COULEURS.vertProduction
                                     : COULEURS.texteSecondaire,
                                 fontWeight:
                                   s.affairesSansType >
@@ -3629,7 +3816,7 @@ formation:
                             b.dbe
                           )}
                           color={
-                            COULEURS.orange
+                            COULEURS.roseDevis
                           }
                         />
 
@@ -3731,11 +3918,15 @@ function Kpi({
   value,
   sub,
   color,
+  onClick,
+  clickable,
 }: {
   label: string;
   value: string;
   sub: string;
   color?: string;
+  onClick?: () => void;
+  clickable?: boolean;
 }) {
   return (
     <div
@@ -3746,7 +3937,9 @@ function Kpi({
             color ??
             COULEURS.rouge
           }`,
+        cursor: clickable ? "pointer" : "default",
       }}
+      onClick={onClick}
     >
       <div
         style={
@@ -3920,9 +4113,7 @@ function ChargeTimeline({
           />
 
           <Legend
-            color={
-              COULEURS.orange
-            }
+            color="#f2bfd0"
             label="DBE / devis"
           />
 
@@ -3934,7 +4125,7 @@ function ChargeTimeline({
           />
 
           <Legend
-            color="#b5b5b5"
+            color={COULEURS.bleuCN}
             label="CN"
           />
 
@@ -3946,13 +4137,13 @@ function ChargeTimeline({
           />
 
           <Legend
-            color="#e7b24b"
+            color={COULEURS.turquoiseAbsence}
             label="Divers d'absences"
           />
 
           <Legend
             color={
-              COULEURS.grisClair
+              COULEURS.vertProduction
             }
             label="Divers de production"
           />
@@ -4111,9 +4302,7 @@ function ChargeTimeline({
                             pct={
                               dbePct
                             }
-                            color={
-                              COULEURS.orange
-                            }
+                            color="#f2bfd0"
                           />
 
                           <BarSegment
@@ -4129,7 +4318,7 @@ function ChargeTimeline({
                             pct={
                               cnPct
                             }
-                            color="#b5b5b5"
+                            color={COULEURS.bleuCN}
                           />
 
                           <BarSegment
@@ -4145,7 +4334,7 @@ function ChargeTimeline({
                             pct={
                               diversAbsencesPct
                             }
-                            color="#e7b24b"
+                            color={COULEURS.turquoiseAbsence}
                           />
 
                           <BarSegment
@@ -4153,7 +4342,7 @@ function ChargeTimeline({
                               diversProductionPct
                             }
                             color={
-                              COULEURS.grisClair
+                              COULEURS.vertProduction
                             }
                           />
 
@@ -4397,6 +4586,9 @@ function NonExpliqueTable({
         <strong>
           Affaires sans type
         </strong>.
+        <br />
+        Les CP / FE / AC / AP restent visibles en
+        <strong> Hors bilan </strong> et ne gonflent pas le reliquat.
       </div>
 
       <div
@@ -4453,6 +4645,10 @@ function NonExpliqueTable({
 
               <th>
                 Affaires sans type
+              </th>
+
+              <th>
+                Hors bilan
               </th>
 
               <th>
@@ -4580,7 +4776,7 @@ function NonExpliqueTable({
                           color:
                             ligne.affairesSansType >
                             0
-                              ? COULEURS.orange
+                              ? COULEURS.ambre
                               : undefined,
                           fontWeight:
                             ligne.affairesSansType >
@@ -4591,6 +4787,20 @@ function NonExpliqueTable({
                       >
                         {heures(
                           ligne.affairesSansType
+                        )}
+                      </td>
+
+                      <td
+                        style={{
+                          ...styles.diagnosticNumberCell,
+                          color:
+                            ligne.ignorees > 0
+                              ? COULEURS.texteSecondaire
+                              : undefined,
+                        }}
+                      >
+                        {heures(
+                          ligne.ignorees
                         )}
                       </td>
 
@@ -4611,7 +4821,7 @@ function NonExpliqueTable({
                     {isOpen && (
                       <tr>
                         <td
-                          colSpan={12}
+                          colSpan={13}
                           style={{
                             background:
                               "#fafafa",
@@ -4655,6 +4865,13 @@ function NonExpliqueTable({
                             />
 
                             <DetailBox
+                              label="Hors bilan (CP / FE / AC / AP)"
+                              value={heures(
+                                ligne.ignorees
+                              )}
+                            />
+
+                            <DetailBox
                               label="Reliquat"
                               value={heures(
                                 ligne.nonExplique
@@ -4677,7 +4894,7 @@ function NonExpliqueTable({
               0 && (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={13}
                   style={
                     styles.emptyCell
                   }
@@ -4710,7 +4927,7 @@ function DetailBox({
         borderLeft:
           `4px solid ${
             warning
-              ? COULEURS.orange
+              ? COULEURS.ambre
               : COULEURS.bordure
           }`,
       }}
@@ -5208,7 +5425,7 @@ const styles: Record<
     height: "100%",
     display: "flex",
     flexDirection:
-      "column",
+      "column-reverse",
     justifyContent:
       "flex-end",
     overflow:
@@ -5330,7 +5547,7 @@ const styles: Record<
       "7px 11px",
     borderRadius: 999,
     background:
-      COULEURS.orangeClair,
+      COULEURS.vert,
     color:
       "#a85d00",
     fontSize: 12,

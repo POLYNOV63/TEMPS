@@ -23,45 +23,28 @@ type TypeAffaire =
   | "DBE"
   | "Divers";
 
-type CodeAffaire =
-  | "EM"
-  | "EE"
-  | "CM"
-  | "SC"
-  | "MP"
-  | "DT"
-  | "RN"
-  | "RL"
-  | "RS"
-  | "IF"
-  | "IM"
-  | "HA"
-  | "DM"
-  | "SU"
-  | "HT"
-  | "LI"
-  | "EP"
-  | "CO"
-  | "BD"
-  | "ET"
-  | "TQ"
-  | "NC";
+type CodeAbsence = string;
 
-type CodeDivers =
-  | "FO"
-  | "FI"
-  | "NI"
-  | "RN"
-  | "IF";
+type ModeHeuresSupplementaires =
+  | "PAYE"
+  | "COMPTEUR";
 
-type CodeAbsence =
-  | ""
-  | "CP"
-  | "RE"
-  | "ML"
-  | "RTT"
-  | "FE"
-  | "AUTRE";
+type CodeImputation = {
+  code: string;
+  libelle: string;
+  categorie: string;
+  type_affaire_autorise: string | null;
+  vendable: boolean;
+  actif: boolean;
+  autorise_affaire: boolean;
+  autorise_devis: boolean;
+  autorise_divers: boolean;
+  historique_uniquement: boolean;
+  remarques_metier: string | null;
+  type_code: string | null;
+  ordre_affichage: number | null;
+  historique: boolean;
+};
 
 type DureeRTT =
   | "JOURNEE"
@@ -72,10 +55,7 @@ type Imputation = {
   typeAffaire: TypeAffaire;
   numeroAffaire: string;
   description: string;
-  code:
-    | CodeAffaire
-    | CodeDivers
-    | "";
+  code: string;
   heures: string;
 };
 
@@ -90,6 +70,8 @@ type JourSemaine = {
   absence: CodeAbsence;
   dureeRTT: DureeRTT;
   heuresRE: string;
+  heuresAbsence: string;
+  dureeCP: DureeRTT;
   ticketRestaurant: boolean;
   imputations: Imputation[];
 };
@@ -102,51 +84,57 @@ type Collaborateur = {
   email: string;
   actif: boolean;
   auth_user_id: string | null;
-  compteur_recuperation: number;
+  profil_horaire_id: string | null;
+  rythme: string | null;
+  compteur_recuperation: number | null;
+};
+
+type HorairesSemaine = {
+  lundi: number;
+  mardi: number;
+  mercredi: number;
+  jeudi: number;
+  vendredi: number;
+};
+
+const HORAIRES_DEFAUT: HorairesSemaine = {
+  lundi: 7.5,
+  mardi: 7.5,
+  mercredi: 7.5,
+  jeudi: 7.5,
+  vendredi: 5,
 };
 
 /* ============================================================
-   CODES AFFAIRES
+   CODES D'IMPUTATION
 ============================================================ */
 
-const CODES_AFFAIRES: {
-  code: CodeAffaire;
-  libelle: string;
-}[] = [
-  { code: "EM", libelle: "Etudes Mécaniques" },
-  { code: "EE", libelle: "Etude électrique" },
-  { code: "CM", libelle: "Calcul Mécanique" },
-  { code: "SC", libelle: "Scan" },
-  { code: "MP", libelle: "Mise en plan" },
-  { code: "DT", libelle: "Devis technique" },
-  { code: "RN", libelle: "Réunion" },
-  { code: "RL", libelle: "Réalisation / Montage" },
-  { code: "RS", libelle: "Relevé sur site" },
-  { code: "IF", libelle: "Informatique" },
-  { code: "IM", libelle: "Impression 3D" },
-  { code: "HA", libelle: "Achat" },
-  { code: "DM", libelle: "Dossier mécanique" },
-  { code: "SU", libelle: "Suivi d'affaires" },
-  { code: "HT", libelle: "Heure trajet" },
-  { code: "LI", libelle: "Livraison" },
-  { code: "EP", libelle: "Etude pneumatique" },
-  { code: "CO", libelle: "Contrôle" },
-  { code: "BD", libelle: "Base de donnée" },
-  { code: "ET", libelle: "Expertise / Faisabilité" },
-  { code: "TQ", libelle: "Tel Que Construit" },
-  { code: "NC", libelle: "Non-conformité" },
-];
+const CODE_RE = "RE";
+const CODE_RT = "RT";
+const CODE_FE = "FE";
+const CODE_CP = "CP";
+const ABSENCES_AVEC_HEURES = new Set(["VM", "AI", "AA"]);
 
-const CODES_DIVERS: {
-  code: CodeDivers;
-  libelle: string;
-}[] = [
-  { code: "FO", libelle: "Formation externe" },
-  { code: "FI", libelle: "Formation interne / accueil" },
-  { code: "NI", libelle: "Non imputable" },
-  { code: "RN", libelle: "Réunion hebdomadaire BE" },
-  { code: "IF", libelle: "Informatique / développement" },
-];
+function normaliserCode(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function libelleAbsence(
+  absence: CodeAbsence,
+  codes: CodeImputation[]
+) {
+  if (!absence) return "Aucune absence";
+
+  const config = codes.find(
+    item => normaliserCode(item.code) === normaliserCode(absence)
+  );
+
+  if (config) return `${config.code} — ${config.libelle}`;
+  return absence === "AUTRE" ? "AUTRE" : absence;
+}
 
 /* ============================================================
    OUTILS
@@ -209,6 +197,11 @@ function dateAffichage(date: string) {
     day: "2-digit",
     month: "2-digit",
   });
+}
+
+function exercicePOLYNOV(dateISOString: string) {
+  const d = new Date(`${dateISOString}T00:00:00`);
+  return d.getMonth() >= 10 ? d.getFullYear() : d.getFullYear() - 1;
 }
 
 function numeroSemaine(date: Date) {
@@ -416,7 +409,8 @@ function joursFeriesFrancais(
 ============================================================ */
 
 function creerSemaine(
-  dateReference: Date
+  dateReference: Date,
+  horaires: HorairesSemaine = HORAIRES_DEFAUT
 ): JourSemaine[] {
   const debut = new Date(
     dateReference.getFullYear(),
@@ -473,26 +467,35 @@ function creerSemaine(
         estFerie: ferie,
 
         heuresTheoriques:
-          index < 4
-            ? 7.5
-            : index === 4
-              ? 5
-              : 0,
+          weekend
+            ? 0
+            : index === 0
+              ? Number(horaires.lundi) || 0
+              : index === 1
+                ? Number(horaires.mardi) || 0
+                : index === 2
+                  ? Number(horaires.mercredi) || 0
+                  : index === 3
+                    ? Number(horaires.jeudi) || 0
+                    : Number(horaires.vendredi) || 0,
 
         presence:
           ferie
             ? "ABSENT"
             : "PRESENTIEL",
 
-        absence:
-          ferie
-            ? "FE"
-            : "",
+        // Le jour férié est déterminé par la date, pas par un code saisi.
+        // Le code FE est généré uniquement lors de l'enregistrement pour le hors-bilan.
+        absence: "",
 
         dureeRTT:
           "JOURNEE",
 
         heuresRE: "",
+
+        heuresAbsence: "",
+
+        dureeCP: "JOURNEE",
 
         ticketRestaurant:
           !weekend &&
@@ -508,56 +511,48 @@ function creerSemaine(
    ABSENCES
 ============================================================ */
 
+function absenceNecessiteHeures(absence: CodeAbsence) {
+  return ABSENCES_AVEC_HEURES.has(normaliserCode(absence));
+}
+
+function absenceNecessiteDuree(absence: CodeAbsence) {
+  return normaliserCode(absence) === CODE_CP;
+}
+
 function absenceTotale(
   absence: CodeAbsence,
-  dureeRTT?: DureeRTT
+  dureeRTT: DureeRTT | undefined,
+  dureeCP: DureeRTT | undefined,
+  codes: CodeImputation[]
 ) {
+  if (!absence) return false;
+  if (absence === CODE_RE) return false;
+  if (absence === CODE_RT) return dureeRTT === "JOURNEE";
+  if (absenceNecessiteHeures(absence)) return false;
+  if (absenceNecessiteDuree(absence)) return dureeCP === "JOURNEE";
+
+  const config = codes.find(
+    code => normaliserCode(code.code) === normaliserCode(absence)
+  );
+
   return (
-    absence === "CP" ||
-    absence === "ML" ||
-    absence === "FE" ||
-    absence === "AUTRE" ||
-    (
-      absence === "RTT" &&
-      dureeRTT === "JOURNEE"
-    )
+    config?.categorie === "ABSENCE" ||
+    config?.categorie === "HORS_BILAN"
   );
 }
 
 function imputationsInterdites(
-  jour: JourSemaine
+  jour: JourSemaine,
+  codes: CodeImputation[]
 ) {
+  if (jour.estFerie) return true;
+
   return absenceTotale(
     jour.absence,
-    jour.dureeRTT
+    jour.dureeRTT,
+    jour.dureeCP,
+    codes
   );
-}
-
-function libelleAbsence(
-  absence: CodeAbsence
-) {
-  switch (absence) {
-    case "CP":
-      return "CP — Congés payés";
-
-    case "RE":
-      return "RE — Récupération";
-
-    case "ML":
-      return "ML — Maladie";
-
-    case "RTT":
-      return "RTT";
-
-    case "FE":
-      return "FE — Jour férié";
-
-    case "AUTRE":
-      return "AUTRE";
-
-    default:
-      return "Aucune absence";
-  }
 }
 
 /* ============================================================
@@ -581,45 +576,38 @@ function totalImputations(
 }
 
 function cibleTravailJour(
-  jour: JourSemaine
+  jour: JourSemaine,
+  codes: CodeImputation[]
 ) {
-  if (jour.estWeekend) {
-    return 0;
-  }
+  if (jour.estWeekend || jour.estFerie) return 0;
 
-  if (
-    jour.absence === "CP" ||
-    jour.absence === "ML" ||
-    jour.absence === "FE" ||
-    jour.absence === "AUTRE"
-  ) {
-    return 0;
-  }
-
-  if (jour.absence === "RE") {
+  if (jour.absence === CODE_RE) {
     return Math.max(
       0,
-      jour.heuresTheoriques -
-        convertirHeures(
-          jour.heuresRE
-        )
+      jour.heuresTheoriques - convertirHeures(jour.heuresRE)
     );
   }
 
-  if (jour.absence === "RTT") {
-    if (
-      jour.dureeRTT ===
-      "DEMI_JOURNEE"
-    ) {
-      return (
-        jour.heuresTheoriques /
-        2
-      );
-    }
-
-    return 0;
+  if (jour.absence === CODE_RT) {
+    return jour.dureeRTT === "DEMI_JOURNEE"
+      ? jour.heuresTheoriques / 2
+      : 0;
   }
 
+  if (absenceNecessiteHeures(jour.absence)) {
+    return Math.max(
+      0,
+      jour.heuresTheoriques - convertirHeures(jour.heuresAbsence)
+    );
+  }
+
+  if (jour.absence === CODE_CP) {
+    return jour.dureeCP === "DEMI_JOURNEE"
+      ? jour.heuresTheoriques / 2
+      : 0;
+  }
+
+  if (absenceTotale(jour.absence, jour.dureeRTT, jour.dureeCP, codes)) return 0;
   return jour.heuresTheoriques;
 }
 
@@ -641,6 +629,11 @@ export default function MaSemainePage() {
       "semaine"
     );
 
+  // Lorsqu'un collaborateur est passé explicitement dans l'URL,
+  // la page est ouverte depuis l'administration : l'admin peut donc
+  // consulter/modifier une feuille même si elle est verrouillée.
+  const modeAdmin = Boolean(collaborateurIdUrl);
+
   const [
     semaine,
     setSemaine,
@@ -658,6 +651,27 @@ export default function MaSemainePage() {
     useState<Collaborateur | null>(
       null
     );
+
+  const [codesImputation, setCodesImputation] =
+    useState<CodeImputation[]>([]);
+
+  const [codesCharges, setCodesCharges] =
+    useState(false);
+
+  const [modeHeuresSupplementaires, setModeHeuresSupplementaires] =
+    useState<ModeHeuresSupplementaires | null>(null);
+
+  const [compteurBaseSemaine, setCompteurBaseSemaine] =
+    useState<number>(0);
+
+  const [horairesProfil, setHorairesProfil] =
+    useState<HorairesSemaine>(HORAIRES_DEFAUT);
+
+  const [choixHeuresSupOuvert, setChoixHeuresSupOuvert] =
+    useState(false);
+
+  const [feuilleVerrouillee, setFeuilleVerrouillee] =
+    useState(false);
 
   const [
     chargement,
@@ -695,6 +709,38 @@ export default function MaSemainePage() {
   ] = useState<
     "OK" | "DANGER" | ""
   >("");
+
+  /* ============================================================
+     CHARGER CODES D'IMPUTATION
+  ============================================================ */
+
+  useEffect(() => {
+    async function chargerCodesImputation() {
+      const { data, error } = await supabase
+        .from("codes_imputation")
+        .select(`
+          code, libelle, categorie, type_affaire_autorise, vendable, actif,
+          autorise_affaire, autorise_devis, autorise_divers,
+          historique_uniquement, remarques_metier, type_code, ordre_affichage, historique
+        `)
+        .eq("actif", true)
+        .eq("historique_uniquement", false)
+        .order("ordre_affichage", { ascending: true, nullsFirst: false })
+        .order("code", { ascending: true });
+
+      if (error) {
+        setMessage(`Impossible de charger les codes d'imputation : ${error.message}`);
+        setMessageType("DANGER");
+        setCodesCharges(true);
+        return;
+      }
+
+      setCodesImputation((data ?? []) as CodeImputation[]);
+      setCodesCharges(true);
+    }
+
+    chargerCodesImputation();
+  }, []);
 
   /* ============================================================
      CHARGER COLLABORATEUR
@@ -766,27 +812,70 @@ export default function MaSemainePage() {
       const collaborateurCharge =
         data as Collaborateur;
 
-      setCollaborateur(
-        collaborateurCharge
-      );
-
       const semaineACharger =
         semaineUrl ??
         semaine[0].date;
 
-      if (semaineUrl) {
-        setSemaine(
-          creerSemaine(
-            new Date(
-              `${semaineACharger}T00:00:00`
-            )
-          )
-        );
+      // Le rythme applicable est celui en vigueur pour la semaine affichée.
+      // On consulte donc l'historique avant de retomber sur le profil courant.
+      let horaires: HorairesSemaine = HORAIRES_DEFAUT;
+      let profilHoraireId = collaborateurCharge.profil_horaire_id;
+
+      const {
+        data: historiqueRythme,
+        error: erreurHistoriqueRythme,
+      } = await supabase
+        .from("historique_profils_horaires")
+        .select("profil_horaire_id,date_debut,date_fin")
+        .eq("collaborateur_id", collaborateurCharge.id)
+        .lte("date_debut", semaineACharger)
+        .or(`date_fin.is.null,date_fin.gte.${semaineACharger}`)
+        .order("date_debut", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Si l'historique n'est pas disponible ou ne contient pas de ligne,
+      // le profil actuellement affecté reste la source de repli.
+      if (!erreurHistoriqueRythme && historiqueRythme?.profil_horaire_id) {
+        profilHoraireId = historiqueRythme.profil_horaire_id;
       }
+
+      if (profilHoraireId) {
+        const { data: profil, error: erreurProfil } = await supabase
+          .from("profils_horaires")
+          .select("id,nom,lundi,mardi,mercredi,jeudi,vendredi")
+          .eq("id", profilHoraireId)
+          .maybeSingle();
+
+        if (erreurProfil) {
+          throw erreurProfil;
+        }
+
+        if (profil) {
+          horaires = {
+            lundi: Number(profil.lundi) || 0,
+            mardi: Number(profil.mardi) || 0,
+            mercredi: Number(profil.mercredi) || 0,
+            jeudi: Number(profil.jeudi) || 0,
+            vendredi: Number(profil.vendredi) || 0,
+          };
+        }
+      }
+
+      setHorairesProfil(horaires);
+      setCollaborateur(collaborateurCharge);
+
+      setSemaine(
+        creerSemaine(
+          new Date(`${semaineACharger}T00:00:00`),
+          horaires
+        )
+      );
 
       await chargerSemaineExistante(
         collaborateurCharge.id,
-        semaineACharger
+        semaineACharger,
+        horaires
       );
 
       setChargement(false);
@@ -795,9 +884,38 @@ export default function MaSemainePage() {
     chargerCollaborateur();
   }, []);
 
+  const codesAffaire = useMemo(
+    () => codesImputation.filter(code => code.autorise_affaire),
+    [codesImputation]
+  );
+
+  const codesDevis = useMemo(
+    () => codesImputation.filter(code => code.autorise_devis),
+    [codesImputation]
+  );
+
+  const codesDivers = useMemo(
+    () => codesImputation.filter(code => code.autorise_divers),
+    [codesImputation]
+  );
+
+  const codesAbsence = useMemo(
+    () => codesImputation.filter(code =>
+      code.categorie === "ABSENCE" || code.categorie === "HORS_BILAN"
+    ),
+    [codesImputation]
+  );
+
+  const getCodesPourType = (type: TypeAffaire) => {
+    if (type === "CBE") return codesAffaire;
+    if (type === "DBE") return codesDevis;
+    return codesDivers;
+  };
+
   /* ============================================================
      TOTAUX
   ============================================================ */
+
 
   const totalHeuresSemaine =
     useMemo(() => {
@@ -814,6 +932,18 @@ export default function MaSemainePage() {
       );
     }, [semaine]);
 
+  /*
+   * Le rythme affiché dans la feuille peut dépasser 35 h
+   * (ex. BIB PE à 37,5 h ou BIB PI à 37,5 h).
+   *
+   * Les 2,5 h supplémentaires ne deviennent PAS de la capacité
+   * normale : elles restent des heures supplémentaires par rapport
+   * à la base POLYNOV de 35 h.
+   *
+   * On conserve donc deux notions :
+   * - totalHeuresTheoriques : rythme quotidien attendu pour remplir la feuille ;
+   * - base35Semaine : référence normale de 35 h, utilisée pour les HS.
+   */
   const totalHeuresTheoriques =
     useMemo(() => {
       return semaine.reduce(
@@ -823,15 +953,56 @@ export default function MaSemainePage() {
         ) =>
           total +
           cibleTravailJour(
-            jour
+            jour,
+            codesImputation
           ),
         0
       );
     }, [semaine]);
 
+  const base35Semaine =
+    useMemo(() => {
+      let base = 35;
+
+      for (const jour of semaine) {
+        if (jour.estWeekend) continue;
+
+        if (jour.estFerie) {
+          base -= jour.heuresTheoriques;
+          continue;
+        }
+
+        if (jour.absence === CODE_CP) {
+          base -= jour.dureeCP === "DEMI_JOURNEE"
+            ? jour.heuresTheoriques / 2
+            : jour.heuresTheoriques;
+          continue;
+        }
+
+        if (jour.absence === CODE_RE) {
+          base -= convertirHeures(jour.heuresRE);
+          continue;
+        }
+
+        if (absenceNecessiteHeures(jour.absence)) {
+          base -= convertirHeures(jour.heuresAbsence);
+          continue;
+        }
+
+        if (absenceTotale(jour.absence, jour.dureeRTT, jour.dureeCP, codesImputation)) {
+          base -= jour.heuresTheoriques;
+        }
+      }
+
+      return Math.max(0, base);
+    }, [semaine]);
+
   const heuresSupplementaires =
-    totalHeuresSemaine -
-    totalHeuresTheoriques;
+    Math.max(
+      0,
+      totalHeuresSemaine -
+        base35Semaine
+    );
 
   const totalRE =
     useMemo(() => {
@@ -849,12 +1020,16 @@ export default function MaSemainePage() {
     }, [semaine]);
 
   const compteurInitial =
-    collaborateur
-      ?.compteur_recuperation ??
-    0;
+    compteurBaseSemaine;
+
+  const heuresSupplementairesAuCompteur =
+    modeHeuresSupplementaires === "COMPTEUR"
+      ? heuresSupplementaires
+      : 0;
 
   const compteurFinal =
-    compteurInitial -
+    compteurInitial +
+    heuresSupplementairesAuCompteur -
     totalRE;
 
   const compteurDepasse =
@@ -882,6 +1057,10 @@ export default function MaSemainePage() {
     date: string,
     modification: Partial<JourSemaine>
   ) {
+    if (feuilleVerrouillee && !modeAdmin) {
+      return;
+    }
+
     setSemaine(
       ancienne =>
         ancienne.map(
@@ -924,115 +1103,39 @@ export default function MaSemainePage() {
     jour: JourSemaine,
     absence: CodeAbsence
   ) {
-    if (
-      absence === "FE" &&
-      !jour.estFerie
-    ) {
-      return;
-    }
+    // Un jour férié est déterminé automatiquement par la date.
+    // Il ne peut pas être choisi comme une absence classique.
+    if (jour.estFerie) return;
 
-    const estAbsent =
-      absenceTotale(
-        absence,
-        jour.dureeRTT
-      );
-
-    let ticket =
-      jour.ticketRestaurant;
-
-    if (estAbsent) {
-      ticket = false;
-    }
-
-    if (absence === "RTT") {
-      ticket =
-        jour.dureeRTT ===
-        "DEMI_JOURNEE";
-    }
-
-    if (absence === "RE") {
-      ticket =
-        !jour.estWeekend;
-    }
-
-    if (absence === "") {
-      ticket =
-        !jour.estWeekend;
-    }
-
-    modifierJour(
-      jour.date,
-      {
-        absence,
-
-        presence:
-          estAbsent
-            ? "ABSENT"
-            : jour.presence ===
-                "ABSENT"
-              ? "PRESENTIEL"
-              : jour.presence,
-
-        ticketRestaurant:
-          ticket,
-
-        heuresRE:
-          absence === "RE"
-            ? jour.heuresRE
-            : "",
-
-        dureeRTT:
-          absence === "RTT"
-            ? jour.dureeRTT
-            : "JOURNEE",
-
-        imputations:
-          absenceTotale(
-            absence,
-            jour.dureeRTT
-          )
-            ? []
-            : jour.imputations,
-      }
+    const estAbsent = absenceTotale(
+      absence,
+      jour.dureeRTT,
+      jour.dureeCP,
+      codesImputation
     );
-  }
 
-  /* ============================================================
-     JOUR FERIE
-  ============================================================ */
+    let ticket = jour.ticketRestaurant;
+    if (estAbsent) ticket = false;
+    if (absence === CODE_RT) ticket = jour.dureeRTT === "DEMI_JOURNEE";
+    if (absence === CODE_RE) ticket = !jour.estWeekend;
+    if (absence === "") ticket = !jour.estWeekend;
 
-  function basculerJourFerie(
-    jour: JourSemaine
-  ) {
-    if (!jour.estFerie) {
-      return;
-    }
+    const heuresAbsence = absenceNecessiteHeures(absence)
+      ? jour.heuresAbsence
+      : "";
 
-    if (
-      jour.absence === "FE"
-    ) {
-      modifierJour(
-        jour.date,
-        {
-          absence: "",
-          presence: "PRESENTIEL",
-          ticketRestaurant: true,
-        }
-      );
+    const dureeCP = absence === CODE_CP ? jour.dureeCP : "JOURNEE";
 
-      return;
-    }
-
-    modifierJour(
-      jour.date,
-      {
-        absence: "FE",
-        presence: "ABSENT",
-        ticketRestaurant: false,
-        imputations: [],
-        heuresRE: "",
-      }
-    );
+    modifierJour(jour.date, {
+      absence,
+      presence: estAbsent ? "ABSENT" : jour.presence === "ABSENT" ? "PRESENTIEL" : jour.presence,
+      ticketRestaurant: ticket,
+      heuresRE: absence === CODE_RE ? jour.heuresRE : "",
+      heuresAbsence,
+      dureeCP,
+      dureeRTT: absence === CODE_RT ? jour.dureeRTT : "JOURNEE",
+      imputations: estAbsent ? [] : jour.imputations,
+    });
   }
 
   /* ============================================================
@@ -1044,7 +1147,8 @@ export default function MaSemainePage() {
   ) {
     if (
       imputationsInterdites(
-        jour
+        jour,
+        codesImputation
       )
     ) {
       return;
@@ -1159,7 +1263,7 @@ export default function MaSemainePage() {
     );
 
     const nouvelleSemaine =
-      creerSemaine(date);
+      creerSemaine(date, horairesProfil);
 
     setSemaine(
       nouvelleSemaine
@@ -1168,7 +1272,8 @@ export default function MaSemainePage() {
     if (collaborateur) {
       chargerSemaineExistante(
         collaborateur.id,
-        nouvelleSemaine[0].date
+        nouvelleSemaine[0].date,
+        horairesProfil
       );
     }
 
@@ -1188,7 +1293,7 @@ export default function MaSemainePage() {
     );
 
     const nouvelleSemaine =
-      creerSemaine(date);
+      creerSemaine(date, horairesProfil);
 
     setSemaine(
       nouvelleSemaine
@@ -1197,7 +1302,8 @@ export default function MaSemainePage() {
     if (collaborateur) {
       chargerSemaineExistante(
         collaborateur.id,
-        nouvelleSemaine[0].date
+        nouvelleSemaine[0].date,
+        horairesProfil
       );
     }
 
@@ -1257,6 +1363,28 @@ export default function MaSemainePage() {
         }
       }
 
+      if (absenceNecessiteHeures(jour.absence)) {
+        const heuresAbsence = convertirHeures(jour.heuresAbsence);
+
+        if (heuresAbsence <= 0) {
+          setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : l'absence ${jour.absence} doit obligatoirement être renseignée en heures.`);
+          setMessageType("DANGER");
+          return false;
+        }
+
+        if (heuresAbsence > jour.heuresTheoriques) {
+          setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : l'absence ${jour.absence} ne peut pas dépasser ${formatHeures(jour.heuresTheoriques)} h.`);
+          setMessageType("DANGER");
+          return false;
+        }
+      }
+
+      if (jour.absence === CODE_CP && !jour.dureeCP) {
+        setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : choisissez journée ou demi-journée pour les congés payés.`);
+        setMessageType("DANGER");
+        return false;
+      }
+
       if (
         jour.absence ===
           "RTT" &&
@@ -1284,7 +1412,8 @@ export default function MaSemainePage() {
 
       if (
         imputationsInterdites(
-          jour
+          jour,
+          codesImputation
         )
       ) {
         continue;
@@ -1422,7 +1551,8 @@ export default function MaSemainePage() {
 
   async function chargerSemaineExistante(
     collaborateurId: string,
-    semaineDebut: string
+    semaineDebut: string,
+    horairesPourSemaine: HorairesSemaine = horairesProfil
   ) {
     if (!supabase) {
       return;
@@ -1434,7 +1564,7 @@ export default function MaSemainePage() {
         error: erreurFeuille,
       } = await supabase
         .from("feuilles_heures")
-        .select("id")
+        .select("id, mode_heures_supplementaires, compteur_avant, compteur_apres, verrouillee")
         .eq(
           "collaborateur_id",
           collaborateurId
@@ -1450,20 +1580,66 @@ export default function MaSemainePage() {
       }
 
       if (!feuille) {
+        setModeHeuresSupplementaires(null);
+        setFeuilleVerrouillee(false);
+
+        // Une nouvelle feuille prend comme base le compteur de la
+        // dernière feuille chronologique précédente. S'il n'y en a
+        // pas, on utilise la valeur initiale paramétrée en RH.
+        const { data: precedente, error: erreurPrecedente } = await supabase
+          .from("feuilles_heures")
+          .select("semaine_debut, compteur_apres")
+          .eq("collaborateur_id", collaborateurId)
+          .lt("semaine_debut", semaineDebut)
+          .order("semaine_debut", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (erreurPrecedente) throw erreurPrecedente;
+
+        if (precedente?.compteur_apres !== null && precedente?.compteur_apres !== undefined) {
+          setCompteurBaseSemaine(Number(precedente.compteur_apres) || 0);
+        } else {
+          const exercice = exercicePOLYNOV(semaineDebut);
+          const { data: droit, error: erreurDroit } = await supabase
+            .from("rh_droits")
+            .select("compteur_recuperation_initial")
+            .eq("collaborateur_id", collaborateurId)
+            .eq("exercice", exercice)
+            .maybeSingle();
+
+          if (erreurDroit) throw erreurDroit;
+
+          setCompteurBaseSemaine(
+            droit?.compteur_recuperation_initial !== null && droit?.compteur_recuperation_initial !== undefined
+              ? Number(droit.compteur_recuperation_initial) || 0
+              : Number(collaborateur?.compteur_recuperation ?? 0) || 0
+          );
+        }
+
         setSemaine(
           creerSemaine(
             new Date(
               `${semaineDebut}T00:00:00`
-            )
+            ),
+            horairesPourSemaine
           )
         );
 
-        setSemaineEnregistree(
-          false
-        );
-
+        setSemaineEnregistree(false);
         return;
       }
+
+      setFeuilleVerrouillee(Boolean(feuille.verrouillee));
+      setCompteurBaseSemaine(
+        feuille.compteur_avant !== null && feuille.compteur_avant !== undefined
+          ? Number(feuille.compteur_avant) || 0
+          : 0
+      );
+
+      setModeHeuresSupplementaires(
+        feuille.mode_heures_supplementaires === "PAYE" ? "PAYE" : "COMPTEUR"
+      );
 
       const {
         data: jours,
@@ -1509,7 +1685,8 @@ export default function MaSemainePage() {
         creerSemaine(
           new Date(
             `${semaineDebut}T00:00:00`
-          )
+          ),
+          horairesPourSemaine
         );
 
       for (
@@ -1529,8 +1706,15 @@ export default function MaSemainePage() {
         jour.presence =
           jourDB.presence;
 
-        jour.absence =
-          jourDB.absence ?? "";
+        const absenceChargee = normaliserCode(jourDB.absence ?? "");
+        // FE est un code technique de hors-bilan : dans Ma semaine,
+        // le jour férié est déterminé automatiquement par la date.
+        // Compatibilité avec l'ancien code RTT : la table utilise RT.
+        jour.absence = absenceChargee === CODE_FE
+          ? ""
+          : absenceChargee === "RTT"
+            ? CODE_RT
+            : absenceChargee;
 
         jour.dureeRTT =
           jourDB.duree_rtt ??
@@ -1539,6 +1723,14 @@ export default function MaSemainePage() {
         jour.heuresRE =
           jourDB.heures_re?.toString() ??
           "";
+
+        jour.heuresAbsence =
+          jourDB.heures_absence?.toString() ??
+          "";
+
+        jour.dureeCP =
+          jourDB.duree_cp ??
+          "JOURNEE";
 
         jour.ticketRestaurant =
           jourDB.ticket_restaurant;
@@ -1565,8 +1757,7 @@ export default function MaSemainePage() {
                 i.description ??
                 "",
 
-              code:
-                i.code ?? "",
+              code: normaliserCode(i.code ?? ""),
 
               heures:
                 i.heures?.toString() ??
@@ -1594,6 +1785,12 @@ export default function MaSemainePage() {
   ============================================================ */
 
   async function enregistrerSemaine() {
+    if (feuilleVerrouillee && !modeAdmin) {
+      setMessage("Cette feuille est verrouillée par l'administration. Elle ne peut plus être modifiée.");
+      setMessageType("DANGER");
+      return;
+    }
+
     if (!collaborateur) {
       setMessage(
         "Le collaborateur n'est pas chargé."
@@ -1603,6 +1800,11 @@ export default function MaSemainePage() {
         "DANGER"
       );
 
+      return;
+    }
+
+    if (heuresSupplementaires > 0.01 && modeHeuresSupplementaires === null) {
+      setChoixHeuresSupOuvert(true);
       return;
     }
 
@@ -1651,6 +1853,57 @@ export default function MaSemainePage() {
 
       let feuilleId: string;
 
+      // Recalcule la base de la feuille à partir de la feuille précédente.
+      // Cela évite qu'une modification d'une semaine utilise par erreur
+      // le compteur courant du collaborateur.
+      const { data: feuillePrecedente, error: erreurFeuillePrecedente } = await supabase
+        .from("feuilles_heures")
+        .select("semaine_debut, compteur_apres")
+        .eq("collaborateur_id", collaborateur.id)
+        .lt("semaine_debut", semaineDebut)
+        .order("semaine_debut", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (erreurFeuillePrecedente) throw erreurFeuillePrecedente;
+
+      let compteurAvantEnregistrement = compteurBaseSemaine;
+
+      if (feuillePrecedente?.compteur_apres !== null && feuillePrecedente?.compteur_apres !== undefined) {
+        compteurAvantEnregistrement = Number(feuillePrecedente.compteur_apres) || 0;
+        setCompteurBaseSemaine(compteurAvantEnregistrement);
+      } else {
+        const exercice = exercicePOLYNOV(semaineDebut);
+        const { data: droit, error: erreurDroit } = await supabase
+          .from("rh_droits")
+          .select("compteur_recuperation_initial")
+          .eq("collaborateur_id", collaborateur.id)
+          .eq("exercice", exercice)
+          .maybeSingle();
+
+        if (erreurDroit) throw erreurDroit;
+
+        if (droit?.compteur_recuperation_initial !== null && droit?.compteur_recuperation_initial !== undefined) {
+          compteurAvantEnregistrement = Number(droit.compteur_recuperation_initial) || 0;
+        }
+
+        setCompteurBaseSemaine(compteurAvantEnregistrement);
+      }
+
+      const compteurApresEnregistrement =
+        compteurAvantEnregistrement +
+        heuresSupplementairesAuCompteur -
+        totalRE;
+
+      if (compteurApresEnregistrement < -30 || compteurApresEnregistrement > 30) {
+        setMessage(
+          `Le compteur de récupération serait de ${formatHeures(compteurApresEnregistrement)} h. La limite autorisée est de -30 h à +30 h.`
+        );
+        setMessageType("DANGER");
+        setEnregistrement(false);
+        return;
+      }
+
       if (feuilleExistante) {
         feuilleId =
           feuilleExistante.id;
@@ -1691,19 +1944,22 @@ export default function MaSemainePage() {
                 totalHeuresSemaine,
 
               total_theorique:
-                totalHeuresTheoriques,
+                base35Semaine,
 
               heures_supplementaires:
                 heuresSupplementaires,
+
+              mode_heures_supplementaires:
+                modeHeuresSupplementaires ?? "COMPTEUR",
 
               total_re:
                 totalRE,
 
               compteur_avant:
-                compteurInitial,
+                compteurAvantEnregistrement,
 
               compteur_apres:
-                compteurFinal,
+                compteurApresEnregistrement,
 
               updated_at:
                 new Date().toISOString(),
@@ -1744,19 +2000,31 @@ export default function MaSemainePage() {
                 totalHeuresSemaine,
 
               total_theorique:
-                totalHeuresTheoriques,
+                base35Semaine,
 
               heures_supplementaires:
                 heuresSupplementaires,
+
+              mode_heures_supplementaires:
+                modeHeuresSupplementaires ?? "COMPTEUR",
 
               total_re:
                 totalRE,
 
               compteur_avant:
-                compteurInitial,
+                compteurAvantEnregistrement,
 
               compteur_apres:
-                compteurFinal,
+                compteurApresEnregistrement,
+
+              verrouillee:
+                false,
+
+              verrouillee_le:
+                null,
+
+              verrouillee_par:
+                null,
             })
             .select("id")
             .single();
@@ -1795,7 +2063,7 @@ export default function MaSemainePage() {
               jour.presence,
 
             absence:
-              jour.absence,
+              jour.estFerie ? CODE_FE : jour.absence,
 
             duree_rtt:
               jour.dureeRTT,
@@ -1804,6 +2072,14 @@ export default function MaSemainePage() {
               convertirHeures(
                 jour.heuresRE
               ),
+
+            heures_absence:
+              convertirHeures(
+                jour.heuresAbsence
+              ),
+
+            duree_cp:
+              jour.dureeCP,
 
             ticket_restaurant:
               jour.ticketRestaurant,
@@ -1946,10 +2222,50 @@ export default function MaSemainePage() {
         }
       }
 
-      /*
-       * Le compteur collaborateur
-       * n'est pas encore modifié ici.
-       */
+      /* --------------------------------------------------------
+         RECALCUL CHRONOLOGIQUE DES FEUILLES SUIVANTES
+         Si un admin modifie une ancienne semaine, les compteurs
+         des semaines suivantes restent cohérents.
+      -------------------------------------------------------- */
+      const { data: feuillesSuivantes, error: erreurSuivantes } = await supabase
+        .from("feuilles_heures")
+        .select("id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re")
+        .eq("collaborateur_id", collaborateur.id)
+        .gt("semaine_debut", semaineDebut)
+        .order("semaine_debut", { ascending: true });
+
+      if (erreurSuivantes) throw erreurSuivantes;
+
+      let compteurCourant = compteurApresEnregistrement;
+
+      for (const suivante of feuillesSuivantes ?? []) {
+        const hsCompteur = suivante.mode_heures_supplementaires === "COMPTEUR"
+          ? Number(suivante.heures_supplementaires ?? 0)
+          : 0;
+        const re = Number(suivante.total_re ?? 0);
+        const apres = compteurCourant + hsCompteur - re;
+
+        if (apres < -30 || apres > 30) {
+          throw new Error(
+            `Le recalcul de la feuille ${suivante.semaine_debut} dépasse la limite du compteur (${formatHeures(apres)} h).`
+          );
+        }
+
+        const { error: erreurMajSuivante } = await supabase
+          .from("feuilles_heures")
+          .update({
+            compteur_avant: compteurCourant,
+            compteur_apres: apres,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", suivante.id);
+
+        if (erreurMajSuivante) throw erreurMajSuivante;
+        compteurCourant = apres;
+      }
+
+      setCompteurBaseSemaine(compteurAvantEnregistrement);
+      setFeuilleVerrouillee(false);
 
       setSemaineEnregistree(
         true
@@ -1963,15 +2279,28 @@ export default function MaSemainePage() {
 
       setMessageType("OK");
     } catch (error) {
-      console.error(error);
+      console.error("Erreur enregistrement semaine", error);
 
-      const texte =
-        error instanceof Error
-          ? error.message
-          : "Erreur inconnue";
+      const erreurSupabase = error as {
+        message?: string;
+        details?: string;
+        hint?: string;
+        code?: string;
+      };
+
+      const texte = [
+        erreurSupabase?.message,
+        erreurSupabase?.details,
+        erreurSupabase?.hint,
+        erreurSupabase?.code
+          ? `Code ${erreurSupabase.code}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" — ");
 
       setMessage(
-        `Impossible d'enregistrer la semaine : ${texte}`
+        `Impossible d'enregistrer la semaine : ${texte || "Erreur inconnue"}`
       );
 
       setMessageType(
@@ -1992,7 +2321,7 @@ export default function MaSemainePage() {
      CHARGEMENT
   ============================================================ */
 
-  if (chargement) {
+  if (chargement || !codesCharges) {
     return (
       <main style={styles.page}>
         <header style={styles.header}>
@@ -2178,7 +2507,15 @@ export default function MaSemainePage() {
               {formatHeures(
                 totalHeuresTheoriques
               )}{" "}
-              h à travailler
+              h prévues
+              {heuresSupplementaires > 0.01 && (
+                <>
+                  {" "}·{" "}
+                  <strong style={{ color: "#138113" }}>
+                    +{formatHeures(heuresSupplementaires)} h sup
+                  </strong>
+                </>
+              )}
             </div>
           </div>
 
@@ -2198,7 +2535,23 @@ export default function MaSemainePage() {
             COMPTEURS
         ==================================================== */}
 
+        <fieldset
+          disabled={feuilleVerrouillee && !modeAdmin}
+          style={{
+            border: 0,
+            padding: 0,
+            margin: 0,
+            minWidth: 0,
+          }}
+        >
         <div style={styles.cards}>
+          {!modeAdmin && feuilleVerrouillee && (
+            <div style={{...styles.message, ...styles.messageDanger, marginBottom: 16}}>
+              <div style={styles.messageIcon}>🔒</div>
+              <div>Cette feuille est <strong>verrouillée par l'administration</strong>. Vous pouvez la consulter, mais elle n'est plus modifiable.</div>
+            </div>
+          )}
+
           {/* HEURES SAISIES */}
 
           <div style={styles.card}>
@@ -2257,92 +2610,63 @@ export default function MaSemainePage() {
               h
             </div>
 
-            <div
-              style={styles.cardHint}
-            >
-              Écart entre les heures
-              saisies et la cible
-              théorique.
-            </div>
-          </div>
-
-          {/* COMPTEUR */}
-
-          <div
-            style={{
-              ...styles.card,
-              border:
-                compteurDepasse
-                  ? "1px solid #d88"
-                  : "1px solid #e3e3e3",
-            }}
-          >
-            <div
-              style={styles.cardLabel}
-            >
-              COMPTEUR RÉCUPÉRATION
+            <div style={styles.cardHint}>
+              Base normale : 35 h. Les heures au-delà sont comptées en heures sup.
             </div>
 
-            <div
-              style={{
-                ...styles.cardValue,
-                color:
-                  compteurDepasse
-                    ? "#c00000"
-                    : "#333",
-              }}
-            >
-              {compteurFinal > 0
-                ? "+"
-                : ""}
-              {formatHeures(
-                compteurFinal
-              )}{" "}
-              h
-            </div>
-
-            <div
-              style={styles.gauge}
-            >
-              <div
-                style={
-                  styles.gaugeTrack
-                }
-              />
-
-              <div
-                style={{
-                  ...styles.gaugeMarker,
-                  left: `${Math.min(
-                    100,
-                    Math.max(
-                      0,
-                      ((compteurFinal +
-                        30) /
-                        60) *
-                        100
-                    )
-                  )}%`,
-                }}
-              />
-            </div>
-
-            <div
-              style={
-                styles.gaugeLabels
-              }
-            >
-              <span>-30 h</span>
-              <span>0</span>
-              <span>+30 h</span>
-            </div>
-
-            {compteurDepasse && (
-              <div
-                style={styles.warning}
-              >
-                ⚠ Limite de ±30 h
-                dépassée
+            {heuresSupplementaires > 0.01 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#777", letterSpacing: ".5px", marginBottom: 6 }}>
+                  QUE FAIRE DE CES HEURES ?
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 6,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModeHeuresSupplementaires("COMPTEUR");
+                      setSemaineEnregistree(false);
+                    }}
+                    style={{
+                      border: modeHeuresSupplementaires === "COMPTEUR" ? "2px solid #c00000" : "1px solid #ddd",
+                      background: modeHeuresSupplementaires === "COMPTEUR" ? "#fff5f5" : "#fff",
+                      color: modeHeuresSupplementaires === "COMPTEUR" ? "#c00000" : "#555",
+                      borderRadius: 8,
+                      padding: "8px 6px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: "Calibri, Arial, sans-serif",
+                      fontSize: 11,
+                    }}
+                  >
+                    ↻ Compteur
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModeHeuresSupplementaires("PAYE");
+                      setSemaineEnregistree(false);
+                    }}
+                    style={{
+                      border: modeHeuresSupplementaires === "PAYE" ? "2px solid #138113" : "1px solid #ddd",
+                      background: modeHeuresSupplementaires === "PAYE" ? "#f2faf2" : "#fff",
+                      color: modeHeuresSupplementaires === "PAYE" ? "#138113" : "#555",
+                      borderRadius: 8,
+                      padding: "8px 6px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      fontFamily: "Calibri, Arial, sans-serif",
+                      fontSize: 11,
+                    }}
+                  >
+                    € Payées
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -2423,7 +2747,8 @@ export default function MaSemainePage() {
             .map(jour => {
               const verrouille =
                 imputationsInterdites(
-                  jour
+                  jour,
+                  codesImputation
                 );
 
               const heuresJour =
@@ -2493,21 +2818,40 @@ export default function MaSemainePage() {
                         )}
                       </div>
 
-                      <div
-                        style={
-                          styles.dayHours
-                        }
-                      >
-                        <strong
-                          style={
-                            styles.dayHoursStrong
-                          }
-                        >
-                          {formatHeures(
-                            heuresJour
-                          )}{" "}
-                          h
+                      <div style={styles.dayHours}>
+                        <strong style={styles.dayHoursStrong}>
+                          {formatHeures(heuresJour)} h
                         </strong>
+
+                        {!jour.estWeekend && (
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: "#c00000",
+                              fontWeight: 800,
+                              marginTop: 4,
+                              paddingTop: 3,
+                              borderTop: "1px solid #e8caca",
+                            }}
+                          >
+                            Objectif : {formatHeures(cibleTravailJour(jour, codesImputation))} h
+                          </div>
+                        )}
+
+                        {!jour.estWeekend &&
+                          !jour.estFerie &&
+                          heuresJour > cibleTravailJour(jour, codesImputation) + 0.01 && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "#138113",
+                                fontWeight: 700,
+                                marginTop: 3,
+                              }}
+                            >
+                              +{formatHeures(heuresJour - cibleTravailJour(jour, codesImputation))} h
+                            </div>
+                          )}
                       </div>
                     </div>
 
@@ -2531,79 +2875,43 @@ export default function MaSemainePage() {
                           Absence
                         </div>
 
-                        <select
-                          value={
-                            jour.absence
-                          }
-                          disabled={
-                            jour.estFerie &&
-                            jour.absence !==
-                              "FE"
-                          }
-                          onChange={e =>
-                            changerAbsence(
-                              jour,
-                              e.target
-                                .value as CodeAbsence
-                            )
-                          }
-                          style={{
-                            ...styles.input,
-                            maxWidth: 250,
-                            background:
-                              jour.absence ===
-                              "FE"
-                                ? "#e9e9e9"
-                                : "#fff",
-                          }}
-                        >
-                          <option value="">
-                            Aucune absence
-                          </option>
-
-                          <option value="CP">
-                            CP — Congés payés
-                          </option>
-
-                          <option value="RE">
-                            RE — Récupération
-                          </option>
-
-                          <option value="ML">
-                            ML — Maladie
-                          </option>
-
-                          <option value="RTT">
-                            RTT
-                          </option>
-
-                          <option value="AUTRE">
-                            AUTRE
-                          </option>
-                        </select>
-
-                        {jour.estFerie && (
-                          <label
-                            style={
-                              styles.ferieToggle
-                            }
+                        {jour.estFerie ? (
+                          <div
+                            style={{
+                              ...styles.input,
+                              maxWidth: 250,
+                              background: "#eeeeee",
+                              color: "#666",
+                              fontWeight: 700,
+                              display: "flex",
+                              alignItems: "center",
+                            }}
                           >
-                            <input
-                              type="checkbox"
-                              checked={
-                                jour.absence ===
-                                "FE"
-                              }
-                              onChange={() =>
-                                basculerJourFerie(
-                                  jour
-                                )
-                              }
-                            />
-
-                            Jour férié
-                            (FE)
-                          </label>
+                            Jour férié — automatique
+                          </div>
+                        ) : (
+                          <select
+                            value={jour.absence}
+                            onChange={e =>
+                              changerAbsence(
+                                jour,
+                                e.target.value as CodeAbsence
+                              )
+                            }
+                            style={{
+                              ...styles.input,
+                              maxWidth: 250,
+                            }}
+                          >
+                            <option value="">Aucune absence</option>
+                            {codesAbsence
+                              .filter(code => normaliserCode(code.code) !== CODE_FE)
+                              .map(code => (
+                                <option key={code.code} value={code.code}>
+                                  {code.code} — {code.libelle}
+                                </option>
+                              ))}
+                          </select>
                         )}
                       </div>
 
@@ -2701,29 +3009,61 @@ export default function MaSemainePage() {
                         </div>
                       )}
 
+                      {/* CP : JOURNEE / DEMI-JOURNEE */}
+
+                      {jour.absence === CODE_CP && (
+                        <div style={styles.rttBox}>
+                          <strong>Congés payés :</strong>
+                          <select
+                            value={jour.dureeCP}
+                            onChange={e => modifierJour(jour.date, {
+                              dureeCP: e.target.value as DureeRTT,
+                              presence: e.target.value === "JOURNEE" ? "ABSENT" : "PRESENTIEL",
+                              ticketRestaurant: e.target.value === "DEMI_JOURNEE" && !jour.estWeekend,
+                              imputations: e.target.value === "JOURNEE" ? [] : jour.imputations,
+                            })}
+                            style={{ ...styles.input, width: 160 }}
+                          >
+                            <option value="JOURNEE">Journée</option>
+                            <option value="DEMI_JOURNEE">1/2 journée</option>
+                          </select>
+                          <span>
+                            {jour.dureeCP === "DEMI_JOURNEE"
+                              ? `Il reste ${formatHeures(jour.heuresTheoriques / 2)} h à travailler.`
+                              : "Journée non travaillée."}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* ABSENCES EN HEURES : VM / AI / AA */}
+
+                      {absenceNecessiteHeures(jour.absence) && (
+                        <div style={styles.reBox}>
+                          <strong>{libelleAbsence(jour.absence, codesImputation)} :</strong>
+                          <input
+                            value={jour.heuresAbsence}
+                            inputMode="decimal"
+                            placeholder="ex. 2,0"
+                            onChange={e => modifierJour(jour.date, {
+                              heuresAbsence: e.target.value.replace(/[^0-9.,]/g, ""),
+                            })}
+                            style={{ ...styles.input, width: 100 }}
+                          />
+                          <span>h d'absence</span>
+                        </div>
+                      )}
+
                       {/* ABSENCE TOTALE */}
 
                       {jour.absence &&
-                        jour.absence !==
-                          "RE" &&
-                        jour.absence !==
-                          "RTT" && (
-                          <div
-                            style={
-                              styles.absenceInfo
-                            }
-                          >
-                            <strong>
-                              {libelleAbsence(
-                                jour.absence
-                              )}
-                            </strong>
-
-                            {" — "}
-
-                            aucune imputation
-                            d'heures sur
-                            cette journée.
+                        jour.absence !== CODE_RE &&
+                        jour.absence !== CODE_RT &&
+                        jour.absence !== CODE_CP &&
+                        !absenceNecessiteHeures(jour.absence) &&
+                        absenceTotale(jour.absence, jour.dureeRTT, jour.dureeCP, codesImputation) && (
+                          <div style={styles.absenceInfo}>
+                            <strong>{libelleAbsence(jour.absence, codesImputation)}</strong>
+                            {" — aucune imputation d'heures sur cette journée."}
                           </div>
                         )}
 
@@ -2763,11 +3103,14 @@ export default function MaSemainePage() {
                                           : ligne.numeroAffaire,
 
                                       code:
-                                        e.target
-                                          .value ===
-                                        "Divers"
+                                        e.target.value === "Divers"
                                           ? ""
-                                          : ligne.code,
+                                          : (e.target.value === "CBE"
+                                              ? codesAffaire
+                                              : codesDevis
+                                            ).some(c => c.code === ligne.code)
+                                            ? ligne.code
+                                            : "",
                                     }
                                   )
                                 }
@@ -2863,12 +3206,7 @@ export default function MaSemainePage() {
                                     jour,
                                     ligne.id,
                                     {
-                                      code:
-                                        e.target
-                                          .value as
-                                          | CodeAffaire
-                                          | CodeDivers
-                                          | "",
+                                      code: e.target.value,
                                     }
                                   )
                                 }
@@ -2877,51 +3215,20 @@ export default function MaSemainePage() {
                                 }
                               >
                                 <option value="">
-                                  Code affaire...
+                                  {getCodesPourType(ligne.typeAffaire).length === 0
+                                    ? "Aucun code autorisé dans Gestion-code"
+                                    : ligne.typeAffaire === "Divers"
+                                      ? "Choisir un code Divers..."
+                                      : ligne.typeAffaire === "DBE"
+                                        ? "Choisir un code devis..."
+                                        : "Choisir un code affaire..."}
                                 </option>
 
-                                {ligne.typeAffaire ===
-                                "Divers"
-                                  ? CODES_DIVERS.map(
-                                      code => (
-                                        <option
-                                          key={
-                                            code.code
-                                          }
-                                          value={
-                                            code.code
-                                          }
-                                        >
-                                          {
-                                            code.code
-                                          }{" "}
-                                          —{" "}
-                                          {
-                                            code.libelle
-                                          }
-                                        </option>
-                                      )
-                                    )
-                                  : CODES_AFFAIRES.map(
-                                      code => (
-                                        <option
-                                          key={
-                                            code.code
-                                          }
-                                          value={
-                                            code.code
-                                          }
-                                        >
-                                          {
-                                            code.code
-                                          }{" "}
-                                          —{" "}
-                                          {
-                                            code.libelle
-                                          }
-                                        </option>
-                                      )
-                                    )}
+                                {getCodesPourType(ligne.typeAffaire).map(code => (
+                                  <option key={code.code} value={code.code}>
+                                    {code.code} — {code.libelle}
+                                  </option>
+                                ))}
                               </select>
 
                               {/* HEURES */}
@@ -3141,6 +3448,8 @@ export default function MaSemainePage() {
           </div>
         </div>
 
+        </fieldset>
+
         {/* ====================================================
             ACTIONS
         ==================================================== */}
@@ -3213,9 +3522,8 @@ export default function MaSemainePage() {
                 {formatHeures(
                   heuresManquantes
                 )}{" "}
-                h par rapport aux
-                heures théoriques de
-                la semaine.
+                h par rapport au
+                rythme prévu de la semaine.
               </div>
             </div>
           </div>
@@ -3389,7 +3697,7 @@ export default function MaSemainePage() {
                   Présentiel en vert,
                   télétravail en jaune,
                   absence en rouge. CP,
-                  ML, FE et AUTRE passent
+                  les absences de journée complète passent
                   automatiquement en
                   « Absent ».
                 </p>
@@ -3415,21 +3723,30 @@ export default function MaSemainePage() {
                 </p>
               </div>
 
-              <div
-                style={
-                  styles.helpItem
-                }
-              >
-                <strong>
-                  Heures
-                </strong>
-
+              <div style={styles.helpItem}>
+                <strong>Rythme & heures sup</strong>
                 <p>
-                  Vous pouvez saisir
-                  7,5 ou 7.5. Vous pouvez
-                  créer autant de lignes
-                  d'imputation que
-                  nécessaire.
+                  Le rythme affiché indique les heures à réaliser chaque jour.
+                  La base normale reste 35 h par semaine. Les heures réalisées
+                  au-delà de cette base sont comptées séparément en heures sup.
+                </p>
+              </div>
+
+              <div style={styles.helpItem}>
+                <strong>PE / PI</strong>
+                <p>
+                  En PE, le rythme peut être 7 h par jour avec des heures sup
+                  quotidiennes. En PI, le rythme peut être 8 / 8 / 8 / 8 / 5,5 h
+                  pour conserver le vendredi après-midi.
+                </p>
+              </div>
+
+              <div style={styles.helpItem}>
+                <strong>Heures</strong>
+                <p>
+                  Saisissez les heures réellement passées sur chaque activité.
+                  Le système calcule automatiquement les heures sup ; inutile
+                  de les saisir séparément.
                 </p>
               </div>
 
@@ -3443,19 +3760,77 @@ export default function MaSemainePage() {
                 </strong>
 
                 <p>
-                  Un jour férié est
-                  automatiquement marqué
-                  FE et verrouillé.
-                  Décochez FE si vous avez
-                  réellement travaillé ce
-                  jour-là.
+                  Un jour férié est détecté
+                  automatiquement à partir de la date.
+                  Il est enregistré en FE en arrière-plan
+                  pour le hors-bilan.
                 </p>
               </div>
             </div>
           </aside>
         )}
+
       </div>
-    </main>
+    
+      {choixHeuresSupOuvert && heuresSupplementaires > 0.01 && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 480,
+              background: "#fff",
+              borderRadius: 16,
+              padding: 28,
+              boxShadow: "0 20px 60px rgba(0,0,0,.25)",
+              fontFamily: "Calibri, Arial, sans-serif",
+            }}
+          >
+            <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>
+              Que souhaitez-vous faire de vos heures supplémentaires ?
+            </div>
+            <div style={{ color: "#666", lineHeight: 1.5, marginBottom: 20 }}>
+              Cette semaine comporte <strong>+{formatHeures(heuresSupplementaires)} h</strong> supplémentaires.
+              <br />Choisissez explicitement leur traitement avant l'enregistrement.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setModeHeuresSupplementaires("COMPTEUR");
+                  setChoixHeuresSupOuvert(false);
+                }}
+                style={{ border: "2px solid #c00000", background: "#fff5f5", color: "#c00000", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
+              >
+                ↻ Mettre au compteur
+                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures alimentent le compteur RE.</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setModeHeuresSupplementaires("PAYE");
+                  setChoixHeuresSupOuvert(false);
+                }}
+                style={{ border: "2px solid #138113", background: "#f2faf2", color: "#138113", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
+              >
+                € Heures payées
+                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures ne alimentent pas le compteur RE.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+</main>
   );
 }
 
@@ -3710,7 +4085,7 @@ const styles: Record<
   cards: {
     display: "grid",
     gridTemplateColumns:
-      "repeat(4, 1fr)",
+      "repeat(3, 1fr)",
     gap: 14,
     marginBottom: 16,
   },

@@ -956,7 +956,7 @@ export default function BilanAffairePage() {
         ←
       </span>
 
-      Retour au dashboard
+      Retour au tableau de bord
     </button>
 
     <div

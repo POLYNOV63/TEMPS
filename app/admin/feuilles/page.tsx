@@ -26,6 +26,8 @@ type Feuille = {
   total_theorique: number;
   heures_supplementaires: number;
   updated_at: string;
+  verrouillee: boolean;
+  verrouillee_le: string | null;
 };
 
 type Statut =
@@ -247,6 +249,11 @@ export default function FeuillesPage() {
     null
   );
 
+  const [
+    verrouillageEnCours,
+    setVerrouillageEnCours,
+  ] = useState<string | null>(null);
+
   /* ======================================================= */
   /* ======================= CHARGEMENT ==================== */
   /* ======================================================= */
@@ -329,6 +336,59 @@ export default function FeuillesPage() {
   /* ======================================================= */
   /* ======================= SUPPRESSION =================== */
   /* ======================================================= */
+
+  async function basculerVerrouillage(feuille: Feuille) {
+    const verrouiller = !Boolean(feuille.verrouillee);
+    const action = verrouiller ? "verrouiller" : "déverrouiller";
+
+    if (!window.confirm(`Confirmer le ${action}ment de cette feuille ?`)) {
+      return;
+    }
+
+    setVerrouillageEnCours(feuille.id);
+    setErreur("");
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Session utilisateur introuvable.");
+
+      const { data: admin } = await supabase
+        .from("collaborateurs")
+        .select("id, role")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (admin?.role !== "ADMIN") {
+        throw new Error("Seul un administrateur peut verrouiller ou déverrouiller une feuille.");
+      }
+
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("feuilles_heures")
+        .update({
+          verrouillee: verrouiller,
+          verrouillee_le: verrouiller ? now : null,
+          verrouillee_par: verrouiller ? admin.id : null,
+          updated_at: now,
+        })
+        .eq("id", feuille.id);
+
+      if (error) throw error;
+
+      setFeuilles(anciennes =>
+        anciennes.map(f =>
+          f.id === feuille.id
+            ? { ...f, verrouillee: verrouiller, verrouillee_le: verrouiller ? now : null }
+            : f
+        )
+      );
+    } catch (error: any) {
+      console.error("Erreur verrouillage feuille :", error);
+      setErreur(error?.message || `Impossible de ${action} la feuille.`);
+    } finally {
+      setVerrouillageEnCours(null);
+    }
+  }
 
   async function supprimerFeuille(
     feuille: Feuille,
@@ -536,13 +596,41 @@ export default function FeuillesPage() {
 
   const semainesDisponibles =
     useMemo(() => {
+      /*
+       * Une semaine doit rester visible même lorsqu'une feuille vient
+       * d'être supprimée : on doit alors pouvoir afficher le collaborateur
+       * avec le statut "À créer".
+       *
+       * On conserve donc toujours la semaine courante dans la liste.
+       */
+      const aujourdHui = new Date();
+
+      const jour = aujourdHui.getDay();
+
+      const decalage =
+        jour === 0
+          ? -6
+          : 1 - jour;
+
+      aujourdHui.setDate(
+        aujourdHui.getDate() + decalage
+      );
+
+      const semaineCourante =
+        `${aujourdHui.getFullYear()}-${String(
+          aujourdHui.getMonth() + 1
+        ).padStart(2, "0")}-${String(
+          aujourdHui.getDate()
+        ).padStart(2, "0")}`;
+
       return Array.from(
-        new Set(
-          feuilles.map(
+        new Set([
+          semaineCourante,
+          ...feuilles.map(
             (f) =>
               f.semaine_debut
-          )
-        )
+          ),
+        ])
       ).sort((a, b) =>
         b.localeCompare(a)
       );
@@ -557,19 +645,34 @@ export default function FeuillesPage() {
       (c) => c.actif
     ).length;
 
-  const feuillesCompletes =
-    feuilles.filter(
-      (f) =>
-        f.total_heures >=
-        f.total_theorique
-    ).length;
+  // Les statistiques reprennent exactement les lignes affichées dans
+  // les semaines : collaborateurs présents uniquement, une seule feuille
+  // par collaborateur et par semaine, sans compter les doublons/stale rows.
+  const statistiquesFeuilles = semainesDisponibles.reduce(
+    (acc, semaine) => {
+      const presents = collaborateurs.filter(c =>
+        Boolean(feuillesParSemaine[semaine]?.[c.id]) ||
+        estPresentSemaine(c, semaine)
+      );
 
-  const feuillesIncompletes =
-    feuilles.filter(
-      (f) =>
-        f.total_heures <
-        f.total_theorique
-    ).length;
+      for (const collaborateur of presents) {
+        const feuille = feuillesParSemaine[semaine]?.[collaborateur.id];
+        if (!feuille) continue;
+
+        if (feuille.total_heures >= feuille.total_theorique) {
+          acc.completes += 1;
+        } else {
+          acc.incompletes += 1;
+        }
+      }
+
+      return acc;
+    },
+    { completes: 0, incompletes: 0 }
+  );
+
+  const feuillesCompletes = statistiquesFeuilles.completes;
+  const feuillesIncompletes = statistiquesFeuilles.incompletes;
 
   /* ======================================================= */
   /* ========================= RENDER ====================== */
@@ -921,9 +1024,26 @@ export default function FeuillesPage() {
                     semaine
                 );
 
+              /*
+               * Un collaborateur qui possède déjà une feuille enregistrée
+               * doit toujours apparaître dans la semaine concernée.
+               *
+               * On ne doit pas masquer une feuille existante simplement
+               * parce que date_entree / date_sortie ne considère pas le
+               * collaborateur comme présent sur la semaine.
+               *
+               * Pour les collaborateurs sans feuille, on conserve le
+               * calcul de présence habituel afin d'afficher les feuilles
+               * manquantes à créer.
+               */
               const collaborateursPresents =
                 collaborateurs.filter(
                   (collaborateur) =>
+                    Boolean(
+                      feuillesParSemaine[semaine]?.[
+                        collaborateur.id
+                      ]
+                    ) ||
                     estPresentSemaine(
                       collaborateur,
                       semaine
@@ -1066,6 +1186,12 @@ export default function FeuillesPage() {
                   supprimerFeuille={
                     supprimerFeuille
                   }
+                  verrouillageEnCours={
+                    verrouillageEnCours
+                  }
+                  basculerVerrouillage={
+                    basculerVerrouillage
+                  }
                 />
               );
             }
@@ -1156,6 +1282,8 @@ function SemaineCard({
   ouverte,
   suppressionEnCours,
   supprimerFeuille,
+  verrouillageEnCours,
+  basculerVerrouillage,
 }: {
   semaine: string;
 
@@ -1192,6 +1320,12 @@ function SemaineCard({
   supprimerFeuille: (
     feuille: Feuille,
     collaborateur: Collaborateur
+  ) => Promise<void>;
+
+  verrouillageEnCours: string | null;
+
+  basculerVerrouillage: (
+    feuille: Feuille
   ) => Promise<void>;
 }) {
   const [survol, setSurvol] =
@@ -1473,6 +1607,12 @@ function SemaineCard({
                     supprimerFeuille={
                       supprimerFeuille
                     }
+                    verrouillageEnCours={
+                      verrouillageEnCours
+                    }
+                    basculerVerrouillage={
+                      basculerVerrouillage
+                    }
                   />
                 );
               }
@@ -1496,6 +1636,8 @@ function CollaborateurRow({
   dernier,
   suppressionEnCours,
   supprimerFeuille,
+  verrouillageEnCours,
+  basculerVerrouillage,
 }: {
   collaborateur: Collaborateur;
 
@@ -1518,6 +1660,12 @@ function CollaborateurRow({
   supprimerFeuille: (
     feuille: Feuille,
     collaborateur: Collaborateur
+  ) => Promise<void>;
+
+  verrouillageEnCours: string | null;
+
+  basculerVerrouillage: (
+    feuille: Feuille
   ) => Promise<void>;
 }) {
   const [survol, setSurvol] =
@@ -1812,6 +1960,18 @@ function CollaborateurRow({
         )}
       </div>
 
+      {feuille?.verrouillee && (
+        <div
+          style={{
+            ...styles.statusArea,
+            color: "#7a4b00",
+            fontWeight: 700,
+          }}
+        >
+          🔒 Verrouillée
+        </div>
+      )}
+
       {/* ================= ACTIONS ================= */}
 
       <div
@@ -1855,6 +2015,26 @@ function CollaborateurRow({
         </button>
 
         {feuille && (
+          <>
+          <button
+            type="button"
+            disabled={suppression || verrouillageEnCours === feuille.id}
+            title={feuille.verrouillee ? "Déverrouiller cette feuille" : "Verrouiller cette feuille"}
+            onClick={() => basculerVerrouillage(feuille)}
+            style={{
+              ...styles.deleteButton,
+              background: feuille.verrouillee ? "#fff7e6" : "#f4f4f4",
+              color: feuille.verrouillee ? "#8a6500" : "#555",
+              borderColor: feuille.verrouillee ? "#e6c36a" : "#ddd",
+            }}
+          >
+            {verrouillageEnCours === feuille.id
+              ? "…"
+              : feuille.verrouillee
+                ? "🔓"
+                : "🔒"}
+          </button>
+
           <button
             type="button"
             disabled={suppression}
@@ -1891,6 +2071,7 @@ function CollaborateurRow({
               ? "…"
               : "🗑"}
           </button>
+          </>
         )}
       </div>
     </div>

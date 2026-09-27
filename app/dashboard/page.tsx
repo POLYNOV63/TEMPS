@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
+/* ===============================================================
+   TYPES
+================================================================ */
+
 type Collaborateur = {
   id: string;
   prenom: string | null;
@@ -22,7 +26,10 @@ type Feuille = {
   statut: string | null;
 };
 
-type EtatFeuille = "complete" | "incomplete" | "manquante";
+type EtatFeuille =
+  | "complete"
+  | "incomplete"
+  | "manquante";
 
 type LigneSurveillance = {
   collaborateur: Collaborateur;
@@ -30,98 +37,140 @@ type LigneSurveillance = {
   etat: EtatFeuille;
 };
 
+/* ===============================================================
+   PAGE
+================================================================ */
+
 export default function DashboardPage() {
   const router = useRouter();
 
   const [prenom, setPrenom] = useState("");
   const [role, setRole] = useState("");
-  const [chargement, setChargement] = useState(true);
 
-  const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>(
-    []
-  );
+  const [chargement, setChargement] =
+    useState(true);
 
-  const [feuilles, setFeuilles] = useState<Feuille[]>([]);
+  const [collaborateurs, setCollaborateurs] =
+    useState<Collaborateur[]>([]);
 
-  const [erreur, setErreur] = useState("");
+  const [feuilles, setFeuilles] =
+    useState<Feuille[]>([]);
 
-  const [semaineCourante, setSemaineCourante] = useState("");
+  const [erreur, setErreur] =
+    useState<string | null>(null);
+
+  const [semaineCourante, setSemaineCourante] =
+    useState("");
+
+  /* =============================================================
+     CHARGEMENT
+  ============================================================= */
 
   useEffect(() => {
     async function chargerDashboard() {
-      setChargement(true);
-      setErreur("");
-
       try {
+        setChargement(true);
+        setErreur(null);
+
         const {
-          data: { user },
+          data: {
+            user,
+          },
+          error: erreurUtilisateur,
         } = await supabase.auth.getUser();
+
+        if (erreurUtilisateur) {
+          throw erreurUtilisateur;
+        }
 
         if (!user) {
           router.push("/login");
           return;
         }
 
-        // ---------------------------------------------------------
-        // 1. Collaborateur connecté
-        // ---------------------------------------------------------
+        /* -------------------------------------------------------
+           Collaborateur connecté
+        ------------------------------------------------------- */
 
         const {
           data: collaborateur,
-          error: collaborateurError,
+          error: erreurCollaborateur,
         } = await supabase
           .from("collaborateurs")
-          .select("id, prenom, nom, actif, role")
+          .select(
+            "id, prenom, nom, actif, role"
+          )
           .eq("auth_user_id", user.id)
-          .single();
+          .maybeSingle();
 
-        if (collaborateurError || !collaborateur) {
-          console.error(
-            "Erreur collaborateur connecté :",
-            collaborateurError
-          );
-
-          setErreur(
-            "Impossible de récupérer les informations du collaborateur."
-          );
-
-          setChargement(false);
-          return;
+        if (erreurCollaborateur) {
+          throw erreurCollaborateur;
         }
 
-        setPrenom(collaborateur.prenom ?? "");
-        setRole(collaborateur.role ?? "");
+        if (!collaborateur) {
+          throw new Error(
+            "Aucun collaborateur associé à votre compte."
+          );
+        }
 
-        // ---------------------------------------------------------
-        // 2. Calcul de la semaine courante
-        // ---------------------------------------------------------
+        setPrenom(
+          collaborateur.prenom ?? ""
+        );
 
-        const lundi = obtenirLundi(new Date());
-        const lundiString = formatDateSQL(lundi);
+        const roleUtilisateur =
+          String(
+            collaborateur.role ?? ""
+          ).toUpperCase();
 
-        setSemaineCourante(lundiString);
+        setRole(roleUtilisateur);
 
-        // ---------------------------------------------------------
-        // 3. Données ADMIN
-        // ---------------------------------------------------------
+        /* -------------------------------------------------------
+           Semaine courante
+        ------------------------------------------------------- */
 
-        if (collaborateur.role === "ADMIN") {
-          const { data: collaborateursData, error: collaborateursError } =
-            await supabase
-              .from("collaborateurs")
-              .select("id, prenom, nom, actif, role")
-              .eq("actif", true)
-              .order("nom", { ascending: true });
+        const lundi =
+          obtenirLundi(new Date());
 
-          if (collaborateursError) {
-            throw collaborateursError;
+        const lundiString =
+          formatDateSQL(lundi);
+
+        setSemaineCourante(
+          lundiString
+        );
+
+        /* -------------------------------------------------------
+           ADMIN
+        ------------------------------------------------------- */
+
+        if (
+          roleUtilisateur ===
+          "ADMIN"
+        ) {
+          const {
+            data: collaborateursActifs,
+            error:
+              erreurCollaborateurs,
+          } = await supabase
+            .from("collaborateurs")
+            .select(
+              "id, prenom, nom, actif, role"
+            )
+            .eq("actif", true)
+            .order("nom", {
+              ascending: true,
+            });
+
+          if (erreurCollaborateurs) {
+            throw erreurCollaborateurs;
           }
 
-          const { data: feuillesData, error: feuillesError } =
-            await supabase
-              .from("feuilles_heures")
-              .select(
-                `
+          const {
+            data: feuillesCourantes,
+            error: erreurFeuilles,
+          } = await supabase
+            .from("feuilles_heures")
+            .select(
+              `
                 id,
                 collaborateur_id,
                 semaine_debut,
@@ -130,48 +179,74 @@ export default function DashboardPage() {
                 heures_supplementaires,
                 statut
               `
-              )
-              .eq("semaine_debut", lundiString);
+            )
+            .eq(
+              "semaine_debut",
+              lundiString
+            );
 
-          if (feuillesError) {
-            throw feuillesError;
+          if (erreurFeuilles) {
+            throw erreurFeuilles;
           }
 
-          setCollaborateurs(collaborateursData ?? []);
-          setFeuilles(feuillesData ?? []);
-        }
+          setCollaborateurs(
+            collaborateursActifs ?? []
+          );
 
-        // ---------------------------------------------------------
-        // 4. Données personnelles pour tout le monde
-        // ---------------------------------------------------------
+          setFeuilles(
+            feuillesCourantes ?? []
+          );
+        } else {
+          /* -----------------------------------------------------
+             COLLABORATEUR
+          ----------------------------------------------------- */
 
-        if (collaborateur.role !== "ADMIN") {
-          const { data: maFeuille } = await supabase
+          const {
+            data: maFeuille,
+            error: erreurMaFeuille,
+          } = await supabase
             .from("feuilles_heures")
             .select(
               `
-              id,
-              collaborateur_id,
-              semaine_debut,
-              total_heures,
-              total_theorique,
-              heures_supplementaires,
-              statut
-            `
+                id,
+                collaborateur_id,
+                semaine_debut,
+                total_heures,
+                total_theorique,
+                heures_supplementaires,
+                statut
+              `
             )
-            .eq("collaborateur_id", collaborateur.id)
-            .eq("semaine_debut", lundiString)
+            .eq(
+              "collaborateur_id",
+              collaborateur.id
+            )
+            .eq(
+              "semaine_debut",
+              lundiString
+            )
             .maybeSingle();
 
-          if (maFeuille) {
-            setFeuilles([maFeuille]);
+          if (erreurMaFeuille) {
+            throw erreurMaFeuille;
           }
+
+          setFeuilles(
+            maFeuille
+              ? [maFeuille]
+              : []
+          );
         }
-      } catch (error) {
-        console.error("Erreur dashboard :", error);
+      } catch (err) {
+        console.error(
+          "Erreur chargement dashboard :",
+          err
+        );
 
         setErreur(
-          "Une erreur est survenue lors du chargement du tableau de bord."
+          err instanceof Error
+            ? err.message
+            : "Une erreur est survenue lors du chargement du tableau de bord."
         );
       } finally {
         setChargement(false);
@@ -181,147 +256,310 @@ export default function DashboardPage() {
     chargerDashboard();
   }, [router]);
 
-  // ---------------------------------------------------------------
-  // Ma feuille de la semaine
-  // ---------------------------------------------------------------
+  /* =============================================================
+     FEUILLE PERSONNELLE
+  ============================================================= */
 
-  const maFeuille = useMemo(() => {
-    if (!feuilles.length) return null;
+  const maFeuille =
+    useMemo(() => {
+      return (
+        feuilles.find(
+          (feuille) =>
+            feuille.semaine_debut ===
+            semaineCourante
+        ) ?? null
+      );
+    }, [
+      feuilles,
+      semaineCourante,
+      role,
+    ]);
 
-    if (role === "ADMIN") return null;
+  /* =============================================================
+     STATISTIQUES ADMIN
+  ============================================================= */
 
-    return feuilles.find(
-      (feuille) => feuille.semaine_debut === semaineCourante
-    );
-  }, [feuilles, role, semaineCourante]);
+  const statistiques =
+    useMemo(() => {
+      if (role !== "ADMIN") {
+        return {
+          collaborateurs: 0,
+          feuillesCompletes: 0,
+          feuillesTotal: 0,
+          heures: 0,
+          heuresSupplementaires: 0,
+        };
+      }
 
-  // ---------------------------------------------------------------
-  // Statistiques ADMIN
-  // ---------------------------------------------------------------
+      /*
+       * On compte uniquement les feuilles correspondant
+       * aux collaborateurs actifs actuellement affichés.
+       *
+       * Une feuille absente = feuille manquante.
+       */
 
-  const statistiques = useMemo(() => {
-    if (role !== "ADMIN") {
-      return {
-        collaborateurs: 0,
-        feuillesCompletes: 0,
-        feuillesTotal: 0,
-        heures: 0,
-        heuresSupplementaires: 0,
-      };
-    }
-
-    const feuillesCompletes = feuilles.filter(
-      (feuille) => estFeuilleComplete(feuille)
-    ).length;
-
-    const heures = feuilles.reduce(
-      (total, feuille) => total + Number(feuille.total_heures ?? 0),
-      0
-    );
-
-    const heuresSupplementaires = feuilles.reduce(
-      (total, feuille) =>
-        total + Number(feuille.heures_supplementaires ?? 0),
-      0
-    );
-
-    return {
-      collaborateurs: collaborateurs.length,
-      feuillesCompletes,
-      feuillesTotal: collaborateurs.length,
-      heures,
-      heuresSupplementaires,
-    };
-  }, [role, collaborateurs, feuilles]);
-
-  // ---------------------------------------------------------------
-  // Feuilles à surveiller
-  // ---------------------------------------------------------------
-
-  const surveillance = useMemo<LigneSurveillance[]>(() => {
-    if (role !== "ADMIN") return [];
-
-    return collaborateurs
-      .map((collaborateur) => {
-        const feuille = feuilles.find(
-          (item) => item.collaborateur_id === collaborateur.id
+      const feuillesDesCollaborateursActifs =
+        feuilles.filter((feuille) =>
+          collaborateurs.some(
+            (collaborateur) =>
+              collaborateur.id ===
+              feuille.collaborateur_id
+          )
         );
 
-        if (!feuille) {
-          return {
-            collaborateur,
-            etat: "manquante" as EtatFeuille,
-          };
+      const feuillesCompletes =
+        feuillesDesCollaborateursActifs.filter(
+          (feuille) =>
+            estFeuilleComplete(
+              feuille
+            )
+        ).length;
+
+      const heures =
+        feuillesDesCollaborateursActifs.reduce(
+          (
+            total,
+            feuille
+          ) =>
+            total +
+            Number(
+              feuille.total_heures ?? 0
+            ),
+          0
+        );
+
+      const heuresSupplementaires =
+        feuillesDesCollaborateursActifs.reduce(
+          (
+            total,
+            feuille
+          ) =>
+            total +
+            Number(
+              feuille.heures_supplementaires ??
+                0
+            ),
+          0
+        );
+
+      return {
+        collaborateurs:
+          collaborateurs.length,
+
+        feuillesCompletes,
+
+        feuillesTotal:
+          collaborateurs.length,
+
+        heures,
+
+        heuresSupplementaires,
+      };
+    }, [
+      role,
+      collaborateurs,
+      feuilles,
+    ]);
+
+  /* =============================================================
+     SURVEILLANCE
+  ============================================================= */
+
+  const surveillance =
+    useMemo<LigneSurveillance[]>(
+      () => {
+        if (role !== "ADMIN") {
+          return [];
         }
 
-        if (!estFeuilleComplete(feuille)) {
-          return {
-            collaborateur,
-            feuille,
-            etat: "incomplete" as EtatFeuille,
-          };
-        }
+        return collaborateurs
+          .map(
+            (
+              collaborateur
+            ) => {
+              const feuille =
+                feuilles.find(
+                  (f) =>
+                    f.collaborateur_id ===
+                    collaborateur.id
+                );
 
-        return null;
-      })
-      .filter(Boolean)
-      .slice(0, 5) as LigneSurveillance[];
-  }, [role, collaborateurs, feuilles]);
+              if (!feuille) {
+                return {
+                  collaborateur,
+                  feuille: undefined,
+                  etat: "manquante",
+                };
+              }
 
-  // ---------------------------------------------------------------
-  // Chargement
-  // ---------------------------------------------------------------
+              if (
+                estFeuilleComplete(
+                  feuille
+                )
+              ) {
+                return null;
+              }
+
+              return {
+                collaborateur,
+                feuille,
+                etat: "incomplete",
+              };
+            }
+          )
+          .filter(
+            (
+              ligne
+            ): ligne is LigneSurveillance =>
+              ligne !== null
+          )
+          .slice(0, 5);
+      },
+      [
+        role,
+        collaborateurs,
+        feuilles,
+      ]
+    );
+
+  /* =============================================================
+     CHARGEMENT
+  ============================================================= */
 
   if (chargement) {
     return (
-      <main style={styles.page}>
-        <header style={styles.header}>
-          <div style={styles.headerInner}>
-            <div style={styles.logo}>POLYNOV</div>
+      <main
+        style={
+          styles.page
+        }
+      >
+        <div
+          style={
+            styles.loadingContainer
+          }
+        >
+          <div
+            style={
+              styles.loadingSpinner
+            }
+          />
 
-            <div style={styles.headerSubtitle}>
-              Gestion des temps & activités
-            </div>
-          </div>
-        </header>
-
-        <div style={styles.loadingContainer}>
-          <div style={styles.loadingSpinner} />
-          <div style={{ marginTop: 14 }}>Chargement du tableau de bord...</div>
+          <p>
+            Chargement du
+            tableau de bord…
+          </p>
         </div>
+
+        <style jsx>{`
+          @keyframes spin {
+            from {
+              transform: rotate(0deg);
+            }
+
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
       </main>
     );
   }
 
-  // ---------------------------------------------------------------
-  // Erreur
-  // ---------------------------------------------------------------
+  /* =============================================================
+     ERREUR
+  ============================================================= */
 
   if (erreur) {
     return (
-      <main style={styles.page}>
-        <header style={styles.header}>
-          <div style={styles.headerInner}>
-            <div style={styles.logo}>POLYNOV</div>
+      <main
+        style={
+          styles.page
+        }
+      >
+        <header
+          style={
+            styles.header
+          }
+        >
+          <div
+            style={
+              styles.headerInner
+            }
+          >
+            <div>
+              <div
+                style={
+                  styles.logo
+                }
+              >
+                POLYNOV
+              </div>
 
-            <div style={styles.headerSubtitle}>
-              Gestion des temps & activités
+              <div
+                style={
+                  styles.headerSubtitle
+                }
+              >
+                Tableau de bord
+              </div>
             </div>
+
+            {role && (
+              <div
+                style={
+                  styles.headerRole
+                }
+              >
+                {role}
+              </div>
+            )}
           </div>
         </header>
 
-        <div style={styles.container}>
-          <div style={styles.errorCard}>
-            <div style={styles.errorIcon}>!</div>
+        <div
+          style={
+            styles.container
+          }
+        >
+          <div
+            style={
+              styles.errorCard
+            }
+          >
+            <div
+              style={
+                styles.errorIcon
+              }
+            >
+              !
+            </div>
 
             <div>
-              <div style={styles.errorTitle}>Impossible de charger le tableau de bord</div>
+              <div
+                style={
+                  styles.errorTitle
+                }
+              >
+                Impossible de charger
+                le tableau de bord
+              </div>
 
-              <div style={styles.errorText}>{erreur}</div>
+              <div
+                style={
+                  styles.errorText
+                }
+              >
+                {erreur}
+              </div>
 
               <button
-                style={styles.primaryButton}
-                onClick={() => window.location.reload()}
+                type="button"
+                style={
+                  styles.primaryButton
+                }
+                onClick={() =>
+                  window.location.reload()
+                }
               >
                 Réessayer
               </button>
@@ -332,125 +570,260 @@ export default function DashboardPage() {
     );
   }
 
-  // ---------------------------------------------------------------
-  // AFFICHAGE
-  // ---------------------------------------------------------------
+  /* =============================================================
+     RENDU
+  ============================================================= */
 
   return (
-    <main style={styles.page}>
-      {/* =========================================================
+    <main
+      style={
+        styles.page
+      }
+    >
+      {/* =======================================================
           HEADER
-      ========================================================= */}
+      ======================================================= */}
 
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
+      <header
+        style={
+          styles.header
+        }
+      >
+        <div
+          style={
+            styles.headerInner
+          }
+        >
           <div>
-            <div style={styles.logo}>POLYNOV</div>
+            <div
+              style={
+                styles.logo
+              }
+            >
+              POLYNOV
+            </div>
 
-            <div style={styles.headerSubtitle}>
-              Gestion des temps & activités
+            <div
+              style={
+                styles.headerSubtitle
+              }
+            >
+              Tableau de bord
             </div>
           </div>
 
           {role && (
-            <div style={styles.headerRole}>
+            <div
+              style={
+                styles.headerRole
+              }
+            >
               {role}
             </div>
           )}
         </div>
       </header>
 
-      {/* =========================================================
+      {/* =======================================================
           CONTENU
-      ========================================================= */}
+      ======================================================= */}
 
-      <div style={styles.container}>
+      <div
+        style={
+          styles.container
+        }
+      >
         {/* -------------------------------------------------------
             BIENVENUE
         ------------------------------------------------------- */}
 
-        <div style={styles.welcome}>
+        <div
+          style={
+            styles.welcome
+          }
+        >
           <div>
-            <h1 style={styles.welcomeTitle}>
-              Bonjour {prenom || "à vous"} 👋
+            <h1
+              style={
+                styles.welcomeTitle
+              }
+            >
+              Bonjour{" "}
+              {prenom || ""}
+              {" 👋"}
             </h1>
 
-            <p style={styles.welcomeText}>
-              Voici l'état de votre activité et de vos feuilles de temps.
+            <p
+              style={
+                styles.welcomeText
+              }
+            >
+              Voici votre espace
+              de travail POLYNOV.
             </p>
           </div>
 
-          <div style={styles.weekBadge}>
-            <span style={styles.weekBadgeLabel}>SEMAINE EN COURS</span>
-            <strong>{formaterSemaine(semaineCourante)}</strong>
+          <div
+            style={
+              styles.weekBadge
+            }
+          >
+            <span
+              style={
+                styles.weekBadgeLabel
+              }
+            >
+              SEMAINE EN COURS
+            </span>
+
+            <strong>
+              {semaineCourante
+                ? `S${numeroSemaine(
+                    semaineCourante
+                  )}-${new Date(
+                    `${semaineCourante}T00:00:00`
+                  ).getFullYear()}`
+                : "—"}
+            </strong>
+
+            <span
+              style={{
+                color: "#888",
+                fontSize: 12,
+              }}
+            >
+              {formaterSemaine(
+                semaineCourante
+              )}
+            </span>
           </div>
         </div>
 
-        {/* =======================================================
-            ESPACE PERSONNEL
-        ======================================================= */}
+        {/* =====================================================
+            MON ESPACE
+        ===================================================== */}
 
         <SectionTitre
           titre="Mon espace"
-          description="Accéder rapidement à vos feuilles et à votre activité"
+          description="Accéder rapidement à vos feuilles, affaires et demandes RH"
         />
 
         {/* -------------------------------------------------------
-            STATUT DE MA SEMAINE
+            MA SEMAINE
+            UNIQUE POINT D'ACCÈS
         ------------------------------------------------------- */}
 
-        <div style={styles.personalStatus}>
-          <div style={styles.personalStatusLeft}>
-            <div style={styles.personalIcon}>📅</div>
+        <div
+          style={
+            styles.personalStatus
+          }
+        >
+          <div
+            style={
+              styles.personalStatusLeft
+            }
+          >
+            <div
+              style={
+                styles.personalIcon
+              }
+            >
+              📅
+            </div>
 
             <div>
-              <div style={styles.personalTitle}>
+              <div
+                style={
+                  styles.personalTitle
+                }
+              >
                 Ma semaine
               </div>
 
-              <div style={styles.personalDescription}>
+              <div
+                style={
+                  styles.personalDescription
+                }
+              >
                 {maFeuille
-                  ? estFeuilleComplete(maFeuille)
-                    ? "Votre feuille est complète."
-                    : "Votre feuille doit encore être complétée."
-                  : "Votre feuille de la semaine n'a pas encore été créée."}
+                  ? `Semaine du ${formaterDateLongue(
+                      semaineCourante
+                    )}`
+                  : "Votre feuille de temps de la semaine courante"}
               </div>
             </div>
           </div>
 
-          <div style={styles.personalStatusRight}>
+          <div
+            style={
+              styles.personalStatusRight
+            }
+          >
             {maFeuille ? (
               <>
-                <div
-                  style={{
-                    ...styles.statusBadge,
-                    ...(estFeuilleComplete(maFeuille)
-                      ? styles.statusComplete
-                      : styles.statusIncomplete),
-                  }}
-                >
-                  {estFeuilleComplete(maFeuille)
-                    ? "✓ Complète"
-                    : "⚠ À compléter"}
-                </div>
-
-                <div style={styles.hoursValue}>
-                  {formatHeures(maFeuille.total_heures)} h
-                  <span style={styles.hoursTheoretical}>
-                    {" "}
-                    / {formatHeures(maFeuille.total_theorique)} h
+                {estFeuilleComplete(
+                  maFeuille
+                ) ? (
+                  <span
+                    style={{
+                      ...styles.statusBadge,
+                      ...styles.statusComplete,
+                    }}
+                  >
+                    ✓ Complète
                   </span>
-                </div>
+                ) : (
+                  <span
+                    style={{
+                      ...styles.statusBadge,
+                      ...styles.statusIncomplete,
+                    }}
+                  >
+                    ⚠ À compléter
+                  </span>
+                )}
+
+                <span
+                  style={
+                    styles.hoursValue
+                  }
+                >
+                  {formatHeures(
+                    maFeuille.total_heures
+                  )}
+                  {" / "}
+                  <span
+                    style={
+                      styles.hoursTheoretical
+                    }
+                  >
+                    {formatHeures(
+                      maFeuille.total_theorique
+                    )}{" "}
+                    h
+                  </span>
+                </span>
               </>
             ) : (
-              <div style={styles.statusMissing}>
-                Non saisie
-              </div>
+              <span
+                style={
+                  styles.statusMissing
+                }
+              >
+                ⚠ Non saisie
+              </span>
             )}
 
             <button
-              style={styles.smallPrimaryButton}
-              onClick={() => router.push("/ma-semaine")}
+              type="button"
+              style={
+                styles.smallPrimaryButton
+              }
+              onClick={() =>
+                router.push(
+                  "/ma-semaine"
+                )
+              }
             >
               Ouvrir →
             </button>
@@ -458,107 +831,146 @@ export default function DashboardPage() {
         </div>
 
         {/* -------------------------------------------------------
-            CARTES PERSONNELLES
+            AUTRES ACCÈS PERSONNELS
+
+            IMPORTANT :
+            "Ma semaine" n'est volontairement PAS remis ici.
         ------------------------------------------------------- */}
 
-        <div style={styles.cardGrid}>
+        <div
+          style={
+            styles.cardGrid
+          }
+        >
           <Carte
-            icone="📅"
-            titre="Ma semaine"
-            description="Saisir et consulter votre feuille hebdomadaire"
-            onClick={() => router.push("/ma-semaine")}
-          />
-
-          <Carte
-            icone="🗂️"
+            icone="📄"
             titre="Mes feuilles"
-            description="Retrouver l'historique de vos feuilles de temps"
-            onClick={() => router.push("/mes-feuilles")}
+            description="Consulter mes feuilles de temps enregistrées"
+            onClick={() =>
+              router.push(
+                "/mes-feuilles"
+              )
+            }
           />
 
           <Carte
             icone="📊"
             titre="Bilan affaire"
-            description="Consulter les historiques et imputations par affaire"
-            onClick={() => router.push("/affaires/bilan")}
+            description="Consulter mes imputations et mes bilans d’affaires"
+            onClick={() =>
+              router.push(
+                "/affaires/bilan"
+              )
+            }
+          />
+
+          <Carte
+            icone="🧑‍💼"
+            titre="RH"
+            description="Gérer mes demandes de congés, RTT et récupération"
+            onClick={() =>
+              router.push(
+                "/RH"
+              )
+            }
           />
         </div>
 
-        {/* =======================================================
-            ADMINISTRATION
-        ======================================================= */}
+        {/* =====================================================
+            ESPACE ADMIN
+        ===================================================== */}
 
         {role === "ADMIN" && (
           <>
+            {/* =================================================
+                SUIVI RAPIDE
+            ================================================= */}
+
             <SectionTitre
-              titre="Pilotage"
-              description="Une vue rapide de l'activité de la semaine"
+              titre="Suivi rapide"
+              description={`Situation des feuilles de temps pour la semaine du ${formaterDateLongue(
+                semaineCourante
+              )}`}
             />
 
-            {/* ---------------------------------------------------
-                KPI
-            --------------------------------------------------- */}
-
-            <div style={styles.kpiGrid}>
+            <div
+              style={
+                styles.kpiGrid
+              }
+            >
               <Kpi
                 icone="👥"
-                valeur={statistiques.collaborateurs}
+                valeur={
+                  statistiques.collaborateurs
+                }
                 label="Collaborateurs actifs"
+                accent="red"
               />
 
               <Kpi
-                icone="📋"
-                valeur={`${statistiques.feuillesCompletes}/${statistiques.feuillesTotal}`}
+                icone="✓"
+                valeur={`${statistiques.feuillesCompletes} / ${statistiques.feuillesTotal}`}
                 label="Feuilles complètes"
-                accent={
-                  statistiques.feuillesCompletes ===
-                  statistiques.feuillesTotal
-                    ? "green"
-                    : "orange"
-                }
+                accent="green"
               />
 
               <Kpi
                 icone="⏱️"
-                valeur={`${formatHeures(statistiques.heures)} h`}
+                valeur={`${formatHeures(
+                  statistiques.heures
+                )} h`}
                 label="Heures saisies"
+                accent="red"
               />
 
               <Kpi
-                icone="↗"
+                icone="＋"
                 valeur={`${formatHeures(
                   statistiques.heuresSupplementaires
                 )} h`}
                 label="Heures supplémentaires"
-                accent={
-                  statistiques.heuresSupplementaires > 0
-                    ? "orange"
-                    : "green"
-                }
+                accent="orange"
               />
             </div>
 
-            {/* ---------------------------------------------------
-                À SURVEILLER
-            --------------------------------------------------- */}
+            {/* =================================================
+                SURVEILLANCE
+            ================================================= */}
 
-            <div style={styles.monitorCard}>
-              <div style={styles.monitorHeader}>
+            <div
+              style={
+                styles.monitorCard
+              }
+            >
+              <div
+                style={
+                  styles.monitorHeader
+                }
+              >
                 <div>
-                  <div style={styles.monitorTitle}>
+                  <div
+                    style={
+                      styles.monitorTitle
+                    }
+                  >
                     À surveiller
                   </div>
 
-                  <div style={styles.monitorSubtitle}>
-                    Feuilles de la semaine du{" "}
-                    {formaterDateLongue(semaineCourante)}
+                  <div
+                    style={
+                      styles.monitorSubtitle
+                    }
+                  >
+                    Feuilles absentes ou
+                    incomplètes cette semaine
                   </div>
                 </div>
 
                 <div
                   style={{
                     ...styles.monitorCount,
-                    ...(surveillance.length === 0
+                    ...(surveillance.length ===
+                    0
                       ? styles.monitorCountGreen
                       : styles.monitorCountOrange),
                   }}
@@ -567,94 +979,168 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {surveillance.length === 0 ? (
-                <div style={styles.noAlert}>
-                  <div style={styles.noAlertIcon}>✓</div>
-
-                  <div>
-                    <strong>Tout est en ordre</strong>
-                    <div>
-                      Toutes les feuilles de la semaine sont complètes.
-                    </div>
+              {surveillance.length ===
+              0 ? (
+                <div
+                  style={
+                    styles.noAlert
+                  }
+                >
+                  <div
+                    style={
+                      styles.noAlertIcon
+                    }
+                  >
+                    ✓
                   </div>
+
+                  <span>
+                    Toutes les feuilles
+                    de la semaine sont
+                    complètes.
+                  </span>
                 </div>
               ) : (
-                <div>
-                  {surveillance.map((ligne) => (
-                    <div
-                      key={ligne.collaborateur.id}
-                      style={styles.monitorRow}
-                    >
-                      <div
-                        style={{
-                          ...styles.monitorStatus,
-                          ...(ligne.etat === "manquante"
-                            ? styles.monitorStatusMissing
-                            : styles.monitorStatusIncomplete),
-                        }}
-                      >
-                        {ligne.etat === "manquante" ? "!" : "⚠"}
-                      </div>
+                <>
+                  {surveillance.map(
+                    (
+                      ligne
+                    ) => {
+                      const nom =
+                        [
+                          ligne
+                            .collaborateur
+                            .prenom,
+                          ligne
+                            .collaborateur
+                            .nom,
+                        ]
+                          .filter(Boolean)
+                          .join(" ");
 
-                      <div style={styles.monitorPerson}>
-                        <strong>
-                          {ligne.collaborateur.prenom}{" "}
-                          {ligne.collaborateur.nom}
-                        </strong>
+                      const trigramme =
+                        nom ||
+                        "Collaborateur";
 
-                        <span>
-                          {ligne.etat === "manquante"
-                            ? "Feuille non saisie"
-                            : `${formatHeures(
-                                ligne.feuille?.total_heures
-                              )} h / ${formatHeures(
-                                ligne.feuille?.total_theorique
-                              )} h`}
-                        </span>
-                      </div>
+                      return (
+                        <div
+                          key={
+                            ligne
+                              .collaborateur
+                              .id
+                          }
+                          style={
+                            styles.monitorRow
+                          }
+                        >
+                          <div
+                            style={{
+                              ...styles.monitorStatus,
+                              ...(ligne.etat ===
+                              "manquante"
+                                ? styles.monitorStatusMissing
+                                : styles.monitorStatusIncomplete),
+                            }}
+                          >
+                            {ligne.etat ===
+                            "manquante"
+                              ? "!"
+                              : "⚠"}
+                          </div>
 
-                      <button
-                        style={styles.monitorButton}
-                        onClick={() =>
-                          router.push(
-                            `/admin/feuilles?collaborateur=${ligne.collaborateur.id}`
-                          )
-                        }
-                      >
-                        Voir →
-                      </button>
-                    </div>
-                  ))}
+                          <div
+                            style={
+                              styles.monitorPerson
+                            }
+                          >
+                            <strong>
+                              {trigramme}
+                            </strong>
 
-                  {(collaborateurs.length > 5 ||
-                    surveillance.length > 0) && (
+                            <span
+                              style={{
+                                color:
+                                  "#888",
+                                fontSize:
+                                  12,
+                              }}
+                            >
+                              {ligne.etat ===
+                              "manquante"
+                                ? "Feuille non saisie"
+                                : `Feuille incomplète — ${formatHeures(
+                                    ligne
+                                      .feuille
+                                      ?.total_heures
+                                  )} / ${formatHeures(
+                                    ligne
+                                      .feuille
+                                      ?.total_theorique
+                                  )} h`}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            style={
+                              styles.monitorButton
+                            }
+                            onClick={() =>
+                              router.push(
+                                "/admin/feuilles"
+                              )
+                            }
+                          >
+                            Voir →
+                          </button>
+                        </div>
+                      );
+                    }
+                  )}
+
+                  {surveillance.length >
+                    0 && (
                     <button
-                      style={styles.seeAllButton}
-                      onClick={() => router.push("/admin/feuilles")}
+                      type="button"
+                      style={
+                        styles.seeAllButton
+                      }
+                      onClick={() =>
+                        router.push(
+                          "/admin/feuilles"
+                        )
+                      }
                     >
-                      Voir toutes les feuilles →
+                      Voir toutes les
+                      feuilles →
                     </button>
                   )}
-                </div>
+                </>
               )}
             </div>
 
-            {/* ===================================================
+            {/* =================================================
                 GESTION
-            =================================================== */}
+            ================================================= */}
 
             <SectionTitre
               titre="Gestion"
               description="Paramétrer les collaborateurs et suivre les feuilles"
             />
 
-            <div style={styles.cardGrid}>
+            <div
+              style={
+                styles.cardGrid
+              }
+            >
               <Carte
                 icone="👥"
                 titre="Collaborateurs"
                 description="Créer, modifier et gérer les collaborateurs"
                 onClick={() =>
-                  router.push("/admin/collaborateurs")
+                  router.push(
+                    "/admin/collaborateurs"
+                  )
                 }
               />
 
@@ -663,7 +1149,9 @@ export default function DashboardPage() {
                 titre="Profils horaires"
                 description="Gérer les profils, rythmes et bases horaires"
                 onClick={() =>
-                  router.push("/admin/profils-horaires")
+                  router.push(
+                    "/admin/profils-horaires"
+                  )
                 }
               />
 
@@ -672,56 +1160,83 @@ export default function DashboardPage() {
                 titre="Feuilles collaborateurs"
                 description="Consulter les feuilles de temps de tous les collaborateurs"
                 onClick={() =>
-                  router.push("/admin/feuilles")
+                  router.push(
+                    "/admin/feuilles"
+                  )
+                }
+              />
+
+              <Carte
+                icone="🏷️"
+                titre="Gestion des codes"
+                description="Gérer les codes, leurs contextes d'utilisation et leur classement dans les bilans"
+                onClick={() =>
+                  router.push(
+                    "/admin/Gestion-codes"
+                  )
+                }
+              />
+
+              <Carte
+                icone="🧑‍💼"
+                titre="Validation RH"
+                description="Valider les demandes RH nécessitant la double validation PLG / AMA"
+                onClick={() =>
+                  router.push(
+                    "/admin/Valid_RH"
+                  )
                 }
               />
             </div>
 
-            {/* ===================================================
+            {/* =================================================
                 ANALYSE
-            =================================================== */}
+            ================================================= */}
 
             <SectionTitre
               titre="Analyse"
-              description="Analyser l'activité et les imputations"
+              description="Analyser la charge, l'activité et les imputations"
             />
 
-            <div style={styles.cardGrid}>
+            <div
+              style={
+                styles.cardGrid
+              }
+            >
               <Carte
                 icone="📈"
-                titre="Bilans par personne"
-                description="Analyser les heures, activités et imputations de chaque collaborateur"
+                titre="Analyse de charge"
+                description="Analyser la charge, les heures, l'activité et le taux d'occupation de chaque collaborateur"
                 onClick={() =>
-                  router.push("/admin/bilans")
-                }
-              />
-
-              <Carte
-                icone="📊"
-                titre="Bilan affaire"
-                description="Analyser les heures et imputations par affaire"
-                onClick={() =>
-                  router.push("/affaires/bilan")
+                  router.push(
+                    "/admin/bilans"
+                  )
                 }
               />
             </div>
 
-            {/* ===================================================
+            {/* =================================================
                 DONNÉES
-            =================================================== */}
+            ================================================= */}
 
             <SectionTitre
               titre="Données"
               description="Importer et alimenter les données historiques"
             />
 
-            <div style={styles.cardGrid}>
+            <div
+              style={
+                styles.cardGrid
+              }
+            >
               <Carte
                 icone="📥"
                 titre="Import historique"
                 description="Importer les anciennes imputations depuis un fichier"
                 onClick={() =>
-                  router.push("/import-historique-v2")
+                  router.push(
+                    "/import-historique-v2"
+                  )
                 }
               />
             </div>
@@ -763,10 +1278,26 @@ function SectionTitre({
   description: string;
 }) {
   return (
-    <div style={styles.sectionHeader}>
-      <h2 style={styles.sectionTitle}>{titre}</h2>
+    <div
+      style={
+        styles.sectionHeader
+      }
+    >
+      <h2
+        style={
+          styles.sectionTitle
+        }
+      >
+        {titre}
+      </h2>
 
-      <p style={styles.sectionDescription}>{description}</p>
+      <p
+        style={
+          styles.sectionDescription
+        }
+      >
+        {description}
+      </p>
     </div>
   );
 }
@@ -786,38 +1317,79 @@ function Carte({
   description: string;
   onClick: () => void;
 }) {
-  const [survol, setSurvol] = useState(false);
+  const [survol, setSurvol] =
+    useState(false);
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      onMouseEnter={() => setSurvol(true)}
-      onMouseLeave={() => setSurvol(false)}
+      onKeyDown={(e) => {
+        if (
+          e.key === "Enter" ||
+          e.key === " "
+        ) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      onMouseEnter={() =>
+        setSurvol(true)
+      }
+      onMouseLeave={() =>
+        setSurvol(false)
+      }
       style={{
         ...styles.card,
-        border: survol
-          ? "1px solid #c00000"
-          : "1px solid #eeeeee",
-        boxShadow: survol
-          ? "0 8px 20px rgba(0,0,0,0.12)"
-          : "0 2px 8px rgba(0,0,0,0.07)",
-        transform: survol
-          ? "translateY(-2px)"
-          : "translateY(0)",
+        border:
+          survol
+            ? "1px solid #c00000"
+            : "1px solid #eeeeee",
+
+        boxShadow:
+          survol
+            ? "0 8px 20px rgba(0,0,0,0.12)"
+            : "0 2px 8px rgba(0,0,0,0.07)",
+
+        transform:
+          survol
+            ? "translateY(-2px)"
+            : "translateY(0)",
       }}
     >
       <div>
-        <div style={styles.cardIcon}>{icone}</div>
+        <div
+          style={
+            styles.cardIcon
+          }
+        >
+          {icone}
+        </div>
 
-        <h3 style={styles.cardTitle}>{titre}</h3>
+        <h3
+          style={
+            styles.cardTitle
+          }
+        >
+          {titre}
+        </h3>
 
-        <p style={styles.cardDescription}>{description}</p>
+        <p
+          style={
+            styles.cardDescription
+          }
+        >
+          {description}
+        </p>
       </div>
 
       <div
         style={{
           ...styles.cardLink,
-          opacity: survol ? 1 : 0.8,
+          opacity: survol
+            ? 1
+            : 0.8,
         }}
       >
         Ouvrir →
@@ -839,7 +1411,10 @@ function Kpi({
   icone: string;
   valeur: string | number;
   label: string;
-  accent?: "red" | "green" | "orange";
+  accent?:
+    | "red"
+    | "green"
+    | "orange";
 }) {
   const accentStyles = {
     red: {
@@ -847,11 +1422,13 @@ function Kpi({
       background: "#fdf0f0",
       value: "#c00000",
     },
+
     green: {
       border: "#2e7d32",
       background: "#edf7ee",
       value: "#2e7d32",
     },
+
     orange: {
       border: "#e67e22",
       background: "#fff5e9",
@@ -859,7 +1436,8 @@ function Kpi({
     },
   };
 
-  const couleur = accentStyles[accent];
+  const couleur =
+    accentStyles[accent];
 
   return (
     <div
@@ -868,11 +1446,16 @@ function Kpi({
         borderTop: `4px solid ${couleur.border}`,
       }}
     >
-      <div style={styles.kpiTop}>
+      <div
+        style={
+          styles.kpiTop
+        }
+      >
         <div
           style={{
             ...styles.kpiIcon,
-            background: couleur.background,
+            background:
+              couleur.background,
           }}
         >
           {icone}
@@ -888,7 +1471,13 @@ function Kpi({
         {valeur}
       </div>
 
-      <div style={styles.kpiLabel}>{label}</div>
+      <div
+        style={
+          styles.kpiLabel
+        }
+      >
+        {label}
+      </div>
     </div>
   );
 }
@@ -897,101 +1486,214 @@ function Kpi({
    UTILITAIRES
 ================================================================ */
 
-function obtenirLundi(date: Date) {
-  const resultat = new Date(date);
+function obtenirLundi(
+  date: Date
+) {
+  const resultat =
+    new Date(date);
 
-  const jour = resultat.getDay();
+  const jour =
+    resultat.getDay();
 
-  const difference = jour === 0 ? -6 : 1 - jour;
+  const difference =
+    jour === 0
+      ? -6
+      : 1 - jour;
 
-  resultat.setDate(resultat.getDate() + difference);
+  resultat.setDate(
+    resultat.getDate() +
+      difference
+  );
 
-  resultat.setHours(0, 0, 0, 0);
+  resultat.setHours(
+    0,
+    0,
+    0,
+    0
+  );
 
   return resultat;
 }
 
-function formatDateSQL(date: Date) {
-  const annee = date.getFullYear();
+function formatDateSQL(
+  date: Date
+) {
+  const annee =
+    date.getFullYear();
 
-  const mois = String(date.getMonth() + 1).padStart(2, "0");
+  const mois = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
 
-  const jour = String(date.getDate()).padStart(2, "0");
+  const jour = String(
+    date.getDate()
+  ).padStart(2, "0");
 
   return `${annee}-${mois}-${jour}`;
 }
 
-function formaterSemaine(dateSQL: string) {
-  if (!dateSQL) return "";
+function formaterSemaine(
+  dateSQL: string
+) {
+  if (!dateSQL) {
+    return "";
+  }
 
-  const date = new Date(`${dateSQL}T00:00:00`);
+  const date =
+    new Date(
+      `${dateSQL}T00:00:00`
+    );
 
-  const jour = date.getDate();
+  const jour =
+    date.getDate();
 
-  const mois = date.toLocaleDateString("fr-FR", {
-    month: "short",
-  });
+  const mois =
+    date.toLocaleDateString(
+      "fr-FR",
+      {
+        month: "short",
+      }
+    );
 
   return `${jour} ${mois}`;
 }
 
-function formaterDateLongue(dateSQL: string) {
-  if (!dateSQL) return "";
+function formaterDateLongue(
+  dateSQL: string
+) {
+  if (!dateSQL) {
+    return "";
+  }
 
-  const date = new Date(`${dateSQL}T00:00:00`);
+  const date =
+    new Date(
+      `${dateSQL}T00:00:00`
+    );
 
-  return date.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return date.toLocaleDateString(
+    "fr-FR",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }
+  );
 }
 
-function formatHeures(valeur: number | null | undefined) {
-  const nombre = Number(valeur ?? 0);
+function numeroSemaine(
+  dateSQL: string
+) {
+  if (!dateSQL) {
+    return "";
+  }
 
-  return nombre.toLocaleString("fr-FR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
+  const date =
+    new Date(
+      `${dateSQL}T00:00:00`
+    );
+
+  /*
+   * Calcul ISO de la semaine.
+   */
+  const jeudi =
+    new Date(date);
+
+  jeudi.setDate(
+    date.getDate() +
+      4 -
+      (date.getDay() || 7)
+  );
+
+  const debutAnnee =
+    new Date(
+      jeudi.getFullYear(),
+      0,
+      1
+    );
+
+  return String(
+    Math.ceil(
+      (((jeudi.getTime() -
+        debutAnnee.getTime()) /
+        86400000) +
+        1) /
+        7
+    )
+  ).padStart(2, "0");
 }
 
-function estFeuilleComplete(feuille: Feuille) {
-  const heures = Number(feuille.total_heures ?? 0);
+function formatHeures(
+  valeur:
+    | number
+    | null
+    | undefined
+) {
+  const nombre =
+    Number(valeur ?? 0);
 
-  const theorique = Number(feuille.total_theorique ?? 0);
+  return nombre.toLocaleString(
+    "fr-FR",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }
+  );
+}
+
+function estFeuilleComplete(
+  feuille: Feuille
+) {
+  const heures =
+    Number(
+      feuille.total_heures ?? 0
+    );
+
+  const theorique =
+    Number(
+      feuille.total_theorique ?? 0
+    );
 
   if (theorique <= 0) {
     return heures > 0;
   }
 
-  return heures >= theorique - 0.01;
+  return (
+    heures >=
+    theorique - 0.01
+  );
 }
 
 /* ===============================================================
    STYLES
 ================================================================ */
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<
+  string,
+  React.CSSProperties
+> = {
   page: {
     minHeight: "100vh",
     background: "#f5f5f5",
-    fontFamily: "Calibri, Arial, sans-serif",
+    fontFamily:
+      "Calibri, Arial, sans-serif",
     color: "#222",
   },
 
   header: {
     background: "#c00000",
     color: "white",
-    padding: "24px 30px 26px 30px",
-    boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
+    padding:
+      "24px 30px 26px 30px",
+    boxShadow:
+      "0 2px 10px rgba(0,0,0,0.12)",
   },
 
   headerInner: {
     maxWidth: 1200,
     margin: "0 auto",
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: 20,
   },
@@ -999,7 +1701,8 @@ const styles: Record<string, React.CSSProperties> = {
   logo: {
     fontSize: 34,
     fontWeight: 800,
-    letterSpacing: "-0.5px",
+    letterSpacing:
+      "-0.5px",
   },
 
   headerSubtitle: {
@@ -1009,10 +1712,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   headerRole: {
-    background: "rgba(255,255,255,0.15)",
-    border: "1px solid rgba(255,255,255,0.3)",
+    background:
+      "rgba(255,255,255,0.15)",
+    border:
+      "1px solid rgba(255,255,255,0.3)",
     borderRadius: 20,
-    padding: "8px 14px",
+    padding:
+      "8px 14px",
     fontSize: 13,
     fontWeight: 700,
   },
@@ -1020,7 +1726,8 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     maxWidth: 1200,
     margin: "0 auto",
-    padding: "30px 30px 60px 30px",
+    padding:
+      "30px 30px 60px 30px",
   },
 
   loadingContainer: {
@@ -1035,15 +1742,19 @@ const styles: Record<string, React.CSSProperties> = {
     width: 28,
     height: 28,
     margin: "0 auto",
-    border: "3px solid #eeeeee",
-    borderTop: "3px solid #c00000",
+    border:
+      "3px solid #eeeeee",
+    borderTop:
+      "3px solid #c00000",
     borderRadius: "50%",
-    animation: "spin 0.8s linear infinite",
+    animation:
+      "spin 0.8s linear infinite",
   },
 
   welcome: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: 20,
     flexWrap: "wrap",
@@ -1055,23 +1766,29 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 34,
     color: "#222",
     fontWeight: 800,
-    letterSpacing: "-0.5px",
+    letterSpacing:
+      "-0.5px",
   },
 
   welcomeText: {
-    margin: "8px 0 0 0",
+    margin:
+      "8px 0 0 0",
     color: "#666",
     fontSize: 16,
   },
 
   weekBadge: {
     background: "white",
-    border: "1px solid #e5e5e5",
+    border:
+      "1px solid #e5e5e5",
     borderRadius: 10,
-    padding: "11px 16px",
-    boxShadow: "0 2px 6px rgba(0,0,0,0.05)",
+    padding:
+      "11px 16px",
+    boxShadow:
+      "0 2px 6px rgba(0,0,0,0.05)",
     display: "flex",
-    flexDirection: "column",
+    flexDirection:
+      "column",
     gap: 3,
     minWidth: 135,
   },
@@ -1080,7 +1797,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#888",
     fontSize: 10,
     fontWeight: 700,
-    letterSpacing: "0.5px",
+    letterSpacing:
+      "0.5px",
   },
 
   sectionHeader: {
@@ -1096,7 +1814,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   sectionDescription: {
-    margin: "4px 0 0 0",
+    margin:
+      "4px 0 0 0",
     color: "#777",
     fontSize: 14,
   },
@@ -1104,12 +1823,16 @@ const styles: Record<string, React.CSSProperties> = {
   personalStatus: {
     background: "white",
     borderRadius: 12,
-    borderLeft: "5px solid #c00000",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-    padding: "18px 20px",
+    borderLeft:
+      "5px solid #c00000",
+    boxShadow:
+      "0 2px 8px rgba(0,0,0,0.08)",
+    padding:
+      "18px 20px",
     marginBottom: 20,
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: 20,
     flexWrap: "wrap",
@@ -1152,7 +1875,8 @@ const styles: Record<string, React.CSSProperties> = {
 
   statusBadge: {
     borderRadius: 20,
-    padding: "6px 10px",
+    padding:
+      "6px 10px",
     fontSize: 12,
     fontWeight: 700,
   },
@@ -1171,7 +1895,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#fdeaea",
     color: "#c00000",
     borderRadius: 20,
-    padding: "6px 10px",
+    padding:
+      "6px 10px",
     fontSize: 12,
     fontWeight: 700,
   },
@@ -1191,7 +1916,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#c00000",
     color: "white",
     borderRadius: 7,
-    padding: "8px 13px",
+    padding:
+      "8px 13px",
     cursor: "pointer",
     fontWeight: 700,
     fontSize: 13,
@@ -1199,7 +1925,8 @@ const styles: Record<string, React.CSSProperties> = {
 
   cardGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gridTemplateColumns:
+      "repeat(auto-fit, minmax(260px, 1fr))",
     gap: 20,
     marginBottom: 38,
   },
@@ -1209,13 +1936,19 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 12,
     padding: 24,
     cursor: "pointer",
-    borderLeft: "5px solid #c00000",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
-    transition: "all 0.15s ease",
+    borderLeft:
+      "5px solid #c00000",
+    boxShadow:
+      "0 2px 8px rgba(0,0,0,0.07)",
+    transition:
+      "all 0.15s ease",
     minHeight: 150,
     display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
+    flexDirection:
+      "column",
+    justifyContent:
+      "space-between",
+    outline: "none",
   },
 
   cardIcon: {
@@ -1238,7 +1971,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   cardDescription: {
-    margin: "8px 0 0 0",
+    margin:
+      "8px 0 0 0",
     color: "#666",
     fontSize: 14,
     lineHeight: 1.5,
@@ -1253,7 +1987,8 @@ const styles: Record<string, React.CSSProperties> = {
 
   kpiGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gridTemplateColumns:
+      "repeat(auto-fit, minmax(200px, 1fr))",
     gap: 16,
     marginBottom: 25,
   },
@@ -1261,13 +1996,16 @@ const styles: Record<string, React.CSSProperties> = {
   kpi: {
     background: "white",
     borderRadius: 11,
-    padding: "18px 20px",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+    padding:
+      "18px 20px",
+    boxShadow:
+      "0 2px 8px rgba(0,0,0,0.07)",
   },
 
   kpiTop: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
   },
 
   kpiIcon: {
@@ -1295,18 +2033,22 @@ const styles: Record<string, React.CSSProperties> = {
   monitorCard: {
     background: "white",
     borderRadius: 12,
-    boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+    boxShadow:
+      "0 2px 8px rgba(0,0,0,0.07)",
     marginBottom: 38,
     overflow: "hidden",
   },
 
   monitorHeader: {
-    padding: "18px 20px",
+    padding:
+      "18px 20px",
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: 15,
-    borderBottom: "1px solid #eeeeee",
+    borderBottom:
+      "1px solid #eeeeee",
   },
 
   monitorTitle: {
@@ -1342,7 +2084,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   noAlert: {
-    padding: "20px",
+    padding: 20,
     display: "flex",
     alignItems: "center",
     gap: 13,
@@ -1366,8 +2108,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 13,
-    padding: "14px 20px",
-    borderBottom: "1px solid #f0f0f0",
+    padding:
+      "14px 20px",
+    borderBottom:
+      "1px solid #f0f0f0",
   },
 
   monitorStatus: {
@@ -1395,7 +2139,8 @@ const styles: Record<string, React.CSSProperties> = {
   monitorPerson: {
     flex: 1,
     display: "flex",
-    flexDirection: "column",
+    flexDirection:
+      "column",
     gap: 2,
     minWidth: 0,
   },
@@ -1407,16 +2152,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     fontSize: 13,
     cursor: "pointer",
-    padding: "7px 4px",
+    padding:
+      "7px 4px",
   },
 
   seeAllButton: {
     width: "100%",
     background: "#fafafa",
     border: "none",
-    borderTop: "1px solid #eeeeee",
+    borderTop:
+      "1px solid #eeeeee",
     color: "#c00000",
-    padding: "13px",
+    padding: 13,
     fontWeight: 700,
     cursor: "pointer",
     fontSize: 13,
@@ -1428,9 +2175,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 25,
     display: "flex",
     gap: 18,
-    alignItems: "flex-start",
-    borderLeft: "5px solid #c00000",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+    alignItems:
+      "flex-start",
+    borderLeft:
+      "5px solid #c00000",
+    boxShadow:
+      "0 2px 8px rgba(0,0,0,0.08)",
   },
 
   errorIcon: {
@@ -1464,7 +2214,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: "white",
     border: "none",
     borderRadius: 7,
-    padding: "9px 15px",
+    padding:
+      "9px 15px",
     fontWeight: 700,
     cursor: "pointer",
   },
