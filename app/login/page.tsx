@@ -51,26 +51,34 @@ export default function LoginPage() {
     router.push("/dashboard");
   }
 
-            async function connexionMicrosoft() {
+async function connexionMicrosoft() {
   if (chargement) return;
 
   setErreur("");
   setChargement(true);
 
-const { data, error } =
-  await supabase.auth.signInWithOAuth({
-    provider: "azure",
-    options: {
-      redirectTo:
-        `${window.location.origin}/auth/callback`,
-    },
-  });
+  const { data, error } =
+    await supabase.auth.signInWithOAuth({
+      provider: "azure",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
 
-console.log("DATA", data);
-console.log("ERROR", error);
+  console.log("DATA", data);
+  console.log("ERROR", error);
 
-alert(JSON.stringify(data));
+  if (error) {
+    setErreur(error.message);
+    setChargement(false);
+    return;
+  }
+
+  if (data?.url) {
+    window.location.href = data.url;
+  }
 }
+
   function gererToucheEntree(
     e: React.KeyboardEvent<HTMLInputElement>
   ) {
