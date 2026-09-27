@@ -57,13 +57,19 @@ export default function LoginPage() {
   setErreur("");
   setChargement(true);
 
-await supabase.auth.signInWithOAuth({
-  provider: "azure",
-  options: {
-    redirectTo:
-      `${window.location.origin}/auth/callback`,
-  },
-});
+const { data, error } =
+  await supabase.auth.signInWithOAuth({
+    provider: "azure",
+    options: {
+      redirectTo:
+        `${window.location.origin}/auth/callback`,
+    },
+  });
+
+console.log("DATA", data);
+console.log("ERROR", error);
+
+alert(JSON.stringify(data));
 }
   function gererToucheEntree(
     e: React.KeyboardEvent<HTMLInputElement>
