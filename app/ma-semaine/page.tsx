@@ -1,7 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   useEffect,
@@ -618,7 +617,7 @@ function cibleTravailJour(
    PAGE
 ============================================================ */
 
-export default function MaSemainePage() {
+function MaSemaineContent() {
   const searchParams =
     useSearchParams();
 
@@ -4666,5 +4665,12 @@ if (
 
   document.head.appendChild(
     style
+  );
+}
+export default function Page() {
+  return (
+    <Suspense fallback={<div>Chargement...</div>}>
+      <MaSemaineContent />
+    </Suspense>
   );
 }
