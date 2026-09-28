@@ -1,40 +1,71 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function AuthCallback() {
   const router = useRouter();
 
+  const [message, setMessage] = useState(
+    "Connexion Microsoft en cours..."
+  );
+
   useEffect(() => {
     async function terminerConnexion() {
       try {
         const params = new URLSearchParams(window.location.search);
+
         const code = params.get("code");
+        const error = params.get("error");
+        const errorDescription = params.get("error_description");
 
-        console.log("AUTH CALLBACK");
+        console.log("=== AUTH CALLBACK ===");
+        console.log("URL :", window.location.href);
         console.log("CODE :", !!code);
-
-        if (!code) {
-          console.error("Aucun code OAuth reçu.");
-          router.replace("/login");
-          return;
-        }
-
-        const { error } =
-          await supabase.auth.exchangeCodeForSession(code);
+        console.log("ERROR :", error);
+        console.log("ERROR DESCRIPTION :", errorDescription);
 
         if (error) {
           console.error(
-            "Erreur échange code/session :",
-            error
+            "Erreur OAuth Microsoft :",
+            error,
+            errorDescription
           );
 
-          router.replace(
-            `/login?erreur=${encodeURIComponent(
-              "La connexion Microsoft a échoué."
-            )}`
+          setMessage(
+            `Erreur Microsoft : ${errorDescription || error}`
+          );
+
+          return;
+        }
+
+        if (!code) {
+          console.error("Aucun code OAuth reçu.");
+
+          setMessage(
+            "Aucun code de connexion Microsoft n'a été reçu."
+          );
+
+          return;
+        }
+
+        console.log("Échange du code contre une session...");
+
+        const { data, error: exchangeError } =
+          await supabase.auth.exchangeCodeForSession(code);
+
+        console.log("RESULTAT ECHANGE :", data);
+        console.log("ERREUR ECHANGE :", exchangeError);
+
+        if (exchangeError) {
+          console.error(
+            "ERREUR exchangeCodeForSession :",
+            exchangeError
+          );
+
+          setMessage(
+            `Erreur Supabase : ${exchangeError.message}`
           );
 
           return;
@@ -45,24 +76,38 @@ export default function AuthCallback() {
         } = await supabase.auth.getSession();
 
         console.log(
-          "SESSION MICROSOFT :",
+          "SESSION :",
           session?.user?.email
         );
 
         if (!session) {
-          console.error("Session absente après OAuth.");
-          router.replace("/login");
+          console.error(
+            "Le code a été échangé mais aucune session n'est disponible."
+          );
+
+          setMessage(
+            "La connexion a été effectuée mais aucune session n'a été créée."
+          );
+
           return;
         }
+
+        console.log("CONNEXION MICROSOFT OK");
 
         router.replace("/dashboard");
       } catch (error) {
         console.error(
-          "Erreur inattendue callback OAuth :",
+          "ERREUR INATTENDUE CALLBACK :",
           error
         );
 
-        router.replace("/login");
+        setMessage(
+          `Erreur inattendue : ${
+            error instanceof Error
+              ? error.message
+              : String(error)
+          }`
+        );
       }
     }
 
@@ -77,10 +122,23 @@ export default function AuthCallback() {
         alignItems: "center",
         justifyContent: "center",
         fontFamily: "Calibri, Arial, sans-serif",
-        color: "#555",
+        padding: 30,
+        textAlign: "center",
       }}
     >
-      Connexion Microsoft en cours...
+      <div>
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            marginBottom: 15,
+          }}
+        >
+          POLYNOV
+        </div>
+
+        <div>{message}</div>
+      </div>
     </div>
   );
 }
