@@ -1,89 +1,35 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
-  const router = useRouter();
-
-  const [email, setEmail] = useState("");
-  const [motDePasse, setMotDePasse] = useState("");
   const [chargement, setChargement] = useState(false);
   const [erreur, setErreur] = useState("");
-  const [afficherMotDePasse, setAfficherMotDePasse] = useState(false);
 
-  async function connexion() {
+  async function connexionMicrosoft() {
     if (chargement) return;
 
     setErreur("");
-
-    if (!email.trim()) {
-      setErreur("Veuillez saisir votre adresse e-mail.");
-      return;
-    }
-
-    if (!motDePasse) {
-      setErreur("Veuillez saisir votre mot de passe.");
-      return;
-    }
-
     setChargement(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password: motDePasse,
-    });
-
-    if (error) {
-      setErreur(
-        error.message === "Invalid login credentials"
-          ? "Adresse e-mail ou mot de passe incorrect."
-          : error.message
-      );
-
-      setChargement(false);
-      return;
-    }
-
-    console.log("Connexion OK");
-
-    router.push("/dashboard");
-  }
-
-async function connexionMicrosoft() {
-  if (chargement) return;
-
-  setErreur("");
-  setChargement(true);
-
-  const { data, error } =
-    await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "azure",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        scopes: "email",
       },
     });
 
-  console.log("DATA", data);
-  console.log("ERROR", error);
+    if (error) {
+      console.error("Erreur connexion Microsoft 365 :", error);
 
-  if (error) {
-    setErreur(error.message);
-    setChargement(false);
-    return;
-  }
+      setErreur(
+        "Impossible de lancer la connexion Microsoft 365 : " +
+          error.message
+      );
 
-  if (data?.url) {
-    window.location.href = data.url;
-  }
-}
-
-  function gererToucheEntree(
-    e: React.KeyboardEvent<HTMLInputElement>
-  ) {
-    if (e.key === "Enter") {
-      connexion();
+      setChargement(false);
     }
   }
 
@@ -111,15 +57,13 @@ async function connexionMicrosoft() {
           boxShadow: "0 18px 45px rgba(0, 0, 0, 0.14)",
         }}
       >
-        {/* ========================================================= */}
         {/* HEADER */}
-        {/* ========================================================= */}
 
         <div
           style={{
             background: "#c00000",
             color: "#ffffff",
-            padding: "34px 30px 30px",
+            padding: "36px 30px 32px",
             textAlign: "center",
           }}
         >
@@ -138,7 +82,6 @@ async function connexionMicrosoft() {
             style={{
               marginTop: 10,
               fontSize: 15,
-              fontWeight: 500,
               opacity: 0.92,
             }}
           >
@@ -146,18 +89,17 @@ async function connexionMicrosoft() {
           </div>
         </div>
 
-        {/* ========================================================= */}
-        {/* FORMULAIRE */}
-        {/* ========================================================= */}
+        {/* CONTENU */}
 
         <div
           style={{
-            padding: "32px 34px 30px",
+            padding: "38px 34px 32px",
           }}
         >
           <div
             style={{
-              marginBottom: 28,
+              textAlign: "center",
+              marginBottom: 30,
             }}
           >
             <h1
@@ -171,20 +113,21 @@ async function connexionMicrosoft() {
               Connexion
             </h1>
 
-            <div
+            <p
               style={{
-                marginTop: 7,
+                margin: "10px 0 0",
                 color: "#777",
                 fontSize: 14,
+                lineHeight: 1.5,
               }}
             >
-              Connectez-vous à votre espace POLYNOV.
-            </div>
+              Connectez-vous avec votre compte
+              <br />
+              professionnel Microsoft 365.
+            </p>
           </div>
 
-          {/* ======================================================= */}
           {/* ERREUR */}
-          {/* ======================================================= */}
 
           {erreur && (
             <div
@@ -203,181 +146,75 @@ async function connexionMicrosoft() {
             </div>
           )}
 
-          {/* ======================================================= */}
-          {/* EMAIL */}
-          {/* ======================================================= */}
+          {/* UNIQUE BOUTON DE CONNEXION */}
 
-          <div
+          <button
+            type="button"
+            onClick={connexionMicrosoft}
+            disabled={chargement}
             style={{
-              marginBottom: 19,
+              width: "100%",
+              height: 52,
+              border: "none",
+              borderRadius: 8,
+              background: chargement ? "#a00000" : "#c00000",
+              color: "#ffffff",
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: chargement ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 12,
             }}
           >
-            <label
-              style={{
-                display: "block",
-                marginBottom: 7,
-                color: "#333",
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              Adresse e-mail
-            </label>
-
-            <input
-              type="email"
-              placeholder="prenom.nom@polynov.fr"
-              value={email}
-              autoComplete="email"
-              onChange={(e) => {
-                setEmail(e.target.value);
-                if (erreur) setErreur("");
-              }}
-              onKeyDown={gererToucheEntree}
-              disabled={chargement}
-              style={{
-                width: "100%",
-                height: 46,
-                boxSizing: "border-box",
-                padding: "0 13px",
-                border: "1px solid #d2d2d2",
-                borderRadius: 7,
-                background: chargement ? "#f5f5f5" : "#fff",
-                color: "#222",
-                fontSize: 14,
-                outline: "none",
-              }}
-            />
-          </div>
-
-          {/* ======================================================= */}
-          {/* MOT DE PASSE */}
-          {/* ======================================================= */}
-
-          <div
-            style={{
-              marginBottom: 23,
-            }}
-          >
-            <label
-              style={{
-                display: "block",
-                marginBottom: 7,
-                color: "#333",
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              Mot de passe
-            </label>
-
-            <div
-              style={{
-                position: "relative",
-              }}
-            >
-              <input
-                type={afficherMotDePasse ? "text" : "password"}
-                placeholder="••••••••"
-                value={motDePasse}
-                autoComplete="current-password"
-                onChange={(e) => {
-                  setMotDePasse(e.target.value);
-                  if (erreur) setErreur("");
-                }}
-                onKeyDown={gererToucheEntree}
-                disabled={chargement}
+            {!chargement && (
+              <span
                 style={{
-                  width: "100%",
-                  height: 46,
-                  boxSizing: "border-box",
-                  padding: "0 75px 0 13px",
-                  border: "1px solid #d2d2d2",
-                  borderRadius: 7,
-                  background: chargement ? "#f5f5f5" : "#fff",
-                  color: "#222",
-                  fontSize: 14,
-                  outline: "none",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, 9px)",
+                  gridTemplateRows: "repeat(2, 9px)",
+                  gap: 2,
                 }}
-              />
-
-              <button
-                type="button"
-                onClick={() =>
-                  setAfficherMotDePasse(!afficherMotDePasse)
-                }
-                disabled={chargement}
-                style={{
-                  position: "absolute",
-                  right: 8,
-                  top: 7,
-                  height: 32,
-                  padding: "0 9px",
-                  border: "none",
-                  background: "transparent",
-                  color: "#777",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
+                aria-hidden="true"
               >
-                {afficherMotDePasse ? "Masquer" : "Afficher"}
-              </button>
-            </div>
-          </div>
+                <span style={{ background: "#f25022" }} />
+                <span style={{ background: "#7fba00" }} />
+                <span style={{ background: "#00a4ef" }} />
+                <span style={{ background: "#ffb900" }} />
+              </span>
+            )}
 
-          {/* ======================================================= */}
-          {/* BOUTON */}
-          {/* ======================================================= */}
+            {chargement
+              ? "Connexion à Microsoft 365..."
+              : "Se connecter avec Microsoft 365"}
+          </button>
 
-<button
-  type="button"
-  onClick={connexion}
-  disabled={chargement}
-  style={{
-    width: "100%",
-    height: 47,
-    border: "none",
-    borderRadius: 7,
-    background: chargement ? "#a00000" : "#c00000",
-    color: "#ffffff",
-    fontSize: 15,
-    fontWeight: 700,
-    cursor: chargement ? "default" : "pointer",
-  }}
->
-  {chargement ? "Connexion..." : "Se connecter"}
-</button>
-
-<button
-  type="button"
-  onClick={connexionMicrosoft}
-  disabled={chargement}
-  style={{
-    width: "100%",
-    height: 47,
-    marginTop: 12,
-    border: "1px solid #d2d2d2",
-    borderRadius: 7,
-    background: "#ffffff",
-    color: "#222",
-    fontSize: 15,
-    fontWeight: 700,
-    cursor: "pointer",
-  }}
->
-  Se connecter avec Microsoft 365
-</button>
-
-
-
-          {/* ======================================================= */}
-          {/* FOOTER */}
-          {/* ======================================================= */}
+          {/* INFORMATION */}
 
           <div
             style={{
-              marginTop: 25,
+              marginTop: 22,
+              padding: "13px 14px",
+              background: "#f7f7f7",
+              border: "1px solid #eeeeee",
+              borderRadius: 8,
+              color: "#777",
+              fontSize: 12,
+              lineHeight: 1.5,
+              textAlign: "center",
+            }}
+          >
+            Utilisez votre compte professionnel POLYNOV.
+            <br />
+            L'authentification est assurée par Microsoft 365.
+          </div>
+
+          {/* FOOTER */}
+
+          <div
+            style={{
+              marginTop: 28,
               paddingTop: 18,
               borderTop: "1px solid #eeeeee",
               textAlign: "center",
