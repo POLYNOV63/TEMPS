@@ -4,12 +4,30 @@ import { useState } from "react";
 import * as XLSX from "xlsx-js-style";
 import { supabase } from "@/lib/supabase";
 
+// ============================================================
+// TYPES
+// ============================================================
+
 type Collaborateur = {
   id: string;
   prenom: string;
   nom: string;
-  trigramme: string | null;
-  actif: boolean;
+  email?: string | null;
+  role?: string | null;
+  trigramme?: string | null;
+  actif?: boolean | null;
+};
+
+type CodeImputation = {
+  code: string;
+  libelle: string | null;
+  categorie: string | null;
+  actif: boolean | null;
+  autorise_affaire: boolean | null;
+  autorise_devis: boolean | null;
+  autorise_divers: boolean | null;
+  historique_uniquement: boolean | null;
+  ordre_affichage?: number | null;
 };
 
 type Feuille = {
@@ -33,7 +51,11 @@ type Jour = {
   heures_re: number | null;
   heures_absence: number | null;
   duree_cp: number | null;
-  ticket_restaurant: boolean | null;
+  ticket_restaurant:
+    | boolean
+    | number
+    | string
+    | null;
   total_heures: number | null;
 };
 
@@ -47,317 +69,1136 @@ type Imputation = {
   heures: number | null;
 };
 
-type CodeMetier = {
-  code: string;
-  libelle: string | null;
-  categorie: string | null;
-  actif: boolean;
-  autorise_affaire: boolean | null;
-  autorise_devis: boolean | null;
-  autorise_divers: boolean | null;
-  ordre_affichage: number | null;
+// ============================================================
+// COLONNES
+// ============================================================
+
+const COL = {
+  A: 0,
+  B: 1,
+  C: 2,
+  D: 3,
+
+  E: 4,
+  Y: 24,
+
+  Z: 25,
+  AO: 40,
+
+  AP: 41,
+  AQ: 42,
+
+  AR: 43,
+  AS: 44,
+
+  AT: 45,
+  AU: 46,
+
+  AV: 47,
+  AW: 48,
+
+  AX: 49,
+  AY: 50,
+
+  AZ: 51,
+  BA: 52,
+
+  BB: 53,
+  BC: 54,
 };
 
-type Affaire = {
-  type: string;
-  numero: string;
-  description: string;
-  heuresParCode: Record<string, number>;
-  total: number;
+const DAY_PAIRS = [
+  { first: COL.AP, second: COL.AQ },
+  { first: COL.AR, second: COL.AS },
+  { first: COL.AT, second: COL.AU },
+  { first: COL.AV, second: COL.AW },
+  { first: COL.AX, second: COL.AY },
+  { first: COL.AZ, second: COL.BA },
+  { first: COL.BB, second: COL.BC },
+];
+
+// ============================================================
+// COULEURS
+// ============================================================
+
+const COLORS = {
+  A: "D9D9D9",
+  B: "F8CBAD",
+  C: "9BC2E6",
+  D: "FFE699",
+
+  PRODUCTION: "FFF2CC",
+  ADMIN: "E2EFDA",
+
+  ABSENT: "FF6600",
+  TELETRAVAIL: "FFFF00",
+  PRESENTIEL: "00B050",
+
+  BLACK: "000000",
 };
 
-const NB_COLONNES = 55;
+// ============================================================
+// UTILITAIRES
+// ============================================================
 
-/*
- * E:Y = production
- */
-const COL_PROD_DEBUT = 4;
-const COL_PROD_FIN = 24;
+function excelColumn(index: number): string {
+  let n = index + 1;
+  let result = "";
 
-/*
- * Z:AO = administratif
- */
-const COL_ADMIN_DEBUT = 25;
-const COL_ADMIN_FIN = 40;
+  while (n > 0) {
+    const modulo = (n - 1) % 26;
 
-/*
- * AP:AQ lundi
- * AR:AS mardi
- * AT:AU mercredi
- * AV:AW jeudi
- * AX:AY vendredi
- * AZ:BA samedi
- * BB:BC dimanche
- */
-const COL_JOUR_DEBUT = 41;
+    result =
+      String.fromCharCode(
+        65 + modulo
+      ) + result;
 
-function col(c: number) {
-  return XLSX.utils.encode_col(c);
+    n = Math.floor(
+      (n - modulo) / 26
+    );
+  }
+
+  return result;
 }
 
-function adresse(c: number, ligne: number) {
-  return `${col(c)}${ligne}`;
-}
-
-function arrondi(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
-function ecrire(
-  feuille: XLSX.WorkSheet,
-  adresseCellule: string,
-  valeur: any
+function address(
+  row: number,
+  col: number
 ) {
-  if (typeof valeur === "number") {
-    feuille[adresseCellule] = {
-      ...(feuille[adresseCellule] || {}),
+  return `${excelColumn(col)}${
+    row + 1
+  }`;
+}
+
+function getCell(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number
+): XLSX.CellObject {
+  const ref =
+    address(row, col);
+
+  if (!ws[ref]) {
+    ws[ref] = {
+      t: "s",
+      v: "",
+    };
+  }
+
+  return ws[ref];
+}
+
+function setCell(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number,
+  value: string | number
+) {
+  const ref =
+    address(row, col);
+
+  if (typeof value === "number") {
+    ws[ref] = {
       t: "n",
-      v: arrondi(valeur),
+      v: value,
     };
   } else {
-    feuille[adresseCellule] = {
-      ...(feuille[adresseCellule] || {}),
+    ws[ref] = {
       t: "s",
-      v: valeur ?? "",
+      v: value,
     };
   }
 }
 
-function typeAffaire(type: string | null) {
-  const t = (type || "").trim().toUpperCase();
-
-  if (t.includes("DBE")) return "DBE";
-  if (t.includes("CBE")) return "CBE";
-  if (t.includes("DIVERS")) return "DIVERS";
-
-  return t;
-}
-
-function lundiISO(
-  annee: number,
-  semaine: number
+function setFormula(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number,
+  formula: string
 ) {
-  const jan4 = new Date(
-    Date.UTC(annee, 0, 4)
-  );
+  const ref =
+    address(row, col);
 
-  const jour =
-    jan4.getUTCDay() || 7;
-
-  const lundi1 =
-    new Date(jan4);
-
-  lundi1.setUTCDate(
-    jan4.getUTCDate() -
-      jour +
-      1
-  );
-
-  const lundi =
-    new Date(lundi1);
-
-  lundi.setUTCDate(
-    lundi.getUTCDate() +
-      (semaine - 1) * 7
-  );
-
-  return lundi
-    .toISOString()
-    .slice(0, 10);
-}
-
-/*
- * Copie la mise en forme d'une ligne du Gabarit
- * sans copier son contenu.
- *
- * Avec xlsx-js-style, la propriété "s" est réellement
- * réécrite dans le fichier Excel.
- */
-function copierMEFLigne(
-  source: XLSX.WorkSheet,
-  destination: XLSX.WorkSheet,
-  ligneSource: number,
-  ligneDestination: number
-) {
-  for (
-    let c = 0;
-    c < NB_COLONNES;
-    c++
-  ) {
-    const src =
-      source[
-        adresse(c, ligneSource)
-      ];
-
-    const dstAdresse =
-      adresse(c, ligneDestination);
-
-    if (!src) continue;
-
-    const valeur =
-      destination[dstAdresse]?.v;
-
-    const formule =
-      destination[dstAdresse]?.f;
-
-    const type =
-      destination[dstAdresse]?.t;
-
-    const lien =
-      destination[dstAdresse]?.l;
-
-    destination[dstAdresse] = {
-      ...src,
-
-      /*
-       * On garde la valeur que notre génération
-       * vient éventuellement d'écrire.
-       */
-      v: valeur,
-      f: formule,
-      t: type,
-
-      /*
-       * On garde également le lien généré.
-       */
-      l: lien,
-
-      /*
-       * IMPORTANT :
-       * c'est la mise en forme du Gabarit.
-       */
-      s: src.s,
-    };
-  }
-}
-
-/*
- * Copie également les hauteurs de lignes.
- */
-function copierHauteurLigne(
-  source: XLSX.WorkSheet,
-  destination: XLSX.WorkSheet,
-  ligneSource: number,
-  ligneDestination: number
-) {
-  if (!source["!rows"]) return;
-
-  const sourceRow =
-    source["!rows"][ligneSource - 1];
-
-  if (!sourceRow) return;
-
-  destination["!rows"] =
-    destination["!rows"] || [];
-
-  destination["!rows"][
-    ligneDestination - 1
-  ] = {
-    ...sourceRow,
+  ws[ref] = {
+    t: "n",
+    v: 0,
+    f: formula,
   };
 }
 
-/*
- * Fusion d'un statut sur deux colonnes.
- */
-function fusionnerJour(
-  feuille: XLSX.WorkSheet,
-  ligne: number,
-  colonne: number
+function clearCell(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number
 ) {
-  feuille["!merges"] =
-    feuille["!merges"] || [];
-
-  const existe =
-    feuille["!merges"].some(
-      (m: any) =>
-        m.s.r === ligne - 1 &&
-        m.s.c === colonne &&
-        m.e.r === ligne - 1 &&
-        m.e.c === colonne + 1
-    );
-
-  if (!existe) {
-    feuille["!merges"].push({
-      s: {
-        r: ligne - 1,
-        c: colonne,
-      },
-      e: {
-        r: ligne - 1,
-        c: colonne + 1,
-      },
-    });
-  }
-
-  ecrire(
-    feuille,
-    adresse(
-      colonne + 1,
-      ligne
-    ),
+  setCell(
+    ws,
+    row,
+    col,
     ""
   );
 }
 
+function formatNumber(
+  value:
+    | number
+    | null
+    | undefined
+) {
+  const n =
+    Number(value);
+
+  if (
+    !Number.isFinite(n) ||
+    n === 0
+  ) {
+    return 0;
+  }
+
+  return Math.round(
+    n * 100
+  ) / 100;
+}
+
+// ============================================================
+// TESTS
+// ============================================================
+
+function estVrai(
+  value:
+    | boolean
+    | number
+    | string
+    | null
+    | undefined
+) {
+  if (value === true) {
+    return true;
+  }
+
+  if (value === 1) {
+    return true;
+  }
+
+  if (
+    typeof value === "string"
+  ) {
+    return [
+      "true",
+      "1",
+      "oui",
+      "yes",
+      "y",
+      "o",
+      "vrai",
+    ].includes(
+      value
+        .trim()
+        .toLowerCase()
+    );
+  }
+
+  return false;
+}
+
+function estTeletravail(
+  presence:
+    | string
+    | null
+    | undefined
+) {
+  const value =
+    (
+      presence || ""
+    )
+      .trim()
+      .toUpperCase();
+
+  return (
+    value === "TT" ||
+    value.includes(
+      "TELETRAVAIL"
+    ) ||
+    value.includes(
+      "TÉLÉTRAVAIL"
+    )
+  );
+}
+
+function estAbsent(
+  jour: Jour
+) {
+  return (
+    !!jour.absence ||
+    formatNumber(
+      jour.duree_cp
+    ) > 0 ||
+    formatNumber(
+      jour.heures_absence
+    ) > 0 ||
+    formatNumber(
+      jour.duree_rtt
+    ) > 0
+  );
+}
+
+// ============================================================
+// STYLE GENERIQUE
+// ============================================================
+
+function styleCell(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number,
+  style: any
+) {
+  const cell =
+    getCell(
+      ws,
+      row,
+      col
+    );
+
+  cell.s = {
+    ...(cell.s || {}),
+    ...style,
+  };
+}
+
+// ============================================================
+// COULEURS DE COLONNES
+// ============================================================
+
+function applyColumnColors(
+  ws: XLSX.WorkSheet,
+  maxRows: number
+) {
+  for (
+    let row = 0;
+    row < maxRows;
+    row++
+  ) {
+    for (
+      let col = COL.A;
+      col <= COL.BC;
+      col++
+    ) {
+      getCell(
+        ws,
+        row,
+        col
+      );
+    }
+  }
+
+  for (
+    let row = 0;
+    row < maxRows;
+    row++
+  ) {
+    applyFill(
+      ws,
+      row,
+      COL.A,
+      COLORS.A
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.B,
+      COLORS.B
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.C,
+      COLORS.C
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.D,
+      COLORS.D
+    );
+
+    for (
+      let col = COL.E;
+      col <= COL.Y;
+      col++
+    ) {
+      applyFill(
+        ws,
+        row,
+        col,
+        COLORS.PRODUCTION
+      );
+    }
+
+    for (
+      let col = COL.Z;
+      col <= COL.AO;
+      col++
+    ) {
+      applyFill(
+        ws,
+        row,
+        col,
+        COLORS.ADMIN
+      );
+    }
+
+    // AP:AQ
+    applyFill(
+      ws,
+      row,
+      COL.AP,
+      COLORS.ADMIN
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.AQ,
+      COLORS.ADMIN
+    );
+
+    // AT:AU
+    applyFill(
+      ws,
+      row,
+      COL.AT,
+      COLORS.ADMIN
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.AU,
+      COLORS.ADMIN
+    );
+
+    // AX:AY
+    applyFill(
+      ws,
+      row,
+      COL.AX,
+      COLORS.ADMIN
+    );
+
+    applyFill(
+      ws,
+      row,
+      COL.AY,
+      COLORS.ADMIN
+    );
+  }
+}
+
+function applyFill(
+  ws: XLSX.WorkSheet,
+  row: number,
+  col: number,
+  color: string
+) {
+  styleCell(
+    ws,
+    row,
+    col,
+    {
+      fill: {
+        patternType:
+          "solid",
+        fgColor: {
+          rgb: color,
+        },
+      },
+    }
+  );
+}
+
+// ============================================================
+// BORDURES LATERALES
+// ============================================================
+
+function applySideBorders(
+  ws: XLSX.WorkSheet,
+  maxRows: number
+) {
+  for (
+    let row = 0;
+    row < maxRows;
+    row++
+  ) {
+    for (
+      let col = COL.A;
+      col <= COL.BC;
+      col++
+    ) {
+      const cell =
+        getCell(
+          ws,
+          row,
+          col
+        );
+
+      styleCell(
+        ws,
+        row,
+        col,
+        {
+          border: {
+            ...(cell.s?.border ||
+              {}),
+            left: {
+              style:
+                "thin",
+              color: {
+                rgb:
+                  COLORS.BLACK,
+              },
+            },
+            right: {
+              style:
+                "thin",
+              color: {
+                rgb:
+                  COLORS.BLACK,
+              },
+            },
+          },
+        }
+      );
+    }
+  }
+}
+
+// ============================================================
+// BORDURE HAUTE COLLABORATEUR
+// ============================================================
+
+function addTopBorder(
+  ws: XLSX.WorkSheet,
+  row: number
+) {
+  for (
+    let col = COL.A;
+    col <= COL.BC;
+    col++
+  ) {
+    const cell =
+      getCell(
+        ws,
+        row,
+        col
+      );
+
+    styleCell(
+      ws,
+      row,
+      col,
+      {
+        border: {
+          ...(cell.s?.border ||
+            {}),
+          top: {
+            style:
+              "thin",
+            color: {
+              rgb:
+                COLORS.BLACK,
+            },
+          },
+        },
+      }
+    );
+  }
+}
+
+// ============================================================
+// CENTRAGE GLOBAL
+// ============================================================
+
+function centerAllCells(
+  ws: XLSX.WorkSheet,
+  maxRows: number
+) {
+  for (
+    let row = 0;
+    row < maxRows;
+    row++
+  ) {
+    for (
+      let col = COL.A;
+      col <= COL.BC;
+      col++
+    ) {
+      const cell =
+        getCell(
+          ws,
+          row,
+          col
+        );
+
+      styleCell(
+        ws,
+        row,
+        col,
+        {
+          alignment: {
+            ...(cell.s?.alignment ||
+              {}),
+            horizontal:
+              "center",
+            vertical:
+              "center",
+          },
+        }
+      );
+    }
+  }
+}
+
+// ============================================================
+// D1
+// ============================================================
+
+function styleD1(
+  ws: XLSX.WorkSheet
+) {
+  const cell =
+    getCell(
+      ws,
+      0,
+      COL.D
+    );
+
+  styleCell(
+    ws,
+    0,
+    COL.D,
+    {
+      alignment: {
+        ...(cell.s?.alignment ||
+          {}),
+        horizontal:
+          "center",
+        vertical:
+          "center",
+        wrapText:
+          true,
+      },
+    }
+  );
+}
+
+// ============================================================
+// A1 / C1 / E1 / Z1
+// ============================================================
+
+function styleMainHeaders(
+  ws: XLSX.WorkSheet
+) {
+  for (
+    const col of [
+      COL.A,
+      COL.C,
+    ]
+  ) {
+    const cell =
+      getCell(
+        ws,
+        0,
+        col
+      );
+
+    styleCell(
+      ws,
+      0,
+      col,
+      {
+        font: {
+          ...(cell.s?.font ||
+            {}),
+          sz: 20,
+        },
+        alignment: {
+          ...(cell.s?.alignment ||
+            {}),
+          horizontal:
+            "center",
+          vertical:
+            "center",
+        },
+      }
+    );
+  }
+
+  for (
+    const col of [
+      COL.E,
+      COL.Z,
+    ]
+  ) {
+    const cell =
+      getCell(
+        ws,
+        0,
+        col
+      );
+
+    styleCell(
+      ws,
+      0,
+      col,
+      {
+        font: {
+          ...(cell.s?.font ||
+            {}),
+          sz: 20,
+        },
+        alignment: {
+          ...(cell.s?.alignment ||
+            {}),
+          horizontal:
+            "center",
+          vertical:
+            "center",
+        },
+      }
+    );
+  }
+}
+
+// ============================================================
+// STATUT
+// ============================================================
+
+function mergeStatus(
+  ws: XLSX.WorkSheet,
+  row: number,
+  firstCol: number,
+  text: string,
+  color: string
+) {
+  const secondCol =
+    firstCol + 1;
+
+  clearCell(
+    ws,
+    row,
+    firstCol
+  );
+
+  clearCell(
+    ws,
+    row,
+    secondCol
+  );
+
+  setCell(
+    ws,
+    row,
+    firstCol,
+    text
+  );
+
+  // PRIORITAIRE :
+  // on réapplique la couleur APRES
+  // toutes les couleurs de colonnes.
+  styleCell(
+    ws,
+    row,
+    firstCol,
+    {
+      fill: {
+        patternType:
+          "solid",
+        fgColor: {
+          rgb: color,
+        },
+      },
+      font: {
+        bold: true,
+      },
+      alignment: {
+        horizontal:
+          "center",
+        vertical:
+          "center",
+      },
+    }
+  );
+
+  styleCell(
+    ws,
+    row,
+    secondCol,
+    {
+      fill: {
+        patternType:
+          "solid",
+        fgColor: {
+          rgb: color,
+        },
+      },
+      alignment: {
+        horizontal:
+          "center",
+        vertical:
+          "center",
+      },
+    }
+  );
+
+  if (
+    !ws["!merges"]
+  ) {
+    ws["!merges"] = [];
+  }
+
+  ws["!merges"] =
+    ws["!merges"].filter(
+      (merge: any) =>
+        !(
+          merge.s.r === row &&
+          merge.s.c ===
+            firstCol &&
+          merge.e.r === row &&
+          merge.e.c ===
+            secondCol
+        )
+    );
+
+  ws["!merges"].push({
+    s: {
+      r: row,
+      c: firstCol,
+    },
+    e: {
+      r: row,
+      c: secondCol,
+    },
+  });
+}
+
+// ============================================================
+// TYPE AFFAIRE
+// ============================================================
+
+function normaliserTypeAffaire(
+  value:
+    | string
+    | null
+    | undefined
+) {
+  return (
+    value || ""
+  )
+    .trim()
+    .toUpperCase()
+    .replace(
+      /\s+/g,
+      ""
+    );
+}
+
+function estProduction(
+  value:
+    | string
+    | null
+    | undefined
+) {
+  const type =
+    normaliserTypeAffaire(
+      value
+    );
+
+  return (
+    type === "CBE" ||
+    type === "DBE" ||
+    type === "AFFAIRE" ||
+    type === "DEVIS"
+  );
+}
+
+// ============================================================
+// DATE ISO
+// ============================================================
+
+function getMondayOfISOWeek(
+  year: number,
+  week: number
+) {
+  const date =
+    new Date(
+      Date.UTC(
+        year,
+        0,
+        4
+      )
+    );
+
+  const day =
+    date.getUTCDay() || 7;
+
+  date.setUTCDate(
+    date.getUTCDate() -
+      day +
+      1 +
+      (week - 1) * 7
+  );
+
+  return new Date(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate()
+  );
+}
+
+function getDayIndex(
+  dateString: string,
+  semaineDebut: Date
+) {
+  const date =
+    new Date(
+      `${dateString}T00:00:00`
+    );
+
+  return Math.round(
+    (
+      date.getTime() -
+      semaineDebut.getTime()
+    ) /
+      (
+        1000 *
+        60 *
+        60 *
+        24
+      )
+  );
+}
+
+// ============================================================
+// COPIE DU GABARIT
+// ============================================================
+
+function copyGabarit(
+  source: XLSX.WorkSheet,
+  target: XLSX.WorkSheet
+) {
+  let maxRows = 150;
+
+  if (
+    source["!ref"]
+  ) {
+    const range =
+      XLSX.utils.decode_range(
+        source["!ref"]
+      );
+
+    maxRows =
+      Math.max(
+        150,
+        range.e.r + 1
+      );
+  }
+
+  for (
+    let row = 0;
+    row < maxRows;
+    row++
+  ) {
+    for (
+      let col = COL.A;
+      col <= COL.BC;
+      col++
+    ) {
+      const ref =
+        address(
+          row,
+          col
+        );
+
+      const sourceCell =
+        source[ref];
+
+      const targetCell =
+        getCell(
+          target,
+          row,
+          col
+        );
+
+      if (!sourceCell) {
+        continue;
+      }
+
+      if (
+        sourceCell.s
+      ) {
+        targetCell.s =
+          JSON.parse(
+            JSON.stringify(
+              sourceCell.s
+            )
+          );
+      }
+
+      if (
+        sourceCell.z !==
+        undefined
+      ) {
+        targetCell.z =
+          sourceCell.z;
+      }
+    }
+  }
+
+  if (
+    source["!cols"]
+  ) {
+    target["!cols"] =
+      source["!cols"].map(
+        (col: any) => ({
+          ...col,
+        })
+      );
+  }
+
+  if (
+    source["!rows"]
+  ) {
+    target["!rows"] =
+      source["!rows"].map(
+        (row: any) => ({
+          ...row,
+        })
+      );
+  }
+
+  if (
+    source["!merges"]
+  ) {
+    target["!merges"] =
+      source["!merges"].map(
+        (merge: any) => ({
+          s: {
+            ...merge.s,
+          },
+          e: {
+            ...merge.e,
+          },
+        })
+      );
+  }
+}
+
+// ============================================================
+// PAGE
+// ============================================================
+
 export default function ExportExcelPage() {
-  const [semaine, setSemaine] =
-    useState("39");
+  const maintenant =
+    new Date();
 
   const [annee, setAnnee] =
-    useState("2026");
+    useState(
+      maintenant.getFullYear()
+    );
 
-  const [chargement, setChargement] =
+  const [semaine, setSemaine] =
+    useState(1);
+
+  const [loading, setLoading] =
     useState(false);
 
   const [message, setMessage] =
     useState("");
 
+  // ==========================================================
+  // EXPORT
+  // ==========================================================
+
   async function exporter() {
     try {
-      setChargement(true);
+      setLoading(true);
       setMessage("");
 
-      /*
-       * ==========================================================
-       * 1. CONTROLE ADMIN
-       * ==========================================================
-       */
+      // ------------------------------------------------------
+      // UTILISATEUR
+      // ------------------------------------------------------
 
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: {
+          user,
+        },
+        error: authError,
+      } =
+        await supabase.auth.getUser();
 
-      if (!user) {
+      if (
+        authError ||
+        !user
+      ) {
         throw new Error(
           "Vous devez être connecté."
         );
       }
 
+      // ------------------------------------------------------
+      // DROITS
+      // ------------------------------------------------------
+
       const {
         data: profil,
-        error: erreurProfil,
-      } = await supabase
-        .from("collaborateurs")
-        .select("role")
-        .eq("auth_user_id", user.id)
-        .single();
+        error: profilError,
+      } =
+        await supabase
+          .from(
+            "collaborateurs"
+          )
+          .select(
+            "role"
+          )
+          .eq(
+            "auth_user_id",
+            user.id
+          )
+          .maybeSingle();
 
-      if (erreurProfil) {
-        throw erreurProfil;
+      if (
+        profilError
+      ) {
+        throw profilError;
       }
 
-      if (profil?.role !== "ADMIN") {
+      if (
+        profil?.role?.toUpperCase() !==
+        "ADMIN"
+      ) {
         throw new Error(
-          "Vous n'avez pas les droits administrateur."
+          "Cette page est réservée aux administrateurs."
         );
       }
 
-      /*
-       * ==========================================================
-       * 2. CHARGEMENT DU GABARIT
-       * ==========================================================
-       */
+      // ------------------------------------------------------
+      // NOM DE L'ONGLET
+      // ------------------------------------------------------
+
+      const nomOnglet =
+        `S${String(
+          semaine
+        ).padStart(
+          2,
+          "0"
+        )}-${annee}`;
+
+      // ------------------------------------------------------
+      // GABARIT
+      // ------------------------------------------------------
 
       const response =
         await fetch(
@@ -366,7 +1207,7 @@ export default function ExportExcelPage() {
 
       if (!response.ok) {
         throw new Error(
-          "Impossible de charger le fichier Gabarit."
+          "Impossible de charger le gabarit Excel."
         );
       }
 
@@ -374,1393 +1215,2075 @@ export default function ExportExcelPage() {
         await response.arrayBuffer();
 
       const workbook =
-        XLSX.read(buffer, {
-          type: "array",
-
-          /*
-           * IMPORTANT POUR LA MEF
-           */
-          cellStyles: true,
-
-          cellFormula: true,
-
-          /*
-           * On conserve le VBA du fichier source.
-           */
-          bookVBA: true,
-        });
+        XLSX.read(
+          buffer,
+          {
+            type: "array",
+            cellStyles: true,
+          }
+        );
 
       const gabarit =
-        workbook.Sheets["Gabarit"];
+        workbook.Sheets[
+          "Gabarit"
+        ];
 
       if (!gabarit) {
         throw new Error(
-          'L\'onglet "Gabarit" est introuvable.'
+          "L'onglet Gabarit est introuvable."
         );
       }
 
-      /*
-       * ==========================================================
-       * 3. NOUVEL ONGLET
-       *
-       * On construit uniquement S39-2026.
-       * ==========================================================
-       */
+      // Nouvelle feuille
+      const ws =
+        XLSX.utils.aoa_to_sheet(
+          []
+        );
 
-      const nomOnglet =
-        `S${semaine}-${annee}`;
+      // IMPORTANT :
+      // on copie d'abord la structure
+      // et la mise en forme du Gabarit.
+      copyGabarit(
+        gabarit,
+        ws
+      );
 
-      /*
-       * On repart d'une feuille vierge.
-       */
-      const feuilleExcel: XLSX.WorkSheet =
-        {};
-
-      /*
-       * ==========================================================
-       * 4. COPIE DU GABARIT
-       *
-       * On copie :
-       * - contenu initial utile
-       * - styles
-       * - largeurs
-       * - hauteurs
-       * - fusions
-       *
-       * Mais le fichier final ne contiendra PAS Gabarit.
-       * ==========================================================
-       */
-
-      const rangeGabarit =
-        gabarit["!ref"]
-          ? XLSX.utils.decode_range(
-              gabarit["!ref"]
-            )
-          : {
-              s: { r: 0, c: 0 },
-              e: {
-                r: 1,
-                c: 54,
-              },
-            };
-
-      for (
-        let r =
-          rangeGabarit.s.r;
-        r <=
-          rangeGabarit.e.r;
-        r++
-      ) {
-        for (
-          let c =
-            rangeGabarit.s.c;
-          c <=
-            rangeGabarit.e.c;
-          c++
-        ) {
-          const a =
-            adresse(
-              c,
-              r + 1
-            );
-
-          const source =
-            gabarit[a];
-
-          if (!source) continue;
-
-          feuilleExcel[a] =
-            {
-              ...source,
-
-              /*
-               * On reprend bien le style.
-               */
-              s: source.s,
-            };
-        }
-      }
-
-      /*
-       * Largeurs de colonnes
-       */
-      if (gabarit["!cols"]) {
-        feuilleExcel["!cols"] =
-          gabarit[
-            "!cols"
-          ].map(
-            (c: any) => ({
-              ...c,
-            })
-          );
-      }
-
-      /*
-       * Hauteurs
-       */
-      if (gabarit["!rows"]) {
-        feuilleExcel["!rows"] =
-          gabarit[
-            "!rows"
-          ].map(
-            (r: any) => ({
-              ...r,
-            })
-          );
-      }
-
-      /*
-       * Fusions initiales
-       */
-      if (gabarit["!merges"]) {
-        feuilleExcel[
-          "!merges"
-        ] =
-          gabarit[
-            "!merges"
-          ].map(
-            (m: any) => ({
-              ...m,
-            })
-          );
-      }
-
-      /*
-       * ==========================================================
-       * 5. SUPPRESSION DES AUTRES ONGLETS
-       *
-       * LE FICHIER FINAL N'AURA QUE S39-2026
-       * ==========================================================
-       */
-
-      workbook.Sheets = {
-        [nomOnglet]:
-          feuilleExcel,
-      };
-
+      // Le fichier final ne contient
+      // qu'une seule feuille.
       workbook.SheetNames = [
         nomOnglet,
       ];
 
-      /*
-       * ==========================================================
-       * 6. ANNEE / SEMAINE
-       * ==========================================================
-       */
+      workbook.Sheets = {
+        [nomOnglet]:
+          ws,
+      };
 
-      ecrire(
-        feuilleExcel,
-        "B1",
-        Number(annee)
+      // ------------------------------------------------------
+      // B1 / B2
+      // ------------------------------------------------------
+
+      setCell(
+        ws,
+        0,
+        COL.B,
+        annee
       );
 
-      ecrire(
-        feuilleExcel,
-        "B2",
-        Number(semaine)
+      setCell(
+        ws,
+        1,
+        COL.B,
+        semaine
       );
 
-      /*
-       * ==========================================================
-       * 7. COLLABORATEURS
-       * ==========================================================
-       */
+      // ------------------------------------------------------
+      // DATE SEMAINE
+      // ------------------------------------------------------
+
+      const dateDebut =
+        getMondayOfISOWeek(
+          annee,
+          semaine
+        );
+
+      const dateFin =
+        new Date(
+          dateDebut
+        );
+
+      dateFin.setDate(
+        dateFin.getDate() +
+          6
+      );
+
+      const debutISO =
+        `${dateDebut.getFullYear()}-${String(
+          dateDebut.getMonth() + 1
+        ).padStart(
+          2,
+          "0"
+        )}-${String(
+          dateDebut.getDate()
+        ).padStart(
+          2,
+          "0"
+        )}`;
+
+      const finISO =
+        `${dateFin.getFullYear()}-${String(
+          dateFin.getMonth() + 1
+        ).padStart(
+          2,
+          "0"
+        )}-${String(
+          dateFin.getDate()
+        ).padStart(
+          2,
+          "0"
+        )}`;
+
+      // ======================================================
+      // COLLABORATEURS
+      // ======================================================
 
       const {
         data: collaborateurs,
         error:
-          erreurCollaborateurs,
-      } = await supabase
-        .from("collaborateurs")
-        .select(
-          "id, prenom, nom, trigramme, actif"
-        )
-        .eq("actif", true)
-        .order("nom");
+          collaborateursError,
+      } =
+        await supabase
+          .from(
+            "collaborateurs"
+          )
+          .select(
+            `
+              id,
+              prenom,
+              nom,
+              email,
+              role,
+              trigramme,
+              actif
+            `
+          )
+          .eq(
+            "actif",
+            true
+          )
+          .order(
+            "nom",
+            {
+              ascending:
+                true,
+            }
+          );
 
-      if (erreurCollaborateurs) {
-        throw erreurCollaborateurs;
+      if (
+        collaborateursError
+      ) {
+        throw collaborateursError;
       }
 
-      /*
-       * ==========================================================
-       * 8. FEUILLES
-       * ==========================================================
-       */
-
-      const debut =
-        lundiISO(
-          Number(annee),
-          Number(semaine)
-        );
+      // ======================================================
+      // FEUILLES
+      // ======================================================
 
       const {
         data: feuilles,
-        error: erreurFeuilles,
-      } = await supabase
-        .from("feuilles_heures")
-        .select(
-          `
-            id,
-            collaborateur_id,
-            semaine_debut,
-            total_heures,
-            total_theorique,
-            heures_supplementaires,
-            mode_heures_supplementaires
-          `
-        )
-        .eq(
-          "semaine_debut",
-          debut
-        );
+        error:
+          feuillesError,
+      } =
+        await supabase
+          .from(
+            "feuilles_heures"
+          )
+          .select(
+            `
+              id,
+              collaborateur_id,
+              semaine_debut,
+              total_heures,
+              total_theorique,
+              heures_supplementaires,
+              mode_heures_supplementaires
+            `
+          )
+          .gte(
+            "semaine_debut",
+            debutISO
+          )
+          .lte(
+            "semaine_debut",
+            finISO
+          );
 
-      if (erreurFeuilles) {
-        throw erreurFeuilles;
+      if (
+        feuillesError
+      ) {
+        throw feuillesError;
       }
 
-      /*
-       * ==========================================================
-       * 9. JOURS
-       * ==========================================================
-       */
+      // ======================================================
+      // UNIQUEMENT LES COLLABORATEURS AVEC UNE FEUILLE
+      // ======================================================
 
-      const idsFeuilles =
-        (feuilles || []).map(
-          (f: Feuille) =>
-            f.id
+      const feuillesParCollaborateur =
+        new Map<
+          string,
+          Feuille
+        >();
+
+      (
+        feuilles || []
+      ).forEach(
+        (
+          feuille
+        ) => {
+          feuillesParCollaborateur.set(
+            feuille.collaborateur_id,
+            feuille
+          );
+        }
+      );
+
+      const collaborateursAvecFeuille =
+        (
+          collaborateurs ||
+          []
+        ).filter(
+          (
+            collaborateur
+          ) =>
+            feuillesParCollaborateur.has(
+              collaborateur.id
+            )
+        );
+
+      if (
+        collaborateursAvecFeuille.length ===
+        0
+      ) {
+        throw new Error(
+          `Aucune feuille trouvée pour ${nomOnglet}.`
+        );
+      }
+
+      // ======================================================
+      // JOURS
+      // ======================================================
+
+      const feuilleIds =
+        (
+          feuilles || []
+        ).map(
+          (
+            feuille
+          ) =>
+            feuille.id
         );
 
       let jours: Jour[] =
         [];
 
       if (
-        idsFeuilles.length
+        feuilleIds.length
       ) {
         const {
           data,
           error,
-        } = await supabase
-          .from(
-            "feuilles_heures_jours"
-          )
-          .select(
-            `
-              id,
-              feuille_id,
-              date_jour,
-              heures_theoriques,
-              presence,
-              absence,
-              duree_rtt,
-              heures_re,
-              heures_absence,
-              duree_cp,
-              ticket_restaurant,
-              total_heures
-            `
-          )
-          .in(
-            "feuille_id",
-            idsFeuilles
-          );
+        } =
+          await supabase
+            .from(
+              "feuilles_heures_jours"
+            )
+            .select(
+              `
+                id,
+                feuille_id,
+                date_jour,
+                heures_theoriques,
+                presence,
+                absence,
+                duree_rtt,
+                heures_re,
+                heures_absence,
+                duree_cp,
+                ticket_restaurant,
+                total_heures
+              `
+            )
+            .in(
+              "feuille_id",
+              feuilleIds
+            );
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
-        jours = data || [];
+        jours =
+          data || [];
       }
 
-      /*
-       * ==========================================================
-       * 10. IMPUTATIONS
-       * ==========================================================
-       */
+      // ======================================================
+      // IMPUTATIONS
+      // ======================================================
 
-      const idsJours =
+      const jourIds =
         jours.map(
-          (j) => j.id
+          (
+            jour
+          ) =>
+            jour.id
         );
 
       let imputations:
         Imputation[] =
         [];
 
-      if (idsJours.length) {
+      if (
+        jourIds.length
+      ) {
         const {
           data,
           error,
-        } = await supabase
-          .from(
-            "feuilles_heures_imputations"
-          )
-          .select(
-            `
-              id,
-              jour_id,
-              type_affaire,
-              numero_affaire,
-              description,
-              code,
-              heures
-            `
-          )
-          .in(
-            "jour_id",
-            idsJours
-          );
+        } =
+          await supabase
+            .from(
+              "feuilles_heures_imputations"
+            )
+            .select(
+              `
+                id,
+                jour_id,
+                type_affaire,
+                numero_affaire,
+                description,
+                code,
+                heures
+              `
+            )
+            .in(
+              "jour_id",
+              jourIds
+            );
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
         imputations =
           data || [];
       }
 
-      /*
-       * ==========================================================
-       * 11. CODES
-       * ==========================================================
-       */
+      // ======================================================
+      // CODES
+      // ======================================================
 
       const {
         data: codes,
-        error: erreurCodes,
-      } = await supabase
-        .from(
-          "codes_imputation"
-        )
-        .select(
-          `
-            code,
-            libelle,
-            categorie,
-            actif,
-            autorise_affaire,
-            autorise_devis,
-            autorise_divers,
-            ordre_affichage
-          `
-        )
-        .eq(
-          "actif",
-          true
-        )
-        .order(
-          "ordre_affichage",
-          {
-            ascending:
-              true,
-          }
-        );
+        error: codesError,
+      } =
+        await supabase
+          .from(
+            "codes_imputation"
+          )
+          .select(
+            `
+              code,
+              libelle,
+              categorie,
+              actif,
+              autorise_affaire,
+              autorise_devis,
+              autorise_divers,
+              historique_uniquement,
+              ordre_affichage
+            `
+          );
 
-      if (erreurCodes) {
-        throw erreurCodes;
+      if (codesError) {
+        throw codesError;
       }
 
-      const codesMetier =
-        (codes ||
-          []) as CodeMetier[];
-
-      /*
-       * ==========================================================
-       * 12. INDEX
-       * ==========================================================
-       */
-
-      const feuilleParCollaborateur =
+      const codesMap =
         new Map<
           string,
-          Feuille
+          CodeImputation
         >();
 
-      (feuilles ||
-        []).forEach(
-        (f: Feuille) => {
-          feuilleParCollaborateur.set(
-            f.collaborateur_id,
-            f
+      (
+        codes || []
+      ).forEach(
+        (
+          code
+        ) => {
+          codesMap.set(
+            code.code
+              .trim()
+              .toUpperCase(),
+            code
           );
         }
       );
 
-      /*
-       * ==========================================================
-       * 13. CODES UTILISES
-       * ==========================================================
-       */
+      // ======================================================
+      // MAPS
+      // ======================================================
 
-      const production =
-        new Set<string>();
+      const joursParFeuille =
+        new Map<
+          string,
+          Jour[]
+        >();
 
-      const administratif =
-        new Set<string>();
+      jours.forEach(
+        (
+          jour
+        ) => {
+          const liste =
+            joursParFeuille.get(
+              jour.feuille_id
+            ) || [];
+
+          liste.push(
+            jour
+          );
+
+          joursParFeuille.set(
+            jour.feuille_id,
+            liste
+          );
+        }
+      );
+
+      const imputationsParJour =
+        new Map<
+          string,
+          Imputation[]
+        >();
 
       imputations.forEach(
-        (imp) => {
-          if (!imp.code) return;
+        (
+          imputation
+        ) => {
+          const liste =
+            imputationsParJour.get(
+              imputation.jour_id
+            ) || [];
 
-          const code =
-            imp.code
+          liste.push(
+            imputation
+          );
+
+          imputationsParJour.set(
+            imputation.jour_id,
+            liste
+          );
+        }
+      );
+
+      // ======================================================
+      // CODES UTILISES
+      // ======================================================
+
+      const productionCodes =
+        new Set<string>();
+
+      const adminCodes =
+        new Set<string>();
+
+      for (
+        const imputation of
+          imputations
+      ) {
+        if (
+          !imputation.code
+        ) {
+          continue;
+        }
+
+        const code =
+          imputation.code
+            .trim()
+            .toUpperCase();
+
+        if (
+          estProduction(
+            imputation.type_affaire
+          )
+        ) {
+          productionCodes.add(
+            code
+          );
+        } else {
+          adminCodes.add(
+            code
+          );
+        }
+      }
+
+      // Absences
+      for (
+        const jour of
+          jours
+      ) {
+        if (
+          jour.absence
+        ) {
+          adminCodes.add(
+            jour.absence
               .trim()
-              .toUpperCase();
-
-          if (!code) return;
-
-          const info =
-            codesMetier.find(
-              (c) =>
-                c.code
-                  .trim()
-                  .toUpperCase() ===
-                code
-            );
-
-          if (
-            info?.autorise_affaire ||
-            info?.autorise_devis
-          ) {
-            production.add(
-              code
-            );
-          } else if (
-            info?.autorise_divers
-          ) {
-            administratif.add(
-              code
-            );
-          }
+              .toUpperCase()
+          );
         }
-      );
 
-      function trierCodes(
-        set: Set<string>
-      ) {
-        return Array.from(
-          set
-        ).sort(
-          (a, b) => {
-            const ca =
-              codesMetier.find(
-                (c) =>
-                  c.code
-                    .trim()
-                    .toUpperCase() ===
-                  a
-              );
+        if (
+          formatNumber(
+            jour.duree_cp
+          ) > 0
+        ) {
+          adminCodes.add(
+            "CP"
+          );
+        }
 
-            const cb =
-              codesMetier.find(
-                (c) =>
-                  c.code
-                    .trim()
-                    .toUpperCase() ===
-                  b
-              );
+        if (
+          formatNumber(
+            jour.duree_rtt
+          ) > 0
+        ) {
+          adminCodes.add(
+            "RTT"
+          );
+        }
 
-            const oa =
-              ca?.ordre_affichage ??
-              9999;
+        if (
+          formatNumber(
+            jour.heures_re
+          ) > 0
+        ) {
+          adminCodes.add(
+            "RE"
+          );
+        }
+      }
 
-            const ob =
-              cb?.ordre_affichage ??
-              9999;
-
-            if (
-              oa !== ob
-            ) {
-              return oa - ob;
-            }
-
-            return a.localeCompare(
+      const trierCodes =
+        (
+          set: Set<string>
+        ) =>
+          Array.from(
+            set
+          ).sort(
+            (
+              a,
               b
+            ) => {
+              const ca =
+                codesMap.get(
+                  a
+                );
+
+              const cb =
+                codesMap.get(
+                  b
+                );
+
+              const oa =
+                ca?.ordre_affichage ??
+                9999;
+
+              const ob =
+                cb?.ordre_affichage ??
+                9999;
+
+              if (
+                oa !== ob
+              ) {
+                return (
+                  oa - ob
+                );
+              }
+
+              return a.localeCompare(
+                b
+              );
+            }
+          );
+
+      const productionCodesTries =
+        trierCodes(
+          productionCodes
+        );
+
+      const adminCodesTries =
+        trierCodes(
+          adminCodes
+        );
+
+      // ======================================================
+      // COLONNES CODES
+      // ======================================================
+
+      const productionColumnMap =
+        new Map<
+          string,
+          number
+        >();
+
+      productionCodesTries
+        .slice(
+          0,
+          COL.Y -
+            COL.E +
+            1
+        )
+        .forEach(
+          (
+            code,
+            index
+          ) => {
+            productionColumnMap.set(
+              code,
+              COL.E +
+                index
             );
           }
         );
-      }
 
-      const codesProduction =
-        trierCodes(
-          production
-        );
+      const adminColumnMap =
+        new Map<
+          string,
+          number
+        >();
 
-      const codesAdministratifs =
-        trierCodes(
-          administratif
-        );
-
-      /*
-       * ==========================================================
-       * 14. NETTOYAGE DES CODES DU GABARIT
-       * ==========================================================
-       */
-
-      for (
-        let c =
-          COL_PROD_DEBUT;
-        c <=
-          COL_PROD_FIN;
-        c++
-      ) {
-        ecrire(
-          feuilleExcel,
-          adresse(c, 2),
-          ""
-        );
-      }
-
-      for (
-        let c =
-          COL_ADMIN_DEBUT;
-        c <=
-          COL_ADMIN_FIN;
-        c++
-      ) {
-        ecrire(
-          feuilleExcel,
-          adresse(c, 2),
-          ""
-        );
-      }
-
-      /*
-       * ==========================================================
-       * 15. CODES PRODUCTION
-       * ==========================================================
-       */
-
-      codesProduction.forEach(
-        (
-          code,
-          index
-        ) => {
-          const c =
-            COL_PROD_DEBUT +
-            index;
-
-          if (
-            c >
-            COL_PROD_FIN
-          )
-            return;
-
-          ecrire(
-            feuilleExcel,
-            adresse(c, 2),
-            code
-          );
-        }
-      );
-
-      /*
-       * ==========================================================
-       * 16. CODES ADMINISTRATIFS
-       * ==========================================================
-       */
-
-      codesAdministratifs.forEach(
-        (
-          code,
-          index
-        ) => {
-          const c =
-            COL_ADMIN_DEBUT +
-            index;
-
-          if (
-            c >
-            COL_ADMIN_FIN
-          )
-            return;
-
-          ecrire(
-            feuilleExcel,
-            adresse(c, 2),
-            code
-          );
-        }
-      );
-
-      /*
-       * ==========================================================
-       * 17. EXPORT DES COLLABORATEURS
-       * ==========================================================
-       */
-
-      const collaborateursExport =
-        (
-          collaborateurs ||
-          []
-        ).filter(
+      adminCodesTries
+        .slice(
+          0,
+          COL.AO -
+            COL.Z +
+            1
+        )
+        .forEach(
           (
-            c: Collaborateur
-          ) =>
-            feuilleParCollaborateur.has(
-              c.id
-            )
+            code,
+            index
+          ) => {
+            adminColumnMap.set(
+              code,
+              COL.Z +
+                index
+            );
+          }
         );
 
-      let ligne = 3;
+      // ======================================================
+      // ENTETES CODES
+      // ======================================================
+
+      productionColumnMap.forEach(
+        (
+          col,
+          code
+        ) => {
+          setCell(
+            ws,
+            1,
+            col,
+            code
+          );
+        }
+      );
+
+      adminColumnMap.forEach(
+        (
+          col,
+          code
+        ) => {
+          setCell(
+            ws,
+            1,
+            col,
+            code
+          );
+        }
+      );
+
+      // ======================================================
+      // REMPLISSAGE
+      // ======================================================
+
+      let currentRow = 2;
 
       for (
-        const collaborateur of collaborateursExport
+        const collaborateur of
+          collaborateursAvecFeuille
       ) {
         const feuille =
-          feuilleParCollaborateur.get(
+          feuillesParCollaborateur.get(
             collaborateur.id
           );
 
-        if (!feuille)
+        if (!feuille) {
           continue;
+        }
 
-        const joursCollab =
-          jours.filter(
-            (j) =>
-              j.feuille_id ===
-              feuille.id
-          );
+        const joursCollaborateur =
+          joursParFeuille.get(
+            feuille.id
+          ) || [];
 
-        const ids =
-          new Set(
-            joursCollab.map(
-              (j) => j.id
-            )
-          );
+        const joursMap =
+          new Map<
+            number,
+            Jour
+          >();
 
-        const imps =
-          imputations.filter(
-            (i) =>
-              ids.has(
-                i.jour_id
+        joursCollaborateur.forEach(
+          (
+            jour
+          ) => {
+            const index =
+              getDayIndex(
+                jour.date_jour,
+                dateDebut
+              );
+
+            if (
+              index >= 0 &&
+              index <= 6
+            ) {
+              joursMap.set(
+                index,
+                jour
+              );
+            }
+          }
+        );
+
+        // ====================================================
+        // TR / TT
+        // ====================================================
+
+        const nombreTR =
+          joursCollaborateur.filter(
+            (
+              jour
+            ) =>
+              estVrai(
+                jour.ticket_restaurant
               )
+          ).length;
+
+        const nombreTT =
+          joursCollaborateur.filter(
+            (
+              jour
+            ) =>
+              estTeletravail(
+                jour.presence
+              )
+          ).length;
+
+        // ====================================================
+        // NOM
+        // ====================================================
+
+        const nomRow =
+          currentRow;
+
+        setCell(
+          ws,
+          nomRow,
+          COL.A,
+          `${(
+            collaborateur.nom ||
+            ""
+          ).toUpperCase()} ${
+            collaborateur.prenom ||
+            ""
+          }`
+        );
+
+        addTopBorder(
+          ws,
+          nomRow
+        );
+
+        // TR
+        setCell(
+          ws,
+          nomRow + 1,
+          COL.A,
+          `${nombreTR} TR`
+        );
+
+        // TT
+        setCell(
+          ws,
+          nomRow + 2,
+          COL.A,
+          `${nombreTT} TT`
+        );
+
+        // COMPTEUR
+        const heuresSup =
+          formatNumber(
+            feuille.heures_supplementaires
           );
 
-        /*
-         * ========================================================
-         * LIGNE NOM
-         * ========================================================
-         */
+        if (
+          heuresSup > 0
+        ) {
+          setCell(
+            ws,
+            nomRow + 3,
+            COL.A,
+            `${heuresSup} H sur compteur`
+          );
+        }
 
-        copierMEFLigne(
-          gabarit,
-          feuilleExcel,
-          2,
-          ligne
-        );
+        // ====================================================
+        // AFFAIRES
+        // ====================================================
 
-        copierHauteurLigne(
-          gabarit,
-          feuilleExcel,
-          2,
-          ligne
-        );
-
-        ecrire(
-          feuilleExcel,
-          `A${ligne}`,
-          `${collaborateur.nom.toUpperCase()} ${collaborateur.prenom}`
-        );
-
-        feuilleExcel[
-          `A${ligne}`
-        ].l = {
-          Target:
-            `/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`,
+        type LigneAffaire = {
+          type: string;
+          numero: string;
+          description: string;
+          code: string;
+          heures: number[];
         };
-
-        /*
-         * TR
-         */
-
-        const tr =
-          joursCollab.filter(
-            (j) =>
-              j.ticket_restaurant
-          ).length;
-
-        ecrire(
-          feuilleExcel,
-          `A${ligne + 1}`,
-          `${tr} TR`
-        );
-
-        /*
-         * TT
-         */
-
-        const tt =
-          joursCollab.filter(
-            (j) =>
-              (
-                j.presence ||
-                ""
-              )
-                .trim()
-                .toUpperCase() ===
-              "TELETRAVAIL"
-          ).length;
-
-        ecrire(
-          feuilleExcel,
-          `A${ligne + 2}`,
-          `${tt} jour(s) TT`
-        );
-
-        /*
-         * ========================================================
-         * AFFAIRES
-         * ========================================================
-         */
 
         const affaires =
           new Map<
             string,
-            Affaire
+            LigneAffaire
           >();
 
-        imps.forEach(
-          (imp) => {
-            const heures =
-              Number(
-                imp.heures ||
-                  0
-              );
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
+            );
 
-            if (!heures)
-              return;
+          if (!jour) {
+            continue;
+          }
+
+          const imps =
+            imputationsParJour.get(
+              jour.id
+            ) || [];
+
+          for (
+            const imputation of
+              imps
+          ) {
+            if (
+              !estProduction(
+                imputation.type_affaire
+              )
+            ) {
+              continue;
+            }
 
             const type =
-              typeAffaire(
-                imp.type_affaire
+              normaliserTypeAffaire(
+                imputation.type_affaire
               );
-
-            if (
-              type !==
-                "CBE" &&
-              type !==
-                "DBE"
-            ) {
-              return;
-            }
 
             const numero =
               (
-                imp.numero_affaire ||
+                imputation.numero_affaire ||
                 ""
               ).trim();
 
             const description =
               (
-                imp.description ||
+                imputation.description ||
                 ""
               ).trim();
 
             const code =
               (
-                imp.code ||
+                imputation.code ||
                 ""
               )
                 .trim()
                 .toUpperCase();
 
-            const cle =
+            const key =
               [
                 type,
                 numero,
                 description,
+                code,
               ].join(
                 "|"
               );
 
             if (
               !affaires.has(
-                cle
+                key
               )
             ) {
               affaires.set(
-                cle,
+                key,
                 {
                   type,
                   numero,
                   description,
-                  heuresParCode:
-                    {},
-                  total: 0,
+                  code,
+                  heures: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
                 }
               );
             }
 
             const affaire =
               affaires.get(
-                cle
+                key
               )!;
 
-            affaire.heuresParCode[
-              code
-            ] =
-              (
-                affaire
-                  .heuresParCode[
-                    code
-                  ] ||
-                0
-              ) + heures;
-
-            affaire.total +=
-              heures;
+            affaire.heures[
+              dayIndex
+            ] +=
+              formatNumber(
+                imputation.heures
+              );
           }
-        );
+        }
 
-        for (
-          const affaire of affaires.values()
-        ) {
-          copierMEFLigne(
-            gabarit,
-            feuilleExcel,
-            2,
-            ligne
-          );
+        let row =
+          nomRow;
 
-          copierHauteurLigne(
-            gabarit,
-            feuilleExcel,
-            2,
-            ligne
-          );
-
-          ecrire(
-            feuilleExcel,
-            `C${ligne}`,
-            `${affaire.type} ${affaire.numero}`
-          );
-
-          ecrire(
-            feuilleExcel,
-            `D${ligne}`,
-            affaire.total
-          );
-
-          codesProduction.forEach(
+        const affairesListe =
+          Array.from(
+            affaires.values()
+          ).sort(
             (
-              code,
-              index
+              a,
+              b
             ) => {
-              const heures =
-                affaire
-                  .heuresParCode[
-                    code
-                  ] || 0;
+              const t =
+                a.type.localeCompare(
+                  b.type
+                );
 
-              if (!heures)
-                return;
+              if (
+                t !== 0
+              ) {
+                return t;
+              }
 
-              ecrire(
-                feuilleExcel,
-                adresse(
-                  COL_PROD_DEBUT +
-                    index,
-                  ligne
-                ),
-                heures
+              return a.numero.localeCompare(
+                b.numero
               );
             }
           );
 
-          ligne++;
-        }
+        // ====================================================
+        // LIGNES CBE / DBE
+        // ====================================================
 
-        /*
-         * ========================================================
-         * DIVERS
-         * ========================================================
-         */
+        for (
+          const affaire of
+            affairesListe
+        ) {
+          row++;
 
-        const divers:
-          Record<
-            string,
-            number
-          > = {};
+          // C = CBE 1234 / DBE 5678
+          setCell(
+            ws,
+            row,
+            COL.C,
+            affaire.numero
+              ? `${affaire.type} ${affaire.numero}`
+              : affaire.type
+          );
 
-        let totalDivers = 0;
+          // D = FORMULE TOTAL
+          setFormula(
+            ws,
+            row,
+            COL.D,
+            `=SUM(E${row + 1}:AO${
+              row + 1
+            })`
+          );
 
-        imps.forEach(
-          (imp) => {
-            const type =
-              typeAffaire(
-                imp.type_affaire
+          // Désignation dans E si disponible
+          // uniquement si elle ne correspond pas
+          // à une colonne de code utilisée.
+          if (
+            affaire.description
+          ) {
+            const codeCol =
+              productionColumnMap.get(
+                affaire.code
               );
 
             if (
-              type !==
-                "DIVERS" &&
-              type !== ""
+              codeCol !==
+              undefined &&
+              codeCol >
+                COL.E
             ) {
-              return;
+              // On conserve les codes à partir de E.
+              // La désignation reste dans C
+              // uniquement lorsque le gabarit le prévoit.
             }
+          }
 
-            const heures =
-              Number(
-                imp.heures ||
-                  0
+          // Ventilation par code
+          const productionCol =
+            productionColumnMap.get(
+              affaire.code
+            );
+
+          if (
+            productionCol !==
+            undefined
+          ) {
+            const total =
+              affaire.heures.reduce(
+                (
+                  s,
+                  h
+                ) =>
+                  s +
+                  formatNumber(
+                    h
+                  ),
+                0
               );
 
-            if (!heures)
-              return;
+            setCell(
+              ws,
+              row,
+              productionCol,
+              formatNumber(
+                total
+              )
+            );
+          }
+        }
+
+        // ====================================================
+        // DIVERS
+        // ====================================================
+
+        row++;
+
+        const diversRow =
+          row;
+
+        setCell(
+          ws,
+          diversRow,
+          COL.C,
+          "Divers"
+        );
+
+        // ----------------------------------------------------
+        // FORMULE DIVERS
+        // ----------------------------------------------------
+
+        setFormula(
+          ws,
+          diversRow,
+          COL.D,
+          `=SUM(E${diversRow + 1}:AO${
+            diversRow + 1
+          })`
+        );
+
+        const diversParCode =
+          new Map<
+            string,
+            {
+              total: number;
+              jours: number[];
+            }
+          >();
+
+        // ----------------------------------------------------
+        // IMPUTATIONS DIVERS
+        // ----------------------------------------------------
+
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
+            );
+
+          if (!jour) {
+            continue;
+          }
+
+          const imps =
+            imputationsParJour.get(
+              jour.id
+            ) || [];
+
+          for (
+            const imputation of
+              imps
+          ) {
+            if (
+              estProduction(
+                imputation.type_affaire
+              )
+            ) {
+              continue;
+            }
 
             const code =
               (
-                imp.code ||
+                imputation.code ||
                 ""
               )
                 .trim()
                 .toUpperCase();
 
-            if (!code)
-              return;
+            if (!code) {
+              continue;
+            }
 
-            divers[code] =
-              (
-                divers[code] ||
-                0
-              ) + heures;
+            if (
+              !diversParCode.has(
+                code
+              )
+            ) {
+              diversParCode.set(
+                code,
+                {
+                  total: 0,
+                  jours: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
+                }
+              );
+            }
 
-            totalDivers +=
+            const entry =
+              diversParCode.get(
+                code
+              )!;
+
+            const heures =
+              formatNumber(
+                imputation.heures
+              );
+
+            entry.total +=
               heures;
+
+            entry.jours[
+              dayIndex
+            ] +=
+              heures;
+          }
+        }
+
+        // ----------------------------------------------------
+        // ABSENCES
+        // ----------------------------------------------------
+
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
+            );
+
+          if (!jour) {
+            continue;
+          }
+
+          // CP
+          if (
+            formatNumber(
+              jour.duree_cp
+            ) > 0
+          ) {
+            if (
+              !diversParCode.has(
+                "CP"
+              )
+            ) {
+              diversParCode.set(
+                "CP",
+                {
+                  total: 0,
+                  jours: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
+                }
+              );
+            }
+
+            const entry =
+              diversParCode.get(
+                "CP"
+              )!;
+
+            const heures =
+              formatNumber(
+                jour.duree_cp
+              );
+
+            entry.total +=
+              heures;
+
+            entry.jours[
+              dayIndex
+            ] +=
+              heures;
+          }
+
+          // RTT
+          if (
+            formatNumber(
+              jour.duree_rtt
+            ) > 0
+          ) {
+            if (
+              !diversParCode.has(
+                "RTT"
+              )
+            ) {
+              diversParCode.set(
+                "RTT",
+                {
+                  total: 0,
+                  jours: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
+                }
+              );
+            }
+
+            const entry =
+              diversParCode.get(
+                "RTT"
+              )!;
+
+            const heures =
+              formatNumber(
+                jour.duree_rtt
+              );
+
+            entry.total +=
+              heures;
+
+            entry.jours[
+              dayIndex
+            ] +=
+              heures;
+          }
+
+          // RE
+          if (
+            formatNumber(
+              jour.heures_re
+            ) > 0
+          ) {
+            if (
+              !diversParCode.has(
+                "RE"
+              )
+            ) {
+              diversParCode.set(
+                "RE",
+                {
+                  total: 0,
+                  jours: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
+                }
+              );
+            }
+
+            const entry =
+              diversParCode.get(
+                "RE"
+              )!;
+
+            const heures =
+              formatNumber(
+                jour.heures_re
+              );
+
+            entry.total +=
+              heures;
+
+            entry.jours[
+              dayIndex
+            ] +=
+              heures;
+          }
+
+          // Absence
+          if (
+            jour.absence &&
+            formatNumber(
+              jour.duree_cp
+            ) === 0
+          ) {
+            const code =
+              jour.absence
+                .trim()
+                .toUpperCase();
+
+            if (
+              !diversParCode.has(
+                code
+              )
+            ) {
+              diversParCode.set(
+                code,
+                {
+                  total: 0,
+                  jours: [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                  ],
+                }
+              );
+            }
+
+            const entry =
+              diversParCode.get(
+                code
+              )!;
+
+            const heures =
+              formatNumber(
+                jour.heures_absence
+              ) ||
+              formatNumber(
+                jour.heures_theoriques
+              );
+
+            entry.total +=
+              heures;
+
+            entry.jours[
+              dayIndex
+            ] +=
+              heures;
+          }
+        }
+
+        // ----------------------------------------------------
+        // ECRITURE DIVERS
+        // ----------------------------------------------------
+
+        diversParCode.forEach(
+          (
+            data,
+            code
+          ) => {
+            const adminCol =
+              adminColumnMap.get(
+                code
+              );
+
+            if (
+              adminCol ===
+              undefined
+            ) {
+              return;
+            }
+
+            setCell(
+              ws,
+              diversRow,
+              adminCol,
+              formatNumber(
+                data.total
+              )
+            );
+
+            data.jours.forEach(
+              (
+                heures,
+                dayIndex
+              ) => {
+                if (
+                  heures <= 0
+                ) {
+                  return;
+                }
+
+                const pair =
+                  DAY_PAIRS[
+                    dayIndex
+                  ];
+
+                setCell(
+                  ws,
+                  diversRow,
+                  pair.first,
+                  formatNumber(
+                    heures
+                  )
+                );
+
+                if (
+                  [
+                    "CP",
+                    "RTT",
+                    "RE",
+                    "AI",
+                    "AA",
+                    "ML",
+                    "AT",
+                    "VM",
+                  ].includes(
+                    code
+                  )
+                ) {
+                  setCell(
+                    ws,
+                    diversRow,
+                    pair.second,
+                    code
+                  );
+                }
+              }
+            );
           }
         );
 
-        if (
-          totalDivers >
-          0
-        ) {
-          copierMEFLigne(
-            gabarit,
-            feuilleExcel,
-            2,
-            ligne
-          );
+        // ====================================================
+        // H/JOUR
+        // ====================================================
 
-          copierHauteurLigne(
-            gabarit,
-            feuilleExcel,
-            2,
-            ligne
-          );
+        row++;
 
-          ecrire(
-            feuilleExcel,
-            `C${ligne}`,
-            "Divers"
-          );
+        const hJourRow =
+          row;
 
-          ecrire(
-            feuilleExcel,
-            `D${ligne}`,
-            totalDivers
-          );
-
-          codesAdministratifs.forEach(
-            (
-              code,
-              index
-            ) => {
-              const heures =
-                divers[
-                  code
-                ] || 0;
-
-              if (!heures)
-                return;
-
-              ecrire(
-                feuilleExcel,
-                adresse(
-                  COL_ADMIN_DEBUT +
-                    index,
-                  ligne
-                ),
-                heures
-              );
-            }
-          );
-
-          ligne++;
-        }
-
-        /*
-         * ========================================================
-         * H/JOUR
-         * ========================================================
-         */
-
-        const ligneHjour =
-          ligne;
-
-        copierMEFLigne(
-          gabarit,
-          feuilleExcel,
-          2,
-          ligneHjour
-        );
-
-        ecrire(
-          feuilleExcel,
-          `C${ligneHjour}`,
+        setCell(
+          ws,
+          hJourRow,
+          COL.C,
           "H/Jour"
         );
 
-        joursCollab.forEach(
-          (jour) => {
-            const date =
-              new Date(
-                `${jour.date_jour}T12:00:00`
-              );
+        // D = formule de somme
+        setFormula(
+          ws,
+          hJourRow,
+          COL.D,
+          `=SUM(AP${hJourRow + 1},AR${
+            hJourRow + 1
+          },AT${hJourRow + 1},AV${
+            hJourRow + 1
+          },AX${hJourRow + 1},AZ${
+            hJourRow + 1
+          },BB${hJourRow + 1})`
+        );
 
-            const js =
-              date.getDay();
-
-            const indexJour =
-              js === 0
-                ? 6
-                : js - 1;
-
-            if (
-              indexJour <
-                0 ||
-              indexJour >
-                6
-            )
-              return;
-
-            const c =
-              COL_JOUR_DEBUT +
-              indexJour *
-                2;
-
-            ecrire(
-              feuilleExcel,
-              adresse(
-                c,
-                ligneHjour
-              ),
-              Number(
-                jour.total_heures ||
-                  0
-              )
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
             );
-          }
-        );
 
-        ligne++;
+          const objectif =
+            jour
+              ? formatNumber(
+                  jour.heures_theoriques
+                )
+              : 0;
 
-        /*
-         * ========================================================
-         * HEURES SUP
-         * ========================================================
-         */
+          const pair =
+            DAY_PAIRS[
+              dayIndex
+            ];
 
-        const ligneHS =
-          ligne;
+          setCell(
+            ws,
+            hJourRow,
+            pair.first,
+            objectif
+          );
+        }
 
-        copierMEFLigne(
-          gabarit,
-          feuilleExcel,
-          2,
-          ligneHS
-        );
+        // ====================================================
+        // HEURES SUP
+        // ====================================================
 
-        ecrire(
-          feuilleExcel,
-          `C${ligneHS}`,
+        row++;
+
+        const heuresSupRow =
+          row;
+
+        setCell(
+          ws,
+          heuresSupRow,
+          COL.C,
           "HEURES SUP"
         );
 
-        ecrire(
-          feuilleExcel,
-          `D${ligneHS}`,
-          Number(
-            feuille.heures_supplementaires ||
-              0
-          )
+        setFormula(
+          ws,
+          heuresSupRow,
+          COL.D,
+          `=SUM(AP${heuresSupRow + 1},AR${
+            heuresSupRow + 1
+          },AT${heuresSupRow + 1},AV${
+            heuresSupRow + 1
+          },AX${heuresSupRow + 1},AZ${
+            heuresSupRow + 1
+          },BB${heuresSupRow + 1})`
         );
 
-        ligne++;
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
+            );
 
-        /*
-         * ========================================================
-         * TOTAL
-         * ========================================================
-         */
+          let hs = 0;
 
-        const ligneTotal =
-          ligne;
+          if (jour) {
+            const total =
+              formatNumber(
+                jour.total_heures
+              );
 
-        copierMEFLigne(
-          gabarit,
-          feuilleExcel,
-          2,
-          ligneTotal
-        );
+            const theorique =
+              formatNumber(
+                jour.heures_theoriques
+              );
 
-        ecrire(
-          feuilleExcel,
-          `C${ligneTotal}`,
+            hs =
+              Math.max(
+                0,
+                total -
+                  theorique
+              );
+          }
+
+          const pair =
+            DAY_PAIRS[
+              dayIndex
+            ];
+
+          setCell(
+            ws,
+            heuresSupRow,
+            pair.first,
+            formatNumber(
+              hs
+            )
+          );
+        }
+
+        // ====================================================
+        // TOTAL
+        // ====================================================
+
+        row++;
+
+        const totalRow =
+          row;
+
+        setCell(
+          ws,
+          totalRow,
+          COL.C,
           "TOTAL"
         );
 
-        ecrire(
-          feuilleExcel,
-          `D${ligneTotal}`,
-          Number(
-            feuille.total_heures ||
-              0
-          )
+        setFormula(
+          ws,
+          totalRow,
+          COL.D,
+          `=SUM(AP${totalRow + 1},AR${
+            totalRow + 1
+          },AT${totalRow + 1},AV${
+            totalRow + 1
+          },AX${totalRow + 1},AZ${
+            totalRow + 1
+          },BB${totalRow + 1})`
         );
 
-        /*
-         * ========================================================
-         * STATUTS
-         * ========================================================
-         */
-
-        joursCollab.forEach(
-          (jour) => {
-            const date =
-              new Date(
-                `${jour.date_jour}T12:00:00`
-              );
-
-            const js =
-              date.getDay();
-
-            const indexJour =
-              js === 0
-                ? 6
-                : js - 1;
-
-            /*
-             * WE VIDE
-             */
-            if (
-              indexJour >=
-              5
-            ) {
-              return;
-            }
-
-            let statut =
-              "";
-
-            const absence =
-              (
-                jour.absence ||
-                ""
-              ).trim();
-
-            const presence =
-              (
-                jour.presence ||
-                ""
-              )
-                .trim()
-                .toUpperCase();
-
-            if (
-              absence
-            ) {
-              statut =
-                "Absent";
-            } else if (
-              presence ===
-              "TELETRAVAIL"
-            ) {
-              statut =
-                "Télétravail";
-            } else if (
-              presence ===
-                "PRESENTIEL" ||
-              presence ===
-                "PRÉSENTIEL"
-            ) {
-              statut =
-                "Présentiel";
-            }
-
-            if (!statut)
-              return;
-
-            const c =
-              COL_JOUR_DEBUT +
-              indexJour *
-                2;
-
-            /*
-             * AP:AQ
-             * AR:AS
-             * etc.
-             */
-            ecrire(
-              feuilleExcel,
-              adresse(
-                c,
-                ligneTotal
-              ),
-              statut
+        for (
+          let dayIndex = 0;
+          dayIndex < 7;
+          dayIndex++
+        ) {
+          const jour =
+            joursMap.get(
+              dayIndex
             );
 
-            fusionnerJour(
-              feuilleExcel,
-              ligneTotal,
-              c
+          if (!jour) {
+            continue;
+          }
+
+          const total =
+            formatNumber(
+              jour.total_heures
             );
+
+          const pair =
+            DAY_PAIRS[
+              dayIndex
+            ];
+
+          // On met d'abord les heures
+          // dans la première cellule.
+          setCell(
+            ws,
+            totalRow,
+            pair.first,
+            total
+          );
+
+          // Puis le statut :
+          // la couleur du statut est prioritaire.
+          if (
+            estAbsent(
+              jour
+            )
+          ) {
+            mergeStatus(
+              ws,
+              totalRow,
+              pair.first,
+              "Absent",
+              COLORS.ABSENT
+            );
+          } else if (
+            estTeletravail(
+              jour.presence
+            )
+          ) {
+            mergeStatus(
+              ws,
+              totalRow,
+              pair.first,
+              "Télétravail",
+              COLORS.TELETRAVAIL
+            );
+          } else {
+            mergeStatus(
+              ws,
+              totalRow,
+              pair.first,
+              "Présentiel",
+              COLORS.PRESENTIEL
+            );
+          }
+        }
+
+        // ====================================================
+        // PROCHAIN COLLABORATEUR
+        // ====================================================
+
+        currentRow =
+          totalRow + 2;
+      }
+
+      // ======================================================
+      // MISE EN FORME FINALE
+      // ======================================================
+
+      const maxRows =
+        Math.max(
+          currentRow + 5,
+          150
+        );
+
+      // ------------------------------------------------------
+      // COULEURS
+      // ------------------------------------------------------
+
+      applyColumnColors(
+        ws,
+        maxRows
+      );
+
+      // ------------------------------------------------------
+      // BORDURES LATERALES
+      // ------------------------------------------------------
+
+      applySideBorders(
+        ws,
+        maxRows
+      );
+
+      // ------------------------------------------------------
+      // CENTRAGE
+      // ------------------------------------------------------
+
+      centerAllCells(
+        ws,
+        maxRows
+      );
+
+      // ------------------------------------------------------
+      // STATUTS A NOUVEAU
+      // ------------------------------------------------------
+      //
+      // IMPORTANT :
+      // les couleurs de statut sont appliquées
+      // APRES les couleurs de colonnes.
+      //
+      // Elles sont donc prioritaires.
+      //
+
+      // Les cellules de statut sont déjà colorées
+      // lors de leur création, mais on ne les réécrit
+      // pas ici pour éviter de perdre leur couleur.
+
+      // ------------------------------------------------------
+      // ENTETES
+      // ------------------------------------------------------
+
+      styleMainHeaders(
+        ws
+      );
+
+      styleD1(
+        ws
+      );
+
+      // ------------------------------------------------------
+      // LARGEUR A = 20
+      // ------------------------------------------------------
+
+      if (
+        !ws["!cols"]
+      ) {
+        ws["!cols"] = [];
+      }
+
+      ws["!cols"][
+        COL.A
+      ] = {
+        ...(ws["!cols"][
+          COL.A
+        ] || {}),
+        wch: 20,
+      };
+
+      // ------------------------------------------------------
+      // AUTRES LARGEURS
+      // ------------------------------------------------------
+
+      for (
+        let col = COL.B;
+        col <= COL.BC;
+        col++
+      ) {
+        if (
+          !ws["!cols"][
+            col
+          ]
+        ) {
+          ws["!cols"][
+            col
+          ] = {
+            wch: 11,
+          };
+        }
+      }
+
+      // ------------------------------------------------------
+      // HAUTEUR D1
+      // ------------------------------------------------------
+
+      if (
+        !ws["!rows"]
+      ) {
+        ws["!rows"] = [];
+      }
+
+      ws["!rows"][0] = {
+        ...(ws["!rows"][0] ||
+          {}),
+        hpt: 35,
+      };
+
+      // ------------------------------------------------------
+      // REF
+      // ------------------------------------------------------
+
+      ws["!ref"] =
+        `A1:${excelColumn(
+          COL.BC
+        )}${maxRows}`;
+
+      // ======================================================
+      // EXPORT
+      // ======================================================
+
+      const output =
+        XLSX.write(
+          workbook,
+          {
+            bookType:
+              "xlsx",
+            type:
+              "array",
+            cellStyles:
+              true,
           }
         );
 
-        /*
-         * Ligne suivante
-         */
-        ligne =
-          ligneTotal + 2;
-      }
+      const blob =
+        new Blob(
+          [output],
+          {
+            type:
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }
+        );
 
-      /*
-       * ==========================================================
-       * REF
-       * ==========================================================
-       */
+      const url =
+        window.URL.createObjectURL(
+          blob
+        );
 
-      feuilleExcel["!ref"] =
-        `A1:BC${Math.max(
-          ligne,
-          3
-        )}`;
+      const link =
+        document.createElement(
+          "a"
+        );
 
-      /*
-       * ==========================================================
-       * EXPORT
-       *
-       * Il n'y a qu'un seul onglet :
-       * S39-2026
-       * ==========================================================
-       */
+      link.href =
+        url;
 
-      XLSX.writeFile(
-        workbook,
-        `${nomOnglet}.xlsx`,
-        {
-          bookType: "xlsx",
-          bookVBA: true,
-          compression: true,
-        }
+      link.download =
+        `${nomOnglet}.xlsx`;
+
+      document.body.appendChild(
+        link
+      );
+
+      link.click();
+
+      link.remove();
+
+      window.URL.revokeObjectURL(
+        url
       );
 
       setMessage(
-        `${nomOnglet} généré avec succès. ` +
-          `Production : ${
-            codesProduction.join(
-              ", "
-            ) ||
-            "aucun"
-          }. ` +
-          `Administratif : ${
-            codesAdministratifs.join(
-              ", "
-            ) ||
-            "aucun"
-          }.`
+        `Export ${nomOnglet} terminé : ${collaborateursAvecFeuille.length} collaborateur(s).`
       );
-    } catch (error: any) {
-      console.error(error);
+    } catch (
+      error: any
+    ) {
+      console.error(
+        "Erreur export Excel :",
+        error
+      );
 
       setMessage(
         `Erreur : ${
           error?.message ||
-          "Une erreur est survenue."
+          "une erreur est survenue."
         }`
       );
     } finally {
-      setChargement(false);
+      setLoading(
+        false
+      );
     }
   }
+
+  // ==========================================================
+  // INTERFACE
+  // ==========================================================
 
   return (
     <main
       style={{
-        padding: 30,
+        padding:
+          "30px",
         fontFamily:
           "Calibri, Arial, sans-serif",
       }}
     >
-      <h1>
-        Export Excel
+      <h1
+        style={{
+          marginBottom:
+            "25px",
+        }}
+      >
+        Export Excel des feuilles d'heures
       </h1>
 
       <div
         style={{
-          display: "flex",
-          gap: 15,
+          display:
+            "flex",
+          gap:
+            "15px",
           alignItems:
-            "center",
-          marginTop: 20,
+            "flex-end",
+          flexWrap:
+            "wrap",
         }}
       >
-        <label>
-          Semaine :
+        <div>
+          <label
+            style={{
+              display:
+                "block",
+              marginBottom:
+                "6px",
+              fontWeight:
+                700,
+            }}
+          >
+            Année
+          </label>
+
+          <input
+            type="number"
+            value={
+              annee
+            }
+            onChange={(
+              e
+            ) =>
+              setAnnee(
+                Number(
+                  e.target.value
+                )
+              )
+            }
+            style={{
+              width:
+                "110px",
+              padding:
+                "10px",
+              border:
+                "1px solid #ccc",
+              borderRadius:
+                "5px",
+            }}
+          />
+        </div>
+
+        <div>
+          <label
+            style={{
+              display:
+                "block",
+              marginBottom:
+                "6px",
+              fontWeight:
+                700,
+            }}
+          >
+            Semaine
+          </label>
+
           <input
             type="number"
             min={1}
             max={53}
-            value={semaine}
-            onChange={(e) =>
+            value={
+              semaine
+            }
+            onChange={(
+              e
+            ) =>
               setSemaine(
-                e.target.value
+                Number(
+                  e.target.value
+                )
               )
             }
             style={{
-              marginLeft: 8,
-              width: 70,
+              width:
+                "110px",
+              padding:
+                "10px",
+              border:
+                "1px solid #ccc",
+              borderRadius:
+                "5px",
             }}
           />
-        </label>
-
-        <label>
-          Année :
-          <input
-            type="number"
-            value={annee}
-            onChange={(e) =>
-              setAnnee(
-                e.target.value
-              )
-            }
-            style={{
-              marginLeft: 8,
-              width: 90,
-            }}
-          />
-        </label>
+        </div>
 
         <button
-          onClick={exporter}
+          type="button"
+          onClick={
+            exporter
+          }
           disabled={
-            chargement
+            loading
           }
           style={{
+            padding:
+              "11px 20px",
             background:
               "#c00000",
-            color: "white",
-            border: "none",
-            padding:
-              "10px 18px",
-            borderRadius: 4,
+            color:
+              "#fff",
+            border:
+              "none",
+            borderRadius:
+              "5px",
             cursor:
-              chargement
-                ? "default"
+              loading
+                ? "wait"
                 : "pointer",
             fontWeight:
-              "bold",
+              700,
           }}
         >
-          {chargement
-            ? "Génération..."
+          {loading
+            ? "Export en cours..."
             : "Exporter la semaine"}
         </button>
       </div>
@@ -1768,17 +3291,67 @@ export default function ExportExcelPage() {
       {message && (
         <div
           style={{
-            marginTop: 25,
-            padding: 15,
+            marginTop:
+              "20px",
+            padding:
+              "12px 15px",
             background:
-              "#f5f5f5",
-            border:
-              "1px solid #ddd",
+              message.startsWith(
+                "Erreur"
+              )
+                ? "#f8d7da"
+                : "#d4edda",
+            color:
+              message.startsWith(
+                "Erreur"
+              )
+                ? "#721c24"
+                : "#155724",
+            borderRadius:
+              "5px",
           }}
         >
           {message}
         </div>
       )}
+
+      <div
+        style={{
+          marginTop:
+            "30px",
+          padding:
+            "15px",
+          background:
+            "#f5f5f5",
+          borderRadius:
+            "6px",
+          maxWidth:
+            "850px",
+        }}
+      >
+        <strong>
+          Export :
+        </strong>{" "}
+        un seul onglet{" "}
+        <strong>
+          S
+          {String(
+            semaine
+          ).padStart(
+            2,
+            "0"
+          )}
+          -
+          {annee}
+        </strong>
+        , construit depuis le{" "}
+        <strong>
+          Gabarit
+        </strong>
+        et alimenté uniquement avec les
+        collaborateurs ayant une feuille
+        pour cette semaine.
+      </div>
     </main>
   );
 }
