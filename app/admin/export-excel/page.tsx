@@ -4,30 +4,12 @@ import { useState } from "react";
 import * as XLSX from "xlsx-js-style";
 import { supabase } from "@/lib/supabase";
 
-// ============================================================
-// TYPES
-// ============================================================
-
 type Collaborateur = {
   id: string;
   prenom: string;
   nom: string;
-  email?: string | null;
-  role?: string | null;
-  trigramme?: string | null;
-  actif?: boolean | null;
-};
-
-type CodeImputation = {
-  code: string;
-  libelle: string | null;
-  categorie: string | null;
-  actif: boolean | null;
-  autorise_affaire: boolean | null;
-  autorise_devis: boolean | null;
-  autorise_divers: boolean | null;
-  historique_uniquement: boolean | null;
-  ordre_affichage?: number | null;
+  trigramme: string | null;
+  actif: boolean;
 };
 
 type Feuille = {
@@ -51,11 +33,7 @@ type Jour = {
   heures_re: number | null;
   heures_absence: number | null;
   duree_cp: number | null;
-  ticket_restaurant:
-    | boolean
-    | number
-    | string
-    | null;
+  ticket_restaurant: boolean | null;
   total_heures: number | null;
 };
 
@@ -69,1414 +47,933 @@ type Imputation = {
   heures: number | null;
 };
 
-// ============================================================
-// COLONNES
-// ============================================================
-
-const COL = {
-  A: 0,
-  B: 1,
-  C: 2,
-  D: 3,
-
-  E: 4,
-  Y: 24,
-
-  Z: 25,
-  AO: 40,
-
-  AP: 41,
-  AQ: 42,
-
-  AR: 43,
-  AS: 44,
-
-  AT: 45,
-  AU: 46,
-
-  AV: 47,
-  AW: 48,
-
-  AX: 49,
-  AY: 50,
-
-  AZ: 51,
-  BA: 52,
-
-  BB: 53,
-  BC: 54,
+type CodeImputation = {
+  code: string;
+  libelle: string | null;
+  categorie: string | null;
+  actif: boolean;
+  autorise_affaire: boolean | null;
+  autorise_devis: boolean | null;
+  autorise_divers: boolean | null;
+  ordre_affichage: number | null;
 };
 
-const DAY_PAIRS = [
-  { first: COL.AP, second: COL.AQ },
-  { first: COL.AR, second: COL.AS },
-  { first: COL.AT, second: COL.AU },
-  { first: COL.AV, second: COL.AW },
-  { first: COL.AX, second: COL.AY },
-  { first: COL.AZ, second: COL.BA },
-  { first: COL.BB, second: COL.BC },
-];
-
-// ============================================================
-// COULEURS
-// ============================================================
-
-const COLORS = {
-  A: "D9D9D9",
-  B: "F8CBAD",
-  C: "9BC2E6",
-  D: "FFE699",
-
-  PRODUCTION: "FFF2CC",
-  ADMIN: "E2EFDA",
-
-  ABSENT: "FF6600",
-  TELETRAVAIL: "FFFF00",
-  PRESENTIEL: "00B050",
-
-  BLACK: "000000",
+type Affaire = {
+  type: string;
+  numero: string;
+  description: string;
+  heuresParCode: Record<string, number>;
+  total: number;
 };
 
-// ============================================================
-// UTILITAIRES
-// ============================================================
+const NB_COLONNES = 55;
 
-function excelColumn(index: number): string {
-  let n = index + 1;
-  let result = "";
+// Production : E:Y
+const COL_PRODUCTION_DEBUT = 4;
+const COL_PRODUCTION_FIN = 24;
 
-  while (n > 0) {
-    const modulo = (n - 1) % 26;
+// Administratif : Z:AO
+const COL_ADMIN_DEBUT = 25;
+const COL_ADMIN_FIN = 40;
 
-    result =
-      String.fromCharCode(
-        65 + modulo
-      ) + result;
+// Jours :
+// Lundi    AP:AQ
+// Mardi    AR:AS
+// Mercredi AT:AU
+// Jeudi    AV:AW
+// Vendredi AX:AY
+// Samedi   AZ:BA
+// Dimanche BB:BC
+const COL_JOURS_DEBUT = 41;
 
-    n = Math.floor(
-      (n - modulo) / 26
-    );
+function arrondi(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function normaliserType(type: string | null) {
+  if (!type) return "";
+
+  const valeur = type.trim().toUpperCase();
+
+  if (valeur.includes("DBE")) return "DBE";
+  if (valeur.includes("CBE")) return "CBE";
+  if (valeur.includes("DIVERS")) return "DIVERS";
+
+  return valeur;
+}
+
+function lundiISO(annee: number, semaine: number) {
+  const jan4 = new Date(
+    Date.UTC(annee, 0, 4)
+  );
+
+  const jour = jan4.getUTCDay() || 7;
+
+  const lundiSemaine1 = new Date(jan4);
+
+  lundiSemaine1.setUTCDate(
+    jan4.getUTCDate() - jour + 1
+  );
+
+  const lundi = new Date(lundiSemaine1);
+
+  lundi.setUTCDate(
+    lundi.getUTCDate() + (semaine - 1) * 7
+  );
+
+  return lundi.toISOString().slice(0, 10);
+}
+
+/**
+ * Retourne l'index du jour dans la semaine ISO :
+ * lundi = 0 ... dimanche = 6.
+ */
+function indexJourSemaine(dateString: string) {
+  const date = new Date(`${dateString}T12:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return -1;
   }
 
-  return result;
+  const js = date.getDay();
+
+  return js === 0 ? 6 : js - 1;
 }
 
-function address(
-  row: number,
-  col: number
+function col(indexZeroBased: number) {
+  return XLSX.utils.encode_col(indexZeroBased);
+}
+
+function cell(colonne: number, ligne: number) {
+  return `${col(colonne)}${ligne}`;
+}
+
+function valeurCellule(
+  feuille: XLSX.WorkSheet,
+  adresse: string,
+  valeur: any
 ) {
-  return `${excelColumn(col)}${
-    row + 1
-  }`;
-}
+  const ancienne = feuille[adresse] || {};
 
-function getCell(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number
-): XLSX.CellObject {
-  const ref =
-    address(row, col);
-
-  if (!ws[ref]) {
-    ws[ref] = {
-      t: "s",
-      v: "",
-    };
-  }
-
-  return ws[ref];
-}
-
-function setCell(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number,
-  value: string | number
-) {
-  const ref =
-    address(row, col);
-
-  if (typeof value === "number") {
-    ws[ref] = {
-      t: "n",
-      v: value,
-    };
-  } else {
-    ws[ref] = {
-      t: "s",
-      v: value,
-    };
-  }
-}
-
-function setFormula(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number,
-  formula: string
-) {
-  const ref =
-    address(row, col);
-
-  ws[ref] = {
-    t: "n",
-    v: 0,
-    f: formula,
+  feuille[adresse] = {
+    ...ancienne,
+    v:
+      typeof valeur === "number"
+        ? arrondi(valeur)
+        : valeur ?? "",
+    t:
+      typeof valeur === "number"
+        ? "n"
+        : "s",
   };
+
+  delete feuille[adresse].f;
+  delete feuille[adresse].w;
 }
 
-function clearCell(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number
+function appliquerRemplissage(
+  feuille: XLSX.WorkSheet,
+  adresse: string,
+  couleur: string
 ) {
-  setCell(
-    ws,
-    row,
-    col,
-    ""
-  );
-}
-
-function formatNumber(
-  value:
-    | number
-    | null
-    | undefined
-) {
-  const n =
-    Number(value);
-
-  if (
-    !Number.isFinite(n) ||
-    n === 0
-  ) {
-    return 0;
-  }
-
-  return Math.round(
-    n * 100
-  ) / 100;
-}
-
-// ============================================================
-// TESTS
-// ============================================================
-
-function estVrai(
-  value:
-    | boolean
-    | number
-    | string
-    | null
-    | undefined
-) {
-  if (value === true) {
-    return true;
-  }
-
-  if (value === 1) {
-    return true;
-  }
-
-  if (
-    typeof value === "string"
-  ) {
-    return [
-      "true",
-      "1",
-      "oui",
-      "yes",
-      "y",
-      "o",
-      "vrai",
-    ].includes(
-      value
-        .trim()
-        .toLowerCase()
-    );
-  }
-
-  return false;
-}
-
-function estTeletravail(
-  presence:
-    | string
-    | null
-    | undefined
-) {
-  const value =
-    (
-      presence || ""
-    )
-      .trim()
-      .toUpperCase();
-
-  return (
-    value === "TT" ||
-    value.includes(
-      "TELETRAVAIL"
-    ) ||
-    value.includes(
-      "TÉLÉTRAVAIL"
-    )
-  );
-}
-
-function estAbsent(
-  jour: Jour
-) {
-  return (
-    !!jour.absence ||
-    formatNumber(
-      jour.duree_cp
-    ) > 0 ||
-    formatNumber(
-      jour.heures_absence
-    ) > 0 ||
-    formatNumber(
-      jour.duree_rtt
-    ) > 0
-  );
-}
-
-// ============================================================
-// STYLE GENERIQUE
-// ============================================================
-
-function styleCell(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number,
-  style: any
-) {
-  const cell =
-    getCell(
-      ws,
-      row,
-      col
-    );
-
-  cell.s = {
-    ...(cell.s || {}),
-    ...style,
+  const ancienne = feuille[adresse] || {
+    t: "s",
+    v: "",
   };
-}
 
-// ============================================================
-// COULEURS DE COLONNES
-// ============================================================
-
-function applyColumnColors(
-  ws: XLSX.WorkSheet,
-  maxRows: number
-) {
-  for (
-    let row = 0;
-    row < maxRows;
-    row++
-  ) {
-    for (
-      let col = COL.A;
-      col <= COL.BC;
-      col++
-    ) {
-      getCell(
-        ws,
-        row,
-        col
-      );
-    }
-  }
-
-  for (
-    let row = 0;
-    row < maxRows;
-    row++
-  ) {
-    applyFill(
-      ws,
-      row,
-      COL.A,
-      COLORS.A
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.B,
-      COLORS.B
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.C,
-      COLORS.C
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.D,
-      COLORS.D
-    );
-
-    for (
-      let col = COL.E;
-      col <= COL.Y;
-      col++
-    ) {
-      applyFill(
-        ws,
-        row,
-        col,
-        COLORS.PRODUCTION
-      );
-    }
-
-    for (
-      let col = COL.Z;
-      col <= COL.AO;
-      col++
-    ) {
-      applyFill(
-        ws,
-        row,
-        col,
-        COLORS.ADMIN
-      );
-    }
-
-    // AP:AQ
-    applyFill(
-      ws,
-      row,
-      COL.AP,
-      COLORS.ADMIN
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.AQ,
-      COLORS.ADMIN
-    );
-
-    // AT:AU
-    applyFill(
-      ws,
-      row,
-      COL.AT,
-      COLORS.ADMIN
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.AU,
-      COLORS.ADMIN
-    );
-
-    // AX:AY
-    applyFill(
-      ws,
-      row,
-      COL.AX,
-      COLORS.ADMIN
-    );
-
-    applyFill(
-      ws,
-      row,
-      COL.AY,
-      COLORS.ADMIN
-    );
-  }
-}
-
-function applyFill(
-  ws: XLSX.WorkSheet,
-  row: number,
-  col: number,
-  color: string
-) {
-  styleCell(
-    ws,
-    row,
-    col,
-    {
-      fill: {
-        patternType:
-          "solid",
-        fgColor: {
-          rgb: color,
-        },
-      },
-    }
-  );
-}
-
-// ============================================================
-// BORDURES LATERALES
-// ============================================================
-
-function applySideBorders(
-  ws: XLSX.WorkSheet,
-  maxRows: number
-) {
-  for (
-    let row = 0;
-    row < maxRows;
-    row++
-  ) {
-    for (
-      let col = COL.A;
-      col <= COL.BC;
-      col++
-    ) {
-      const cell =
-        getCell(
-          ws,
-          row,
-          col
-        );
-
-      styleCell(
-        ws,
-        row,
-        col,
-        {
-          border: {
-            ...(cell.s?.border ||
-              {}),
-            left: {
-              style:
-                "thin",
-              color: {
-                rgb:
-                  COLORS.BLACK,
-              },
-            },
-            right: {
-              style:
-                "thin",
-              color: {
-                rgb:
-                  COLORS.BLACK,
-              },
-            },
-          },
-        }
-      );
-    }
-  }
-}
-
-// ============================================================
-// BORDURE HAUTE COLLABORATEUR
-// ============================================================
-
-function addTopBorder(
-  ws: XLSX.WorkSheet,
-  row: number
-) {
-  for (
-    let col = COL.A;
-    col <= COL.BC;
-    col++
-  ) {
-    const cell =
-      getCell(
-        ws,
-        row,
-        col
-      );
-
-    styleCell(
-      ws,
-      row,
-      col,
-      {
-        border: {
-          ...(cell.s?.border ||
-            {}),
-          top: {
-            style:
-              "thin",
-            color: {
-              rgb:
-                COLORS.BLACK,
-            },
-          },
-        },
-      }
-    );
-  }
-}
-
-// ============================================================
-// CENTRAGE GLOBAL
-// ============================================================
-
-function centerAllCells(
-  ws: XLSX.WorkSheet,
-  maxRows: number
-) {
-  for (
-    let row = 0;
-    row < maxRows;
-    row++
-  ) {
-    for (
-      let col = COL.A;
-      col <= COL.BC;
-      col++
-    ) {
-      const cell =
-        getCell(
-          ws,
-          row,
-          col
-        );
-
-      styleCell(
-        ws,
-        row,
-        col,
-        {
-          alignment: {
-            ...(cell.s?.alignment ||
-              {}),
-            horizontal:
-              "center",
-            vertical:
-              "center",
-          },
-        }
-      );
-    }
-  }
-}
-
-// ============================================================
-// D1
-// ============================================================
-
-function styleD1(
-  ws: XLSX.WorkSheet
-) {
-  const cell =
-    getCell(
-      ws,
-      0,
-      COL.D
-    );
-
-  styleCell(
-    ws,
-    0,
-    COL.D,
-    {
-      alignment: {
-        ...(cell.s?.alignment ||
-          {}),
-        horizontal:
-          "center",
-        vertical:
-          "center",
-        wrapText:
-          true,
-      },
-    }
-  );
-}
-
-// ============================================================
-// A1 / C1 / E1 / Z1
-// ============================================================
-
-function styleMainHeaders(
-  ws: XLSX.WorkSheet
-) {
-  for (
-    const col of [
-      COL.A,
-      COL.C,
-    ]
-  ) {
-    const cell =
-      getCell(
-        ws,
-        0,
-        col
-      );
-
-    styleCell(
-      ws,
-      0,
-      col,
-      {
-        font: {
-          ...(cell.s?.font ||
-            {}),
-          sz: 20,
-        },
-        alignment: {
-          ...(cell.s?.alignment ||
-            {}),
-          horizontal:
-            "center",
-          vertical:
-            "center",
-        },
-      }
-    );
-  }
-
-  for (
-    const col of [
-      COL.E,
-      COL.Z,
-    ]
-  ) {
-    const cell =
-      getCell(
-        ws,
-        0,
-        col
-      );
-
-    styleCell(
-      ws,
-      0,
-      col,
-      {
-        font: {
-          ...(cell.s?.font ||
-            {}),
-          sz: 20,
-        },
-        alignment: {
-          ...(cell.s?.alignment ||
-            {}),
-          horizontal:
-            "center",
-          vertical:
-            "center",
-        },
-      }
-    );
-  }
-}
-
-// ============================================================
-// STATUT
-// ============================================================
-
-function mergeStatus(
-  ws: XLSX.WorkSheet,
-  row: number,
-  firstCol: number,
-  text: string,
-  color: string
-) {
-  const secondCol =
-    firstCol + 1;
-
-  clearCell(
-    ws,
-    row,
-    firstCol
-  );
-
-  clearCell(
-    ws,
-    row,
-    secondCol
-  );
-
-  setCell(
-    ws,
-    row,
-    firstCol,
-    text
-  );
-
-  // PRIORITAIRE :
-  // on réapplique la couleur APRES
-  // toutes les couleurs de colonnes.
-  styleCell(
-    ws,
-    row,
-    firstCol,
-    {
-      fill: {
-        patternType:
-          "solid",
-        fgColor: {
-          rgb: color,
-        },
-      },
-      font: {
-        bold: true,
-      },
-      alignment: {
-        horizontal:
-          "center",
-        vertical:
-          "center",
-      },
-    }
-  );
-
-  styleCell(
-    ws,
-    row,
-    secondCol,
-    {
-      fill: {
-        patternType:
-          "solid",
-        fgColor: {
-          rgb: color,
-        },
-      },
-      alignment: {
-        horizontal:
-          "center",
-        vertical:
-          "center",
-      },
-    }
-  );
-
-  if (
-    !ws["!merges"]
-  ) {
-    ws["!merges"] = [];
-  }
-
-  ws["!merges"] =
-    ws["!merges"].filter(
-      (merge: any) =>
-        !(
-          merge.s.r === row &&
-          merge.s.c ===
-            firstCol &&
-          merge.e.r === row &&
-          merge.e.c ===
-            secondCol
-        )
-    );
-
-  ws["!merges"].push({
+  feuille[adresse] = {
+    ...ancienne,
     s: {
-      r: row,
-      c: firstCol,
+      ...(ancienne.s || {}),
+      fill: {
+        patternType: "solid",
+        fgColor: {
+          rgb: couleur,
+        },
+      },
     },
-    e: {
-      r: row,
-      c: secondCol,
+  };
+}
+
+function appliquerStyleCellule(
+  feuille: XLSX.WorkSheet,
+  adresse: string,
+  options: any
+) {
+  const ancienne = feuille[adresse] || {
+    t: "s",
+    v: "",
+  };
+
+  feuille[adresse] = {
+    ...ancienne,
+    s: {
+      ...(ancienne.s || {}),
+      ...options,
     },
+  };
+}
+
+function appliquerToutesLesBordures(
+  feuille: XLSX.WorkSheet,
+  derniereLigne: number
+) {
+  const bordure = {
+    style: "thin",
+    color: {
+      rgb: "000000",
+    },
+  };
+
+  for (let ligne = 1; ligne <= derniereLigne; ligne++) {
+    for (let colonne = 0; colonne < NB_COLONNES; colonne++) {
+      const adresse = cell(colonne, ligne);
+      const ancienne = feuille[adresse] || {
+        t: "s",
+        v: "",
+      };
+
+      feuille[adresse] = {
+        ...ancienne,
+        s: {
+          ...(ancienne.s || {}),
+          border: {
+            ...(ancienne.s?.border || {}),
+            top: bordure,
+            bottom: bordure,
+            left: bordure,
+            right: bordure,
+          },
+        },
+      };
+    }
+  }
+}
+
+function appliquerCentrageToutesLesCellules(
+  feuille: XLSX.WorkSheet,
+  derniereLigne: number
+) {
+  for (let ligne = 1; ligne <= derniereLigne; ligne++) {
+    for (let colonne = 0; colonne < NB_COLONNES; colonne++) {
+      const adresse = cell(colonne, ligne);
+      const ancienne = feuille[adresse] || {
+        t: "s",
+        v: "",
+      };
+
+      feuille[adresse] = {
+        ...ancienne,
+        s: {
+          ...(ancienne.s || {}),
+          alignment: {
+            ...(ancienne.s?.alignment || {}),
+            horizontal: "center",
+            vertical: "center",
+          },
+        },
+      };
+    }
+  }
+}
+
+function appliquerStyleEntete(
+  feuille: XLSX.WorkSheet,
+  gabarit: XLSX.WorkSheet
+) {
+  const style20 = {
+    font: {
+      name: "Calibri",
+      sz: 20,
+    },
+    alignment: {
+      horizontal: "center",
+      vertical: "center",
+      wrapText: true,
+    },
+  };
+
+  const style11 = {
+    font: {
+      name: "Calibri",
+      sz: 11,
+    },
+    alignment: {
+      horizontal: "center",
+      vertical: "center",
+      wrapText: true,
+    },
+  };
+
+  const style14 = {
+    font: {
+      name: "Calibri",
+      sz: 14,
+    },
+    alignment: {
+      horizontal: "center",
+      vertical: "center",
+      wrapText: true,
+      // Texte vertical dans B1.
+      // 90 = rotation verticale du contenu.
+      textRotation: 90,
+    },
+  };
+
+  ["A1", "C1", "E1", "Z1"].forEach((adresse) => {
+    appliquerStyleCellule(
+      feuille,
+      adresse,
+      style20
+    );
+  });
+
+  appliquerStyleCellule(
+    feuille,
+    "D1",
+    style11
+  );
+
+  appliquerStyleCellule(
+    feuille,
+    "B1",
+    style14
+  );
+
+  appliquerStyleCellule(
+    feuille,
+    "B2",
+    style11
+  );
+
+  // On reprend les formules de dates EXACTEMENT depuis le Gabarit.
+  const cellulesDate = [
+    "AP1",
+    "AR1",
+    "AT1",
+    "AV1",
+    "AX1",
+    "AZ1",
+    "BB1",
+  ];
+
+  cellulesDate.forEach((adresse) => {
+    const source = gabarit[adresse];
+
+    if (source?.f) {
+      const ancienne = feuille[adresse] || {
+        t: "s",
+        v: "",
+      };
+
+      feuille[adresse] = {
+        ...ancienne,
+        f: source.f,
+        t: "s",
+      };
+    }
+
+    appliquerStyleCellule(
+      feuille,
+      adresse,
+      style11
+    );
+  });
+
+  // Codes dynamiques ligne 2 : Calibri 11 centré.
+  for (let c = COL_PRODUCTION_DEBUT; c <= COL_ADMIN_FIN; c++) {
+    appliquerStyleCellule(
+      feuille,
+      cell(c, 2),
+      style11
+    );
+  }
+
+  // Couleurs des colonnes A à D sur les deux lignes d'en-tête.
+  const couleursColonnes = [
+    [0, "D9D9D9"],
+    [1, "F8CBAD"],
+    [2, "9BC2E6"],
+    [3, "FFE699"],
+  ];
+
+  couleursColonnes.forEach(([colonne, couleur]) => {
+    appliquerRemplissage(
+      feuille,
+      cell(Number(colonne), 1),
+      String(couleur)
+    );
+    appliquerRemplissage(
+      feuille,
+      cell(Number(colonne), 2),
+      String(couleur)
+    );
+  });
+
+  // Couleurs d'en-tête demandées.
+  for (let c = COL_PRODUCTION_DEBUT; c <= COL_PRODUCTION_FIN; c++) {
+    appliquerRemplissage(
+      feuille,
+      cell(c, 1),
+      "FFF2CC"
+    );
+    appliquerRemplissage(
+      feuille,
+      cell(c, 2),
+      "FFF2CC"
+    );
+  }
+
+  for (let c = COL_ADMIN_DEBUT; c <= COL_ADMIN_FIN; c++) {
+    appliquerRemplissage(
+      feuille,
+      cell(c, 1),
+      "E2EFDA"
+    );
+    appliquerRemplissage(
+      feuille,
+      cell(c, 2),
+      "E2EFDA"
+    );
+  }
+
+  [[41, 42], [45, 46], [49, 50]].forEach(([c1, c2]) => {
+    for (const c of [c1, c2]) {
+      appliquerRemplissage(
+        feuille,
+        cell(c, 1),
+        "E2EFDA"
+      );
+      appliquerRemplissage(
+        feuille,
+        cell(c, 2),
+        "E2EFDA"
+      );
+    }
   });
 }
 
-// ============================================================
-// TYPE AFFAIRE
-// ============================================================
-
-function normaliserTypeAffaire(
-  value:
-    | string
-    | null
-    | undefined
-) {
-  return (
-    value || ""
-  )
-    .trim()
-    .toUpperCase()
-    .replace(
-      /\s+/g,
-      ""
-    );
-}
-
-function estProduction(
-  value:
-    | string
-    | null
-    | undefined
-) {
-  const type =
-    normaliserTypeAffaire(
-      value
-    );
-
-  return (
-    type === "CBE" ||
-    type === "DBE" ||
-    type === "AFFAIRE" ||
-    type === "DEVIS"
-  );
-}
-
-// ============================================================
-// DATE ISO
-// ============================================================
-
-function getMondayOfISOWeek(
-  year: number,
-  week: number
-) {
-  const date =
-    new Date(
-      Date.UTC(
-        year,
-        0,
-        4
-      )
-    );
-
-  const day =
-    date.getUTCDay() || 7;
-
-  date.setUTCDate(
-    date.getUTCDate() -
-      day +
-      1 +
-      (week - 1) * 7
-  );
-
-  return new Date(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate()
-  );
-}
-
-function getDayIndex(
-  dateString: string,
-  semaineDebut: Date
-) {
-  const date =
-    new Date(
-      `${dateString}T00:00:00`
-    );
-
-  return Math.round(
-    (
-      date.getTime() -
-      semaineDebut.getTime()
-    ) /
-      (
-        1000 *
-        60 *
-        60 *
-        24
-      )
-  );
-}
-
-// ============================================================
-// COPIE DU GABARIT
-// ============================================================
-
-function copyGabarit(
+/**
+ * Copie UNIQUEMENT la mise en forme d'une ligne.
+ * Les valeurs/formules/liens de la ligne source ne sont jamais copiés.
+ */
+function copierMiseEnFormeLigne(
   source: XLSX.WorkSheet,
-  target: XLSX.WorkSheet
+  destination: XLSX.WorkSheet,
+  ligneSource: number,
+  ligneDestination: number
 ) {
-  let maxRows = 150;
+  for (let c = 0; c < NB_COLONNES; c++) {
+    const sourceAddress = cell(c, ligneSource);
+    const destinationAddress = cell(c, ligneDestination);
+    const sourceCell = source[sourceAddress];
 
-  if (
-    source["!ref"]
-  ) {
-    const range =
-      XLSX.utils.decode_range(
-        source["!ref"]
-      );
+    if (sourceCell) {
+      destination[destinationAddress] = {
+        ...sourceCell,
+        v: "",
+        t: "s",
+      };
 
-    maxRows =
-      Math.max(
-        150,
-        range.e.r + 1
-      );
-  }
-
-  for (
-    let row = 0;
-    row < maxRows;
-    row++
-  ) {
-    for (
-      let col = COL.A;
-      col <= COL.BC;
-      col++
-    ) {
-      const ref =
-        address(
-          row,
-          col
-        );
-
-      const sourceCell =
-        source[ref];
-
-      const targetCell =
-        getCell(
-          target,
-          row,
-          col
-        );
-
-      if (!sourceCell) {
-        continue;
-      }
-
-      if (
-        sourceCell.s
-      ) {
-        targetCell.s =
-          JSON.parse(
-            JSON.stringify(
-              sourceCell.s
-            )
-          );
-      }
-
-      if (
-        sourceCell.z !==
-        undefined
-      ) {
-        targetCell.z =
-          sourceCell.z;
-      }
+      delete destination[destinationAddress].f;
+      delete destination[destinationAddress].l;
+      delete destination[destinationAddress].w;
+    } else {
+      destination[destinationAddress] = {
+        t: "s",
+        v: "",
+      };
     }
   }
 
-  if (
-    source["!cols"]
-  ) {
-    target["!cols"] =
-      source["!cols"].map(
-        (col: any) => ({
-          ...col,
-        })
-      );
-  }
+  for (let c = 0; c < NB_COLONNES; c++) {
+    const address = cell(c, ligneDestination);
 
-  if (
-    source["!rows"]
-  ) {
-    target["!rows"] =
-      source["!rows"].map(
-        (row: any) => ({
-          ...row,
-        })
-      );
-  }
+    let couleur: string | null = null;
 
-  if (
-    source["!merges"]
-  ) {
-    target["!merges"] =
-      source["!merges"].map(
-        (merge: any) => ({
-          s: {
-            ...merge.s,
-          },
-          e: {
-            ...merge.e,
-          },
-        })
+    if (c === 0) couleur = "D9D9D9";
+    else if (c === 1) couleur = "F8CBAD";
+    else if (c === 2) couleur = "9BC2E6";
+    else if (c === 3) couleur = "FFE699";
+    else if (c >= COL_PRODUCTION_DEBUT && c <= COL_PRODUCTION_FIN) couleur = "FFF2CC";
+    else if (c >= COL_ADMIN_DEBUT && c <= COL_ADMIN_FIN) couleur = "E2EFDA";
+    else if ([41, 42, 45, 46, 49, 50].includes(c)) couleur = "E2EFDA";
+
+    if (couleur) {
+      appliquerRemplissage(
+        destination,
+        address,
+        couleur
       );
+    }
   }
 }
 
-// ============================================================
-// PAGE
-// ============================================================
+/**
+ * Le gabarit actuel contient la ligne 1 et la ligne 2.
+ *
+ * Pour les lignes métier, on utilise les lignes du gabarit
+ * comme base de mise en forme et on les répète.
+ *
+ * Cela permet de changer ultérieurement le gabarit sans
+ * toucher à la logique métier.
+ */
+function appliquerMiseEnForme(
+  gabarit: XLSX.WorkSheet,
+  feuille: XLSX.WorkSheet,
+  ligne: number,
+  typeLigne: "AFFAIRE" | "DIVERS" | "HJOUR" | "HS" | "TOTAL"
+) {
+  /*
+   * Pour l'instant le gabarit principal est constitué de
+   * ses deux premières lignes.
+   *
+   * On privilégie la ligne 2 comme ligne métier.
+   *
+   * Le jour où tu ajoutes dans Gabarit des lignes modèles
+   * spécifiques, il suffira d'adapter ce mapping.
+   */
+  let ligneModele = 2;
+
+  if (typeLigne === "AFFAIRE") {
+    ligneModele = 2;
+  }
+
+  if (typeLigne === "DIVERS") {
+    ligneModele = 2;
+  }
+
+  if (typeLigne === "HJOUR") {
+    ligneModele = 2;
+  }
+
+  if (typeLigne === "HS") {
+    ligneModele = 2;
+  }
+
+  if (typeLigne === "TOTAL") {
+    ligneModele = 2;
+  }
+
+  copierMiseEnFormeLigne(
+    gabarit,
+    feuille,
+    ligneModele,
+    ligne
+  );
+}
+
+function viderLigne(
+  feuille: XLSX.WorkSheet,
+  ligne: number
+) {
+  for (let c = 0; c < NB_COLONNES; c++) {
+    const adresse = cell(c, ligne);
+
+    if (feuille[adresse]) {
+      delete feuille[adresse].v;
+      delete feuille[adresse].f;
+      delete feuille[adresse].l;
+
+      feuille[adresse].t = "s";
+      feuille[adresse].v = "";
+    }
+  }
+}
+
+function fusionnerJour(
+  feuille: XLSX.WorkSheet,
+  ligne: number,
+  colonne: number,
+  statut: string
+) {
+  const debut = cell(colonne, ligne);
+  const fin = cell(colonne + 1, ligne);
+
+  feuille["!merges"] = feuille["!merges"] || [];
+
+  feuille["!merges"] = feuille["!merges"].filter(
+    (m: any) =>
+      !(
+        m.s.r === ligne - 1 &&
+        m.s.c === colonne &&
+        m.e.r === ligne - 1 &&
+        m.e.c === colonne + 1
+      )
+  );
+
+  feuille["!merges"].push({
+    s: {
+      r: ligne - 1,
+      c: colonne,
+    },
+    e: {
+      r: ligne - 1,
+      c: colonne + 1,
+    },
+  });
+
+  let couleur = "00B050";
+
+  if (statut === "Absent") couleur = "FF6600";
+  if (statut === "Télétravail") couleur = "FFFF00";
+
+  valeurCellule(
+    feuille,
+    debut,
+    statut
+  );
+
+  valeurCellule(
+    feuille,
+    fin,
+    ""
+  );
+
+  appliquerRemplissage(
+    feuille,
+    debut,
+    couleur
+  );
+
+  appliquerRemplissage(
+    feuille,
+    fin,
+    couleur
+  );
+
+  appliquerStyleCellule(
+    feuille,
+    debut,
+    {
+      font: {
+        name: "Calibri",
+        sz: 11,
+      },
+      alignment: {
+        horizontal: "center",
+        vertical: "center",
+      },
+    }
+  );
+}
+
+function estCodeProduction(
+  code: string,
+  codeInfo?: CodeImputation
+) {
+  if (!codeInfo) return false;
+
+  return (
+    codeInfo.autorise_affaire === true ||
+    codeInfo.autorise_devis === true
+  );
+}
+
+function estCodeAdministratif(
+  code: string,
+  codeInfo?: CodeImputation
+) {
+  if (!codeInfo) return false;
+
+  return (
+    codeInfo.autorise_divers === true &&
+    !estCodeProduction(code, codeInfo)
+  );
+}
+
+function appliquerBordureSuperieure(
+  feuille: XLSX.WorkSheet,
+  adresse: string
+) {
+  const ancienne = feuille[adresse] || {
+    t: "s",
+    v: "",
+  };
+
+  feuille[adresse] = {
+    ...ancienne,
+    s: {
+      ...(ancienne.s || {}),
+      border: {
+        ...(ancienne.s?.border || {}),
+        top: {
+          style: "thin",
+          color: {
+            rgb: "000000",
+          },
+        },
+      },
+    },
+  };
+}
 
 export default function ExportExcelPage() {
-  const maintenant =
-    new Date();
-
-  const [annee, setAnnee] =
-    useState(
-      maintenant.getFullYear()
-    );
-
-  const [semaine, setSemaine] =
-    useState(1);
-
-  const [loading, setLoading] =
-    useState(false);
-
-  const [message, setMessage] =
-    useState("");
-
-  // ==========================================================
-  // EXPORT
-  // ==========================================================
+  const [semaine, setSemaine] = useState("39");
+  const [annee, setAnnee] = useState("2026");
+  const [chargement, setChargement] = useState(false);
+  const [message, setMessage] = useState("");
 
   async function exporter() {
     try {
-      setLoading(true);
+      setChargement(true);
       setMessage("");
 
-      // ------------------------------------------------------
-      // UTILISATEUR
-      // ------------------------------------------------------
+      /*
+       * ============================================================
+       * 1. CONTROLE ADMIN
+       * ============================================================
+       */
 
       const {
-        data: {
-          user,
-        },
-        error: authError,
-      } =
-        await supabase.auth.getUser();
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      if (
-        authError ||
-        !user
-      ) {
+      if (!user) {
         throw new Error(
           "Vous devez être connecté."
         );
       }
 
-      // ------------------------------------------------------
-      // DROITS
-      // ------------------------------------------------------
-
-      const {
-        data: profil,
-        error: profilError,
-      } =
+      const { data: profil, error: erreurProfil } =
         await supabase
-          .from(
-            "collaborateurs"
-          )
-          .select(
-            "role"
-          )
-          .eq(
-            "auth_user_id",
-            user.id
-          )
-          .maybeSingle();
+          .from("collaborateurs")
+          .select("role")
+          .eq("auth_user_id", user.id)
+          .single();
 
-      if (
-        profilError
-      ) {
-        throw profilError;
+      if (erreurProfil) {
+        throw erreurProfil;
       }
 
-      if (
-        profil?.role?.toUpperCase() !==
-        "ADMIN"
-      ) {
+      if (profil?.role !== "ADMIN") {
         throw new Error(
-          "Cette page est réservée aux administrateurs."
+          "Vous n'avez pas les droits administrateur."
         );
       }
 
-      // ------------------------------------------------------
-      // NOM DE L'ONGLET
-      // ------------------------------------------------------
+      /*
+       * ============================================================
+       * 2. CHARGEMENT DU FICHIER GABARIT
+       * ============================================================
+       */
 
-      const nomOnglet =
-        `S${String(
-          semaine
-        ).padStart(
-          2,
-          "0"
-        )}-${annee}`;
-
-      // ------------------------------------------------------
-      // GABARIT
-      // ------------------------------------------------------
-
-      const response =
-        await fetch(
-          "/Recuperation heures pour export.xlsx"
-        );
+      const response = await fetch(
+        "/Recuperation heures pour export.xlsx"
+      );
 
       if (!response.ok) {
         throw new Error(
-          "Impossible de charger le gabarit Excel."
+          "Impossible de charger le fichier Excel dans /public."
         );
       }
 
       const buffer =
         await response.arrayBuffer();
 
-      const workbook =
-        XLSX.read(
-          buffer,
-          {
-            type: "array",
-            cellStyles: true,
-          }
-        );
+      const workbook = XLSX.read(buffer, {
+        type: "array",
+        cellStyles: true,
+        cellFormula: true,
+        bookVBA: true,
+      });
 
       const gabarit =
-        workbook.Sheets[
-          "Gabarit"
-        ];
+        workbook.Sheets["Gabarit"];
 
       if (!gabarit) {
         throw new Error(
-          "L'onglet Gabarit est introuvable."
+          'L\'onglet "Gabarit" est introuvable.'
         );
       }
 
-      // Nouvelle feuille
-      const ws =
-        XLSX.utils.aoa_to_sheet(
-          []
+      /*
+       * ============================================================
+       * 3. CREATION DU NOUVEL ONGLET
+       *
+       * Aucun contenu du S39 existant n'est utilisé.
+       * ============================================================
+       */
+
+      const nomOnglet =
+        `S${semaine}-${annee}`;
+
+      /*
+       * On supprime les anciens onglets de test.
+       */
+      workbook.SheetNames =
+        workbook.SheetNames.filter(
+          (nom) => nom === "Gabarit"
         );
 
-      // IMPORTANT :
-      // on copie d'abord la structure
-      // et la mise en forme du Gabarit.
-      copyGabarit(
-        gabarit,
-        ws
-      );
+      delete workbook.Sheets[
+        nomOnglet
+      ];
 
-      // Le fichier final ne contient
-      // qu'une seule feuille.
+      /*
+       * Copie initiale du Gabarit.
+       */
+      const feuilleExcel: XLSX.WorkSheet =
+        {};
+
+      const rangeGabarit =
+        gabarit["!ref"]
+          ? XLSX.utils.decode_range(
+              gabarit["!ref"]
+            )
+          : {
+              s: { r: 0, c: 0 },
+              e: { r: 1, c: 54 },
+            };
+
+      for (
+        let r = rangeGabarit.s.r;
+        r <= rangeGabarit.e.r;
+        r++
+      ) {
+        for (
+          let c = rangeGabarit.s.c;
+          c <= rangeGabarit.e.c;
+          c++
+        ) {
+          const a = cell(c, r + 1);
+
+          if (!gabarit[a]) continue;
+
+          feuilleExcel[a] = {
+            ...gabarit[a],
+          };
+        }
+      }
+
+      if (gabarit["!cols"]) {
+        feuilleExcel["!cols"] =
+          gabarit["!cols"].map(
+            (c: any) => ({ ...c })
+          );
+      }
+
+      if (gabarit["!rows"]) {
+        feuilleExcel["!rows"] =
+          gabarit["!rows"].map(
+            (r: any) => ({ ...r })
+          );
+      }
+
+      if (gabarit["!merges"]) {
+        feuilleExcel["!merges"] =
+          gabarit["!merges"].map(
+            (m: any) => ({ ...m })
+          );
+      }
+
+      workbook.Sheets[nomOnglet] =
+        feuilleExcel;
+
+      // Le Gabarit sert uniquement de modèle :
+      // il ne doit jamais rester dans le fichier final.
+      delete workbook.Sheets["Gabarit"];
       workbook.SheetNames = [
         nomOnglet,
       ];
 
-      workbook.Sheets = {
-        [nomOnglet]:
-          ws,
-      };
+      /*
+       * ============================================================
+       * 4. ANNEE / SEMAINE
+       * ============================================================
+       */
 
-      // ------------------------------------------------------
-      // B1 / B2
-      // ------------------------------------------------------
-
-      setCell(
-        ws,
-        0,
-        COL.B,
-        annee
+      valeurCellule(
+        feuilleExcel,
+        "B1",
+        Number(annee)
       );
 
-      setCell(
-        ws,
-        1,
-        COL.B,
-        semaine
+      valeurCellule(
+        feuilleExcel,
+        "B2",
+        Number(semaine)
       );
 
-      // ------------------------------------------------------
-      // DATE SEMAINE
-      // ------------------------------------------------------
-
-      const dateDebut =
-        getMondayOfISOWeek(
-          annee,
-          semaine
-        );
-
-      const dateFin =
-        new Date(
-          dateDebut
-        );
-
-      dateFin.setDate(
-        dateFin.getDate() +
-          6
+      appliquerStyleEntete(
+        feuilleExcel,
+        gabarit
       );
 
-      const debutISO =
-        `${dateDebut.getFullYear()}-${String(
-          dateDebut.getMonth() + 1
-        ).padStart(
-          2,
-          "0"
-        )}-${String(
-          dateDebut.getDate()
-        ).padStart(
-          2,
-          "0"
-        )}`;
-
-      const finISO =
-        `${dateFin.getFullYear()}-${String(
-          dateFin.getMonth() + 1
-        ).padStart(
-          2,
-          "0"
-        )}-${String(
-          dateFin.getDate()
-        ).padStart(
-          2,
-          "0"
-        )}`;
-
-      // ======================================================
-      // COLLABORATEURS
-      // ======================================================
+      /*
+       * ============================================================
+       * 5. RECUPERATION COLLABORATEURS
+       * ============================================================
+       */
 
       const {
         data: collaborateurs,
-        error:
-          collaborateursError,
-      } =
-        await supabase
-          .from(
-            "collaborateurs"
-          )
-          .select(
-            `
-              id,
-              prenom,
-              nom,
-              email,
-              role,
-              trigramme,
-              actif
-            `
-          )
-          .eq(
-            "actif",
-            true
-          )
-          .order(
-            "nom",
-            {
-              ascending:
-                true,
-            }
-          );
+        error: erreurCollaborateurs,
+      } = await supabase
+        .from("collaborateurs")
+        .select(
+          "id, prenom, nom, trigramme, actif"
+        )
+        .eq("actif", true)
+        .order("nom");
 
-      if (
-        collaborateursError
-      ) {
-        throw collaborateursError;
+      if (erreurCollaborateurs) {
+        throw erreurCollaborateurs;
       }
 
-      // ======================================================
-      // FEUILLES
-      // ======================================================
+      /*
+       * ============================================================
+       * 6. FEUILLES
+       * ============================================================
+       */
+
+      const debutSemaine = lundiISO(
+        Number(annee),
+        Number(semaine)
+      );
 
       const {
         data: feuilles,
-        error:
-          feuillesError,
-      } =
-        await supabase
-          .from(
-            "feuilles_heures"
-          )
-          .select(
-            `
-              id,
-              collaborateur_id,
-              semaine_debut,
-              total_heures,
-              total_theorique,
-              heures_supplementaires,
-              mode_heures_supplementaires
-            `
-          )
-          .gte(
-            "semaine_debut",
-            debutISO
-          )
-          .lte(
-            "semaine_debut",
-            finISO
-          );
+        error: erreurFeuilles,
+      } = await supabase
+        .from("feuilles_heures")
+        .select(
+          `
+            id,
+            collaborateur_id,
+            semaine_debut,
+            total_heures,
+            total_theorique,
+            heures_supplementaires,
+            mode_heures_supplementaires
+          `
+        )
+        .eq(
+          "semaine_debut",
+          debutSemaine
+        );
 
-      if (
-        feuillesError
-      ) {
-        throw feuillesError;
+      if (erreurFeuilles) {
+        throw erreurFeuilles;
       }
 
-      // ======================================================
-      // UNIQUEMENT LES COLLABORATEURS AVEC UNE FEUILLE
-      // ======================================================
+      /*
+       * ============================================================
+       * 7. JOURS
+       * ============================================================
+       */
 
-      const feuillesParCollaborateur =
-        new Map<
-          string,
-          Feuille
-        >();
-
-      (
-        feuilles || []
-      ).forEach(
-        (
-          feuille
-        ) => {
-          feuillesParCollaborateur.set(
-            feuille.collaborateur_id,
-            feuille
-          );
-        }
-      );
-
-      const collaborateursAvecFeuille =
-        (
-          collaborateurs ||
-          []
-        ).filter(
-          (
-            collaborateur
-          ) =>
-            feuillesParCollaborateur.has(
-              collaborateur.id
-            )
+      const idsFeuilles =
+        (feuilles || []).map(
+          (f: Feuille) => f.id
         );
 
-      if (
-        collaborateursAvecFeuille.length ===
-        0
-      ) {
-        throw new Error(
-          `Aucune feuille trouvée pour ${nomOnglet}.`
-        );
-      }
+      let jours: Jour[] = [];
 
-      // ======================================================
-      // JOURS
-      // ======================================================
-
-      const feuilleIds =
-        (
-          feuilles || []
-        ).map(
-          (
-            feuille
-          ) =>
-            feuille.id
-        );
-
-      let jours: Jour[] =
-        [];
-
-      if (
-        feuilleIds.length
-      ) {
-        const {
-          data,
-          error,
-        } =
+      if (idsFeuilles.length) {
+        const { data, error } =
           await supabase
-            .from(
-              "feuilles_heures_jours"
-            )
+            .from("feuilles_heures_jours")
             .select(
               `
                 id,
@@ -1495,40 +992,28 @@ export default function ExportExcelPage() {
             )
             .in(
               "feuille_id",
-              feuilleIds
+              idsFeuilles
             );
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
 
-        jours =
-          data || [];
+        jours = data || [];
       }
 
-      // ======================================================
-      // IMPUTATIONS
-      // ======================================================
+      /*
+       * ============================================================
+       * 8. IMPUTATIONS
+       * ============================================================
+       */
 
-      const jourIds =
-        jours.map(
-          (
-            jour
-          ) =>
-            jour.id
-        );
+      const idsJours =
+        jours.map((j) => j.id);
 
-      let imputations:
-        Imputation[] =
+      let imputations: Imputation[] =
         [];
 
-      if (
-        jourIds.length
-      ) {
-        const {
-          data,
-          error,
-        } =
+      if (idsJours.length) {
+        const { data, error } =
           await supabase
             .from(
               "feuilles_heures_imputations"
@@ -1546,1744 +1031,1485 @@ export default function ExportExcelPage() {
             )
             .in(
               "jour_id",
-              jourIds
+              idsJours
             );
 
-        if (error) {
-          throw error;
-        }
+        if (error) throw error;
 
-        imputations =
-          data || [];
+        imputations = data || [];
       }
 
-      // ======================================================
-      // CODES
-      // ======================================================
+      /*
+       * ============================================================
+       * 9. CODES
+       * ============================================================
+       */
 
       const {
         data: codes,
-        error: codesError,
-      } =
-        await supabase
-          .from(
-            "codes_imputation"
-          )
-          .select(
-            `
-              code,
-              libelle,
-              categorie,
-              actif,
-              autorise_affaire,
-              autorise_devis,
-              autorise_divers,
-              historique_uniquement,
-              ordre_affichage
-            `
-          );
+        error: erreurCodes,
+      } = await supabase
+        .from("codes_imputation")
+        .select(
+          `
+            code,
+            libelle,
+            categorie,
+            actif,
+            autorise_affaire,
+            autorise_devis,
+            autorise_divers,
+            ordre_affichage
+          `
+        )
+        .eq("actif", true)
+        .order(
+          "ordre_affichage",
+          {
+            ascending: true,
+          }
+        );
 
-      if (codesError) {
-        throw codesError;
+      if (erreurCodes) {
+        throw erreurCodes;
       }
 
-      const codesMap =
-        new Map<
-          string,
-          CodeImputation
-        >();
+      const codesMetier =
+        (codes || []) as CodeImputation[];
 
-      (
-        codes || []
-      ).forEach(
-        (
-          code
-        ) => {
-          codesMap.set(
-            code.code
-              .trim()
-              .toUpperCase(),
-            code
+      /*
+       * ============================================================
+       * 10. INDEX
+       * ============================================================
+       */
+
+      const feuilleParCollaborateur =
+        new Map<string, Feuille>();
+
+      (feuilles || []).forEach(
+        (f: Feuille) => {
+          feuilleParCollaborateur.set(
+            f.collaborateur_id,
+            f
           );
         }
       );
 
-      // ======================================================
-      // MAPS
-      // ======================================================
+      const jourParId =
+        new Map<string, Jour>();
 
-      const joursParFeuille =
-        new Map<
-          string,
-          Jour[]
-        >();
+      jours.forEach((j) => {
+        jourParId.set(j.id, j);
+      });
 
-      jours.forEach(
-        (
-          jour
-        ) => {
-          const liste =
-            joursParFeuille.get(
-              jour.feuille_id
-            ) || [];
+      /*
+       * ============================================================
+       * 11. CODES UTILISES
+       * ============================================================
+       */
 
-          liste.push(
-            jour
-          );
-
-          joursParFeuille.set(
-            jour.feuille_id,
-            liste
-          );
-        }
-      );
-
-      const imputationsParJour =
-        new Map<
-          string,
-          Imputation[]
-        >();
-
-      imputations.forEach(
-        (
-          imputation
-        ) => {
-          const liste =
-            imputationsParJour.get(
-              imputation.jour_id
-            ) || [];
-
-          liste.push(
-            imputation
-          );
-
-          imputationsParJour.set(
-            imputation.jour_id,
-            liste
-          );
-        }
-      );
-
-      // ======================================================
-      // CODES UTILISES
-      // ======================================================
-
-      const productionCodes =
+      const productionSet =
         new Set<string>();
 
-      const adminCodes =
+      const adminSet =
         new Set<string>();
 
-      for (
-        const imputation of
-          imputations
-      ) {
-        if (
-          !imputation.code
-        ) {
-          continue;
-        }
+      imputations.forEach((imp) => {
+        if (!imp.code) return;
 
         const code =
-          imputation.code
+          imp.code
             .trim()
             .toUpperCase();
 
+        if (!code) return;
+
+        const info =
+          codesMetier.find(
+            (c) =>
+              c.code
+                .trim()
+                .toUpperCase() === code
+          );
+
         if (
-          estProduction(
-            imputation.type_affaire
+          estCodeProduction(
+            code,
+            info
           )
         ) {
-          productionCodes.add(
-            code
-          );
+          productionSet.add(code);
+        } else if (
+          estCodeAdministratif(
+            code,
+            info
+          )
+        ) {
+          adminSet.add(code);
         } else {
-          adminCodes.add(
-            code
+          // Secours si le code existe dans une imputation mais
+          // n'est pas encore présent dans codes_imputation.
+          const type = normaliserType(
+            imp.type_affaire
           );
-        }
-      }
 
-      // Absences
-      for (
-        const jour of
-          jours
+          if (type === "CBE" || type === "DBE") {
+            productionSet.add(code);
+          } else {
+            adminSet.add(code);
+          }
+        }
+      });
+
+      // Les codes d'absence stockés dans feuilles_heures_jours
+      // sont eux aussi considérés comme des codes administratifs utilisés.
+      jours.forEach((jour) => {
+        const code =
+          (jour.absence || "")
+            .trim()
+            .toUpperCase();
+
+        if (!code || code === "AUTRE") return;
+
+        adminSet.add(code);
+      });
+
+      // Les heures de récupération (RE) sont stockées directement
+      // dans feuilles_heures_jours.heures_re et doivent donc
+      // également faire apparaître le code RE dans l'en-tête.
+      jours.forEach((jour) => {
+        if (Number(jour.heures_re || 0) > 0) {
+          adminSet.add("RE");
+        }
+      });
+
+      // Les codes d'absence stockés directement dans les jours
+      // doivent également apparaître parmi les codes administratifs
+      // utilisés pendant la semaine.
+      jours.forEach((jour) => {
+        const code =
+          (jour.absence || "")
+            .trim()
+            .toUpperCase();
+
+        if (!code || code === "AUTRE") return;
+
+        const info =
+          codesMetier.find(
+            (c) =>
+              c.code
+                .trim()
+                .toUpperCase() === code
+          );
+
+        if (!info || info.actif !== true) return;
+
+        adminSet.add(code);
+      });
+
+      function ordreCodes(
+        codesA: Set<string>
       ) {
-        if (
-          jour.absence
-        ) {
-          adminCodes.add(
-            jour.absence
-              .trim()
-              .toUpperCase()
-          );
-        }
-
-        if (
-          formatNumber(
-            jour.duree_cp
-          ) > 0
-        ) {
-          adminCodes.add(
-            "CP"
-          );
-        }
-
-        if (
-          formatNumber(
-            jour.duree_rtt
-          ) > 0
-        ) {
-          adminCodes.add(
-            "RTT"
-          );
-        }
-
-        if (
-          formatNumber(
-            jour.heures_re
-          ) > 0
-        ) {
-          adminCodes.add(
-            "RE"
-          );
-        }
-      }
-
-      const trierCodes =
-        (
-          set: Set<string>
-        ) =>
-          Array.from(
-            set
-          ).sort(
-            (
-              a,
-              b
-            ) => {
-              const ca =
-                codesMap.get(
-                  a
-                );
-
-              const cb =
-                codesMap.get(
-                  b
-                );
-
-              const oa =
-                ca?.ordre_affichage ??
-                9999;
-
-              const ob =
-                cb?.ordre_affichage ??
-                9999;
-
-              if (
-                oa !== ob
-              ) {
-                return (
-                  oa - ob
-                );
-              }
-
-              return a.localeCompare(
-                b
+        return Array.from(codesA).sort(
+          (a, b) => {
+            const ca =
+              codesMetier.find(
+                (c) =>
+                  c.code
+                    .trim()
+                    .toUpperCase() === a
               );
+
+            const cb =
+              codesMetier.find(
+                (c) =>
+                  c.code
+                    .trim()
+                    .toUpperCase() === b
+              );
+
+            const oa =
+              ca?.ordre_affichage ??
+              9999;
+
+            const ob =
+              cb?.ordre_affichage ??
+              9999;
+
+            if (oa !== ob) {
+              return oa - ob;
             }
-          );
 
-      const productionCodesTries =
-        trierCodes(
-          productionCodes
-        );
-
-      const adminCodesTries =
-        trierCodes(
-          adminCodes
-        );
-
-      // ======================================================
-      // COLONNES CODES
-      // ======================================================
-
-      const productionColumnMap =
-        new Map<
-          string,
-          number
-        >();
-
-      productionCodesTries
-        .slice(
-          0,
-          COL.Y -
-            COL.E +
-            1
-        )
-        .forEach(
-          (
-            code,
-            index
-          ) => {
-            productionColumnMap.set(
-              code,
-              COL.E +
-                index
-            );
+            return a.localeCompare(b);
           }
         );
+      }
 
-      const adminColumnMap =
-        new Map<
-          string,
-          number
-        >();
+      const codesProduction =
+        ordreCodes(productionSet);
 
-      adminCodesTries
-        .slice(
-          0,
-          COL.AO -
-            COL.Z +
-            1
-        )
-        .forEach(
-          (
-            code,
-            index
-          ) => {
-            adminColumnMap.set(
-              code,
-              COL.Z +
-                index
-            );
-          }
-        );
+      const codesAdministratifs =
+        ordreCodes(adminSet);
 
-      // ======================================================
-      // ENTETES CODES
-      // ======================================================
-
-      productionColumnMap.forEach(
-        (
-          col,
-          code
-        ) => {
-          setCell(
-            ws,
-            1,
-            col,
-            code
-          );
-        }
-      );
-
-      adminColumnMap.forEach(
-        (
-          col,
-          code
-        ) => {
-          setCell(
-            ws,
-            1,
-            col,
-            code
-          );
-        }
-      );
-
-      // ======================================================
-      // REMPLISSAGE
-      // ======================================================
-
-      let currentRow = 2;
+      /*
+       * ============================================================
+       * 12. NETTOYAGE DES COLONNES CODES
+       * ============================================================
+       */
 
       for (
-        const collaborateur of
-          collaborateursAvecFeuille
+        let c = COL_PRODUCTION_DEBUT;
+        c <= COL_PRODUCTION_FIN;
+        c++
       ) {
+        valeurCellule(
+          feuilleExcel,
+          cell(c, 2),
+          ""
+        );
+      }
+
+      for (
+        let c = COL_ADMIN_DEBUT;
+        c <= COL_ADMIN_FIN;
+        c++
+      ) {
+        valeurCellule(
+          feuilleExcel,
+          cell(c, 2),
+          ""
+        );
+      }
+
+      /*
+       * ============================================================
+       * 13. CODES PRODUCTION EN E:Y
+       * ============================================================
+       */
+
+      codesProduction.forEach(
+        (code, index) => {
+          const colonne =
+            COL_PRODUCTION_DEBUT +
+            index;
+
+          if (
+            colonne >
+            COL_PRODUCTION_FIN
+          ) {
+            return;
+          }
+
+          valeurCellule(
+            feuilleExcel,
+            cell(colonne, 2),
+            code
+          );
+        }
+      );
+
+      /*
+       * ============================================================
+       * 14. CODES ADMIN EN Z:AO
+       * ============================================================
+       */
+
+      codesAdministratifs.forEach(
+        (code, index) => {
+          const colonne =
+            COL_ADMIN_DEBUT +
+            index;
+
+          if (
+            colonne >
+            COL_ADMIN_FIN
+          ) {
+            return;
+          }
+
+          valeurCellule(
+            feuilleExcel,
+            cell(colonne, 2),
+            code
+          );
+        }
+      );
+
+      /*
+       * Présentation finale des deux lignes d'en-tête après
+       * l'injection des codes dynamiques.
+       */
+      appliquerStyleEntete(
+        feuilleExcel,
+        gabarit
+      );
+
+      /*
+       * ============================================================
+       * 15. COLLABORATEURS
+       * ============================================================
+       */
+
+      const collaborateursExport =
+        (collaborateurs || []).filter(
+          (c: Collaborateur) =>
+            feuilleParCollaborateur.has(
+              c.id
+            )
+        );
+
+      let ligne = 3;
+
+      for (const collaborateur of collaborateursExport) {
+        const collaborateurLigne = ligne;
+
         const feuille =
-          feuillesParCollaborateur.get(
+          feuilleParCollaborateur.get(
             collaborateur.id
           );
 
-        if (!feuille) {
-          continue;
-        }
+        if (!feuille) continue;
 
-        const joursCollaborateur =
-          joursParFeuille.get(
-            feuille.id
-          ) || [];
-
-        const joursMap =
-          new Map<
-            number,
-            Jour
-          >();
-
-        joursCollaborateur.forEach(
-          (
-            jour
-          ) => {
-            const index =
-              getDayIndex(
-                jour.date_jour,
-                dateDebut
-              );
-
-            if (
-              index >= 0 &&
-              index <= 6
-            ) {
-              joursMap.set(
-                index,
-                jour
-              );
-            }
-          }
-        );
-
-        // ====================================================
-        // TR / TT
-        // ====================================================
-
-        const nombreTR =
-          joursCollaborateur.filter(
-            (
-              jour
-            ) =>
-              estVrai(
-                jour.ticket_restaurant
-              )
-          ).length;
-
-        const nombreTT =
-          joursCollaborateur.filter(
-            (
-              jour
-            ) =>
-              estTeletravail(
-                jour.presence
-              )
-          ).length;
-
-        // ====================================================
-        // NOM
-        // ====================================================
-
-        const nomRow =
-          currentRow;
-
-        setCell(
-          ws,
-          nomRow,
-          COL.A,
-          `${(
-            collaborateur.nom ||
-            ""
-          ).toUpperCase()} ${
-            collaborateur.prenom ||
-            ""
-          }`
-        );
-
-        addTopBorder(
-          ws,
-          nomRow
-        );
-
-        // TR
-        setCell(
-          ws,
-          nomRow + 1,
-          COL.A,
-          `${nombreTR} TR`
-        );
-
-        // TT
-        setCell(
-          ws,
-          nomRow + 2,
-          COL.A,
-          `${nombreTT} TT`
-        );
-
-        // COMPTEUR
-        const heuresSup =
-          formatNumber(
-            feuille.heures_supplementaires
+        const joursCollab =
+          jours.filter(
+            (j) =>
+              j.feuille_id ===
+              feuille.id
           );
 
-        if (
-          heuresSup > 0
-        ) {
-          setCell(
-            ws,
-            nomRow + 3,
-            COL.A,
-            `${heuresSup} H sur compteur`
+        const idsJoursCollab =
+          new Set(
+            joursCollab.map(
+              (j) => j.id
+            )
+          );
+
+        const imputationsCollab =
+          imputations.filter(
+            (i) =>
+              idsJoursCollab.has(
+                i.jour_id
+              )
+          );
+
+        /*
+         * ----------------------------------------------------------
+         * MEF LIGNE COLLABORATEUR
+         * ----------------------------------------------------------
+         */
+
+        appliquerMiseEnForme(
+          gabarit,
+          feuilleExcel,
+          ligne,
+          "AFFAIRE"
+        );
+
+        // Bordure supérieure de séparation du bloc collaborateur,
+        // sur toute la largeur A:BC.
+        for (let c = 0; c < NB_COLONNES; c++) {
+          appliquerBordureSuperieure(
+            feuilleExcel,
+            cell(c, ligne)
           );
         }
 
-        // ====================================================
-        // AFFAIRES
-        // ====================================================
+        /*
+         * NOM
+         */
 
-        type LigneAffaire = {
-          type: string;
-          numero: string;
-          description: string;
-          code: string;
-          heures: number[];
+        valeurCellule(
+          feuilleExcel,
+          `A${ligne}`,
+          `${collaborateur.nom.toUpperCase()} ${collaborateur.prenom}`
+        );
+
+        // Bordure supérieure de A à BC dès qu'un nouveau
+        // collaborateur est inséré.
+        for (let c = 0; c < NB_COLONNES; c++) {
+          appliquerBordureSuperieure(
+            feuilleExcel,
+            cell(c, ligne)
+          );
+        }
+
+        /*
+         * Lien vers la feuille
+         */
+
+        feuilleExcel[
+          `A${ligne}`
+        ].l = {
+          Target:
+            `/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`,
         };
+
+        /*
+         * ----------------------------------------------------------
+         * AFFAIRES
+         * ----------------------------------------------------------
+         */
 
         const affaires =
           new Map<
             string,
-            LigneAffaire
+            Affaire
           >();
 
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
-            );
+        imputationsCollab.forEach(
+          (imp) => {
+            const heures =
+              Number(
+                imp.heures || 0
+              );
 
-          if (!jour) {
-            continue;
-          }
-
-          const imps =
-            imputationsParJour.get(
-              jour.id
-            ) || [];
-
-          for (
-            const imputation of
-              imps
-          ) {
-            if (
-              !estProduction(
-                imputation.type_affaire
-              )
-            ) {
-              continue;
-            }
+            if (!heures) return;
 
             const type =
-              normaliserTypeAffaire(
-                imputation.type_affaire
+              normaliserType(
+                imp.type_affaire
               );
+
+            /*
+             * Les lignes CBE / DBE uniquement
+             */
+            if (
+              type !== "CBE" &&
+              type !== "DBE"
+            ) {
+              return;
+            }
 
             const numero =
               (
-                imputation.numero_affaire ||
+                imp.numero_affaire ||
                 ""
               ).trim();
 
             const description =
               (
-                imputation.description ||
+                imp.description ||
                 ""
               ).trim();
 
             const code =
               (
-                imputation.code ||
+                imp.code ||
                 ""
               )
                 .trim()
                 .toUpperCase();
 
-            const key =
-              [
+            const cle = [
+              type,
+              numero,
+              description,
+            ].join("|");
+
+            if (
+              !affaires.has(cle)
+            ) {
+              affaires.set(cle, {
                 type,
                 numero,
                 description,
-                code,
-              ].join(
-                "|"
-              );
-
-            if (
-              !affaires.has(
-                key
-              )
-            ) {
-              affaires.set(
-                key,
-                {
-                  type,
-                  numero,
-                  description,
-                  code,
-                  heures: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
+                heuresParCode: {},
+                total: 0,
+              });
             }
 
             const affaire =
-              affaires.get(
-                key
-              )!;
+              affaires.get(cle)!;
 
-            affaire.heures[
-              dayIndex
-            ] +=
-              formatNumber(
-                imputation.heures
-              );
-          }
-        }
-
-        let row =
-          nomRow;
-
-        const affairesListe =
-          Array.from(
-            affaires.values()
-          ).sort(
-            (
-              a,
-              b
-            ) => {
-              const t =
-                a.type.localeCompare(
-                  b.type
-                );
-
-              if (
-                t !== 0
-              ) {
-                return t;
-              }
-
-              return a.numero.localeCompare(
-                b.numero
-              );
-            }
-          );
-
-        // ====================================================
-        // LIGNES CBE / DBE
-        // ====================================================
-
-        for (
-          const affaire of
-            affairesListe
-        ) {
-          row++;
-
-          // C = CBE 1234 / DBE 5678
-          setCell(
-            ws,
-            row,
-            COL.C,
-            affaire.numero
-              ? `${affaire.type} ${affaire.numero}`
-              : affaire.type
-          );
-
-          // D = FORMULE TOTAL
-          setFormula(
-            ws,
-            row,
-            COL.D,
-            `=SUM(E${row + 1}:AO${
-              row + 1
-            })`
-          );
-
-          // Désignation dans E si disponible
-          // uniquement si elle ne correspond pas
-          // à une colonne de code utilisée.
-          if (
-            affaire.description
-          ) {
-            const codeCol =
-              productionColumnMap.get(
-                affaire.code
-              );
-
-            if (
-              codeCol !==
-              undefined &&
-              codeCol >
-                COL.E
-            ) {
-              // On conserve les codes à partir de E.
-              // La désignation reste dans C
-              // uniquement lorsque le gabarit le prévoit.
-            }
-          }
-
-          // Ventilation par code
-          const productionCol =
-            productionColumnMap.get(
-              affaire.code
-            );
-
-          if (
-            productionCol !==
-            undefined
-          ) {
-            const total =
-              affaire.heures.reduce(
-                (
-                  s,
-                  h
-                ) =>
-                  s +
-                  formatNumber(
-                    h
-                  ),
-                0
-              );
-
-            setCell(
-              ws,
-              row,
-              productionCol,
-              formatNumber(
-                total
-              )
-            );
-          }
-        }
-
-        // ====================================================
-        // DIVERS
-        // ====================================================
-
-        row++;
-
-        const diversRow =
-          row;
-
-        setCell(
-          ws,
-          diversRow,
-          COL.C,
-          "Divers"
-        );
-
-        // ----------------------------------------------------
-        // FORMULE DIVERS
-        // ----------------------------------------------------
-
-        setFormula(
-          ws,
-          diversRow,
-          COL.D,
-          `=SUM(E${diversRow + 1}:AO${
-            diversRow + 1
-          })`
-        );
-
-        const diversParCode =
-          new Map<
-            string,
-            {
-              total: number;
-              jours: number[];
-            }
-          >();
-
-        // ----------------------------------------------------
-        // IMPUTATIONS DIVERS
-        // ----------------------------------------------------
-
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
-            );
-
-          if (!jour) {
-            continue;
-          }
-
-          const imps =
-            imputationsParJour.get(
-              jour.id
-            ) || [];
-
-          for (
-            const imputation of
-              imps
-          ) {
-            if (
-              estProduction(
-                imputation.type_affaire
-              )
-            ) {
-              continue;
-            }
-
-            const code =
+            affaire.heuresParCode[
+              code
+            ] =
               (
-                imputation.code ||
-                ""
-              )
-                .trim()
-                .toUpperCase();
+                affaire
+                  .heuresParCode[
+                    code
+                  ] || 0
+              ) + heures;
 
-            if (!code) {
-              continue;
-            }
-
-            if (
-              !diversParCode.has(
-                code
-              )
-            ) {
-              diversParCode.set(
-                code,
-                {
-                  total: 0,
-                  jours: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
-            }
-
-            const entry =
-              diversParCode.get(
-                code
-              )!;
-
-            const heures =
-              formatNumber(
-                imputation.heures
-              );
-
-            entry.total +=
-              heures;
-
-            entry.jours[
-              dayIndex
-            ] +=
+            affaire.total +=
               heures;
           }
+        );
+
+        // La ligne du nom reste intacte.
+        // Les affaires commencent toujours à la ligne suivante.
+        ligne++;
+
+        for (const affaire of affaires.values()) {
+          appliquerMiseEnForme(
+            gabarit,
+            feuilleExcel,
+            ligne,
+            "AFFAIRE"
+          );
+
+          valeurCellule(
+            feuilleExcel,
+            `C${ligne}`,
+            `${affaire.type} ${affaire.numero}`
+          );
+
+          valeurCellule(
+            feuilleExcel,
+            `D${ligne}`,
+            affaire.total
+          );
+
+          /*
+           * Production
+           */
+
+          codesProduction.forEach(
+            (code, index) => {
+              const heures =
+                affaire
+                  .heuresParCode[
+                    code
+                  ] || 0;
+
+              if (!heures) return;
+
+              valeurCellule(
+                feuilleExcel,
+                cell(
+                  COL_PRODUCTION_DEBUT +
+                    index,
+                  ligne
+                ),
+                heures
+              );
+            }
+          );
+
+          ligne++;
         }
 
-        // ----------------------------------------------------
-        // ABSENCES
-        // ----------------------------------------------------
+        /*
+         * ----------------------------------------------------------
+         * DIVERS
+         *
+         * IMPERATIVEMENT après les CBE/DBE
+         * et avant H/Jour.
+         * ----------------------------------------------------------
+         */
 
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
-            );
+        const diversParCode: Record<
+          string,
+          number
+        > = {};
 
-          if (!jour) {
-            continue;
-          }
+        let totalDivers = 0;
 
-          // CP
-          if (
-            formatNumber(
-              jour.duree_cp
-            ) > 0
-          ) {
-            if (
-              !diversParCode.has(
-                "CP"
-              )
-            ) {
-              diversParCode.set(
-                "CP",
-                {
-                  total: 0,
-                  jours: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
-            }
-
-            const entry =
-              diversParCode.get(
-                "CP"
-              )!;
-
-            const heures =
-              formatNumber(
-                jour.duree_cp
-              );
-
-            entry.total +=
-              heures;
-
-            entry.jours[
-              dayIndex
-            ] +=
-              heures;
-          }
-
-          // RTT
-          if (
-            formatNumber(
-              jour.duree_rtt
-            ) > 0
-          ) {
-            if (
-              !diversParCode.has(
-                "RTT"
-              )
-            ) {
-              diversParCode.set(
-                "RTT",
-                {
-                  total: 0,
-                  jours: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
-            }
-
-            const entry =
-              diversParCode.get(
-                "RTT"
-              )!;
-
-            const heures =
-              formatNumber(
-                jour.duree_rtt
-              );
-
-            entry.total +=
-              heures;
-
-            entry.jours[
-              dayIndex
-            ] +=
-              heures;
-          }
-
-          // RE
-          if (
-            formatNumber(
-              jour.heures_re
-            ) > 0
-          ) {
-            if (
-              !diversParCode.has(
-                "RE"
-              )
-            ) {
-              diversParCode.set(
-                "RE",
-                {
-                  total: 0,
-                  jours: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
-            }
-
-            const entry =
-              diversParCode.get(
-                "RE"
-              )!;
-
-            const heures =
-              formatNumber(
-                jour.heures_re
-              );
-
-            entry.total +=
-              heures;
-
-            entry.jours[
-              dayIndex
-            ] +=
-              heures;
-          }
-
-          // Absence
-          if (
-            jour.absence &&
-            formatNumber(
-              jour.duree_cp
-            ) === 0
-          ) {
-            const code =
-              jour.absence
-                .trim()
-                .toUpperCase();
-
-            if (
-              !diversParCode.has(
-                code
-              )
-            ) {
-              diversParCode.set(
-                code,
-                {
-                  total: 0,
-                  jours: [
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                  ],
-                }
-              );
-            }
-
-            const entry =
-              diversParCode.get(
-                code
-              )!;
-
-            const heures =
-              formatNumber(
-                jour.heures_absence
-              ) ||
-              formatNumber(
-                jour.heures_theoriques
-              );
-
-            entry.total +=
-              heures;
-
-            entry.jours[
-              dayIndex
-            ] +=
-              heures;
-          }
-        }
-
-        // ----------------------------------------------------
-        // ECRITURE DIVERS
-        // ----------------------------------------------------
-
-        diversParCode.forEach(
-          (
-            data,
-            code
-          ) => {
-            const adminCol =
-              adminColumnMap.get(
-                code
+        imputationsCollab.forEach(
+          (imp) => {
+            const type =
+              normaliserType(
+                imp.type_affaire
               );
 
             if (
-              adminCol ===
-              undefined
+              type !== "DIVERS" &&
+              type !== ""
             ) {
               return;
             }
 
-            setCell(
-              ws,
-              diversRow,
-              adminCol,
-              formatNumber(
-                data.total
-              )
-            );
+            const heures =
+              Number(
+                imp.heures || 0
+              );
 
-            data.jours.forEach(
+            if (!heures) return;
+
+            const code =
               (
-                heures,
-                dayIndex
-              ) => {
-                if (
-                  heures <= 0
-                ) {
-                  return;
-                }
+                imp.code ||
+                ""
+              )
+                .trim()
+                .toUpperCase();
 
-                const pair =
-                  DAY_PAIRS[
-                    dayIndex
-                  ];
+            if (!code) return;
 
-                setCell(
-                  ws,
-                  diversRow,
-                  pair.first,
-                  formatNumber(
-                    heures
-                  )
-                );
+            diversParCode[code] =
+              (
+                diversParCode[code] ||
+                0
+              ) + heures;
 
-                if (
-                  [
-                    "CP",
-                    "RTT",
-                    "RE",
-                    "AI",
-                    "AA",
-                    "ML",
-                    "AT",
-                    "VM",
-                  ].includes(
-                    code
-                  )
-                ) {
-                  setCell(
-                    ws,
-                    diversRow,
-                    pair.second,
-                    code
-                  );
-                }
-              }
-            );
+            totalDivers +=
+              heures;
           }
         );
 
-        // ====================================================
-        // H/JOUR
-        // ====================================================
+        /*
+         * ----------------------------------------------------------
+         * ABSENCES / RE STOCKES DIRECTEMENT DANS LES JOURS
+         * ----------------------------------------------------------
+         *
+         * Exemple CP toute la semaine :
+         *   AP = 7,5   AQ = CP
+         *   AR = 7,5   AS = CP
+         *   etc.
+         *
+         * Pour RE :
+         *   la valeur est prise dans heures_re et le code RE
+         *   est placé dans la cellule de droite de la paire.
+         *
+         * On ajoute ces heures à Divers si elles n'existent pas
+         * déjà dans les imputations Divers, afin d'éviter un double
+         * comptage.
+         */
 
-        row++;
+        const absencesJournalieres: Array<{
+          jour: Jour;
+          code: string;
+          heures: number;
+        }> = [];
 
-        const hJourRow =
-          row;
+        /*
+         * Les absences peuvent être stockées de deux façons dans
+         * le nouveau système :
+         *
+         *  1. directement dans feuilles_heures_jours.absence
+         *  2. comme imputation Divers avec le code métier
+         *
+         * On regarde donc les deux sources. Cela permet notamment
+         * de récupérer un changement CP -> ML fait dans la feuille.
+         */
+        joursCollab.forEach((jour) => {
+          const absenceBrute =
+            (jour.absence || "")
+              .trim()
+              .toUpperCase();
 
-        setCell(
-          ws,
-          hJourRow,
-          COL.C,
+          /*
+           * Toutes les imputations Divers de cette journée.
+           * On s'en sert notamment lorsqu'absence contient seulement
+           * un statut générique ou n'est pas renseigné.
+           */
+          const imputationsDiversJour =
+            imputationsCollab.filter((imp) => {
+              if (imp.jour_id !== jour.id) return false;
+
+              const type = normaliserType(
+                imp.type_affaire
+              );
+
+              return (
+                type === "DIVERS" ||
+                type === ""
+              );
+            });
+
+          /*
+           * On cherche d'abord un éventuel code d'absence réellement
+           * enregistré dans l'imputation Divers de la journée.
+           * Exemple : ML = 7 h.
+           */
+          const imputationAbsence =
+            imputationsDiversJour.find((imp) => {
+              const code =
+                (imp.code || "")
+                  .trim()
+                  .toUpperCase();
+
+              if (!code || code === "AUTRE") {
+                return false;
+              }
+
+              const info =
+                codesMetier.find(
+                  (c) =>
+                    c.code
+                      .trim()
+                      .toUpperCase() === code
+                );
+
+              return (
+                adminSet.has(code) ||
+                (info?.autorise_divers === true &&
+                  !estCodeProduction(code, info))
+              );
+            });
+
+          const codeImputationAbsence =
+            (imputationAbsence?.code || "")
+              .trim()
+              .toUpperCase();
+
+          const heuresImputationAbsence =
+            Number(
+              imputationAbsence?.heures || 0
+            );
+
+          /*
+           * Priorité :
+           *  - un code d'absence explicite dans la colonne absence
+           *  - sinon le code administratif enregistré en Divers
+           */
+          const codeAbsence =
+            absenceBrute &&
+            absenceBrute !== "AUTRE" &&
+            absenceBrute !== "ABSENT"
+              ? absenceBrute
+              : codeImputationAbsence;
+
+          if (codeAbsence) {
+            const heuresAbsence =
+              Number(
+                jour.heures_absence ||
+                  jour.duree_cp ||
+                  heuresImputationAbsence ||
+                  (codeAbsence === "CP"
+                    ? jour.heures_theoriques
+                    : jour.heures_theoriques) ||
+                  0
+              );
+
+            if (heuresAbsence > 0) {
+              absencesJournalieres.push({
+                jour,
+                code: codeAbsence,
+                heures: heuresAbsence,
+              });
+            }
+
+            return;
+          }
+
+          /*
+           * RE est stocké directement dans heures_re.
+           * Si une imputation RE existe déjà pour cette journée,
+           * on prend son montant ; sinon on utilise heures_re.
+           */
+          const imputationRE =
+            imputationsDiversJour.find((imp) => {
+              return (
+                (imp.code || "")
+                  .trim()
+                  .toUpperCase() === "RE"
+              );
+            });
+
+          const heuresRE =
+            Number(
+              imputationRE?.heures ||
+                jour.heures_re ||
+                0
+            );
+
+          if (heuresRE > 0) {
+            absencesJournalieres.push({
+              jour,
+              code: "RE",
+              heures: heuresRE,
+            });
+          }
+        });
+
+        const heuresJournalieresParCode: Record<string, number> = {};
+
+        absencesJournalieres.forEach((item) => {
+          heuresJournalieresParCode[item.code] =
+            (
+              heuresJournalieresParCode[item.code] ||
+              0
+            ) + item.heures;
+        });
+
+        Object.entries(
+          heuresJournalieresParCode
+        ).forEach(([code, heures]) => {
+          const dejaDansDivers =
+            diversParCode[code] || 0;
+
+          // Si le code est déjà remonté par une imputation Divers,
+          // on ne le compte pas une deuxième fois.
+          if (dejaDansDivers < heures) {
+            diversParCode[code] =
+              heures;
+
+            totalDivers +=
+              heures - dejaDansDivers;
+          }
+        });
+
+        if (totalDivers > 0) {
+          appliquerMiseEnForme(
+            gabarit,
+            feuilleExcel,
+            ligne,
+            "DIVERS"
+          );
+
+          valeurCellule(
+            feuilleExcel,
+            `C${ligne}`,
+            "Divers"
+          );
+
+          valeurCellule(
+            feuilleExcel,
+            `D${ligne}`,
+            totalDivers
+          );
+
+          /*
+           * Codes administratifs
+           */
+
+          codesAdministratifs.forEach(
+            (code, index) => {
+              const heures =
+                diversParCode[
+                  code
+                ] || 0;
+
+              if (!heures) return;
+
+              valeurCellule(
+                feuilleExcel,
+                cell(
+                  COL_ADMIN_DEBUT +
+                    index,
+                  ligne
+                ),
+                heures
+              );
+            }
+          );
+
+          /*
+           * Pour chaque absence / RE, on reporte aussi
+           * le détail dans la paire quotidienne :
+           *
+           * AP = heures, AQ = CP
+           * AR = heures, AS = CP
+           * AT = heures, AU = CP
+           * etc.
+           */
+          absencesJournalieres.forEach((item) => {
+            const jourSemaine =
+              indexJourSemaine(
+                item.jour.date_jour
+              );
+
+            if (
+              jourSemaine < 0 ||
+              jourSemaine > 6
+            ) {
+              return;
+            }
+
+            const colonne =
+              COL_JOURS_DEBUT +
+              jourSemaine * 2;
+
+            valeurCellule(
+              feuilleExcel,
+              cell(
+                colonne,
+                ligne
+              ),
+              item.heures
+            );
+
+            valeurCellule(
+              feuilleExcel,
+              cell(
+                colonne + 1,
+                ligne
+              ),
+              item.code
+            );
+          });
+
+          ligne++;
+        }
+
+        /*
+         * ----------------------------------------------------------
+         * H/JOUR
+         * ----------------------------------------------------------
+         */
+
+        const ligneHjour = ligne;
+
+        appliquerMiseEnForme(
+          gabarit,
+          feuilleExcel,
+          ligneHjour,
+          "HJOUR"
+        );
+
+        valeurCellule(
+          feuilleExcel,
+          `C${ligneHjour}`,
           "H/Jour"
         );
 
-        // D = formule de somme
-        setFormula(
-          ws,
-          hJourRow,
-          COL.D,
-          `=SUM(AP${hJourRow + 1},AR${
-            hJourRow + 1
-          },AT${hJourRow + 1},AV${
-            hJourRow + 1
-          },AX${hJourRow + 1},AZ${
-            hJourRow + 1
-          },BB${hJourRow + 1})`
+        joursCollab.forEach(
+          (jour) => {
+            const date =
+              new Date(
+                `${jour.date_jour}T12:00:00`
+              );
+
+            const js =
+              date.getDay();
+
+            const jourSemaine =
+              js === 0
+                ? 6
+                : js - 1;
+
+            if (
+              jourSemaine < 0 ||
+              jourSemaine > 6
+            ) {
+              return;
+            }
+
+            const colonne =
+              COL_JOURS_DEBUT +
+              jourSemaine * 2;
+
+            valeurCellule(
+              feuilleExcel,
+              cell(
+                colonne,
+                ligneHjour
+              ),
+              Number(
+                jour.total_heures ||
+                  0
+              )
+            );
+          }
         );
 
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
-            );
+        ligne++;
 
-          const objectif =
-            jour
-              ? formatNumber(
-                  jour.heures_theoriques
-                )
-              : 0;
+        /*
+         * ----------------------------------------------------------
+         * HEURES SUP
+         * ----------------------------------------------------------
+         */
 
-          const pair =
-            DAY_PAIRS[
-              dayIndex
-            ];
+        const ligneHS = ligne;
 
-          setCell(
-            ws,
-            hJourRow,
-            pair.first,
-            objectif
-          );
-        }
+        appliquerMiseEnForme(
+          gabarit,
+          feuilleExcel,
+          ligneHS,
+          "HS"
+        );
 
-        // ====================================================
-        // HEURES SUP
-        // ====================================================
-
-        row++;
-
-        const heuresSupRow =
-          row;
-
-        setCell(
-          ws,
-          heuresSupRow,
-          COL.C,
+        valeurCellule(
+          feuilleExcel,
+          `C${ligneHS}`,
           "HEURES SUP"
         );
 
-        setFormula(
-          ws,
-          heuresSupRow,
-          COL.D,
-          `=SUM(AP${heuresSupRow + 1},AR${
-            heuresSupRow + 1
-          },AT${heuresSupRow + 1},AV${
-            heuresSupRow + 1
-          },AX${heuresSupRow + 1},AZ${
-            heuresSupRow + 1
-          },BB${heuresSupRow + 1})`
+        const heuresSupplementaires = Number(
+          feuille.heures_supplementaires ||
+            0
         );
 
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
-            );
+        valeurCellule(
+          feuilleExcel,
+          `D${ligneHS}`,
+          heuresSupplementaires
+        );
 
-          let hs = 0;
-
-          if (jour) {
-            const total =
-              formatNumber(
-                jour.total_heures
-              );
-
-            const theorique =
-              formatNumber(
-                jour.heures_theoriques
-              );
-
-            hs =
-              Math.max(
-                0,
-                total -
-                  theorique
-              );
-          }
-
-          const pair =
-            DAY_PAIRS[
-              dayIndex
-            ];
-
-          setCell(
-            ws,
-            heuresSupRow,
-            pair.first,
-            formatNumber(
-              hs
-            )
+        if (heuresSupplementaires > 0) {
+          appliquerStyleCellule(
+            feuilleExcel,
+            `D${ligneHS}`,
+            {
+              font: {
+                ...(feuilleExcel[`D${ligneHS}`]?.s?.font || {}),
+                color: {
+                  rgb: "FF0000",
+                },
+              },
+            }
           );
         }
 
-        // ====================================================
-        // TOTAL
-        // ====================================================
+        ligne++;
 
-        row++;
+        /*
+         * ----------------------------------------------------------
+         * TOTAL
+         * ----------------------------------------------------------
+         */
 
-        const totalRow =
-          row;
+        const ligneTotal =
+          ligne;
 
-        setCell(
-          ws,
-          totalRow,
-          COL.C,
+        appliquerMiseEnForme(
+          gabarit,
+          feuilleExcel,
+          ligneTotal,
           "TOTAL"
         );
 
-        setFormula(
-          ws,
-          totalRow,
-          COL.D,
-          `=SUM(AP${totalRow + 1},AR${
-            totalRow + 1
-          },AT${totalRow + 1},AV${
-            totalRow + 1
-          },AX${totalRow + 1},AZ${
-            totalRow + 1
-          },BB${totalRow + 1})`
+        valeurCellule(
+          feuilleExcel,
+          `C${ligneTotal}`,
+          "TOTAL"
         );
 
-        for (
-          let dayIndex = 0;
-          dayIndex < 7;
-          dayIndex++
-        ) {
-          const jour =
-            joursMap.get(
-              dayIndex
+        valeurCellule(
+          feuilleExcel,
+          `D${ligneTotal}`,
+          Number(
+            feuille.total_heures ||
+              0
+          )
+        );
+
+        /*
+         * ----------------------------------------------------------
+         * STATUTS
+         *
+         * AP:AQ = lundi
+         * AR:AS = mardi
+         * etc.
+         *
+         * IMPORTANT :
+         * on ne met RIEN le week-end par défaut.
+         * ----------------------------------------------------------
+         */
+
+        joursCollab.forEach(
+          (jour) => {
+            const date =
+              new Date(
+                `${jour.date_jour}T12:00:00`
+              );
+
+            const js =
+              date.getDay();
+
+            const jourSemaine =
+              js === 0
+                ? 6
+                : js - 1;
+
+            if (
+              jourSemaine < 0 ||
+              jourSemaine > 6
+            ) {
+              return;
+            }
+
+            /*
+             * Samedi / dimanche :
+             * rien par défaut.
+             */
+
+            if (
+              jourSemaine >= 5
+            ) {
+              return;
+            }
+
+            let statut = "";
+
+            const absence =
+              (
+                jour.absence ||
+                ""
+              ).trim();
+
+            const presence =
+              (
+                jour.presence ||
+                ""
+              )
+                .trim()
+                .toUpperCase();
+
+            if (absence) {
+              statut = "Absent";
+            } else if (
+              presence ===
+              "TELETRAVAIL"
+            ) {
+              statut =
+                "Télétravail";
+            } else if (
+              presence ===
+              "PRESENTIEL" ||
+              presence ===
+              "PRÉSENTIEL"
+            ) {
+              statut =
+                "Présentiel";
+            }
+
+            if (!statut) return;
+
+            const colonne =
+              COL_JOURS_DEBUT +
+              jourSemaine * 2;
+
+            valeurCellule(
+              feuilleExcel,
+              cell(
+                colonne,
+                ligneTotal
+              ),
+              statut
             );
 
-          if (!jour) {
-            continue;
+            /*
+             * AP:AQ
+             * AR:AS
+             * ...
+             */
+
+            fusionnerJour(
+              feuilleExcel,
+              ligneTotal,
+              colonne,
+              statut
+            );
           }
+        );
 
-          const total =
-            formatNumber(
-              jour.total_heures
+        /*
+         * ----------------------------------------------------------
+         * INFORMATIONS COLLABORATEUR
+         *
+         * On écrit TR / TT APRES avoir appliqué la mise en forme
+         * des lignes, afin que les copies de style ne les effacent pas.
+         * ----------------------------------------------------------
+         */
+
+        const nbTR =
+          joursCollab.filter(
+            (j) =>
+              j.ticket_restaurant === true
+          ).length;
+
+        const nbTT =
+          joursCollab.filter((j) => {
+            const presence =
+              (j.presence || "")
+                .trim()
+                .toUpperCase();
+
+            return (
+              presence === "TELETRAVAIL" ||
+              presence === "TÉLÉTRAVAIL"
             );
+          }).length;
 
-          const pair =
-            DAY_PAIRS[
-              dayIndex
-            ];
+        valeurCellule(
+          feuilleExcel,
+          `A${collaborateurLigne + 1}`,
+          `${nbTR} TR`
+        );
 
-          // On met d'abord les heures
-          // dans la première cellule.
-          setCell(
-            ws,
-            totalRow,
-            pair.first,
-            total
+        valeurCellule(
+          feuilleExcel,
+          `A${collaborateurLigne + 2}`,
+          `${nbTT} jour(s) TT`
+        );
+
+        /*
+         * Nombre d'heures effectivement placées sur le compteur.
+         * Rien n'est affiché lorsque les HS sont payées.
+         */
+        if (
+          Number(feuille.heures_supplementaires || 0) !== 0 &&
+          (feuille.mode_heures_supplementaires || "")
+            .trim()
+            .toUpperCase() === "COMPTEUR"
+        ) {
+          valeurCellule(
+            feuilleExcel,
+            `A${ligneHS}`,
+            `${String(
+              arrondi(
+                Number(
+                  feuille.heures_supplementaires || 0
+                )
+              )
+            ).replace(".", ",")} H sur compteur`
+          );
+        }
+
+        /*
+         * Ligne suivante
+         */
+
+        ligne =
+          ligneTotal + 2;
+      }
+
+      /*
+       * ============================================================
+       * 16. BORDURES COMPLETES
+       * ============================================================
+       *
+       * Toutes les cellules de A1 à BC sont dessinées, y compris
+       * les cellules vides. Cela garantit les bordures verticales
+       * et horizontales sur toute la zone exportée.
+       */
+
+      const derniereLigne = Math.max(
+        ligne,
+        3
+      );
+
+      /*
+       * Toutes les cellules exportées sont centrées
+       * horizontalement et verticalement.
+       */
+      appliquerCentrageToutesLesCellules(
+        feuilleExcel,
+        derniereLigne
+      );
+
+      appliquerToutesLesBordures(
+        feuilleExcel,
+        derniereLigne
+      );
+
+      /*
+       * Les lignes de début de bloc collaborateur sont réaffirmées
+       * après la grille générale.
+       */
+      let ligneBloc = 3;
+
+      for (const collaborateur of collaborateursExport) {
+        const feuilleCollab =
+          feuilleParCollaborateur.get(
+            collaborateur.id
           );
 
-          // Puis le statut :
-          // la couleur du statut est prioritaire.
+        if (!feuilleCollab) continue;
+
+        const joursCollab =
+          jours.filter(
+            (j) =>
+              j.feuille_id ===
+              feuilleCollab.id
+          );
+
+        const idsJoursCollab =
+          new Set(
+            joursCollab.map(
+              (j) => j.id
+            )
+          );
+
+        const imputationsCollab =
+          imputations.filter(
+            (i) =>
+              idsJoursCollab.has(
+                i.jour_id
+              )
+          );
+
+        const clesAffaires =
+          new Set<string>();
+
+        imputationsCollab.forEach((imp) => {
+          const type = normaliserType(
+            imp.type_affaire
+          );
+
           if (
-            estAbsent(
-              jour
-            )
+            type === "CBE" ||
+            type === "DBE"
           ) {
-            mergeStatus(
-              ws,
-              totalRow,
-              pair.first,
-              "Absent",
-              COLORS.ABSENT
-            );
-          } else if (
-            estTeletravail(
-              jour.presence
-            )
-          ) {
-            mergeStatus(
-              ws,
-              totalRow,
-              pair.first,
-              "Télétravail",
-              COLORS.TELETRAVAIL
-            );
-          } else {
-            mergeStatus(
-              ws,
-              totalRow,
-              pair.first,
-              "Présentiel",
-              COLORS.PRESENTIEL
+            clesAffaires.add(
+              [
+                type,
+                (imp.numero_affaire || "").trim(),
+                (imp.description || "").trim(),
+              ].join("|")
             );
           }
+        });
+
+        for (let c = 0; c < NB_COLONNES; c++) {
+          appliquerBordureSuperieure(
+            feuilleExcel,
+            cell(c, ligneBloc)
+          );
         }
 
-        // ====================================================
-        // PROCHAIN COLLABORATEUR
-        // ====================================================
-
-        currentRow =
-          totalRow + 2;
+        // 1 ligne nom + N affaires + 1 Divers + H/Jour + HS + TOTAL + 1 ligne vide.
+        ligneBloc +=
+          clesAffaires.size + 6;
       }
 
-      // ======================================================
-      // MISE EN FORME FINALE
-      // ======================================================
+      /*
+       * ============================================================
+       * 17. REF FINAL
+       * ============================================================
+       */
 
-      const maxRows =
-        Math.max(
-          currentRow + 5,
-          150
-        );
+      feuilleExcel["!ref"] =
+        `A1:BC${Math.max(
+          ligne,
+          3
+        )}`;
 
-      // ------------------------------------------------------
-      // COULEURS
-      // ------------------------------------------------------
+      // Ajustement automatique de la largeur de la colonne A.
+      let longueurMaxColonneA = 0;
 
-      applyColumnColors(
-        ws,
-        maxRows
-      );
+      for (let r = 1; r <= ligne; r++) {
+        const valeur =
+          feuilleExcel[`A${r}`]?.v;
 
-      // ------------------------------------------------------
-      // BORDURES LATERALES
-      // ------------------------------------------------------
-
-      applySideBorders(
-        ws,
-        maxRows
-      );
-
-      // ------------------------------------------------------
-      // CENTRAGE
-      // ------------------------------------------------------
-
-      centerAllCells(
-        ws,
-        maxRows
-      );
-
-      // ------------------------------------------------------
-      // STATUTS A NOUVEAU
-      // ------------------------------------------------------
-      //
-      // IMPORTANT :
-      // les couleurs de statut sont appliquées
-      // APRES les couleurs de colonnes.
-      //
-      // Elles sont donc prioritaires.
-      //
-
-      // Les cellules de statut sont déjà colorées
-      // lors de leur création, mais on ne les réécrit
-      // pas ici pour éviter de perdre leur couleur.
-
-      // ------------------------------------------------------
-      // ENTETES
-      // ------------------------------------------------------
-
-      styleMainHeaders(
-        ws
-      );
-
-      styleD1(
-        ws
-      );
-
-      // ------------------------------------------------------
-      // LARGEUR A = 20
-      // ------------------------------------------------------
-
-      if (
-        !ws["!cols"]
-      ) {
-        ws["!cols"] = [];
-      }
-
-      ws["!cols"][
-        COL.A
-      ] = {
-        ...(ws["!cols"][
-          COL.A
-        ] || {}),
-        wch: 20,
-      };
-
-      // ------------------------------------------------------
-      // AUTRES LARGEURS
-      // ------------------------------------------------------
-
-      for (
-        let col = COL.B;
-        col <= COL.BC;
-        col++
-      ) {
-        if (
-          !ws["!cols"][
-            col
-          ]
-        ) {
-          ws["!cols"][
-            col
-          ] = {
-            wch: 11,
-          };
+        if (valeur !== undefined && valeur !== null) {
+          longueurMaxColonneA = Math.max(
+            longueurMaxColonneA,
+            String(valeur).length
+          );
         }
       }
 
-      // ------------------------------------------------------
-      // HAUTEUR D1
-      // ------------------------------------------------------
+      feuilleExcel["!cols"] =
+        feuilleExcel["!cols"] || [];
 
-      if (
-        !ws["!rows"]
-      ) {
-        ws["!rows"] = [];
-      }
-
-      ws["!rows"][0] = {
-        ...(ws["!rows"][0] ||
-          {}),
-        hpt: 35,
+      feuilleExcel["!cols"][0] = {
+        ...(feuilleExcel["!cols"][0] || {}),
+        wch: Math.max(18, Math.min(42, longueurMaxColonneA + 3)),
       };
 
-      // ------------------------------------------------------
-      // REF
-      // ------------------------------------------------------
+      /*
+       * Le fichier final ne contient que SXX-XXXX.
+       */
+      workbook.SheetNames = [nomOnglet];
 
-      ws["!ref"] =
-        `A1:${excelColumn(
-          COL.BC
-        )}${maxRows}`;
+      /*
+       * ============================================================
+       * 17. EXPORT
+       * ============================================================
+       */
 
-      // ======================================================
-      // EXPORT
-      // ======================================================
-
-      const output =
-        XLSX.write(
-          workbook,
-          {
-            bookType:
-              "xlsx",
-            type:
-              "array",
-            cellStyles:
-              true,
-          }
-        );
-
-      const blob =
-        new Blob(
-          [output],
-          {
-            type:
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          }
-        );
-
-      const url =
-        window.URL.createObjectURL(
-          blob
-        );
-
-      const link =
-        document.createElement(
-          "a"
-        );
-
-      link.href =
-        url;
-
-      link.download =
-        `${nomOnglet}.xlsx`;
-
-      document.body.appendChild(
-        link
-      );
-
-      link.click();
-
-      link.remove();
-
-      window.URL.revokeObjectURL(
-        url
+      XLSX.writeFile(
+        workbook,
+        `${nomOnglet}.xlsx`,
+        {
+          bookType: "xlsx",
+          bookVBA: true,
+          compression: true,
+        }
       );
 
       setMessage(
-        `Export ${nomOnglet} terminé : ${collaborateursAvecFeuille.length} collaborateur(s).`
+        `Export ${nomOnglet} généré. ` +
+          `${codesProduction.length} code(s) production : ` +
+          `${codesProduction.join(", ") || "aucun"}. ` +
+          `${codesAdministratifs.length} code(s) administratif(s) : ` +
+          `${codesAdministratifs.join(", ") || "aucun"}.`
       );
-    } catch (
-      error: any
-    ) {
-      console.error(
-        "Erreur export Excel :",
-        error
-      );
+    } catch (error: any) {
+      console.error(error);
 
       setMessage(
         `Erreur : ${
           error?.message ||
-          "une erreur est survenue."
+          "Une erreur est survenue."
         }`
       );
     } finally {
-      setLoading(
-        false
-      );
+      setChargement(false);
     }
   }
-
-  // ==========================================================
-  // INTERFACE
-  // ==========================================================
 
   return (
     <main
       style={{
-        padding:
-          "30px",
+        padding: 30,
         fontFamily:
           "Calibri, Arial, sans-serif",
       }}
     >
-      <h1
-        style={{
-          marginBottom:
-            "25px",
-        }}
-      >
-        Export Excel des feuilles d'heures
+      <h1>
+        Export Excel
       </h1>
 
       <div
         style={{
-          display:
-            "flex",
-          gap:
-            "15px",
-          alignItems:
-            "flex-end",
-          flexWrap:
-            "wrap",
+          display: "flex",
+          gap: 15,
+          alignItems: "center",
+          marginTop: 20,
         }}
       >
-        <div>
-          <label
-            style={{
-              display:
-                "block",
-              marginBottom:
-                "6px",
-              fontWeight:
-                700,
-            }}
-          >
-            Année
-          </label>
-
-          <input
-            type="number"
-            value={
-              annee
-            }
-            onChange={(
-              e
-            ) =>
-              setAnnee(
-                Number(
-                  e.target.value
-                )
-              )
-            }
-            style={{
-              width:
-                "110px",
-              padding:
-                "10px",
-              border:
-                "1px solid #ccc",
-              borderRadius:
-                "5px",
-            }}
-          />
-        </div>
-
-        <div>
-          <label
-            style={{
-              display:
-                "block",
-              marginBottom:
-                "6px",
-              fontWeight:
-                700,
-            }}
-          >
-            Semaine
-          </label>
-
+        <label>
+          Semaine :
           <input
             type="number"
             min={1}
             max={53}
-            value={
-              semaine
-            }
-            onChange={(
-              e
-            ) =>
+            value={semaine}
+            onChange={(e) =>
               setSemaine(
-                Number(
-                  e.target.value
-                )
+                e.target.value
               )
             }
             style={{
-              width:
-                "110px",
-              padding:
-                "10px",
-              border:
-                "1px solid #ccc",
-              borderRadius:
-                "5px",
+              marginLeft: 8,
+              width: 70,
             }}
           />
-        </div>
+        </label>
+
+        <label>
+          Année :
+          <input
+            type="number"
+            value={annee}
+            onChange={(e) =>
+              setAnnee(
+                e.target.value
+              )
+            }
+            style={{
+              marginLeft: 8,
+              width: 90,
+            }}
+          />
+        </label>
 
         <button
-          type="button"
-          onClick={
-            exporter
-          }
-          disabled={
-            loading
-          }
+          onClick={exporter}
+          disabled={chargement}
           style={{
-            padding:
-              "11px 20px",
             background:
               "#c00000",
-            color:
-              "#fff",
-            border:
-              "none",
-            borderRadius:
-              "5px",
+            color: "white",
+            border: "none",
+            padding:
+              "10px 18px",
+            borderRadius: 4,
             cursor:
-              loading
-                ? "wait"
+              chargement
+                ? "default"
                 : "pointer",
             fontWeight:
-              700,
+              "bold",
           }}
         >
-          {loading
-            ? "Export en cours..."
+          {chargement
+            ? "Génération..."
             : "Exporter la semaine"}
         </button>
       </div>
@@ -3291,67 +2517,17 @@ export default function ExportExcelPage() {
       {message && (
         <div
           style={{
-            marginTop:
-              "20px",
-            padding:
-              "12px 15px",
+            marginTop: 25,
+            padding: 15,
             background:
-              message.startsWith(
-                "Erreur"
-              )
-                ? "#f8d7da"
-                : "#d4edda",
-            color:
-              message.startsWith(
-                "Erreur"
-              )
-                ? "#721c24"
-                : "#155724",
-            borderRadius:
-              "5px",
+              "#f5f5f5",
+            border:
+              "1px solid #ddd",
           }}
         >
           {message}
         </div>
       )}
-
-      <div
-        style={{
-          marginTop:
-            "30px",
-          padding:
-            "15px",
-          background:
-            "#f5f5f5",
-          borderRadius:
-            "6px",
-          maxWidth:
-            "850px",
-        }}
-      >
-        <strong>
-          Export :
-        </strong>{" "}
-        un seul onglet{" "}
-        <strong>
-          S
-          {String(
-            semaine
-          ).padStart(
-            2,
-            "0"
-          )}
-          -
-          {annee}
-        </strong>
-        , construit depuis le{" "}
-        <strong>
-          Gabarit
-        </strong>
-        et alimenté uniquement avec les
-        collaborateurs ayant une feuille
-        pour cette semaine.
-      </div>
     </main>
   );
 }
