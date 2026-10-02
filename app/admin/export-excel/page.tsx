@@ -10,6 +10,17 @@ type Collaborateur = {
   nom: string;
   trigramme: string | null;
   actif: boolean;
+  profil_horaire_id: string | null;
+};
+
+type ProfilHoraire = {
+  id: string;
+  nom: string | null;
+  lundi: number | null;
+  mardi: number | null;
+  mercredi: number | null;
+  jeudi: number | null;
+  vendredi: number | null;
 };
 
 type Feuille = {
@@ -32,7 +43,7 @@ type Jour = {
   duree_rtt: number | null;
   heures_re: number | null;
   heures_absence: number | null;
-  duree_cp: number | null;
+  duree_cp: string | null;
   ticket_restaurant: boolean | null;
   total_heures: number | null;
 };
@@ -225,25 +236,67 @@ function appliquerToutesLesBordures(
     },
   };
 
+  /*
+   * Pas de quadrillage horizontal généralisé.
+   *
+   * Bordures verticales :
+   * - A:AO : séparation de toutes les colonnes ;
+   * - AP, AR, AT, AV, AX, AZ, BB : début de chaque paire
+   *   journalière ;
+   * - pas de séparation verticale entre les deux cellules d'une
+   *   paire de statut ;
+   * - BC : bordure droite extérieure.
+   */
+  const colonnesBordureGauche = new Set<number>();
+
+  for (let colonne = 0; colonne <= COL_ADMIN_FIN; colonne++) {
+    colonnesBordureGauche.add(colonne);
+  }
+
+  [
+    COL_JOURS_DEBUT,
+    COL_JOURS_DEBUT + 2,
+    COL_JOURS_DEBUT + 4,
+    COL_JOURS_DEBUT + 6,
+    COL_JOURS_DEBUT + 8,
+    COL_JOURS_DEBUT + 10,
+    COL_JOURS_DEBUT + 12,
+  ].forEach((colonne) => {
+    colonnesBordureGauche.add(colonne);
+  });
+
   for (let ligne = 1; ligne <= derniereLigne; ligne++) {
     for (let colonne = 0; colonne < NB_COLONNES; colonne++) {
       const adresse = cell(colonne, ligne);
+
       const ancienne = feuille[adresse] || {
         t: "s",
         v: "",
       };
 
+      const borduresExistantes = {
+        ...(ancienne.s?.border || {}),
+      };
+
+      if (colonnesBordureGauche.has(colonne)) {
+        borduresExistantes.left = bordure;
+      }
+
+      if (colonne === NB_COLONNES - 1) {
+        borduresExistantes.right = bordure;
+      }
+
+      /*
+       * Très important :
+       * on ne définit NI top NI bottom ici.
+       * Les seules bordures horizontales seront ajoutées
+       * explicitement au début des blocs collaborateurs.
+       */
       feuille[adresse] = {
         ...ancienne,
         s: {
           ...(ancienne.s || {}),
-          border: {
-            ...(ancienne.s?.border || {}),
-            top: bordure,
-            bottom: bordure,
-            left: bordure,
-            right: bordure,
-          },
+          border: borduresExistantes,
         },
       };
     }
@@ -682,6 +735,23 @@ function estCodeAdministratif(
   );
 }
 
+/**
+ * Un code administratif n'est pas forcément un code d'absence.
+ *
+ * Exemple important : NI est un code administratif/Divers, mais ce
+ * n'est PAS un code d'absence journalier. Il doit donc rester dans
+ * Z:AO et ne doit jamais être exporté dans AP:AQ / AR:AS / etc.
+ *
+ * La source de vérité est la catégorie gérée dans Gestion-code.
+ */
+function estCodeAbsenceJournalier(
+  codeInfo?: CodeImputation
+) {
+  return (
+    codeInfo?.categorie || ""
+  ).trim().toUpperCase() === "ABSENCE";
+}
+
 function appliquerBordureSuperieure(
   feuille: XLSX.WorkSheet,
   adresse: string
@@ -912,13 +982,108 @@ export default function ExportExcelPage() {
       } = await supabase
         .from("collaborateurs")
         .select(
-          "id, prenom, nom, trigramme, actif"
+          "id, prenom, nom, trigramme, actif, profil_horaire_id"
         )
         .eq("actif", true)
         .order("nom");
 
       if (erreurCollaborateurs) {
         throw erreurCollaborateurs;
+      }
+
+      /*
+       * ============================================================
+       * 5 BIS. PROFILS HORAIRES
+       *
+       * Pour les CP/ML en journée complète, heures_theoriques
+       * est volontairement à 0 dans la nouvelle application.
+       * L'export doit donc retrouver l'objectif normal du jour
+       * via le profil horaire du collaborateur.
+       * ============================================================
+       */
+
+      const profilsIds =
+        Array.from(
+          new Set(
+            (collaborateurs || [])
+              .map(
+                (c: Collaborateur) =>
+                  c.profil_horaire_id
+              )
+              .filter(Boolean)
+          )
+        );
+
+      let profilsHoraires: ProfilHoraire[] = [];
+
+      if (profilsIds.length) {
+        const {
+          data: profils,
+          error: erreurProfils,
+        } = await supabase
+          .from("profils_horaires")
+          .select(
+            `
+              id,
+              nom,
+              lundi,
+              mardi,
+              mercredi,
+              jeudi,
+              vendredi
+            `
+          )
+          .in("id", profilsIds);
+
+        if (erreurProfils) {
+          throw erreurProfils;
+        }
+
+        profilsHoraires =
+          (profils || []) as ProfilHoraire[];
+      }
+
+      const profilParId =
+        new Map<string, ProfilHoraire>();
+
+      profilsHoraires.forEach(
+        (profil) => {
+          profilParId.set(
+            profil.id,
+            profil
+          );
+        }
+      );
+
+      function objectifNormalDuJour(
+        collaborateur: Collaborateur,
+        jourSemaine: number
+      ): number {
+        if (jourSemaine < 0 || jourSemaine > 6) {
+          return 0;
+        }
+
+        const profil = collaborateur.profil_horaire_id
+          ? profilParId.get(
+              collaborateur.profil_horaire_id
+            )
+          : undefined;
+
+        if (!profil) {
+          return 0;
+        }
+
+        const objectifs = [
+          Number(profil.lundi || 0),
+          Number(profil.mardi || 0),
+          Number(profil.mercredi || 0),
+          Number(profil.jeudi || 0),
+          Number(profil.vendredi || 0),
+          0,
+          0,
+        ];
+
+        return objectifs[jourSemaine];
       }
 
       /*
@@ -1360,7 +1525,12 @@ export default function ExportExcelPage() {
 
       let ligne = 3;
 
+      // Lignes exactes où commence chaque bloc collaborateur.
+      // On s'en sert uniquement pour poser la bordure supérieure.
+      const lignesDebutBlocs: number[] = [];
+
       for (const collaborateur of collaborateursExport) {
+        lignesDebutBlocs.push(ligne);
         const collaborateurLigne = ligne;
 
         const feuille =
@@ -1673,33 +1843,32 @@ export default function ExportExcelPage() {
         }> = [];
 
         /*
-         * Les absences peuvent être stockées de deux façons dans
-         * le nouveau système :
+         * Pour chaque journée, on récupère les codes administratifs
+         * réellement présents dans les données.
          *
-         *  1. directement dans feuilles_heures_jours.absence
-         *  2. comme imputation Divers avec le code métier
+         * Sources possibles :
+         *  - imputation Divers pour un code dont la catégorie
+         *    Gestion-code est ABSENCE (ex. ML, CP, VM...)
+         *  - colonne absence de feuilles_heures_jours, uniquement
+         *    pour un code de catégorie ABSENCE
+         *  - heures_re pour RE
          *
-         * On regarde donc les deux sources. Cela permet notamment
-         * de récupérer un changement CP -> ML fait dans la feuille.
+         * IMPORTANT :
+         * RE est traité indépendamment de absence.
+         * Cela évite qu'un ancien code CP/ML dans absence empêche
+         * le RE du jour d'être exporté.
          */
         joursCollab.forEach((jour) => {
-          const absenceBrute =
-            (jour.absence || "")
-              .trim()
-              .toUpperCase();
-
-          /*
-           * Toutes les imputations Divers de cette journée.
-           * On s'en sert notamment lorsqu'absence contient seulement
-           * un statut générique ou n'est pas renseigné.
-           */
           const imputationsDiversJour =
             imputationsCollab.filter((imp) => {
-              if (imp.jour_id !== jour.id) return false;
+              if (imp.jour_id !== jour.id) {
+                return false;
+              }
 
-              const type = normaliserType(
-                imp.type_affaire
-              );
+              const type =
+                normaliserType(
+                  imp.type_affaire
+                );
 
               return (
                 type === "DIVERS" ||
@@ -1708,99 +1877,30 @@ export default function ExportExcelPage() {
             });
 
           /*
-           * On cherche d'abord un éventuel code d'absence réellement
-           * enregistré dans l'imputation Divers de la journée.
-           * Exemple : ML = 7 h.
-           */
-          const imputationAbsence =
-            imputationsDiversJour.find((imp) => {
-              const code =
-                (imp.code || "")
-                  .trim()
-                  .toUpperCase();
-
-              if (!code || code === "AUTRE") {
-                return false;
-              }
-
-              const info =
-                codesMetier.find(
-                  (c) =>
-                    c.code
-                      .trim()
-                      .toUpperCase() === code
-                );
-
-              return (
-                adminSet.has(code) ||
-                (info?.autorise_divers === true &&
-                  !estCodeProduction(code, info))
-              );
-            });
-
-          const codeImputationAbsence =
-            (imputationAbsence?.code || "")
-              .trim()
-              .toUpperCase();
-
-          const heuresImputationAbsence =
-            Number(
-              imputationAbsence?.heures || 0
-            );
-
-          /*
-           * Priorité :
-           *  - un code d'absence explicite dans la colonne absence
-           *  - sinon le code administratif enregistré en Divers
-           */
-          const codeAbsence =
-            absenceBrute &&
-            absenceBrute !== "AUTRE" &&
-            absenceBrute !== "ABSENT"
-              ? absenceBrute
-              : codeImputationAbsence;
-
-          if (codeAbsence) {
-            const heuresAbsence =
-              Number(
-                jour.heures_absence ||
-                  jour.duree_cp ||
-                  heuresImputationAbsence ||
-                  (codeAbsence === "CP"
-                    ? jour.heures_theoriques
-                    : jour.heures_theoriques) ||
-                  0
-              );
-
-            if (heuresAbsence > 0) {
-              absencesJournalieres.push({
-                jour,
-                code: codeAbsence,
-                heures: heuresAbsence,
-              });
-            }
-
-            return;
-          }
-
-          /*
-           * RE est stocké directement dans heures_re.
-           * Si une imputation RE existe déjà pour cette journée,
-           * on prend son montant ; sinon on utilise heures_re.
+           * --------------------------------------------------------
+           * 1. RE
+           * --------------------------------------------------------
+           *
+           * On aura toujours un nombre d'heures à exporter en face
+           * de RE. La source principale est heures_re.
+           * Une éventuelle imputation Divers RE est utilisée
+           * comme secours.
            */
           const imputationRE =
-            imputationsDiversJour.find((imp) => {
-              return (
-                (imp.code || "")
+            imputationsDiversJour.find(
+              (imp) =>
+                (
+                  imp.code || ""
+                )
                   .trim()
-                  .toUpperCase() === "RE"
-              );
-            });
+                  .toUpperCase() ===
+                "RE"
+            );
 
           const heuresRE =
             Number(
-              imputationRE?.heures ||
-                jour.heures_re ||
+              jour.heures_re ||
+                imputationRE?.heures ||
                 0
             );
 
@@ -1811,36 +1911,280 @@ export default function ExportExcelPage() {
               heures: heuresRE,
             });
           }
-        });
 
-        const heuresJournalieresParCode: Record<string, number> = {};
+          /*
+           * --------------------------------------------------------
+           * 2. AUTRES CODES ADMINISTRATIFS DE LA JOURNEE
+           * --------------------------------------------------------
+           */
 
-        absencesJournalieres.forEach((item) => {
-          heuresJournalieresParCode[item.code] =
+          const codesDiversDuJour =
+            new Map<
+              string,
+              number
+            >();
+
+          imputationsDiversJour.forEach(
+            (imp) => {
+              const code =
+                (
+                  imp.code || ""
+                )
+                  .trim()
+                  .toUpperCase();
+
+              if (
+                !code ||
+                code === "AUTRE" ||
+                code === "RE"
+              ) {
+                return;
+              }
+
+              const info =
+                codesMetier.find(
+                  (c) =>
+                    c.code
+                      .trim()
+                      .toUpperCase() ===
+                    code
+                );
+
+              /*
+               * IMPORTANT : ici on ne veut PAS tous les codes
+               * administratifs.
+               *
+               * La paire journalière AP:AQ / AR:AS / ... est réservée
+               * aux vrais codes d'absence définis dans Gestion-code.
+               *
+               * NI, FO, FI, RN, etc. restent des codes Divers/Admin
+               * et doivent uniquement apparaître dans Z:AO.
+               */
+              if (!estCodeAbsenceJournalier(info)) {
+                return;
+              }
+
+              const heures =
+                Number(
+                  imp.heures || 0
+                );
+
+              if (heures <= 0) {
+                return;
+              }
+
+              codesDiversDuJour.set(
+                code,
+                (
+                  codesDiversDuJour.get(
+                    code
+                  ) || 0
+                ) + heures
+              );
+            }
+          );
+
+          for (
+            const [
+              code,
+              heures,
+            ] of codesDiversDuJour.entries()
+          ) {
+            absencesJournalieres.push({
+              jour,
+              code,
+              heures,
+            });
+          }
+
+          /*
+           * --------------------------------------------------------
+           * 3. CODE DIRECTEMENT DANS absence
+           * --------------------------------------------------------
+           *
+           * On ne force pas "Absent" en fonction de ce champ si
+           * présence est explicitement PRESENTIEL ou TELETRAVAIL.
+           * C'est précisément ce qui permet de ne pas transformer
+           * le vendredi RE + affaires en "Absent".
+           *
+           * Pour un CP/ML de journée complète, le code reste
+           * exploitable même si heures_theoriques vaut 0 :
+           * on utilise alors l'objectif normal du profil.
+           */
+          const absenceCode =
             (
-              heuresJournalieresParCode[item.code] ||
-              0
-            ) + item.heures;
-        });
+              jour.absence || ""
+            )
+              .trim()
+              .toUpperCase();
 
-        Object.entries(
-          heuresJournalieresParCode
-        ).forEach(([code, heures]) => {
-          const dejaDansDivers =
-            diversParCode[code] || 0;
+          const presence =
+            (
+              jour.presence || ""
+            )
+              .trim()
+              .toUpperCase();
 
-          // Si le code est déjà remonté par une imputation Divers,
-          // on ne le compte pas une deuxième fois.
-          if (dejaDansDivers < heures) {
-            diversParCode[code] =
-              heures;
+          const cpDemiJournee =
+            absenceCode === "CP" &&
+            (
+              jour.duree_cp || ""
+            ) ===
+              "DEMI_JOURNEE";
 
-            totalDivers +=
-              heures - dejaDansDivers;
+          const absenceInfo =
+            codesMetier.find(
+              (c) =>
+                c.code
+                  .trim()
+                  .toUpperCase() ===
+                absenceCode
+            );
+
+          const absenceDirecteValide =
+            absenceCode &&
+            absenceCode !== "AUTRE" &&
+            absenceCode !== "RE" &&
+            estCodeAbsenceJournalier(
+              absenceInfo
+            ) &&
+            (
+              presence !== "PRESENTIEL" ||
+              cpDemiJournee
+            ) &&
+            !Array.from(
+              codesDiversDuJour.keys()
+            ).includes(
+              absenceCode
+            );
+
+          if (
+            absenceDirecteValide
+          ) {
+            const jourSemaine =
+              indexJourSemaine(
+                jour.date_jour
+              );
+
+            const objectifNormal =
+              objectifNormalDuJour(
+                collaborateur,
+                jourSemaine
+              );
+
+            let heuresAbsence =
+              Number(
+                jour.heures_absence ||
+                  0
+              );
+
+            /*
+             * CP :
+             * - journée complète : objectif normal
+             * - demi-journée : moitié de l'objectif normal
+             */
+            if (
+              absenceCode === "CP"
+            ) {
+              if (
+                (
+                  jour.duree_cp || ""
+                ) ===
+                "DEMI_JOURNEE"
+              ) {
+                heuresAbsence =
+                  objectifNormal / 2;
+              } else {
+                heuresAbsence =
+                  objectifNormal;
+              }
+            }
+
+            /*
+             * ML / absences journée :
+             * si aucune valeur spécifique n'existe, on prend
+             * l'objectif normal du profil.
+             */
+            if (
+              heuresAbsence <= 0 &&
+              objectifNormal > 0
+            ) {
+              heuresAbsence =
+                objectifNormal;
+            }
+
+            if (
+              heuresAbsence > 0
+            ) {
+              absencesJournalieres.push({
+                jour,
+                code: absenceCode,
+                heures: heuresAbsence,
+              });
+            }
           }
         });
 
-        if (totalDivers > 0) {
+        /*
+         * On reconstruit les montants Divers à partir des journées.
+         *
+         * RE est ajouté avec ses vraies heures.
+         * CP/ML/etc utilisent les heures journalières calculées.
+         *
+         * Si une imputation Divers existe déjà pour le même code,
+         * on ne double pas les heures.
+         */
+        const heuresJournalieresParCode:
+          Record<
+            string,
+            number
+          > = {};
+
+        absencesJournalieres.forEach(
+          (item) => {
+            heuresJournalieresParCode[
+              item.code
+            ] =
+              (
+                heuresJournalieresParCode[
+                  item.code
+                ] || 0
+              ) +
+              item.heures;
+          }
+        );
+
+        Object.entries(
+          heuresJournalieresParCode
+        ).forEach(
+          ([
+            code,
+            heures,
+          ]) => {
+            const dejaDansDivers =
+              diversParCode[
+                code
+              ] || 0;
+
+            if (
+              dejaDansDivers <
+              heures
+            ) {
+              diversParCode[
+                code
+              ] = heures;
+
+              totalDivers +=
+                heures -
+                dejaDansDivers;
+            }
+          }
+        );
+
+        if (
+          totalDivers > 0 ||
+          absencesJournalieres.length > 0
+        ) {
           appliquerMiseEnForme(
             gabarit,
             feuilleExcel,
@@ -1863,7 +2207,6 @@ export default function ExportExcelPage() {
           /*
            * Codes administratifs
            */
-
           codesAdministratifs.forEach(
             (code, index) => {
               const heures =
@@ -1871,7 +2214,9 @@ export default function ExportExcelPage() {
                   code
                 ] || 0;
 
-              if (!heures) return;
+              if (!heures) {
+                return;
+              }
 
               valeurCellule(
                 feuilleExcel,
@@ -1886,49 +2231,110 @@ export default function ExportExcelPage() {
           );
 
           /*
-           * Pour chaque absence / RE, on reporte aussi
-           * le détail dans la paire quotidienne :
+           * Pour chaque code d'ABSENCE journalier :
            *
-           * AP = heures, AQ = CP
-           * AR = heures, AS = CP
-           * AT = heures, AU = CP
+           * AP = heures, AQ = code
+           * AR = heures, AS = code
            * etc.
            */
-          absencesJournalieres.forEach((item) => {
-            const jourSemaine =
-              indexJourSemaine(
-                item.jour.date_jour
-              );
+          absencesJournalieres.forEach(
+            (item) => {
+              const jourSemaine =
+                indexJourSemaine(
+                  item.jour.date_jour
+                );
 
-            if (
-              jourSemaine < 0 ||
-              jourSemaine > 6
-            ) {
-              return;
+              if (
+                jourSemaine < 0 ||
+                jourSemaine > 6
+              ) {
+                return;
+              }
+
+              const colonne =
+                COL_JOURS_DEBUT +
+                jourSemaine * 2;
+
+              /*
+               * S'il y avait plusieurs codes administratifs
+               * sur la même journée, on additionne les heures
+               * dans la première cellule et on conserve le code
+               * dans la seconde quand une seule paire est utilisée.
+               *
+               * Dans le cas normal POLYNOV (un code administratif
+               * journalier), le résultat est exactement :
+               *   7 | CP
+               *   7 | ML
+               *   2 | RE
+               */
+              const celluleHeures =
+                cell(
+                  colonne,
+                  ligne
+                );
+
+              const celluleCode =
+                cell(
+                  colonne + 1,
+                  ligne
+                );
+
+              const heuresExistantes =
+                Number(
+                  feuilleExcel[
+                    celluleHeures
+                  ]?.v || 0
+                );
+
+              if (
+                heuresExistantes > 0
+              ) {
+                valeurCellule(
+                  feuilleExcel,
+                  celluleHeures,
+                  heuresExistantes +
+                    item.heures
+                );
+
+                /*
+                 * En cas de plusieurs codes sur une même journée,
+                 * on sépare les codes par "/" plutôt que d'en perdre
+                 * un silencieusement.
+                 */
+                const codeExistant =
+                  String(
+                    feuilleExcel[
+                      celluleCode
+                    ]?.v || ""
+                  ).trim();
+
+                const nouveauCode =
+                  codeExistant &&
+                  codeExistant !==
+                    item.code
+                    ? `${codeExistant}/${item.code}`
+                    : item.code;
+
+                valeurCellule(
+                  feuilleExcel,
+                  celluleCode,
+                  nouveauCode
+                );
+              } else {
+                valeurCellule(
+                  feuilleExcel,
+                  celluleHeures,
+                  item.heures
+                );
+
+                valeurCellule(
+                  feuilleExcel,
+                  celluleCode,
+                  item.code
+                );
+              }
             }
-
-            const colonne =
-              COL_JOURS_DEBUT +
-              jourSemaine * 2;
-
-            valeurCellule(
-              feuilleExcel,
-              cell(
-                colonne,
-                ligne
-              ),
-              item.heures
-            );
-
-            valeurCellule(
-              feuilleExcel,
-              cell(
-                colonne + 1,
-                ligne
-              ),
-              item.code
-            );
-          });
+          );
 
           ligne++;
         }
@@ -2138,22 +2544,33 @@ export default function ExportExcelPage() {
                 .trim()
                 .toUpperCase();
 
-            if (absence) {
-              statut = "Absent";
-            } else if (
+            /*
+             * La présence explicite est prioritaire.
+             *
+             * Cela évite qu'un ancien code d'absence resté dans
+             * la colonne absence transforme un jour "PRESENTIEL"
+             * (par exemple vendredi avec 2 h de RE) en "Absent".
+             */
+            if (
               presence ===
-              "TELETRAVAIL"
+                "TELETRAVAIL" ||
+              presence ===
+                "TÉLÉTRAVAIL"
             ) {
               statut =
                 "Télétravail";
             } else if (
               presence ===
-              "PRESENTIEL" ||
+                "PRESENTIEL" ||
               presence ===
-              "PRÉSENTIEL"
+                "PRÉSENTIEL"
             ) {
               statut =
                 "Présentiel";
+            } else if (
+              absence
+            ) {
+              statut = "Absent";
             }
 
             if (!statut) return;
@@ -2254,7 +2671,7 @@ export default function ExportExcelPage() {
          */
 
         ligne =
-          ligneTotal + 2;
+          ligneTotal + 1;
       }
 
       /*
@@ -2287,73 +2704,18 @@ export default function ExportExcelPage() {
       );
 
       /*
-       * Les lignes de début de bloc collaborateur sont réaffirmées
-       * après la grille générale.
+       * Bordure horizontale UNIQUEMENT au-dessus de chaque
+       * bloc collaborateur.
+       *
+       * Aucune ligne vide n'est créée entre deux collaborateurs.
        */
-      let ligneBloc = 3;
-
-      for (const collaborateur of collaborateursExport) {
-        const feuilleCollab =
-          feuilleParCollaborateur.get(
-            collaborateur.id
-          );
-
-        if (!feuilleCollab) continue;
-
-        const joursCollab =
-          jours.filter(
-            (j) =>
-              j.feuille_id ===
-              feuilleCollab.id
-          );
-
-        const idsJoursCollab =
-          new Set(
-            joursCollab.map(
-              (j) => j.id
-            )
-          );
-
-        const imputationsCollab =
-          imputations.filter(
-            (i) =>
-              idsJoursCollab.has(
-                i.jour_id
-              )
-          );
-
-        const clesAffaires =
-          new Set<string>();
-
-        imputationsCollab.forEach((imp) => {
-          const type = normaliserType(
-            imp.type_affaire
-          );
-
-          if (
-            type === "CBE" ||
-            type === "DBE"
-          ) {
-            clesAffaires.add(
-              [
-                type,
-                (imp.numero_affaire || "").trim(),
-                (imp.description || "").trim(),
-              ].join("|")
-            );
-          }
-        });
-
-        for (let c = 0; c < NB_COLONNES; c++) {
+      for (const ligneBloc of lignesDebutBlocs) {
+        for (let colonne = 0; colonne < NB_COLONNES; colonne++) {
           appliquerBordureSuperieure(
             feuilleExcel,
-            cell(c, ligneBloc)
+            cell(colonne, ligneBloc)
           );
         }
-
-        // 1 ligne nom + N affaires + 1 Divers + H/Jour + HS + TOTAL + 1 ligne vide.
-        ligneBloc +=
-          clesAffaires.size + 6;
       }
 
       /*
