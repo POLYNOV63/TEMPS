@@ -784,6 +784,67 @@ export default function ExportExcelPage() {
   const [chargement, setChargement] = useState(false);
   const [message, setMessage] = useState("");
 
+  // Les administrateurs, ainsi que Mathieu MONTBRIZON (MMO) et
+  // Fabien VILLENEUVE (FVI), sont autorisés à lancer l'export.
+  async function verifierDroitExport() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      throw new Error(
+        "Vous devez être connecté."
+      );
+    }
+
+    const { data: collaborateur, error } =
+      await supabase
+        .from("collaborateurs")
+        .select("role, prenom, nom, trigramme")
+        .eq("auth_user_id", user.id)
+        .single();
+
+    if (error) {
+      throw error;
+    }
+
+    const roleUtilisateur =
+      String(collaborateur?.role || "")
+        .trim()
+        .toUpperCase();
+
+    const trigramme =
+      String(collaborateur?.trigramme || "")
+        .trim()
+        .toUpperCase();
+
+    const nomComplet = `${
+      String(collaborateur?.prenom || "")
+        .trim()
+    } ${
+      String(collaborateur?.nom || "")
+        .trim()
+    }`
+      .trim()
+      .toUpperCase();
+
+    const autoriseParNom =
+      nomComplet === "MATHIEU MONTBRIZON" ||
+      nomComplet === "FABIEN VILLENEUVE";
+
+    const autorise =
+      roleUtilisateur === "ADMIN" ||
+      trigramme === "MMO" ||
+      trigramme === "FVI" ||
+      autoriseParNom;
+
+    if (!autorise) {
+      throw new Error(
+        "Vous n'avez pas les droits pour lancer l'export Excel."
+      );
+    }
+  }
+
   async function exporter() {
     try {
       setChargement(true);
@@ -791,36 +852,11 @@ export default function ExportExcelPage() {
 
       /*
        * ============================================================
-       * 1. CONTROLE ADMIN
+       * 1. CONTROLE DES DROITS D'EXPORT
        * ============================================================
        */
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        throw new Error(
-          "Vous devez être connecté."
-        );
-      }
-
-      const { data: profil, error: erreurProfil } =
-        await supabase
-          .from("collaborateurs")
-          .select("role")
-          .eq("auth_user_id", user.id)
-          .single();
-
-      if (erreurProfil) {
-        throw erreurProfil;
-      }
-
-      if (profil?.role !== "ADMIN") {
-        throw new Error(
-          "Vous n'avez pas les droits administrateur."
-        );
-      }
+      await verifierDroitExport();
 
       /*
        * ============================================================
@@ -2719,6 +2755,32 @@ export default function ExportExcelPage() {
       }
 
       /*
+       * Bordure supérieure sur toute la ligne 2.
+       */
+      for (let colonne = 0; colonne < NB_COLONNES; colonne++) {
+        appliquerBordureSuperieure(
+          feuilleExcel,
+          cell(colonne, 2)
+        );
+      }
+
+      /*
+       * Les libellés H/Jour, HEURES SUP et TOTAL sont en gras.
+       */
+      [ligneHjour, ligneHS, ligneTotal].forEach((ligneSpeciale) => {
+        appliquerStyleCellule(
+          feuilleExcel,
+          `C${ligneSpeciale}`,
+          {
+            font: {
+              ...(feuilleExcel[`C${ligneSpeciale}`]?.s?.font || {}),
+              bold: true,
+            },
+          }
+        );
+      });
+
+      /*
        * ============================================================
        * 17. REF FINAL
        * ============================================================
@@ -2730,27 +2792,26 @@ export default function ExportExcelPage() {
           3
         )}`;
 
-      // Ajustement automatique de la largeur de la colonne A.
-      let longueurMaxColonneA = 0;
-
-      for (let r = 1; r <= ligne; r++) {
-        const valeur =
-          feuilleExcel[`A${r}`]?.v;
-
-        if (valeur !== undefined && valeur !== null) {
-          longueurMaxColonneA = Math.max(
-            longueurMaxColonneA,
-            String(valeur).length
-          );
-        }
-      }
-
+      /*
+       * Largeurs imposées pour rester conformes à l'ancien système.
+       * A = 25 ; C = 16 ; D = 10.
+       */
       feuilleExcel["!cols"] =
         feuilleExcel["!cols"] || [];
 
       feuilleExcel["!cols"][0] = {
         ...(feuilleExcel["!cols"][0] || {}),
-        wch: Math.max(18, Math.min(42, longueurMaxColonneA + 3)),
+        wch: 25,
+      };
+
+      feuilleExcel["!cols"][2] = {
+        ...(feuilleExcel["!cols"][2] || {}),
+        wch: 16,
+      };
+
+      feuilleExcel["!cols"][3] = {
+        ...(feuilleExcel["!cols"][3] || {}),
+        wch: 10,
       };
 
       /*
@@ -2795,101 +2856,232 @@ export default function ExportExcelPage() {
     }
   }
 
+  const apercuLundi = lundiISO(
+    Number(annee),
+    Number(semaine)
+  );
+
+  const apercuDimanche = new Date(
+    `${apercuLundi}T12:00:00`
+  );
+
+  apercuDimanche.setDate(
+    apercuDimanche.getDate() + 6
+  );
+
+  const formatApercuDate = (date: Date) =>
+    date.toLocaleDateString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+
   return (
     <main
       style={{
-        padding: 30,
-        fontFamily:
-          "Calibri, Arial, sans-serif",
+        minHeight: "100vh",
+        padding: "50px 30px",
+        background: "#f5f5f5",
+        fontFamily: "Calibri, Arial, sans-serif",
       }}
     >
-      <h1>
-        Export Excel
-      </h1>
-
       <div
         style={{
-          display: "flex",
-          gap: 15,
-          alignItems: "center",
-          marginTop: 20,
+          maxWidth: 720,
+          margin: "0 auto",
         }}
       >
-        <label>
-          Semaine :
-          <input
-            type="number"
-            min={1}
-            max={53}
-            value={semaine}
-            onChange={(e) =>
-              setSemaine(
-                e.target.value
-              )
-            }
-            style={{
-              marginLeft: 8,
-              width: 70,
-            }}
-          />
-        </label>
-
-        <label>
-          Année :
-          <input
-            type="number"
-            value={annee}
-            onChange={(e) =>
-              setAnnee(
-                e.target.value
-              )
-            }
-            style={{
-              marginLeft: 8,
-              width: 90,
-            }}
-          />
-        </label>
-
-        <button
-          onClick={exporter}
-          disabled={chargement}
-          style={{
-            background:
-              "#c00000",
-            color: "white",
-            border: "none",
-            padding:
-              "10px 18px",
-            borderRadius: 4,
-            cursor:
-              chargement
-                ? "default"
-                : "pointer",
-            fontWeight:
-              "bold",
-          }}
-        >
-          {chargement
-            ? "Génération..."
-            : "Exporter la semaine"}
-        </button>
-      </div>
-
-      {message && (
         <div
           style={{
-            marginTop: 25,
-            padding: 15,
-            background:
-              "#f5f5f5",
-            border:
-              "1px solid #ddd",
+            background: "#c00000",
+            color: "white",
+            borderRadius: "12px 12px 0 0",
+            padding: "22px 26px",
           }}
         >
-          {message}
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 800,
+            }}
+          >
+            Export Excel
+          </div>
+          <div
+            style={{
+              marginTop: 5,
+              opacity: 0.9,
+              fontSize: 14,
+            }}
+          >
+            Sélectionnez la semaine à extraire
+          </div>
         </div>
-      )}
+
+        <div
+          style={{
+            background: "white",
+            borderRadius: "0 0 12px 12px",
+            padding: 30,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+          }}
+        >
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 20,
+            }}
+          >
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                fontWeight: 700,
+              }}
+            >
+              Semaine
+              <select
+                value={semaine}
+                onChange={(e) =>
+                  setSemaine(e.target.value)
+                }
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  border: "1px solid #d9d9d9",
+                  borderRadius: 7,
+                  fontSize: 16,
+                  background: "white",
+                }}
+              >
+                {Array.from({ length: 53 }, (_, index) => {
+                  const numero = index + 1;
+                  return (
+                    <option key={numero} value={numero}>
+                      Semaine {String(numero).padStart(2, "0")}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                fontWeight: 700,
+              }}
+            >
+              Année
+              <select
+                value={annee}
+                onChange={(e) =>
+                  setAnnee(e.target.value)
+                }
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  border: "1px solid #d9d9d9",
+                  borderRadius: 7,
+                  fontSize: 16,
+                  background: "white",
+                }}
+              >
+                {[2025, 2026, 2027, 2028].map((valeur) => (
+                  <option key={valeur} value={valeur}>
+                    {valeur}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div
+            style={{
+              marginTop: 24,
+              padding: "15px 18px",
+              background: "#f8f8f8",
+              border: "1px solid #e6e6e6",
+              borderRadius: 8,
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                color: "#888",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+              }}
+            >
+              Semaine sélectionnée
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 22,
+                fontWeight: 800,
+                color: "#c00000",
+              }}
+            >
+              S{String(semaine).padStart(2, "0")}-{annee}
+            </div>
+            <div
+              style={{
+                marginTop: 4,
+                color: "#666",
+                fontSize: 14,
+              }}
+            >
+              Du {formatApercuDate(new Date(`${apercuLundi}T12:00:00`))}
+              {" au "}
+              {formatApercuDate(apercuDimanche)}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={exporter}
+            disabled={chargement}
+            style={{
+              width: "100%",
+              marginTop: 24,
+              background: chargement ? "#999" : "#c00000",
+              color: "white",
+              border: "none",
+              padding: "14px 18px",
+              borderRadius: 8,
+              cursor: chargement ? "default" : "pointer",
+              fontWeight: 800,
+              fontSize: 16,
+            }}
+          >
+            {chargement
+              ? "Génération du fichier…"
+              : `Exporter S${String(semaine).padStart(2, "0")}-${annee}`}
+          </button>
+
+          {message && (
+            <div
+              style={{
+                marginTop: 18,
+                padding: 14,
+                background: "#f5f5f5",
+                border: "1px solid #ddd",
+                borderRadius: 7,
+                color: "#555",
+                fontSize: 14,
+              }}
+            >
+              {message}
+            </div>
+          )}
+        </div>
+      </div>
     </main>
   );
 }
