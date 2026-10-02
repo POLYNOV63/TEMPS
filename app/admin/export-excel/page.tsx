@@ -2753,6 +2753,7 @@ export default function ExportExcelPage() {
           );
         }
       }
+const lignesSpeciales: number[] = [];
 
       /*
        * Bordure supérieure sur toute la ligne 2.
@@ -2764,21 +2765,22 @@ export default function ExportExcelPage() {
         );
       }
 
+      
       /*
        * Les libellés H/Jour, HEURES SUP et TOTAL sont en gras.
        */
-      [ligneHjour, ligneHS, ligneTotal].forEach((ligneSpeciale) => {
-        appliquerStyleCellule(
-          feuilleExcel,
-          `C${ligneSpeciale}`,
-          {
-            font: {
-              ...(feuilleExcel[`C${ligneSpeciale}`]?.s?.font || {}),
-              bold: true,
-            },
-          }
-        );
-      });
+lignesSpeciales.forEach((ligneSpeciale) => {
+  appliquerStyleCellule(
+    feuilleExcel,
+    `C${ligneSpeciale}`,
+    {
+      font: {
+        ...(feuilleExcel[`C${ligneSpeciale}`]?.s?.font || {}),
+        bold: true,
+      },
+    }
+  );
+});
 
       /*
        * ============================================================
