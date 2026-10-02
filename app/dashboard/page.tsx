@@ -1179,6 +1179,17 @@ if (!collaborateur) {
               />
 
               <Carte
+                icone="📊"
+                titre="Export Excel"
+                description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
+                onClick={() =>
+                  router.push(
+                    "/admin/export-excel"
+                  )
+                }
+              />
+
+              <Carte
                 icone="🏷️"
                 titre="Gestion des codes"
                 description="Gérer les codes, leurs contextes d'utilisation et leur classement dans les bilans"
