@@ -2433,6 +2433,17 @@ export default function ExportExcelPage() {
           "H/Jour"
         );
 
+        appliquerStyleCellule(
+          feuilleExcel,
+          `C${ligneHjour}`,
+          {
+            font: {
+              ...(feuilleExcel[`C${ligneHjour}`]?.s?.font || {}),
+              bold: true,
+            },
+          }
+        );
+
         joursCollab.forEach(
           (jour) => {
             const date =
@@ -2496,6 +2507,17 @@ export default function ExportExcelPage() {
           "HEURES SUP"
         );
 
+        appliquerStyleCellule(
+          feuilleExcel,
+          `C${ligneHS}`,
+          {
+            font: {
+              ...(feuilleExcel[`C${ligneHS}`]?.s?.font || {}),
+              bold: true,
+            },
+          }
+        );
+
         const heuresSupplementaires = Number(
           feuille.heures_supplementaires ||
             0
@@ -2544,6 +2566,17 @@ export default function ExportExcelPage() {
           feuilleExcel,
           `C${ligneTotal}`,
           "TOTAL"
+        );
+
+        appliquerStyleCellule(
+          feuilleExcel,
+          `C${ligneTotal}`,
+          {
+            font: {
+              ...(feuilleExcel[`C${ligneTotal}`]?.s?.font || {}),
+              bold: true,
+            },
+          }
         );
 
         valeurCellule(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 
@@ -14,6 +14,7 @@ type Collaborateur = {
   nom: string | null;
   actif: boolean;
   role: string | null;
+  trigramme?: string | null;
 };
 
 type Feuille = {
@@ -45,7 +46,22 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [prenom, setPrenom] = useState("");
+  const [nom, setNom] = useState("");
+  const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("");
+
+  const accesExportExcel =
+    role === "ADMIN" ||
+    trigramme.trim().toUpperCase() === "MMO" ||
+    trigramme.trim().toUpperCase() === "FVI" ||
+    `${prenom.trim()} ${nom.trim()}`
+      .trim()
+      .toUpperCase() ===
+      "MATHIEU MONTBRIZON" ||
+    `${prenom.trim()} ${nom.trim()}`
+      .trim()
+      .toUpperCase() ===
+      "FABIEN VILLENEUVE";
 
   const [chargement, setChargement] =
     useState(true);
@@ -102,7 +118,7 @@ console.log("ERREUR DASHBOARD", erreurUtilisateur);
         } = await supabase
           .from("collaborateurs")
           .select(
-            "id, prenom, nom, actif, role"
+            "id, prenom, nom, actif, role, trigramme"
           )
           .eq("auth_user_id", user.id)
           .maybeSingle();
@@ -127,6 +143,14 @@ if (!collaborateur) {
 
         setPrenom(
           collaborateur.prenom ?? ""
+        );
+
+        setNom(
+          collaborateur.nom ?? ""
+        );
+
+        setTrigramme(
+          collaborateur.trigramme ?? ""
         );
 
         const roleUtilisateur =
@@ -886,6 +910,20 @@ if (!collaborateur) {
               )
             }
           />
+
+          {accesExportExcel &&
+            role !== "ADMIN" && (
+              <Carte
+                icone="📊"
+                titre="Export Excel"
+                description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
+                onClick={() =>
+                  router.push(
+                    "/admin/export-excel"
+                  )
+                }
+              />
+            )}
         </div>
 
         {/* =====================================================
@@ -1703,7 +1741,7 @@ function estFeuilleComplete(
 
 const styles: Record<
   string,
-  React.CSSProperties
+  CSSProperties
 > = {
   page: {
     minHeight: "100vh",

@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
@@ -617,7 +618,7 @@ function cibleTravailJour(
    PAGE
 ============================================================ */
 
-export default function MaSemaineContent() {
+export default function MaSemainePage() {
   const searchParams =
     useSearchParams();
 
@@ -690,6 +691,24 @@ export default function MaSemaineContent() {
     setSemaineEnregistree,
   ] = useState(false);
 
+  // Une semaine peut être sauvegardée à tout moment sous forme de brouillon.
+  // La validation finale est une étape séparée.
+  const [
+    semaineValidee,
+    setSemaineValidee,
+  ] = useState(false);
+
+  // Indique qu'une modification locale n'a pas encore été enregistrée.
+  const [
+    semaineModifiee,
+    setSemaineModifiee,
+  ] = useState(false);
+
+  // Référence synchrone utilisée par les confirmations de navigation
+  // et par l'avertissement du navigateur avant fermeture/rechargement.
+  const semaineModifieeRef =
+    useRef(false);
+
   const [
     weekendOuvert,
     setWeekendOuvert,
@@ -711,6 +730,57 @@ export default function MaSemaineContent() {
   ] = useState<
     "OK" | "DANGER" | ""
   >("");
+
+  /* ============================================================
+     PROTECTION CONTRE LA PERTE DE SAISIE
+  ============================================================ */
+
+  useEffect(() => {
+    semaineModifieeRef.current =
+      semaineModifiee;
+  }, [semaineModifiee]);
+
+  useEffect(() => {
+    function avertirAvantFermeture(
+      event: BeforeUnloadEvent
+    ) {
+      if (
+        !semaineModifieeRef.current ||
+        feuilleVerrouillee ||
+        modeAdmin
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener(
+      "beforeunload",
+      avertirAvantFermeture
+    );
+
+    return () => {
+      window.removeEventListener(
+        "beforeunload",
+        avertirAvantFermeture
+      );
+    };
+  }, [feuilleVerrouillee, modeAdmin]);
+
+  function confirmerAvantQuitter() {
+    if (
+      semaineModifieeRef.current &&
+      !modeAdmin
+    ) {
+      return window.confirm(
+        "Votre semaine contient des modifications non enregistrées.\n\nVoulez-vous vraiment quitter cette page sans enregistrer ?"
+      );
+    }
+
+    return true;
+  }
 
   /* ============================================================
      CHARGER CODES D'IMPUTATION
@@ -1021,29 +1091,15 @@ export default function MaSemaineContent() {
       );
     }, [semaine]);
 
-  const compteurInitial =
-    compteurBaseSemaine;
-
-  const heuresSupplementairesAuCompteur =
-    modeHeuresSupplementaires === "COMPTEUR"
-      ? heuresSupplementaires
-      : 0;
-
-  const compteurFinal =
-    compteurInitial +
-    heuresSupplementairesAuCompteur -
-    totalRE;
-
-  const compteurDepasse =
-    compteurFinal < -30 ||
-    compteurFinal > 30;
-
   const heuresManquantes =
     Math.max(
       0,
       totalHeuresTheoriques -
         totalHeuresSemaine
     );
+
+  const semaineComplete =
+    heuresManquantes <= 0.01;
 
   const totalTickets =
     semaine.filter(
@@ -1076,9 +1132,16 @@ export default function MaSemaineContent() {
         )
     );
 
-    setSemaineEnregistree(
-      false
-    );
+    setSemaineEnregistree(false);
+    setSemaineValidee(false);
+
+    semaineModifieeRef.current =
+      true;
+    setSemaineModifiee(true);
+
+    // Une nouvelle modification rend obsolète l'ancien message.
+    setMessage("");
+    setMessageType("");
   }
 
   /* ============================================================
@@ -1255,6 +1318,10 @@ export default function MaSemaineContent() {
   ============================================================ */
 
   function semainePrecedente() {
+    if (!confirmerAvantQuitter()) {
+      return;
+    }
+
     const date =
       new Date(
         `${semaine[0].date}T00:00:00`
@@ -1281,10 +1348,17 @@ export default function MaSemaineContent() {
 
     setMessage("");
     setMessageType("");
+    semaineModifieeRef.current = false;
+    setSemaineModifiee(false);
     setSemaineEnregistree(false);
+    setSemaineValidee(false);
   }
 
   function semaineSuivante() {
+    if (!confirmerAvantQuitter()) {
+      return;
+    }
+
     const date =
       new Date(
         `${semaine[0].date}T00:00:00`
@@ -1311,25 +1385,25 @@ export default function MaSemaineContent() {
 
     setMessage("");
     setMessageType("");
+    semaineModifieeRef.current = false;
+    setSemaineModifiee(false);
     setSemaineEnregistree(false);
+    setSemaineValidee(false);
   }
 
   /* ============================================================
      VALIDATION
   ============================================================ */
 
-  function verifierSemaine(): boolean {
+  function verifierSemaine(
+    validationFinale = false
+  ): boolean {
     setMessage("");
     setMessageType("");
 
     for (const jour of semaine) {
-      if (
-        jour.absence === "RE"
-      ) {
-        const heuresRE =
-          convertirHeures(
-            jour.heuresRE
-          );
+      if (jour.absence === CODE_RE) {
+        const heuresRE = convertirHeures(jour.heuresRE);
 
         if (heuresRE <= 0) {
           setMessage(
@@ -1337,18 +1411,11 @@ export default function MaSemaineContent() {
               jour.date
             )} : une récupération (RE) doit obligatoirement être renseignée en heures.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
 
-        if (
-          heuresRE >
-          jour.heuresTheoriques
-        ) {
+        if (heuresRE > jour.heuresTheoriques) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
               jour.date
@@ -1356,11 +1423,7 @@ export default function MaSemaineContent() {
               jour.heuresTheoriques
             )} h.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
       }
@@ -1369,113 +1432,90 @@ export default function MaSemaineContent() {
         const heuresAbsence = convertirHeures(jour.heuresAbsence);
 
         if (heuresAbsence <= 0) {
-          setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : l'absence ${jour.absence} doit obligatoirement être renseignée en heures.`);
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : l'absence ${jour.absence} doit obligatoirement être renseignée en heures.`
+          );
           setMessageType("DANGER");
           return false;
         }
 
         if (heuresAbsence > jour.heuresTheoriques) {
-          setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : l'absence ${jour.absence} ne peut pas dépasser ${formatHeures(jour.heuresTheoriques)} h.`);
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : l'absence ${jour.absence} ne peut pas dépasser ${formatHeures(
+              jour.heuresTheoriques
+            )} h.`
+          );
           setMessageType("DANGER");
           return false;
         }
       }
 
       if (jour.absence === CODE_CP && !jour.dureeCP) {
-        setMessage(`Le ${jour.jour} ${dateAffichage(jour.date)} : choisissez journée ou demi-journée pour les congés payés.`);
+        setMessage(
+          `Le ${jour.jour} ${dateAffichage(
+            jour.date
+          )} : choisissez journée ou demi-journée pour les congés payés.`
+        );
         setMessageType("DANGER");
         return false;
       }
 
       if (
-        jour.absence ===
-          "RTT" &&
-        jour.dureeRTT ===
-          "DEMI_JOURNEE"
+        jour.absence === CODE_RT &&
+        jour.dureeRTT === "DEMI_JOURNEE" &&
+        totalImputations(jour) <= 0
       ) {
-        if (
-          totalImputations(
-            jour
-          ) <= 0
-        ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : un RTT d'une demi-journée doit être complété par des heures travaillées.`
-          );
-
-          setMessageType(
-            "DANGER"
-          );
-
-          return false;
-        }
+        setMessage(
+          `Le ${jour.jour} ${dateAffichage(
+            jour.date
+          )} : un RTT d'une demi-journée doit être complété par des heures travaillées.`
+        );
+        setMessageType("DANGER");
+        return false;
       }
 
-      if (
-        imputationsInterdites(
-          jour,
-          codesImputation
-        )
-      ) {
+      if (imputationsInterdites(jour, codesImputation)) {
         continue;
       }
 
       for (const ligne of jour.imputations) {
-        const heures =
-          convertirHeures(
-            ligne.heures
-          );
+        const heures = convertirHeures(ligne.heures);
 
         if (
-          ligne.typeAffaire !==
-            "Divers" &&
+          ligne.typeAffaire !== "Divers" &&
           ligne.numeroAffaire &&
-          !/^\d{4}$/.test(
-            ligne.numeroAffaire
-          )
+          !/^\d{4}$/.test(ligne.numeroAffaire)
         ) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
               jour.date
             )} : le numéro d'affaire doit comporter exactement 4 chiffres.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
 
         if (
           ligne.heures &&
-          ligne.typeAffaire !==
-            "Divers" &&
-          (
-            !ligne.code ||
-            !/^\d{4}$/.test(
-              ligne.numeroAffaire
-            )
-          )
+          ligne.typeAffaire !== "Divers" &&
+          (!ligne.code || !/^\d{4}$/.test(ligne.numeroAffaire))
         ) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
               jour.date
             )} : impossible de saisir des heures sans code affaire et numéro d'affaire sur 4 chiffres.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
 
         if (
           ligne.heures &&
-          ligne.typeAffaire ===
-            "Divers" &&
+          ligne.typeAffaire === "Divers" &&
           !ligne.code
         ) {
           setMessage(
@@ -1483,11 +1523,7 @@ export default function MaSemaineContent() {
               jour.date
             )} : impossible de saisir des heures sans sélectionner un code Divers.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
 
@@ -1497,53 +1533,43 @@ export default function MaSemaineContent() {
               jour.date
             )} : le nombre d'heures ne peut pas être négatif.`
           );
-
-          setMessageType(
-            "DANGER"
-          );
-
+          setMessageType("DANGER");
           return false;
         }
       }
     }
 
-    if (compteurDepasse) {
+    if (validationFinale) {
+      if (heuresManquantes > 0.01) {
+        setMessage(
+          `Impossible de valider : il manque ${formatHeures(
+            heuresManquantes
+          )} h par rapport au rythme prévu de la semaine.`
+        );
+        setMessageType("DANGER");
+        return false;
+      }
+
       setMessage(
-        `Attention : le compteur de récupération serait de ${formatHeures(
-          compteurFinal
-        )} h. La limite autorisée est de -30 h à +30 h.`
+        "La semaine est complète et prête à être validée."
       );
-
-      setMessageType(
-        "DANGER"
-      );
-
-      return false;
+      setMessageType("OK");
+      return true;
     }
 
-    if (
-      heuresManquantes >
-      0.01
-    ) {
+    if (heuresManquantes > 0.01) {
       setMessage(
-        `Attention : il manque ${formatHeures(
+        `Saisie valide. Le brouillon peut être enregistré ; il reste ${formatHeures(
           heuresManquantes
-        )} h par rapport aux heures théoriques de la semaine.`
-      );
-
-      setMessageType(
-        "DANGER"
+        )} h à renseigner.`
       );
     } else {
       setMessage(
-        "La semaine est correctement renseignée. Vous pouvez maintenant l'enregistrer."
-      );
-
-      setMessageType(
-        "OK"
+        "Semaine complète. Vous pouvez l'enregistrer puis la valider."
       );
     }
 
+    setMessageType("OK");
     return true;
   }
 
@@ -1566,7 +1592,7 @@ export default function MaSemaineContent() {
         error: erreurFeuille,
       } = await supabase
         .from("feuilles_heures")
-        .select("id, mode_heures_supplementaires, compteur_avant, compteur_apres, verrouillee")
+        .select("id, statut, mode_heures_supplementaires, compteur_avant, compteur_apres, verrouillee")
         .eq(
           "collaborateur_id",
           collaborateurId
@@ -1592,6 +1618,7 @@ export default function MaSemaineContent() {
           .from("feuilles_heures")
           .select("semaine_debut, compteur_apres")
           .eq("collaborateur_id", collaborateurId)
+          .eq("statut", "A_TRAITER")
           .lt("semaine_debut", semaineDebut)
           .order("semaine_debut", { ascending: false })
           .limit(1)
@@ -1628,7 +1655,10 @@ export default function MaSemaineContent() {
           )
         );
 
+        semaineModifieeRef.current = false;
+        setSemaineModifiee(false);
         setSemaineEnregistree(false);
+        setSemaineValidee(false);
         return;
       }
 
@@ -1639,8 +1669,17 @@ export default function MaSemaineContent() {
           : 0
       );
 
+      // Pour un brouillon, le choix COMPTEUR/PAYE n'est pas considéré
+      // comme validé. On le redemande lors de la validation finale si
+      // des heures supplémentaires existent.
       setModeHeuresSupplementaires(
-        feuille.mode_heures_supplementaires === "PAYE" ? "PAYE" : "COMPTEUR"
+        feuille.statut === "BROUILLON"
+          ? null
+          : feuille.mode_heures_supplementaires === "PAYE"
+            ? "PAYE"
+            : feuille.mode_heures_supplementaires === "COMPTEUR"
+              ? "COMPTEUR"
+              : null
       );
 
       const {
@@ -1771,9 +1810,33 @@ export default function MaSemaineContent() {
         semaineChargee
       );
 
-      setSemaineEnregistree(
-        true
+      // Une feuille peut exister en base tout en étant incomplète.
+      // Le badge « Semaine enregistrée » ne doit apparaître que si
+      // la semaine chargée atteint bien son objectif d'heures.
+      const totalHeuresChargees = semaineChargee.reduce(
+        (total, jour) => total + totalImputations(jour),
+        0
       );
+
+      const totalTheoriqueCharge = semaineChargee.reduce(
+        (total, jour) =>
+          total + cibleTravailJour(jour, codesImputation),
+        0
+      );
+
+      const feuilleEstComplete =
+        totalHeuresChargees >= totalTheoriqueCharge - 0.01;
+
+      const feuilleEstValidee =
+        feuille.statut === "A_TRAITER" && feuilleEstComplete;
+
+      semaineModifieeRef.current = false;
+      setSemaineModifiee(false);
+      setSemaineEnregistree(true);
+      setSemaineValidee(feuilleEstValidee);
+
+      setMessage("");
+      setMessageType("");
     } catch (error) {
       console.error(
         "Erreur chargement semaine",
@@ -1786,372 +1849,267 @@ export default function MaSemaineContent() {
      ENREGISTREMENT SUPABASE
   ============================================================ */
 
-  async function enregistrerSemaine() {
+  async function recupererCompteurAvant(
+    collaborateurId: string,
+    semaineDebut: string
+  ) {
+    const { data: precedente, error: erreurPrecedente } =
+      await supabase
+        .from("feuilles_heures")
+        .select("semaine_debut, compteur_apres")
+        .eq("collaborateur_id", collaborateurId)
+        .eq("statut", "A_TRAITER")
+        .lt("semaine_debut", semaineDebut)
+        .order("semaine_debut", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (erreurPrecedente) {
+      throw erreurPrecedente;
+    }
+
+    if (
+      precedente?.compteur_apres !== null &&
+      precedente?.compteur_apres !== undefined
+    ) {
+      return Number(precedente.compteur_apres) || 0;
+    }
+
+    const exercice = exercicePOLYNOV(semaineDebut);
+
+    const { data: droit, error: erreurDroit } =
+      await supabase
+        .from("rh_droits")
+        .select("compteur_recuperation_initial")
+        .eq("collaborateur_id", collaborateurId)
+        .eq("exercice", exercice)
+        .maybeSingle();
+
+    if (erreurDroit) {
+      throw erreurDroit;
+    }
+
+    return (
+      droit?.compteur_recuperation_initial !== null &&
+      droit?.compteur_recuperation_initial !== undefined
+        ? Number(droit.compteur_recuperation_initial) || 0
+        : Number(collaborateur?.compteur_recuperation ?? 0) || 0
+    );
+  }
+
+  async function sauvegarderSemaine(
+    validationFinale: boolean,
+    modeForce?: ModeHeuresSupplementaires
+  ) {
     if (feuilleVerrouillee && !modeAdmin) {
-      setMessage("Cette feuille est verrouillée par l'administration. Elle ne peut plus être modifiée.");
+      setMessage(
+        "Cette feuille est verrouillée par l'administration. Elle ne peut plus être modifiée."
+      );
       setMessageType("DANGER");
       return;
     }
 
     if (!collaborateur) {
-      setMessage(
-        "Le collaborateur n'est pas chargé."
-      );
-
-      setMessageType(
-        "DANGER"
-      );
-
+      setMessage("Le collaborateur n'est pas chargé.");
+      setMessageType("DANGER");
       return;
     }
 
-    if (heuresSupplementaires > 0.01 && modeHeuresSupplementaires === null) {
-      setChoixHeuresSupOuvert(true);
-      return;
-    }
-
-    const valide =
-      verifierSemaine();
-
+    const valide = verifierSemaine(validationFinale);
     if (!valide) {
       return;
     }
 
+    const modeEffectif = modeForce ?? modeHeuresSupplementaires;
+
+    if (
+      validationFinale &&
+      heuresSupplementaires > 0.01 &&
+      modeEffectif === null
+    ) {
+      setChoixHeuresSupOuvert(true);
+      return;
+    }
+
     setEnregistrement(true);
-
     setMessage(
-      "Enregistrement de la semaine..."
+      validationFinale
+        ? "Validation et enregistrement de la semaine..."
+        : "Enregistrement du brouillon..."
     );
-
     setMessageType("OK");
 
     try {
-      const semaineDebut =
-        semaine[0].date;
+      const semaineDebut = semaine[0].date;
+
+      const compteurAvantEnregistrement =
+        await recupererCompteurAvant(
+          collaborateur.id,
+          semaineDebut
+        );
+
+      setCompteurBaseSemaine(compteurAvantEnregistrement);
+
+      const heuresSupplementairesCompteur =
+        validationFinale && modeEffectif === "COMPTEUR"
+          ? heuresSupplementaires
+          : 0;
+
+      const compteurApresEnregistrement =
+        validationFinale
+          ? compteurAvantEnregistrement +
+            heuresSupplementairesCompteur -
+            totalRE
+          : compteurAvantEnregistrement;
+
+      if (
+        validationFinale &&
+        (compteurApresEnregistrement < -30 ||
+          compteurApresEnregistrement > 30)
+      ) {
+        setMessage(
+          `Le compteur de récupération serait de ${formatHeures(
+            compteurApresEnregistrement
+          )} h. La limite autorisée est de -30 h à +30 h.`
+        );
+        setMessageType("DANGER");
+        return;
+      }
 
       const {
-        data:
-          feuilleExistante,
-        error:
-          erreurRecherche,
+        data: feuilleExistante,
+        error: erreurRecherche,
       } = await supabase
-        .from(
-          "feuilles_heures"
-        )
+        .from("feuilles_heures")
         .select("id")
-        .eq(
-          "collaborateur_id",
-          collaborateur.id
-        )
-        .eq(
-          "semaine_debut",
-          semaineDebut
-        )
+        .eq("collaborateur_id", collaborateur.id)
+        .eq("semaine_debut", semaineDebut)
         .maybeSingle();
 
       if (erreurRecherche) {
         throw erreurRecherche;
       }
 
+      const statut = validationFinale
+        ? "A_TRAITER"
+        : "BROUILLON";
+
+      const donneesFeuille = {
+        statut,
+        total_heures: totalHeuresSemaine,
+        total_theorique: base35Semaine,
+        heures_supplementaires: heuresSupplementaires,
+        // Le statut BROUILLON permet de sauvegarder à tout moment.
+        // On conserve une valeur technique COMPTEUR pour rester compatible
+        // avec une éventuelle contrainte NOT NULL sur cette colonne ;
+        // elle est volontairement ignorée au rechargement d'un brouillon.
+        mode_heures_supplementaires: validationFinale
+          ? modeEffectif
+          : "COMPTEUR",
+        total_re: totalRE,
+        compteur_avant: compteurAvantEnregistrement,
+        compteur_apres: validationFinale
+          ? compteurApresEnregistrement
+          : compteurAvantEnregistrement,
+        updated_at: new Date().toISOString(),
+      };
+
       let feuilleId: string;
 
-      // Recalcule la base de la feuille à partir de la feuille précédente.
-      // Cela évite qu'une modification d'une semaine utilise par erreur
-      // le compteur courant du collaborateur.
-      const { data: feuillePrecedente, error: erreurFeuillePrecedente } = await supabase
-        .from("feuilles_heures")
-        .select("semaine_debut, compteur_apres")
-        .eq("collaborateur_id", collaborateur.id)
-        .lt("semaine_debut", semaineDebut)
-        .order("semaine_debut", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (erreurFeuillePrecedente) throw erreurFeuillePrecedente;
-
-      let compteurAvantEnregistrement = compteurBaseSemaine;
-
-      if (feuillePrecedente?.compteur_apres !== null && feuillePrecedente?.compteur_apres !== undefined) {
-        compteurAvantEnregistrement = Number(feuillePrecedente.compteur_apres) || 0;
-        setCompteurBaseSemaine(compteurAvantEnregistrement);
-      } else {
-        const exercice = exercicePOLYNOV(semaineDebut);
-        const { data: droit, error: erreurDroit } = await supabase
-          .from("rh_droits")
-          .select("compteur_recuperation_initial")
-          .eq("collaborateur_id", collaborateur.id)
-          .eq("exercice", exercice)
-          .maybeSingle();
-
-        if (erreurDroit) throw erreurDroit;
-
-        if (droit?.compteur_recuperation_initial !== null && droit?.compteur_recuperation_initial !== undefined) {
-          compteurAvantEnregistrement = Number(droit.compteur_recuperation_initial) || 0;
-        }
-
-        setCompteurBaseSemaine(compteurAvantEnregistrement);
-      }
-
-      const compteurApresEnregistrement =
-        compteurAvantEnregistrement +
-        heuresSupplementairesAuCompteur -
-        totalRE;
-
-      if (compteurApresEnregistrement < -30 || compteurApresEnregistrement > 30) {
-        setMessage(
-          `Le compteur de récupération serait de ${formatHeures(compteurApresEnregistrement)} h. La limite autorisée est de -30 h à +30 h.`
-        );
-        setMessageType("DANGER");
-        setEnregistrement(false);
-        return;
-      }
-
       if (feuilleExistante) {
-        feuilleId =
-          feuilleExistante.id;
+        feuilleId = feuilleExistante.id;
 
-        const {
-          error:
-            erreurSuppressionJours,
-        } =
+        const { error: erreurSuppressionJours } =
           await supabase
-            .from(
-              "feuilles_heures_jours"
-            )
+            .from("feuilles_heures_jours")
             .delete()
-            .eq(
-              "feuille_id",
-              feuilleId
-            );
+            .eq("feuille_id", feuilleId);
 
-        if (
-          erreurSuppressionJours
-        ) {
+        if (erreurSuppressionJours) {
           throw erreurSuppressionJours;
         }
 
-        const {
-          error:
-            erreurUpdate,
-        } =
+        const { error: erreurUpdate } =
           await supabase
-            .from(
-              "feuilles_heures"
-            )
-            .update({
-              statut:
-                "A_TRAITER",
-
-              total_heures:
-                totalHeuresSemaine,
-
-              total_theorique:
-                base35Semaine,
-
-              heures_supplementaires:
-                heuresSupplementaires,
-
-              mode_heures_supplementaires:
-                modeHeuresSupplementaires ?? "COMPTEUR",
-
-              total_re:
-                totalRE,
-
-              compteur_avant:
-                compteurAvantEnregistrement,
-
-              compteur_apres:
-                compteurApresEnregistrement,
-
-              updated_at:
-                new Date().toISOString(),
-            })
-            .eq(
-              "id",
-              feuilleId
-            );
+            .from("feuilles_heures")
+            .update(donneesFeuille)
+            .eq("id", feuilleId);
 
         if (erreurUpdate) {
           throw erreurUpdate;
         }
       } else {
         const {
-          data:
-            nouvelleFeuille,
-          error:
-            erreurCreation,
-        } =
-          await supabase
-            .from(
-              "feuilles_heures"
-            )
-            .insert({
-              collaborateur_id:
-                collaborateur.id,
-
-              semaine_debut:
-                semaineDebut,
-
-              date_debut_semaine:
-                semaineDebut,
-
-              statut:
-                "A_TRAITER",
-
-              total_heures:
-                totalHeuresSemaine,
-
-              total_theorique:
-                base35Semaine,
-
-              heures_supplementaires:
-                heuresSupplementaires,
-
-              mode_heures_supplementaires:
-                modeHeuresSupplementaires ?? "COMPTEUR",
-
-              total_re:
-                totalRE,
-
-              compteur_avant:
-                compteurAvantEnregistrement,
-
-              compteur_apres:
-                compteurApresEnregistrement,
-
-              verrouillee:
-                false,
-
-              verrouillee_le:
-                null,
-
-              verrouillee_par:
-                null,
-            })
-            .select("id")
-            .single();
+          data: nouvelleFeuille,
+          error: erreurCreation,
+        } = await supabase
+          .from("feuilles_heures")
+          .insert({
+            collaborateur_id: collaborateur.id,
+            semaine_debut: semaineDebut,
+            date_debut_semaine: semaineDebut,
+            ...donneesFeuille,
+            verrouillee: false,
+            verrouillee_le: null,
+            verrouillee_par: null,
+          })
+          .select("id")
+          .single();
 
         if (erreurCreation) {
           throw erreurCreation;
         }
 
         if (!nouvelleFeuille) {
-          throw new Error(
-            "La feuille n'a pas pu être créée."
-          );
+          throw new Error("La feuille n'a pas pu être créée.");
         }
 
-        feuilleId =
-          nouvelleFeuille.id;
+        feuilleId = nouvelleFeuille.id;
       }
 
-      /* --------------------------------------------------------
-         JOURNEES
-      -------------------------------------------------------- */
+      const joursAInserer = semaine.map(
+        jour => ({
+          feuille_id: feuilleId,
+          date_jour: jour.date,
+          heures_theoriques: jour.heuresTheoriques,
+          presence: jour.presence,
+          absence: jour.estFerie ? CODE_FE : jour.absence,
+          duree_rtt: jour.dureeRTT,
+          heures_re: convertirHeures(jour.heuresRE),
+          heures_absence: convertirHeures(jour.heuresAbsence),
+          duree_cp: jour.dureeCP,
+          ticket_restaurant: jour.ticketRestaurant,
+          total_heures: totalImputations(jour),
+        })
+      );
 
-      const joursAInserer =
-        semaine.map(
-          jour => ({
-            feuille_id:
-              feuilleId,
-
-            date_jour:
-              jour.date,
-
-            heures_theoriques:
-              jour.heuresTheoriques,
-
-            presence:
-              jour.presence,
-
-            absence:
-              jour.estFerie ? CODE_FE : jour.absence,
-
-            duree_rtt:
-              jour.dureeRTT,
-
-            heures_re:
-              convertirHeures(
-                jour.heuresRE
-              ),
-
-            heures_absence:
-              convertirHeures(
-                jour.heuresAbsence
-              ),
-
-            duree_cp:
-              jour.dureeCP,
-
-            ticket_restaurant:
-              jour.ticketRestaurant,
-
-            total_heures:
-              totalImputations(
-                jour
-              ),
-          })
-        );
-
-      const {
-        data:
-          joursCrees,
-        error:
-          erreurJours,
-      } =
+      const { data: joursCrees, error: erreurJours } =
         await supabase
-          .from(
-            "feuilles_heures_jours"
-          )
-          .insert(
-            joursAInserer
-          )
-          .select(
-            "id,date_jour"
-          );
+          .from("feuilles_heures_jours")
+          .insert(joursAInserer)
+          .select("id,date_jour");
 
       if (erreurJours) {
         throw erreurJours;
       }
 
       if (!joursCrees) {
-        throw new Error(
-          "Les journées n'ont pas pu être enregistrées."
-        );
+        throw new Error("Les journées n'ont pas pu être enregistrées.");
       }
-
-      /* --------------------------------------------------------
-         IMPUTATIONS
-      -------------------------------------------------------- */
 
       const imputationsAInserer: {
         jour_id: string;
-
-        type_affaire:
-          | TypeAffaire;
-
-        numero_affaire:
-          | string
-          | null;
-
-        description:
-          | string
-          | null;
-
+        type_affaire: TypeAffaire;
+        numero_affaire: string | null;
+        description: string | null;
         code: string;
-
         heures: number;
       }[] = [];
 
-      for (
-        const jour of semaine
-      ) {
-        const jourDB =
-          joursCrees.find(
-            j =>
-              j.date_jour ===
-              jour.date
-          );
+      for (const jour of semaine) {
+        const jourDB = joursCrees.find(
+          j => j.date_jour === jour.date
+        );
 
         if (!jourDB) {
           throw new Error(
@@ -2159,10 +2117,7 @@ export default function MaSemaineContent() {
           );
         }
 
-        for (
-          const ligne of
-            jour.imputations
-        ) {
+        for (const ligne of jour.imputations) {
           if (
             !ligne.code &&
             !ligne.heures &&
@@ -2173,115 +2128,114 @@ export default function MaSemaineContent() {
           }
 
           imputationsAInserer.push({
-            jour_id:
-              jourDB.id,
-
-            type_affaire:
-              ligne.typeAffaire,
-
+            jour_id: jourDB.id,
+            type_affaire: ligne.typeAffaire,
             numero_affaire:
-              ligne.typeAffaire ===
-              "Divers"
+              ligne.typeAffaire === "Divers"
                 ? null
-                : ligne.numeroAffaire ||
-                  null,
-
-            description:
-              ligne.description ||
-              null,
-
-            code:
-              ligne.code,
-
-            heures:
-              convertirHeures(
-                ligne.heures
-              ),
+                : ligne.numeroAffaire || null,
+            description: ligne.description || null,
+            code: ligne.code,
+            heures: convertirHeures(ligne.heures),
           });
         }
       }
 
-      if (
-        imputationsAInserer.length >
-        0
-      ) {
-        const {
-          error:
-            erreurImputations,
-        } =
+      if (imputationsAInserer.length > 0) {
+        const { error: erreurImputations } =
           await supabase
-            .from(
-              "feuilles_heures_imputations"
-            )
-            .insert(
-              imputationsAInserer
-            );
+            .from("feuilles_heures_imputations")
+            .insert(imputationsAInserer);
 
-        if (
-          erreurImputations
-        ) {
+        if (erreurImputations) {
           throw erreurImputations;
         }
       }
 
-      /* --------------------------------------------------------
-         RECALCUL CHRONOLOGIQUE DES FEUILLES SUIVANTES
-         Si un admin modifie une ancienne semaine, les compteurs
-         des semaines suivantes restent cohérents.
-      -------------------------------------------------------- */
-      const { data: feuillesSuivantes, error: erreurSuivantes } = await supabase
-        .from("feuilles_heures")
-        .select("id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re")
-        .eq("collaborateur_id", collaborateur.id)
-        .gt("semaine_debut", semaineDebut)
-        .order("semaine_debut", { ascending: true });
+      if (validationFinale) {
+        const {
+          data: feuillesSuivantes,
+          error: erreurSuivantes,
+        } = await supabase
+          .from("feuilles_heures")
+          .select(
+            "id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re"
+          )
+          .eq("collaborateur_id", collaborateur.id)
+          .eq("statut", "A_TRAITER")
+          .gt("semaine_debut", semaineDebut)
+          .order("semaine_debut", { ascending: true });
 
-      if (erreurSuivantes) throw erreurSuivantes;
-
-      let compteurCourant = compteurApresEnregistrement;
-
-      for (const suivante of feuillesSuivantes ?? []) {
-        const hsCompteur = suivante.mode_heures_supplementaires === "COMPTEUR"
-          ? Number(suivante.heures_supplementaires ?? 0)
-          : 0;
-        const re = Number(suivante.total_re ?? 0);
-        const apres = compteurCourant + hsCompteur - re;
-
-        if (apres < -30 || apres > 30) {
-          throw new Error(
-            `Le recalcul de la feuille ${suivante.semaine_debut} dépasse la limite du compteur (${formatHeures(apres)} h).`
-          );
+        if (erreurSuivantes) {
+          throw erreurSuivantes;
         }
 
-        const { error: erreurMajSuivante } = await supabase
-          .from("feuilles_heures")
-          .update({
-            compteur_avant: compteurCourant,
-            compteur_apres: apres,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", suivante.id);
+        let compteurCourant = compteurApresEnregistrement;
 
-        if (erreurMajSuivante) throw erreurMajSuivante;
-        compteurCourant = apres;
+        for (const suivante of feuillesSuivantes ?? []) {
+          const hsCompteur =
+            suivante.mode_heures_supplementaires === "COMPTEUR"
+              ? Number(suivante.heures_supplementaires ?? 0)
+              : 0;
+
+          const re = Number(suivante.total_re ?? 0);
+          const apres = compteurCourant + hsCompteur - re;
+
+          if (apres < -30 || apres > 30) {
+            throw new Error(
+              `Le recalcul de la feuille ${suivante.semaine_debut} dépasse la limite du compteur (${formatHeures(apres)} h).`
+            );
+          }
+
+          const { error: erreurMajSuivante } =
+            await supabase
+              .from("feuilles_heures")
+              .update({
+                compteur_avant: compteurCourant,
+                compteur_apres: apres,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", suivante.id);
+
+          if (erreurMajSuivante) {
+            throw erreurMajSuivante;
+          }
+
+          compteurCourant = apres;
+        }
       }
 
-      setCompteurBaseSemaine(compteurAvantEnregistrement);
       setFeuilleVerrouillee(false);
+      setSemaineEnregistree(true);
+      setSemaineValidee(validationFinale);
+      semaineModifieeRef.current = false;
+      setSemaineModifiee(false);
 
-      setSemaineEnregistree(
-        true
-      );
-
-      setMessage(
-        `Semaine du ${dateAffichage(
-          semaineDebut
-        )} enregistrée avec succès.`
-      );
+      if (validationFinale) {
+        setMessage(
+          `Semaine du ${dateAffichage(
+            semaineDebut
+          )} validée et transmise à POLYNOV.`
+        );
+      } else if (heuresManquantes > 0.01) {
+        setMessage(
+          `Brouillon de la semaine du ${dateAffichage(
+            semaineDebut
+          )} enregistré. Il reste ${formatHeures(
+            heuresManquantes
+          )} h à renseigner.`
+        );
+      } else {
+        setMessage(
+          `Brouillon de la semaine du ${dateAffichage(
+            semaineDebut
+          )} enregistré. La semaine est complète : vous pouvez maintenant la valider.`
+        );
+      }
 
       setMessageType("OK");
     } catch (error) {
-      console.error("Erreur enregistrement semaine", error);
+      console.error("Erreur sauvegarde semaine", error);
 
       const erreurSupabase = error as {
         message?: string;
@@ -2302,21 +2256,24 @@ export default function MaSemaineContent() {
         .join(" — ");
 
       setMessage(
-        `Impossible d'enregistrer la semaine : ${texte || "Erreur inconnue"}`
+        `Impossible de sauvegarder la semaine : ${
+          texte || "Erreur inconnue"
+        }`
       );
-
-      setMessageType(
-        "DANGER"
-      );
-
-      setSemaineEnregistree(
-        false
-      );
+      setMessageType("DANGER");
     } finally {
-      setEnregistrement(
-        false
-      );
+      setEnregistrement(false);
     }
+  }
+
+  async function enregistrerBrouillon() {
+    await sauvegarderSemaine(false);
+  }
+
+  async function validerSemaine(
+    modeForce?: ModeHeuresSupplementaires
+  ) {
+    await sauvegarderSemaine(true, modeForce);
   }
 
   /* ============================================================
@@ -2368,10 +2325,11 @@ export default function MaSemaineContent() {
         <div style={styles.headerInner}>
           <div>
             <button
-              onClick={() =>
-                window.location.href =
-                  "/dashboard"
-              }
+              onClick={() => {
+                if (confirmerAvantQuitter()) {
+                  window.location.href = "/dashboard";
+                }
+              }}
               style={
                 styles.headerBackButton
               }
@@ -2519,6 +2477,26 @@ export default function MaSemaineContent() {
                 </>
               )}
             </div>
+
+            <div
+              style={
+                semaineModifiee
+                  ? styles.unsavedStatus
+                  : semaineValidee
+                    ? styles.validatedStatus
+                    : semaineEnregistree
+                      ? styles.savedStatus
+                      : styles.notSavedStatus
+              }
+            >
+              {semaineModifiee
+                ? "● Modifications non enregistrées"
+                : semaineValidee
+                  ? "✓ Semaine validée — transmise"
+                  : semaineEnregistree
+                    ? "✓ Brouillon enregistré"
+                    : "○ Semaine non enregistrée"}
+            </div>
           </div>
 
           <button
@@ -2632,7 +2610,10 @@ export default function MaSemaineContent() {
                     type="button"
                     onClick={() => {
                       setModeHeuresSupplementaires("COMPTEUR");
+                      semaineModifieeRef.current = true;
+                      setSemaineModifiee(true);
                       setSemaineEnregistree(false);
+                      setSemaineValidee(false);
                     }}
                     style={{
                       border: modeHeuresSupplementaires === "COMPTEUR" ? "2px solid #c00000" : "1px solid #ddd",
@@ -2652,7 +2633,10 @@ export default function MaSemaineContent() {
                     type="button"
                     onClick={() => {
                       setModeHeuresSupplementaires("PAYE");
+                      semaineModifieeRef.current = true;
+                      setSemaineModifiee(true);
                       setSemaineEnregistree(false);
+                      setSemaineValidee(false);
                     }}
                     style={{
                       border: modeHeuresSupplementaires === "PAYE" ? "2px solid #138113" : "1px solid #ddd",
@@ -3453,6 +3437,86 @@ export default function MaSemaineContent() {
         </fieldset>
 
         {/* ====================================================
+            ETAT / RAPPEL
+        ==================================================== */}
+
+        {semaineModifiee && semaineComplete && (
+          <div
+            style={styles.saveReminder}
+          >
+            <div
+              style={styles.saveReminderIcon}
+            >
+              ✓
+            </div>
+
+            <div
+              style={styles.saveReminderText}
+            >
+              <strong>Votre semaine est complète.</strong>
+              <div>
+                Toutes les heures prévues sont renseignées.
+                <br />
+                Enregistrez le brouillon puis cliquez sur
+                <strong> « Valider ma semaine »</strong>.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={enregistrerBrouillon}
+              disabled={
+                enregistrement ||
+                (feuilleVerrouillee && !modeAdmin)
+              }
+              style={styles.saveReminderButton}
+            >
+              {enregistrement
+                ? "Enregistrement..."
+                : "Enregistrer"}
+            </button>
+          </div>
+        )}
+
+        {!semaineModifiee &&
+          semaineEnregistree &&
+          !semaineValidee &&
+          semaineComplete && (
+            <div
+              style={styles.validationReminder}
+            >
+              <div
+                style={styles.validationReminderIcon}
+              >
+                !
+              </div>
+
+              <div
+                style={styles.validationReminderText}
+              >
+                <strong>Votre brouillon est complet.</strong>
+                <div>
+                  La semaine doit maintenant être validée pour être transmise.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => validerSemaine()}
+                disabled={
+                  enregistrement ||
+                  (feuilleVerrouillee && !modeAdmin)
+                }
+                style={styles.validationReminderButton}
+              >
+                {enregistrement
+                  ? "Validation..."
+                  : "✓ Valider ma semaine"}
+              </button>
+            </div>
+          )}
+
+        {/* ====================================================
             ACTIONS
         ==================================================== */}
 
@@ -3462,36 +3526,64 @@ export default function MaSemaineContent() {
           }
         >
           <button
-            onClick={
-              verifierSemaine
-            }
+            onClick={() => verifierSemaine(true)}
             style={
               styles.buttonSecondary
+            }
+            disabled={
+              enregistrement ||
+              (feuilleVerrouillee && !modeAdmin)
             }
           >
             Vérifier ma semaine
           </button>
 
           <button
-            onClick={
-              enregistrerSemaine
-            }
+            type="button"
+            onClick={enregistrerBrouillon}
             disabled={
-              enregistrement
+              enregistrement ||
+              (feuilleVerrouillee && !modeAdmin)
             }
-            style={{
-              ...styles.buttonPrimary,
-              opacity:
-                enregistrement
-                  ? 0.6
-                  : 1,
-            }}
+            style={styles.buttonDraft}
           >
             {enregistrement
               ? "Enregistrement..."
-              : semaineEnregistree
-                ? "✓ Semaine enregistrée"
-                : "Enregistrer ma semaine"}
+              : "💾 Enregistrer le brouillon"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => validerSemaine()}
+            disabled={
+              enregistrement ||
+              !semaineComplete ||
+              (semaineValidee && !semaineModifiee) ||
+              (feuilleVerrouillee && !modeAdmin)
+            }
+            style={{
+              ...styles.buttonValidate,
+              opacity:
+                enregistrement ||
+                !semaineComplete ||
+                (semaineValidee && !semaineModifiee) ||
+                (feuilleVerrouillee && !modeAdmin)
+                  ? 0.55
+                  : 1,
+              cursor:
+                enregistrement ||
+                !semaineComplete ||
+                (semaineValidee && !semaineModifiee) ||
+                (feuilleVerrouillee && !modeAdmin)
+                  ? "not-allowed"
+                  : "pointer",
+            }}
+          >
+            {semaineValidee && !semaineModifiee
+              ? "✓ Semaine validée"
+              : !semaineComplete
+                ? `⚠ Il reste ${formatHeures(heuresManquantes)} h`
+                : "✓ Valider ma semaine"}
           </button>
         </div>
 
@@ -3811,6 +3903,7 @@ export default function MaSemaineContent() {
                 onClick={() => {
                   setModeHeuresSupplementaires("COMPTEUR");
                   setChoixHeuresSupOuvert(false);
+                  void validerSemaine("COMPTEUR");
                 }}
                 style={{ border: "2px solid #c00000", background: "#fff5f5", color: "#c00000", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
               >
@@ -3822,6 +3915,7 @@ export default function MaSemaineContent() {
                 onClick={() => {
                   setModeHeuresSupplementaires("PAYE");
                   setChoixHeuresSupOuvert(false);
+                  void validerSemaine("PAYE");
                 }}
                 style={{ border: "2px solid #138113", background: "#f2faf2", color: "#138113", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
               >
@@ -4483,6 +4577,151 @@ const styles: Record<
       "flex-end",
     gap: 10,
     marginTop: 16,
+  },
+
+  savedStatus: {
+    marginTop: 5,
+    color: "#555",
+    fontSize: 12,
+    fontWeight: 700,
+  },
+
+  validatedStatus: {
+    marginTop: 5,
+    color: "#138113",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+
+  notSavedStatus: {
+    marginTop: 5,
+    color: "#888",
+    fontSize: 12,
+    fontWeight: 700,
+  },
+
+  unsavedStatus: {
+    marginTop: 5,
+    color: "#a05a00",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+
+  buttonDraft: {
+    background: "#ffffff",
+    color: "#444",
+    border: "1px solid #cfcfcf",
+    borderRadius: 7,
+    padding: "10px 15px",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "Calibri, Arial, sans-serif",
+    fontSize: 14,
+  },
+
+  buttonValidate: {
+    background: "#138113",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: 7,
+    padding: "10px 17px",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "Calibri, Arial, sans-serif",
+    fontSize: 14,
+    boxShadow: "0 2px 4px rgba(19,129,19,.15)",
+  },
+
+  saveReminder: {
+    marginTop: 16,
+    background: "#edf8ef",
+    border: "1px solid #b9dfbf",
+    borderLeft: "5px solid #138113",
+    borderRadius: 10,
+    padding: "13px 15px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    boxShadow: "0 2px 7px rgba(0,0,0,.04)",
+  },
+
+  saveReminderIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: "50%",
+    background: "#138113",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+
+  saveReminderText: {
+    flex: 1,
+    color: "#176b22",
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+
+  saveReminderButton: {
+    background: "#138113",
+    color: "#fff",
+    border: "none",
+    borderRadius: 7,
+    padding: "9px 13px",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "Calibri, Arial, sans-serif",
+    fontSize: 13,
+    whiteSpace: "nowrap",
+  },
+
+  validationReminder: {
+    marginTop: 16,
+    background: "#fff8e7",
+    border: "1px solid #ead7a0",
+    borderLeft: "5px solid #c00000",
+    borderRadius: 10,
+    padding: "13px 15px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    boxShadow: "0 2px 7px rgba(0,0,0,.04)",
+  },
+
+  validationReminderIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: "50%",
+    background: "#c00000",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+
+  validationReminderText: {
+    flex: 1,
+    color: "#6b5600",
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+
+  validationReminderButton: {
+    background: "#c00000",
+    color: "#fff",
+    border: "none",
+    borderRadius: 7,
+    padding: "9px 13px",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "Calibri, Arial, sans-serif",
+    fontSize: 13,
+    whiteSpace: "nowrap",
   },
 
   /* ----------------------------------------------------------
