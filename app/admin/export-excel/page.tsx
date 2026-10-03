@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx-js-style";
 import { supabase } from "@/lib/supabase";
 
@@ -133,6 +134,35 @@ function lundiISO(annee: number, semaine: number) {
   );
 
   return lundi.toISOString().slice(0, 10);
+}
+
+function infoSemaineISO(date = new Date()) {
+  const d = new Date(
+    Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    )
+  );
+
+  const jour = d.getUTCDay() || 7;
+
+  // On se place sur le jeudi de la semaine ISO.
+  d.setUTCDate(d.getUTCDate() + 4 - jour);
+
+  const anneeISO = d.getUTCFullYear();
+  const debutAnnee = new Date(
+    Date.UTC(anneeISO, 0, 1)
+  );
+
+  const semaineISO = Math.ceil(
+    (((d.getTime() - debutAnnee.getTime()) / 86400000) + 1) / 7
+  );
+
+  return {
+    annee: anneeISO,
+    semaine: semaineISO,
+  };
 }
 
 /**
@@ -779,8 +809,15 @@ function appliquerBordureSuperieure(
 }
 
 export default function ExportExcelPage() {
-  const [semaine, setSemaine] = useState("39");
-  const [annee, setAnnee] = useState("2026");
+  const router = useRouter();
+  const semaineActuelle = infoSemaineISO();
+
+  const [semaine, setSemaine] = useState(
+    String(semaineActuelle.semaine)
+  );
+  const [annee, setAnnee] = useState(
+    String(semaineActuelle.annee)
+  );
   const [chargement, setChargement] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -2765,8 +2802,6 @@ export default function ExportExcelPage() {
       }
 
       /*
- 
-      /*
        * ============================================================
        * 17. REF FINAL
        * ============================================================
@@ -2912,6 +2947,28 @@ export default function ExportExcelPage() {
             boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
           }}
         >
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 24,
+              padding: "10px 14px",
+              border: "1px solid #d9d9d9",
+              borderRadius: 8,
+              background: "white",
+              color: "#333",
+              cursor: "pointer",
+              fontFamily: "Calibri, Arial, sans-serif",
+              fontSize: 14,
+              fontWeight: 700,
+            }}
+          >
+            ← Retour au dashboard
+          </button>
+
           <div
             style={{
               display: "grid",
