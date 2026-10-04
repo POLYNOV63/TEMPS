@@ -2019,6 +2019,47 @@ export default function MaSemainePage() {
       if (feuilleExistante) {
         feuilleId = feuilleExistante.id;
 
+        /* ------------------------------------------------------
+           AVANT DE RECREER LES JOURNEES
+
+           Les imputations sont liées aux journées via jour_id.
+           On les supprime donc explicitement avant de supprimer
+           les journées. Cela évite de dépendre d'une éventuelle
+           contrainte SQL ON DELETE CASCADE.
+        ------------------------------------------------------ */
+
+        const {
+          data: joursExistants,
+          error: erreurLectureJoursExistants,
+        } = await supabase
+          .from("feuilles_heures_jours")
+          .select("id")
+          .eq("feuille_id", feuilleId);
+
+        if (erreurLectureJoursExistants) {
+          throw erreurLectureJoursExistants;
+        }
+
+        const idsJoursExistants = (joursExistants ?? []).map(
+          jour => jour.id
+        );
+
+        if (idsJoursExistants.length > 0) {
+          const { error: erreurSuppressionImputations } =
+            await supabase
+              .from("feuilles_heures_imputations")
+              .delete()
+              .in("jour_id", idsJoursExistants);
+
+          if (erreurSuppressionImputations) {
+            throw erreurSuppressionImputations;
+          }
+        }
+
+        /* ------------------------------------------------------
+           SUPPRESSION DES ANCIENNES JOURNEES
+        ------------------------------------------------------ */
+
         const { error: erreurSuppressionJours } =
           await supabase
             .from("feuilles_heures_jours")
@@ -2028,6 +2069,10 @@ export default function MaSemainePage() {
         if (erreurSuppressionJours) {
           throw erreurSuppressionJours;
         }
+
+        /* ------------------------------------------------------
+           MISE A JOUR DE LA FEUILLE
+        ------------------------------------------------------ */
 
         const { error: erreurUpdate } =
           await supabase

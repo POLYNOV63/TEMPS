@@ -1,12 +1,12 @@
 "use client";
 
 export default function ExportIAPage() {
-const exportIA = async () => {
-  const response = await fetch("/api/Export-IA");
+  const exportIA = async () => {
+    const response = await fetch("/api/Export-IA");
 
-  if (!response.ok) {
-    throw new Error("Erreur export");
-  }
+    if (!response.ok) {
+      throw new Error("Erreur export");
+    }
 
     const blob = await response.blob();
 
