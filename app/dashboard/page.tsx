@@ -1239,6 +1239,17 @@ if (!collaborateur) {
               />
 
               <Carte
+                icone="🧩"
+                titre="Gestion des activités"
+                description="Créer les activités du BE et associer les codes d'imputation à chaque activité"
+                onClick={() =>
+                  router.push(
+                    "/admin/Gestion-activites"
+                  )
+                }
+              />
+
+              <Carte
   icone="🧠"
   titre="Export IA"
   description="Générer un contexte complet du projet (code, base, architecture, droits, fonctions SQL)."
@@ -1282,6 +1293,17 @@ if (!collaborateur) {
                 onClick={() =>
                   router.push(
                     "/admin/bilans"
+                  )
+                }
+              />
+
+              <Carte
+                icone="🧩"
+                titre="Bilan activités"
+                description="Voir les heures CBE / DBE réparties par activité dans le nouveau système"
+                onClick={() =>
+                  router.push(
+                    "/admin/bilan-activites"
                   )
                 }
               />

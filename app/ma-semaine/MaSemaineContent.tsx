@@ -32,6 +32,19 @@ type ModeHeuresSupplementaires =
   | "PAYE"
   | "COMPTEUR";
 
+type Activite = {
+  id: string;
+  code: string;
+  nom: string;
+  actif: boolean;
+  ordre_affichage: number;
+};
+
+type ActiviteCode = {
+  activite_id: string;
+  code: string;
+};
+
 type CodeImputation = {
   code: string;
   libelle: string;
@@ -56,6 +69,7 @@ type DureeRTT =
 type Imputation = {
   id: string;
   typeAffaire: TypeAffaire;
+  activiteId: string | null;
   numeroAffaire: string;
   description: string;
   code: string;
@@ -661,6 +675,15 @@ export default function MaSemainePage() {
   const [codesCharges, setCodesCharges] =
     useState(false);
 
+  const [activites, setActivites] =
+    useState<Activite[]>([]);
+
+  const [activitesCodes, setActivitesCodes] =
+    useState<ActiviteCode[]>([]);
+
+  const [activitesCharges, setActivitesCharges] =
+    useState(false);
+
   const [modeHeuresSupplementaires, setModeHeuresSupplementaires] =
     useState<ModeHeuresSupplementaires | null>(null);
 
@@ -815,6 +838,52 @@ export default function MaSemainePage() {
   }, []);
 
   /* ============================================================
+     CHARGER ACTIVITÉS ET ASSOCIATIONS ACTIVITÉ/CODE
+  ============================================================ */
+
+  useEffect(() => {
+    async function chargerActivites() {
+      const [resultatActivites, resultatAssociations] =
+        await Promise.all([
+          supabase
+            .from("activites")
+            .select("id, code, nom, actif, ordre_affichage")
+            .order("ordre_affichage", { ascending: true })
+            .order("nom", { ascending: true }),
+          supabase
+            .from("activites_codes")
+            .select("activite_id, code"),
+        ]);
+
+      if (resultatActivites.error) {
+        setMessage(
+          `Impossible de charger les activités : ${resultatActivites.error.message}`
+        );
+        setMessageType("DANGER");
+        setActivitesCharges(true);
+        return;
+      }
+
+      if (resultatAssociations.error) {
+        setMessage(
+          `Impossible de charger les associations activité/code : ${resultatAssociations.error.message}`
+        );
+        setMessageType("DANGER");
+        setActivitesCharges(true);
+        return;
+      }
+
+      setActivites((resultatActivites.data ?? []) as Activite[]);
+      setActivitesCodes(
+        (resultatAssociations.data ?? []) as ActiviteCode[]
+      );
+      setActivitesCharges(true);
+    }
+
+    chargerActivites();
+  }, []);
+
+  /* ============================================================
      CHARGER COLLABORATEUR
   ============================================================ */
 
@@ -956,16 +1025,6 @@ export default function MaSemainePage() {
     chargerCollaborateur();
   }, []);
 
-  const codesAffaire = useMemo(
-    () => codesImputation.filter(code => code.autorise_affaire),
-    [codesImputation]
-  );
-
-  const codesDevis = useMemo(
-    () => codesImputation.filter(code => code.autorise_devis),
-    [codesImputation]
-  );
-
   const codesDivers = useMemo(
     () => codesImputation.filter(code => code.autorise_divers),
     [codesImputation]
@@ -978,11 +1037,54 @@ export default function MaSemainePage() {
     [codesImputation]
   );
 
-  const getCodesPourType = (type: TypeAffaire) => {
-    if (type === "CBE") return codesAffaire;
-    if (type === "DBE") return codesDevis;
-    return codesDivers;
+  const activitesActives = useMemo(
+    () => activites.filter(activite => activite.actif),
+    [activites]
+  );
+
+  const codesParActivite = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+
+    for (const association of activitesCodes) {
+      if (!map.has(association.activite_id)) {
+        map.set(association.activite_id, new Set());
+      }
+
+      map.get(association.activite_id)!.add(
+        normaliserCode(association.code)
+      );
+    }
+
+    return map;
+  }, [activitesCodes]);
+
+  const getCodesPourLigne = (ligne: Imputation) => {
+    /*
+     * Pour CBE et DBE, l'activité est désormais le filtre principal :
+     * les deux types utilisent les codes associés à l'activité.
+     * Le type CBE/DBE reste porté par l'imputation elle-même.
+     *
+     * Les lignes Divers restent indépendantes des activités.
+     */
+    if (ligne.typeAffaire === "Divers") {
+      return codesDivers;
+    }
+
+    if (!ligne.activiteId) {
+      return [];
+    }
+
+    const codesAutorises =
+      codesParActivite.get(ligne.activiteId) ??
+      new Set<string>();
+
+    return codesImputation.filter(code =>
+      code.actif === true &&
+      code.historique_uniquement !== true &&
+      codesAutorises.has(normaliserCode(code.code))
+    );
   };
+
 
   /* ============================================================
      TOTAUX
@@ -1228,6 +1330,8 @@ export default function MaSemainePage() {
             .slice(2),
 
         typeAffaire: "CBE",
+
+        activiteId: null,
 
         numeroAffaire: "",
 
@@ -1499,6 +1603,46 @@ export default function MaSemainePage() {
           return false;
         }
 
+        const ligneRenseignee = Boolean(
+          ligne.activiteId ||
+          ligne.code ||
+          ligne.heures ||
+          ligne.numeroAffaire ||
+          ligne.description
+        );
+
+        if (
+          ligneRenseignee &&
+          ligne.typeAffaire !== "Divers" &&
+          !ligne.activiteId
+        ) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : choisissez d'abord une activité pour cette imputation.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
+        if (
+          ligneRenseignee &&
+          ligne.typeAffaire !== "Divers" &&
+          ligne.activiteId &&
+          ligne.code &&
+          !getCodesPourLigne(ligne).some(
+            code => normaliserCode(code.code) === normaliserCode(ligne.code)
+          )
+        ) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : le code ${ligne.code} n'est pas autorisé pour l'activité sélectionnée.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
         if (
           ligne.heures &&
           ligne.typeAffaire !== "Divers" &&
@@ -1559,13 +1703,13 @@ export default function MaSemainePage() {
 
     if (heuresManquantes > 0.01) {
       setMessage(
-        `Saisie valide. Le brouillon peut être enregistré ; il reste ${formatHeures(
+        `Saisie valide. Il reste ${formatHeures(
           heuresManquantes
         )} h à renseigner.`
       );
     } else {
       setMessage(
-        "Semaine complète. Vous pouvez l'enregistrer puis la valider."
+        "Semaine complète."
       );
     }
 
@@ -1790,6 +1934,10 @@ export default function MaSemainePage() {
               typeAffaire:
                 i.type_affaire,
 
+              activiteId:
+                i.activite_id ??
+                null,
+
               numeroAffaire:
                 i.numero_affaire ??
                 "",
@@ -2003,9 +2151,8 @@ export default function MaSemainePage() {
         // On conserve une valeur technique COMPTEUR pour rester compatible
         // avec une éventuelle contrainte NOT NULL sur cette colonne ;
         // elle est volontairement ignorée au rechargement d'un brouillon.
-        mode_heures_supplementaires: validationFinale
-          ? modeEffectif
-          : "COMPTEUR",
+        mode_heures_supplementaires:
+          modeEffectif ?? "COMPTEUR",
         total_re: totalRE,
         compteur_avant: compteurAvantEnregistrement,
         compteur_apres: validationFinale
@@ -2145,6 +2292,7 @@ export default function MaSemainePage() {
       const imputationsAInserer: {
         jour_id: string;
         type_affaire: TypeAffaire;
+        activite_id: string | null;
         numero_affaire: string | null;
         description: string | null;
         code: string;
@@ -2175,6 +2323,10 @@ export default function MaSemainePage() {
           imputationsAInserer.push({
             jour_id: jourDB.id,
             type_affaire: ligne.typeAffaire,
+            activite_id:
+              ligne.typeAffaire === "Divers"
+                ? null
+                : ligne.activiteId || null,
             numero_affaire:
               ligne.typeAffaire === "Divers"
                 ? null
@@ -2325,7 +2477,7 @@ export default function MaSemainePage() {
      CHARGEMENT
   ============================================================ */
 
-  if (chargement || !codesCharges) {
+  if (chargement || !codesCharges || !activitesCharges) {
     return (
       <main style={styles.page}>
         <header style={styles.header}>
@@ -3117,34 +3269,51 @@ export default function MaSemainePage() {
                                 value={
                                   ligne.typeAffaire
                                 }
-                                onChange={e =>
+                                onChange={e => {
+                                  const nouveauType =
+                                    e.target.value as TypeAffaire;
+
+                                  const nouvelleActiviteId =
+                                    nouveauType === "Divers"
+                                      ? null
+                                      : ligne.activiteId;
+
+                                  const lignePourNouveauType: Imputation = {
+                                    ...ligne,
+                                    typeAffaire: nouveauType,
+                                    activiteId: nouvelleActiviteId,
+                                  };
+
+                                  const codePeutRester =
+                                    nouveauType !== "Divers" &&
+                                    nouvelleActiviteId &&
+                                    ligne.code
+                                      ? getCodesPourLigne(lignePourNouveauType).some(
+                                          code =>
+                                            normaliserCode(code.code) ===
+                                            normaliserCode(ligne.code)
+                                        )
+                                      : false;
+
                                   modifierImputation(
                                     jour,
                                     ligne.id,
                                     {
-                                      typeAffaire:
-                                        e.target
-                                          .value as TypeAffaire,
-
+                                      typeAffaire: nouveauType,
+                                      activiteId: nouvelleActiviteId,
                                       numeroAffaire:
-                                        e.target
-                                          .value ===
-                                        "Divers"
+                                        nouveauType === "Divers"
                                           ? ""
                                           : ligne.numeroAffaire,
-
                                       code:
-                                        e.target.value === "Divers"
+                                        nouveauType === "Divers"
                                           ? ""
-                                          : (e.target.value === "CBE"
-                                              ? codesAffaire
-                                              : codesDevis
-                                            ).some(c => c.code === ligne.code)
+                                          : codePeutRester
                                             ? ligne.code
                                             : "",
                                     }
-                                  )
-                                }
+                                  );
+                                }}
                                 style={
                                   styles.input
                                 }
@@ -3161,6 +3330,65 @@ export default function MaSemainePage() {
                                   Divers
                                 </option>
                               </select>
+
+                              {/* ACTIVITÉ */}
+
+                              {ligne.typeAffaire === "Divers" ? (
+                                <div
+                                  style={{
+                                    ...styles.input,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    background: "#f3f3f3",
+                                    color: "#777",
+                                  }}
+                                >
+                                  —
+                                </div>
+                              ) : (
+                                <select
+                                  value={ligne.activiteId ?? ""}
+                                  onChange={e => {
+                                    const activiteId = e.target.value || null;
+                                    const codesPourActivite = activiteId
+                                      ? getCodesPourLigne({
+                                          ...ligne,
+                                          activiteId,
+                                        })
+                                      : [];
+
+                                    modifierImputation(
+                                      jour,
+                                      ligne.id,
+                                      {
+                                        activiteId,
+                                        code: codesPourActivite.some(
+                                          code =>
+                                            normaliserCode(code.code) ===
+                                            normaliserCode(ligne.code)
+                                        )
+                                          ? ligne.code
+                                          : "",
+                                      }
+                                    );
+                                  }}
+                                  style={styles.input}
+                                >
+                                  <option value="">
+                                    Choisir une activité...
+                                  </option>
+
+                                  {activitesActives.map(activite => (
+                                    <option
+                                      key={activite.id}
+                                      value={activite.id}
+                                    >
+                                      {activite.nom}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
 
                               {/* NUMERO */}
 
@@ -3232,6 +3460,10 @@ export default function MaSemainePage() {
                                 value={
                                   ligne.code
                                 }
+                                disabled={
+                                  ligne.typeAffaire !== "Divers" &&
+                                  !ligne.activiteId
+                                }
                                 onChange={e =>
                                   modifierImputation(
                                     jour,
@@ -3241,26 +3473,39 @@ export default function MaSemainePage() {
                                     }
                                   )
                                 }
-                                style={
-                                  styles.input
-                                }
+                                style={{
+                                  ...styles.input,
+                                  background:
+                                    ligne.typeAffaire !== "Divers" &&
+                                    !ligne.activiteId
+                                      ? "#f3f3f3"
+                                      : "#fff",
+                                }}
                               >
                                 <option value="">
-                                  {getCodesPourType(ligne.typeAffaire).length === 0
-                                    ? "Aucun code autorisé dans Gestion-code"
-                                    : ligne.typeAffaire === "Divers"
-                                      ? "Choisir un code Divers..."
-                                      : ligne.typeAffaire === "DBE"
-                                        ? "Choisir un code devis..."
-                                        : "Choisir un code affaire..."}
+                                  {ligne.typeAffaire !== "Divers" && !ligne.activiteId
+                                    ? "Choisir une activité d'abord..."
+                                    : getCodesPourLigne(ligne).length === 0
+                                      ? "Aucun code autorisé pour cette sélection"
+                                      : ligne.typeAffaire === "Divers"
+                                        ? "Choisir un code Divers..."
+                                        : "Choisir un code..."}
                                 </option>
 
-                                {getCodesPourType(ligne.typeAffaire).map(code => (
+                                {getCodesPourLigne(ligne).map(code => (
                                   <option key={code.code} value={code.code}>
                                     {code.code} — {code.libelle}
                                   </option>
                                 ))}
                               </select>
+
+                              {ligne.typeAffaire !== "Divers" &&
+                                ligne.activiteId &&
+                                getCodesPourLigne(ligne).length === 0 && (
+                                  <div style={styles.codeHelp}>
+                                    Aucun code n'est associé à cette activité dans Gestion-activites.
+                                  </div>
+                                )}
 
                               {/* HEURES */}
 
@@ -3482,31 +3727,17 @@ export default function MaSemainePage() {
         </fieldset>
 
         {/* ====================================================
-            ETAT / RAPPEL
+            ACTIONS
         ==================================================== */}
 
-        {semaineModifiee && semaineComplete && (
-          <div
-            style={styles.saveReminder}
-          >
-            <div
-              style={styles.saveReminderIcon}
-            >
-              ✓
-            </div>
+        <div style={styles.actionZone}>
+          <div style={styles.actionExplanation}>
+            <strong>Enregistrer</strong> sauvegarde votre saisie en brouillon.
+            <span> · </span>
+            <strong>Valider</strong> transmet définitivement la semaine à POLYNOV.
+          </div>
 
-            <div
-              style={styles.saveReminderText}
-            >
-              <strong>Votre semaine est complète.</strong>
-              <div>
-                Toutes les heures prévues sont renseignées.
-                <br />
-                Enregistrez le brouillon puis cliquez sur
-                <strong> « Valider ma semaine »</strong>.
-              </div>
-            </div>
-
+          <div style={styles.bottomActions}>
             <button
               type="button"
               onClick={enregistrerBrouillon}
@@ -3514,122 +3745,45 @@ export default function MaSemainePage() {
                 enregistrement ||
                 (feuilleVerrouillee && !modeAdmin)
               }
-              style={styles.saveReminderButton}
+              style={styles.buttonDraft}
             >
               {enregistrement
                 ? "Enregistrement..."
-                : "Enregistrer"}
+                : "💾 Enregistrer"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => validerSemaine()}
+              disabled={
+                enregistrement ||
+                !semaineComplete ||
+                (semaineValidee && !semaineModifiee) ||
+                (feuilleVerrouillee && !modeAdmin)
+              }
+              style={{
+                ...styles.buttonValidate,
+                opacity:
+                  enregistrement ||
+                  !semaineComplete ||
+                  (semaineValidee && !semaineModifiee) ||
+                  (feuilleVerrouillee && !modeAdmin)
+                    ? 0.55
+                    : 1,
+                cursor:
+                  enregistrement ||
+                  !semaineComplete ||
+                  (semaineValidee && !semaineModifiee) ||
+                  (feuilleVerrouillee && !modeAdmin)
+                    ? "not-allowed"
+                    : "pointer",
+              }}
+            >
+              {semaineValidee && !semaineModifiee
+                ? "✓ Semaine validée"
+                : "✓ Valider ma semaine"}
             </button>
           </div>
-        )}
-
-        {!semaineModifiee &&
-          semaineEnregistree &&
-          !semaineValidee &&
-          semaineComplete && (
-            <div
-              style={styles.validationReminder}
-            >
-              <div
-                style={styles.validationReminderIcon}
-              >
-                !
-              </div>
-
-              <div
-                style={styles.validationReminderText}
-              >
-                <strong>Votre brouillon est complet.</strong>
-                <div>
-                  La semaine doit maintenant être validée pour être transmise.
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => validerSemaine()}
-                disabled={
-                  enregistrement ||
-                  (feuilleVerrouillee && !modeAdmin)
-                }
-                style={styles.validationReminderButton}
-              >
-                {enregistrement
-                  ? "Validation..."
-                  : "✓ Valider ma semaine"}
-              </button>
-            </div>
-          )}
-
-        {/* ====================================================
-            ACTIONS
-        ==================================================== */}
-
-        <div
-          style={
-            styles.bottomActions
-          }
-        >
-          <button
-            onClick={() => verifierSemaine(true)}
-            style={
-              styles.buttonSecondary
-            }
-            disabled={
-              enregistrement ||
-              (feuilleVerrouillee && !modeAdmin)
-            }
-          >
-            Vérifier ma semaine
-          </button>
-
-          <button
-            type="button"
-            onClick={enregistrerBrouillon}
-            disabled={
-              enregistrement ||
-              (feuilleVerrouillee && !modeAdmin)
-            }
-            style={styles.buttonDraft}
-          >
-            {enregistrement
-              ? "Enregistrement..."
-              : "💾 Enregistrer le brouillon"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => validerSemaine()}
-            disabled={
-              enregistrement ||
-              !semaineComplete ||
-              (semaineValidee && !semaineModifiee) ||
-              (feuilleVerrouillee && !modeAdmin)
-            }
-            style={{
-              ...styles.buttonValidate,
-              opacity:
-                enregistrement ||
-                !semaineComplete ||
-                (semaineValidee && !semaineModifiee) ||
-                (feuilleVerrouillee && !modeAdmin)
-                  ? 0.55
-                  : 1,
-              cursor:
-                enregistrement ||
-                !semaineComplete ||
-                (semaineValidee && !semaineModifiee) ||
-                (feuilleVerrouillee && !modeAdmin)
-                  ? "not-allowed"
-                  : "pointer",
-            }}
-          >
-            {semaineValidee && !semaineModifiee
-              ? "✓ Semaine validée"
-              : !semaineComplete
-                ? `⚠ Il reste ${formatHeures(heuresManquantes)} h`
-                : "✓ Valider ma semaine"}
-          </button>
         </div>
 
         {/* ====================================================
@@ -4329,8 +4483,8 @@ const styles: Record<
   tableHeader: {
     display: "grid",
     gridTemplateColumns:
-      "145px minmax(560px, 1fr) 150px 150px",
-    minWidth: 1005,
+      "145px minmax(760px, 1fr) 150px 150px",
+    minWidth: 1205,
     borderBottom:
       "1px solid #ddd",
     background: "#f7f7f7",
@@ -4360,7 +4514,7 @@ const styles: Record<
   },
 
   dayBlock: {
-    minWidth: 1005,
+    minWidth: 1205,
     borderBottom:
       "1px solid #e2e2e2",
   },
@@ -4368,7 +4522,7 @@ const styles: Record<
   dayGrid: {
     display: "grid",
     gridTemplateColumns:
-      "145px minmax(560px, 1fr) 150px 150px",
+      "145px minmax(760px, 1fr) 150px 150px",
     minHeight: 120,
   },
 
@@ -4422,6 +4576,9 @@ const styles: Record<
 
   imputationCell: {
     padding: 11,
+    minWidth: 0,
+    overflowX: "auto",
+    overflowY: "visible",
   },
 
   sectionLabel: {
@@ -4468,7 +4625,8 @@ const styles: Record<
   imputationRow: {
     display: "grid",
     gridTemplateColumns:
-      "72px 68px minmax(140px, 1fr) 185px 72px 34px",
+      "60px 130px 62px minmax(130px, 1fr) 150px 62px 38px",
+    minWidth: 690,
     gap: 6,
     alignItems: "center",
     marginBottom: 7,
@@ -4615,6 +4773,38 @@ const styles: Record<
   /* ----------------------------------------------------------
      ACTIONS
   ---------------------------------------------------------- */
+
+  codeHelp: {
+    gridColumn: "1 / -1",
+    fontSize: 11,
+    lineHeight: 1.35,
+    color: "#9a5b00",
+    background: "#fff7e8",
+    border: "1px solid #efd5a3",
+    borderRadius: 5,
+    padding: "6px 8px",
+  },
+
+  actionZone: {
+    marginTop: 18,
+    padding: "14px 16px",
+    background: "#fff",
+    border: "1px solid #e3e3e3",
+    borderRadius: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    flexWrap: "wrap",
+  },
+
+  actionExplanation: {
+    color: "#666",
+    fontSize: 12,
+    lineHeight: 1.45,
+    flex: 1,
+    minWidth: 260,
+  },
 
   bottomActions: {
     display: "flex",
