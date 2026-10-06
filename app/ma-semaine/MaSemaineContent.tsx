@@ -3113,19 +3113,19 @@ export default function MaSemainePage() {
             </div>
 
             <div
-              style={
-                styles.presenceHeader
-              }
+              style={styles.sideHeader}
             >
-              Présence
-            </div>
+              <div
+                style={styles.presenceHeader}
+              >
+                Présence
+              </div>
 
-            <div
-              style={
-                styles.ticketHeader
-              }
-            >
-              Présence / ticket
+              <div
+                style={styles.ticketHeader}
+              >
+                Présence / ticket
+              </div>
             </div>
           </div>
 
@@ -4787,12 +4787,27 @@ const styles: Record<
     padding: 13,
   },
 
+  sideHeader: {
+    display: "grid",
+    gridTemplateRows: "1fr 1fr",
+    minWidth: 0,
+  },
+
   presenceHeader: {
-    padding: 13,
+    padding: 10,
+    textAlign: "center",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderBottom: "1px solid #ddd",
   },
 
   ticketHeader: {
-    padding: 13,
+    padding: 10,
+    textAlign: "center",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   dayBlock: {
