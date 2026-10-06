@@ -134,6 +134,20 @@ function parseHeures(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function pourcentage(part: number, total: number) {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) {
+    return 0;
+  }
+  return (part / total) * 100;
+}
+
+function formatPourcentage(value: number) {
+  return value.toLocaleString("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  });
+}
+
 function normaliserNom(prenom: string, nom: string) {
   return `${prenom ?? ""} ${nom ?? ""}`.trim();
 }
@@ -155,10 +169,7 @@ export default function BilanActivitesPage() {
   const [lignesCollaborateurs, setLignesCollaborateurs] = useState<LigneCollaborateur[]>([]);
   const [lignesSemaines, setLignesSemaines] = useState<LigneSemaine[]>([]);
 
-  const [heuresTotalAffaires, setHeuresTotalAffaires] = useState(0);
   const [heuresSansActivite, setHeuresSansActivite] = useState(0);
-  const [nombreImputations, setNombreImputations] = useState(0);
-  const [nombreSemaines, setNombreSemaines] = useState(0);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
@@ -271,15 +282,11 @@ export default function BilanActivitesPage() {
       if (feuillesError) throw feuillesError;
 
       const feuilles = (feuillesData ?? []) as Feuille[];
-      setNombreSemaines(new Set(feuilles.map(f => `${f.collaborateur_id}|${f.semaine_debut}`)).size);
-
       if (feuilles.length === 0) {
         setLignesActivites([]);
         setLignesCollaborateurs([]);
         setLignesSemaines([]);
-        setHeuresTotalAffaires(0);
         setHeuresSansActivite(0);
-        setNombreImputations(0);
         setChargement(false);
         return;
       }
@@ -300,9 +307,7 @@ export default function BilanActivitesPage() {
         setLignesActivites([]);
         setLignesCollaborateurs([]);
         setLignesSemaines([]);
-        setHeuresTotalAffaires(0);
         setHeuresSansActivite(0);
-        setNombreImputations(0);
         setChargement(false);
         return;
       }
@@ -330,9 +335,7 @@ export default function BilanActivitesPage() {
       const collaborateurStats = new Map<string, Map<string, number>>();
       const semaineStats = new Map<string, Map<string, number>>();
 
-      let totalAffaires = 0;
       let sansActivite = 0;
-      let nbLignesActivite = 0;
 
       for (const imputation of imputations) {
         if (imputation.type_affaire !== "CBE" && imputation.type_affaire !== "DBE") {
@@ -345,8 +348,6 @@ export default function BilanActivitesPage() {
 
         const feuille = feuillesMap.get(jour.feuille_id);
         if (!feuille) continue;
-
-        totalAffaires += heures;
 
         if (!imputation.activite_id) {
           sansActivite += heures;
@@ -362,8 +363,6 @@ export default function BilanActivitesPage() {
         if (activiteId !== "TOUTES" && imputation.activite_id !== activiteId) {
           continue;
         }
-
-        nbLignesActivite += 1;
 
         if (!activiteStats.has(activite.id)) {
           activiteStats.set(activite.id, {
@@ -478,9 +477,7 @@ export default function BilanActivitesPage() {
       setLignesActivites(lignesActiviteData);
       setLignesCollaborateurs(lignesCollaborateursData);
       setLignesSemaines(lignesSemainesData);
-      setHeuresTotalAffaires(totalAffaires);
       setHeuresSansActivite(sansActivite);
-      setNombreImputations(nbLignesActivite);
       setChargement(false);
     } catch (error) {
       console.error("Erreur bilan activités", error);
@@ -494,15 +491,11 @@ export default function BilanActivitesPage() {
     chargerDonnees();
   }, [chargerDonnees]);
 
+
   const heuresActivites = useMemo(
     () => lignesActivites.reduce((sum, ligne) => sum + ligne.heures, 0),
     [lignesActivites]
   );
-
-  const pourcentageActivites =
-    heuresTotalAffaires > 0
-      ? (heuresActivites / heuresTotalAffaires) * 100
-      : 0;
 
   const titrePeriode = useMemo(() => {
     if (periode === "SEMAINE") {
@@ -694,53 +687,12 @@ export default function BilanActivitesPage() {
           </div>
         </section>
 
-        <section style={styles.cardsGrid}>
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>HEURES CBE / DBE</div>
-            <div style={styles.cardValue}>{formatHeures(heuresTotalAffaires)} h</div>
-            <div style={styles.cardHint}>Heures d'affaires sur la période sélectionnée.</div>
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>HEURES AVEC ACTIVITÉ</div>
-            <div style={styles.cardValue}>{formatHeures(heuresActivites)} h</div>
-            <div style={styles.cardHint}>
-              {pourcentageActivites.toLocaleString("fr-FR", {
-                maximumFractionDigits: 1,
-              })}% des heures CBE / DBE analysées.
-            </div>
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>SANS ACTIVITÉ</div>
-            <div
-              style={{
-                ...styles.cardValue,
-                color: heuresSansActivite > 0.01 ? "#c00000" : "#138113",
-              }}
-            >
-              {formatHeures(heuresSansActivite)} h
-            </div>
-            <div style={styles.cardHint}>
-              CBE / DBE non rattachées à une activité.
-            </div>
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>IMP. ANALYSÉES</div>
-            <div style={styles.cardValue}>{nombreImputations}</div>
-            <div style={styles.cardHint}>
-              {nombreSemaines} feuille{nombreSemaines > 1 ? "s" : ""} dans le périmètre.
-            </div>
-          </div>
-        </section>
-
         {heuresSansActivite > 0.01 && (
           <div style={styles.warningBox}>
             <strong>⚠ Des heures CBE / DBE ne sont pas rattachées à une activité.</strong>
             <div style={{ marginTop: 5 }}>
-              Elles sont conservées dans le chiffre « Sans activité » et ne sont
-              pas réparties dans les activités ci-dessous.
+              Elles sont conservées dans les données mais ne sont pas réparties
+              dans les activités ci-dessous.
             </div>
           </div>
         )}
@@ -794,11 +746,15 @@ export default function BilanActivitesPage() {
                   <div style={styles.detailTitle}>{ligne.nom}</div>
                   <div style={styles.detailLine}>
                     <span>CBE</span>
-                    <strong>{formatHeures(ligne.cbe)} h</strong>
+                    <strong>
+                      {formatHeures(ligne.cbe)} h ({formatPourcentage(pourcentage(ligne.cbe, ligne.heures))}%)
+                    </strong>
                   </div>
                   <div style={styles.detailLine}>
                     <span>DBE</span>
-                    <strong>{formatHeures(ligne.dbe)} h</strong>
+                    <strong>
+                      {formatHeures(ligne.dbe)} h ({formatPourcentage(pourcentage(ligne.dbe, ligne.heures))}%)
+                    </strong>
                   </div>
                   <div style={styles.detailLine}>
                     <span>Collaborateurs</span>
@@ -819,6 +775,7 @@ export default function BilanActivitesPage() {
             <div>
               <div style={styles.sectionEyebrow}>COLLABORATEURS</div>
               <h2 style={styles.sectionTitle}>Répartition des heures par collaborateur</h2>
+              <div style={styles.sectionHint}>Les pourcentages indiquent la part de chaque activité dans le total du collaborateur.</div>
             </div>
           </div>
 
@@ -845,11 +802,18 @@ export default function BilanActivitesPage() {
                         <strong>{ligne.trigramme}</strong>
                         <span style={styles.personName}>{ligne.nom}</span>
                       </td>
-                      {activitesAffichees.map(activite => (
-                        <td key={activite.id} style={styles.tdRight}>
-                          {formatHeures(ligne.heuresParActivite[activite.id] ?? 0)}
-                        </td>
-                      ))}
+                      {activitesAffichees.map(activite => {
+                        const heures = ligne.heuresParActivite[activite.id] ?? 0;
+                        const part = pourcentage(heures, ligne.total);
+                        return (
+                          <td key={activite.id} style={styles.tdRight}>
+                            <div style={styles.hoursCell}>
+                              <strong>{formatHeures(heures)} h</strong>
+                              <span>{formatPourcentage(part)}%</span>
+                            </div>
+                          </td>
+                        );
+                      })}
                       <td style={{ ...styles.tdRight, fontWeight: 800 }}>
                         {formatHeures(ligne.total)}
                       </td>
@@ -867,6 +831,7 @@ export default function BilanActivitesPage() {
               <div>
                 <div style={styles.sectionEyebrow}>ÉVOLUTION</div>
                 <h2 style={styles.sectionTitle}>Répartition par semaine</h2>
+                <div style={styles.sectionHint}>Les pourcentages indiquent la part de chaque activité dans le total de la semaine.</div>
               </div>
             </div>
 
@@ -895,11 +860,18 @@ export default function BilanActivitesPage() {
                             {formatDate(ligne.semaineDebut)}
                           </span>
                         </td>
-                        {activitesAffichees.map(activite => (
-                          <td key={activite.id} style={styles.tdRight}>
-                            {formatHeures(ligne.heuresParActivite[activite.id] ?? 0)}
-                          </td>
-                        ))}
+                        {activitesAffichees.map(activite => {
+                          const heures = ligne.heuresParActivite[activite.id] ?? 0;
+                          const part = pourcentage(heures, ligne.total);
+                          return (
+                            <td key={activite.id} style={styles.tdRight}>
+                              <div style={styles.hoursCell}>
+                                <strong>{formatHeures(heures)} h</strong>
+                                <span>{formatPourcentage(part)}%</span>
+                              </div>
+                            </td>
+                          );
+                        })}
                         <td style={{ ...styles.tdRight, fontWeight: 800 }}>
                           {formatHeures(ligne.total)}
                         </td>
@@ -1092,36 +1064,6 @@ const styles: Record<string, CSSProperties> = {
     color: "#777",
     fontSize: 12,
   },
-  cardsGrid: {
-    marginTop: 18,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 12,
-  },
-  card: {
-    background: "#fff",
-    border: "1px solid #e2e2e2",
-    borderRadius: 10,
-    padding: 17,
-    boxShadow: "0 2px 7px rgba(0,0,0,.04)",
-  },
-  cardLabel: {
-    fontSize: 10,
-    fontWeight: 900,
-    color: "#777",
-    letterSpacing: ".55px",
-  },
-  cardValue: {
-    marginTop: 7,
-    fontSize: 28,
-    fontWeight: 900,
-  },
-  cardHint: {
-    marginTop: 4,
-    color: "#777",
-    fontSize: 12,
-    lineHeight: 1.35,
-  },
   warningBox: {
     marginTop: 16,
     background: "#fff8e8",
@@ -1156,6 +1098,18 @@ const styles: Record<string, CSSProperties> = {
   sectionTitle: {
     margin: "4px 0 0",
     fontSize: 19,
+  },
+  sectionHint: {
+    marginTop: 4,
+    color: "#777",
+    fontSize: 12,
+    lineHeight: 1.35,
+  },
+  hoursCell: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
   },
   sectionTotal: {
     fontSize: 20,
@@ -1243,7 +1197,7 @@ const styles: Record<string, CSSProperties> = {
   },
   thRight: {
     padding: "10px 12px",
-    textAlign: "right",
+    textAlign: "center",
     background: "#f7f8f9",
     color: "#626970",
     borderBottom: "1px solid #e2e5e9",
@@ -1257,7 +1211,7 @@ const styles: Record<string, CSSProperties> = {
   },
   tdRight: {
     padding: "10px 12px",
-    textAlign: "right",
+    textAlign: "center",
     borderBottom: "1px solid #eceeef",
     whiteSpace: "nowrap",
   },

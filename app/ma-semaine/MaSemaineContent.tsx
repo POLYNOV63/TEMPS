@@ -66,6 +66,10 @@ type DureeRTT =
   | "JOURNEE"
   | "DEMI_JOURNEE";
 
+type DureeCP =
+  | "JOURNEE"
+  | "DEMI_JOURNEE";
+
 type Imputation = {
   id: string;
   typeAffaire: TypeAffaire;
@@ -88,7 +92,7 @@ type JourSemaine = {
   dureeRTT: DureeRTT;
   heuresRE: string;
   heuresAbsence: string;
-  dureeCP: DureeRTT;
+  dureeCP: DureeCP;
   ticketRestaurant: boolean;
   imputations: Imputation[];
 };
@@ -497,7 +501,7 @@ function creerSemaine(
                     : Number(horaires.vendredi) || 0,
 
         presence:
-          ferie
+          ferie || weekend
             ? "ABSENT"
             : "PRESENTIEL",
 
@@ -534,6 +538,18 @@ function absenceNecessiteHeures(absence: CodeAbsence) {
 
 function absenceNecessiteDuree(absence: CodeAbsence) {
   return normaliserCode(absence) === CODE_CP;
+}
+
+/**
+ * Le profil horaire ne contient que le nombre total d'heures de la
+ * journée. Pour un CP d'une demi-journée, on demande donc explicitement
+ * les heures réellement posées en CP : cela évite de supposer que les
+ * deux demi-journées ont toujours la même durée.
+ */
+function heuresCP(jour: JourSemaine) {
+  if (jour.absence !== CODE_CP) return 0;
+  if (jour.dureeCP === "JOURNEE") return jour.heuresTheoriques;
+  return convertirHeures(jour.heuresAbsence);
 }
 
 function absenceTotale(
@@ -606,9 +622,18 @@ function cibleTravailJour(
   }
 
   if (jour.absence === CODE_RT) {
-    return jour.dureeRTT === "DEMI_JOURNEE"
-      ? jour.heuresTheoriques / 2
-      : 0;
+    if (jour.dureeRTT === "JOURNEE") {
+      return 0;
+    }
+
+    const heuresRTT = convertirHeures(jour.heuresAbsence);
+
+    // En demi-journée, on demande les heures réellement posées en RTT,
+    // car le matin et l'après-midi n'ont pas nécessairement la même durée.
+    // Avant la saisie, on conserve une estimation provisoire à 50 %.
+    return heuresRTT > 0
+      ? Math.max(0, jour.heuresTheoriques - heuresRTT)
+      : jour.heuresTheoriques / 2;
   }
 
   if (absenceNecessiteHeures(jour.absence)) {
@@ -619,9 +644,10 @@ function cibleTravailJour(
   }
 
   if (jour.absence === CODE_CP) {
-    return jour.dureeCP === "DEMI_JOURNEE"
-      ? jour.heuresTheoriques / 2
-      : 0;
+    return Math.max(
+      0,
+      jour.heuresTheoriques - heuresCP(jour)
+    );
   }
 
   if (absenceTotale(jour.absence, jour.dureeRTT, jour.dureeCP, codes)) return 0;
@@ -1060,16 +1086,29 @@ export default function MaSemainePage() {
 
   const getCodesPourLigne = (ligne: Imputation) => {
     /*
-     * Pour CBE et DBE, l'activité est désormais le filtre principal :
-     * les deux types utilisent les codes associés à l'activité.
-     * Le type CBE/DBE reste porté par l'imputation elle-même.
-     *
-     * Les lignes Divers restent indépendantes des activités.
+     * Divers : aucun lien avec les activités.
      */
     if (ligne.typeAffaire === "Divers") {
       return codesDivers;
     }
 
+    /*
+     * DBE : dans POLYNOV, le code d'imputation est toujours DT.
+     * L'activité reste obligatoire pour l'analyse, mais elle ne
+     * modifie pas la liste du code affaire/devis.
+     */
+    if (ligne.typeAffaire === "DBE") {
+      return codesImputation.filter(code =>
+        code.actif === true &&
+        code.historique_uniquement !== true &&
+        normaliserCode(code.code) === "DT"
+      );
+    }
+
+    /*
+     * CBE : l'activité filtre les codes, puis Gestion-codes conserve
+     * la règle d'autorisation propre aux affaires.
+     */
     if (!ligne.activiteId) {
       return [];
     }
@@ -1081,6 +1120,7 @@ export default function MaSemainePage() {
     return codesImputation.filter(code =>
       code.actif === true &&
       code.historique_uniquement !== true &&
+      code.autorise_affaire === true &&
       codesAutorises.has(normaliserCode(code.code))
     );
   };
@@ -1147,9 +1187,7 @@ export default function MaSemainePage() {
         }
 
         if (jour.absence === CODE_CP) {
-          base -= jour.dureeCP === "DEMI_JOURNEE"
-            ? jour.heuresTheoriques / 2
-            : jour.heuresTheoriques;
+          base -= heuresCP(jour);
           continue;
         }
 
@@ -1192,6 +1230,25 @@ export default function MaSemainePage() {
         0
       );
     }, [semaine]);
+
+  /*
+   * Projection dynamique du compteur de récupération.
+   */
+  const compteurApresRE =
+    compteurBaseSemaine - totalRE;
+
+  const compteurPrevisionnelAvecHS =
+    compteurBaseSemaine +
+    heuresSupplementaires -
+    totalRE;
+
+  const compteurDepasse30AvecHS =
+    compteurPrevisionnelAvecHS > 30.01;
+
+  const totalCompteurChoisi =
+    modeHeuresSupplementaires === "COMPTEUR"
+      ? compteurPrevisionnelAvecHS
+      : compteurApresRE;
 
   const heuresManquantes =
     Math.max(
@@ -1236,6 +1293,10 @@ export default function MaSemainePage() {
 
     setSemaineEnregistree(false);
     setSemaineValidee(false);
+
+    // Toute modification invalide le choix précédent PAYE/COMPTEUR.
+    // La prochaine validation demandera donc une action explicite.
+    setModeHeuresSupplementaires(null);
 
     semaineModifieeRef.current =
       true;
@@ -1287,15 +1348,26 @@ export default function MaSemainePage() {
     if (absence === CODE_RE) ticket = !jour.estWeekend;
     if (absence === "") ticket = !jour.estWeekend;
 
-    const heuresAbsence = absenceNecessiteHeures(absence)
-      ? jour.heuresAbsence
-      : "";
+    const heuresAbsence =
+      absence === CODE_CP
+        ? (jour.absence === CODE_CP ? jour.heuresAbsence : "")
+        : absenceNecessiteHeures(absence)
+          ? jour.heuresAbsence
+          : "";
 
     const dureeCP = absence === CODE_CP ? jour.dureeCP : "JOURNEE";
 
+    const presence = jour.estWeekend
+      ? (estAbsent ? "ABSENT" : jour.presence)
+      : estAbsent
+        ? "ABSENT"
+        : jour.presence === "ABSENT"
+          ? "PRESENTIEL"
+          : jour.presence;
+
     modifierJour(jour.date, {
       absence,
-      presence: estAbsent ? "ABSENT" : jour.presence === "ABSENT" ? "PRESENTIEL" : jour.presence,
+      presence,
       ticketRestaurant: ticket,
       heuresRE: absence === CODE_RE ? jour.heuresRE : "",
       heuresAbsence,
@@ -1410,9 +1482,18 @@ export default function MaSemainePage() {
             : "PRESENTIEL",
 
         ticketRestaurant:
-          duree ===
-            "DEMI_JOURNEE" &&
+          duree === "DEMI_JOURNEE" &&
           !jour.estWeekend,
+
+        heuresAbsence:
+          duree === "JOURNEE"
+            ? ""
+            : jour.heuresAbsence,
+
+        imputations:
+          duree === "JOURNEE"
+            ? []
+            : jour.imputations,
       }
     );
   }
@@ -1568,18 +1649,77 @@ export default function MaSemainePage() {
         return false;
       }
 
+      if (jour.absence === CODE_CP && jour.dureeCP === "DEMI_JOURNEE") {
+        const cpHeures = convertirHeures(jour.heuresAbsence);
+
+        if (cpHeures <= 0) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : renseignez les heures réellement posées en CP pour la demi-journée (ex. 4 h le matin ou 3,5 h l'après-midi).`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
+        if (cpHeures > jour.heuresTheoriques) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : les heures de CP ne peuvent pas dépasser ${formatHeures(
+              jour.heuresTheoriques
+            )} h.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+      }
+
       if (
         jour.absence === CODE_RT &&
-        jour.dureeRTT === "DEMI_JOURNEE" &&
-        totalImputations(jour) <= 0
+        jour.dureeRTT === "DEMI_JOURNEE"
       ) {
-        setMessage(
-          `Le ${jour.jour} ${dateAffichage(
-            jour.date
-          )} : un RTT d'une demi-journée doit être complété par des heures travaillées.`
-        );
-        setMessageType("DANGER");
-        return false;
+        const heuresRTT = convertirHeures(jour.heuresAbsence);
+
+        if (heuresRTT <= 0) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : renseignez les heures réellement posées en RTT pour la demi-journée.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
+        if (heuresRTT >= jour.heuresTheoriques) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : un RTT d'une demi-journée doit laisser des heures à travailler.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
+        const heuresTravailleesAttendue =
+          Math.max(0, jour.heuresTheoriques - heuresRTT);
+
+        if (
+          Math.abs(totalImputations(jour) - heuresTravailleesAttendue) >
+          0.01
+        ) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : il faut imputer ${formatHeures(
+              heuresTravailleesAttendue
+            )} h de travail pour compléter ce RTT d'une demi-journée (actuellement ${formatHeures(
+              totalImputations(jour)
+            )} h).`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
       }
 
       if (imputationsInterdites(jour, codesImputation)) {
@@ -1888,8 +2028,23 @@ export default function MaSemainePage() {
           continue;
         }
 
+        const imputationsJour = (imputations ?? []).filter(
+          i => i.jour_id === jourDB.id
+        );
+
+        const weekendAvecActivite =
+          jour.estWeekend &&
+          (Boolean(jourDB.absence) ||
+            Number(jourDB.heures_re ?? 0) > 0 ||
+            Number(jourDB.heures_absence ?? 0) > 0 ||
+            imputationsJour.some(i => Number(i.heures ?? 0) > 0));
+
         jour.presence =
-          jourDB.presence;
+          jour.estWeekend && !weekendAvecActivite
+            ? "ABSENT"
+            : jour.estWeekend
+              ? (jourDB.presence === "TELETRAVAIL" ? "TELETRAVAIL" : "ABSENT")
+              : jourDB.presence;
 
         const absenceChargee = normaliserCode(jourDB.absence ?? "");
         // FE est un code technique de hors-bilan : dans Ma semaine,
@@ -1918,15 +2073,12 @@ export default function MaSemainePage() {
           "JOURNEE";
 
         jour.ticketRestaurant =
-          jourDB.ticket_restaurant;
+          jour.estWeekend
+            ? false
+            : Boolean(jourDB.ticket_restaurant);
 
         jour.imputations =
-          (imputations ?? [])
-            .filter(
-              i =>
-                i.jour_id ===
-                jourDB.id
-            )
+          imputationsJour
             .map(i => ({
               id:
                 crypto.randomUUID(),
@@ -2045,6 +2197,29 @@ export default function MaSemainePage() {
     );
   }
 
+  function jourDoitEtreEnregistre(jour: JourSemaine) {
+    /*
+     * Les week-ends sont affichés par défaut comme ABSENT, mais on ne
+     * crée aucun enregistrement SQL pour eux tant qu'ils restent dans
+     * cet état neutre. Cela évite de remplir inutilement les tables.
+     *
+     * Dès qu'un week-end est réellement travaillé ou renseigné, il est
+     * sauvegardé normalement.
+     */
+    if (!jour.estWeekend) {
+      return true;
+    }
+
+    return (
+      jour.presence !== "ABSENT" ||
+      Boolean(jour.absence) ||
+      jour.ticketRestaurant === true ||
+      convertirHeures(jour.heuresRE) > 0 ||
+      convertirHeures(jour.heuresAbsence) > 0 ||
+      jour.imputations.length > 0
+    );
+  }
+
   async function sauvegarderSemaine(
     validationFinale: boolean,
     modeForce?: ModeHeuresSupplementaires
@@ -2068,12 +2243,20 @@ export default function MaSemainePage() {
       return;
     }
 
-    const modeEffectif = modeForce ?? modeHeuresSupplementaires;
+    /*
+     * La base impose un mode non nul.
+     * En brouillon, COMPTEUR sert uniquement de valeur technique.
+     * En validation, le choix PAYE/COMPTEUR est demandé seulement
+     * lorsqu'il y a réellement des heures supplémentaires.
+     */
+    const modeEffectif: ModeHeuresSupplementaires =
+      modeForce ?? modeHeuresSupplementaires ?? "COMPTEUR";
 
     if (
       validationFinale &&
       heuresSupplementaires > 0.01 &&
-      modeEffectif === null
+      !modeForce &&
+      modeHeuresSupplementaires === null
     ) {
       setChoixHeuresSupOuvert(true);
       return;
@@ -2110,15 +2293,31 @@ export default function MaSemainePage() {
             totalRE
           : compteurAvantEnregistrement;
 
+      /*
+       * La borne supérieure du compteur est +30 h.
+       * On conserve également la borne basse historique de -30 h.
+       */
       if (
         validationFinale &&
-        (compteurApresEnregistrement < -30 ||
-          compteurApresEnregistrement > 30)
+        compteurApresEnregistrement > 30.01
       ) {
         setMessage(
-          `Le compteur de récupération serait de ${formatHeures(
+          `Le compteur de récupération atteindrait ${formatHeures(
             compteurApresEnregistrement
-          )} h. La limite autorisée est de -30 h à +30 h.`
+          )} h. Il ne peut pas dépasser +30 h.`
+        );
+        setMessageType("DANGER");
+        return;
+      }
+
+      if (
+        validationFinale &&
+        compteurApresEnregistrement < -30
+      ) {
+        setMessage(
+          `Le compteur de récupération atteindrait ${formatHeures(
+            compteurApresEnregistrement
+          )} h. La limite basse autorisée est de -30 h.`
         );
         setMessageType("DANGER");
         return;
@@ -2259,8 +2458,9 @@ export default function MaSemainePage() {
         feuilleId = nouvelleFeuille.id;
       }
 
-      const joursAInserer = semaine.map(
-        jour => ({
+      const joursAInserer = semaine
+        .filter(jourDoitEtreEnregistre)
+        .map(jour => ({
           feuille_id: feuilleId,
           date_jour: jour.date,
           heures_theoriques: jour.heuresTheoriques,
@@ -2299,7 +2499,7 @@ export default function MaSemainePage() {
         heures: number;
       }[] = [];
 
-      for (const jour of semaine) {
+      for (const jour of semaine.filter(jourDoitEtreEnregistre)) {
         const jourDB = joursCrees.find(
           j => j.date_jour === jour.date
         );
@@ -2400,6 +2600,10 @@ export default function MaSemainePage() {
 
           compteurCourant = apres;
         }
+      }
+
+      if (validationFinale) {
+        setModeHeuresSupplementaires(modeEffectif);
       }
 
       setFeuilleVerrouillee(false);
@@ -2792,66 +2996,70 @@ export default function MaSemainePage() {
             </div>
 
             {heuresSupplementaires > 0.01 && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: "#777", letterSpacing: ".5px", marginBottom: 6 }}>
-                  QUE FAIRE DE CES HEURES ?
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 6,
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setModeHeuresSupplementaires("COMPTEUR");
-                      semaineModifieeRef.current = true;
-                      setSemaineModifiee(true);
-                      setSemaineEnregistree(false);
-                      setSemaineValidee(false);
-                    }}
-                    style={{
-                      border: modeHeuresSupplementaires === "COMPTEUR" ? "2px solid #c00000" : "1px solid #ddd",
-                      background: modeHeuresSupplementaires === "COMPTEUR" ? "#fff5f5" : "#fff",
-                      color: modeHeuresSupplementaires === "COMPTEUR" ? "#c00000" : "#555",
-                      borderRadius: 8,
-                      padding: "8px 6px",
-                      fontWeight: 800,
-                      cursor: "pointer",
-                      fontFamily: "Calibri, Arial, sans-serif",
-                      fontSize: 11,
-                    }}
-                  >
-                    ↻ Compteur
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setModeHeuresSupplementaires("PAYE");
-                      semaineModifieeRef.current = true;
-                      setSemaineModifiee(true);
-                      setSemaineEnregistree(false);
-                      setSemaineValidee(false);
-                    }}
-                    style={{
-                      border: modeHeuresSupplementaires === "PAYE" ? "2px solid #138113" : "1px solid #ddd",
-                      background: modeHeuresSupplementaires === "PAYE" ? "#f2faf2" : "#fff",
-                      color: modeHeuresSupplementaires === "PAYE" ? "#138113" : "#555",
-                      borderRadius: 8,
-                      padding: "8px 6px",
-                      fontWeight: 800,
-                      cursor: "pointer",
-                      fontFamily: "Calibri, Arial, sans-serif",
-                      fontSize: 11,
-                    }}
-                  >
-                    € Payées
-                  </button>
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: modeHeuresSupplementaires
+                    ? "1px solid #acd2b0"
+                    : "1px solid #dfc777",
+                  background: modeHeuresSupplementaires
+                    ? "#f2faf2"
+                    : "#fffaf0",
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                }}
+              >
+                <strong>
+                  {modeHeuresSupplementaires === "COMPTEUR"
+                    ? "✓ Heures sup : compteur"
+                    : modeHeuresSupplementaires === "PAYE"
+                      ? "✓ Heures sup : payées"
+                      : "⚠ Choix obligatoire lors de la validation"}
+                </strong>
+                <div style={{ marginTop: 3, color: "#666" }}>
+                  Le choix PAYÉES / COMPTEUR sera demandé explicitement à la validation.
                 </div>
               </div>
             )}
+          </div>
+
+          {/* COMPTEUR DE RÉCUPÉRATION */}
+
+          <div style={styles.card}>
+            <div style={styles.cardLabel}>
+              COMPTEUR DE RÉCUPÉRATION
+            </div>
+
+            <div
+              style={{
+                ...styles.cardValue,
+                color:
+                  totalCompteurChoisi > 30.01
+                    ? "#c00000"
+                    : totalCompteurChoisi < -30
+                      ? "#c00000"
+                      : "#333",
+              }}
+            >
+              {formatHeures(totalCompteurChoisi)} h
+            </div>
+
+            <div style={styles.cardHint}>
+              Début de semaine : <strong>{formatHeures(compteurBaseSemaine)} h</strong>
+              {totalRE > 0.01 && (
+                <>
+                  <br />− {formatHeures(totalRE)} h de récupération saisie
+                </>
+              )}
+              {heuresSupplementaires > 0.01 && (
+                <>
+                  <br />
+                  Si les +{formatHeures(heuresSupplementaires)} h sup vont au compteur : {formatHeures(compteurPrevisionnelAvecHS)} h / 30 h
+                </>
+              )}
+            </div>
           </div>
 
           {/* TICKETS */}
@@ -2866,7 +3074,7 @@ export default function MaSemainePage() {
             <div
               style={{
                 ...styles.cardValue,
-                fontSize: 32,
+                fontSize: 28,
                 color: "#222",
               }}
             >
@@ -2917,7 +3125,7 @@ export default function MaSemainePage() {
                 styles.ticketHeader
               }
             >
-              Ticket restaurant
+              Présence / ticket
             </div>
           </div>
 
@@ -3180,15 +3388,34 @@ export default function MaSemainePage() {
                             </option>
                           </select>
 
-                          <span>
-                            {jour.dureeRTT ===
-                            "DEMI_JOURNEE"
-                              ? `Il reste ${formatHeures(
-                                  jour.heuresTheoriques /
-                                    2
-                                )} h à travailler.`
-                              : "Journée non travaillée."}
-                          </span>
+                          {jour.dureeRTT === "DEMI_JOURNEE" ? (
+                            <>
+                              <label style={styles.cpHoursLabel}>
+                                Heures de RTT
+                                <input
+                                  value={jour.heuresAbsence}
+                                  inputMode="decimal"
+                                  placeholder="ex. 4 ou 3,5"
+                                  onChange={e =>
+                                    modifierJour(jour.date, {
+                                      heuresAbsence: e.target.value.replace(/[^0-9.,]/g, ""),
+                                    })
+                                  }
+                                  style={{ ...styles.input, width: 115 }}
+                                />
+                              </label>
+                              <span>
+                                Saisissez les heures réellement posées en RTT.
+                              </span>
+                              <span style={styles.cpRemaining}>
+                                {jour.heuresAbsence
+                                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                                  : "Renseignez les heures de RTT pour calculer le temps restant."}
+                              </span>
+                            </>
+                          ) : (
+                            <span>Journée non travaillée.</span>
+                          )}
                         </div>
                       )}
 
@@ -3199,22 +3426,50 @@ export default function MaSemainePage() {
                           <strong>Congés payés :</strong>
                           <select
                             value={jour.dureeCP}
-                            onChange={e => modifierJour(jour.date, {
-                              dureeCP: e.target.value as DureeRTT,
-                              presence: e.target.value === "JOURNEE" ? "ABSENT" : "PRESENTIEL",
-                              ticketRestaurant: e.target.value === "DEMI_JOURNEE" && !jour.estWeekend,
-                              imputations: e.target.value === "JOURNEE" ? [] : jour.imputations,
-                            })}
+                            onChange={e => {
+                              const duree = e.target.value as DureeCP;
+                              modifierJour(jour.date, {
+                                dureeCP: duree,
+                                presence: duree === "JOURNEE" ? "ABSENT" : "PRESENTIEL",
+                                ticketRestaurant: duree === "DEMI_JOURNEE" && !jour.estWeekend,
+                                heuresAbsence: duree === "JOURNEE" ? "" : jour.heuresAbsence,
+                                imputations: duree === "JOURNEE" ? [] : jour.imputations,
+                              });
+                            }}
                             style={{ ...styles.input, width: 160 }}
                           >
                             <option value="JOURNEE">Journée</option>
                             <option value="DEMI_JOURNEE">1/2 journée</option>
                           </select>
-                          <span>
-                            {jour.dureeCP === "DEMI_JOURNEE"
-                              ? `Il reste ${formatHeures(jour.heuresTheoriques / 2)} h à travailler.`
-                              : "Journée non travaillée."}
-                          </span>
+
+                          {jour.dureeCP === "DEMI_JOURNEE" ? (
+                            <>
+                              <label style={styles.cpHoursLabel}>
+                                Heures de CP
+                                <input
+                                  value={jour.heuresAbsence}
+                                  inputMode="decimal"
+                                  placeholder="ex. 4 ou 3,5"
+                                  onChange={e =>
+                                    modifierJour(jour.date, {
+                                      heuresAbsence: e.target.value.replace(/[^0-9.,]/g, ""),
+                                    })
+                                  }
+                                  style={{ ...styles.input, width: 115 }}
+                                />
+                              </label>
+                              <span>
+                                Saisissez les heures réellement posées en CP : 4 h le matin, 3,5 h l'après-midi, par exemple.
+                              </span>
+                              <span style={styles.cpRemaining}>
+                                {jour.heuresAbsence
+                                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                                  : "Renseignez les heures de CP pour calculer le temps restant."}
+                              </span>
+                            </>
+                          ) : (
+                            <span>Journée non travaillée.</span>
+                          )}
                         </div>
                       )}
 
@@ -3314,9 +3569,7 @@ export default function MaSemainePage() {
                                     }
                                   );
                                 }}
-                                style={
-                                  styles.input
-                                }
+                                style={{ ...styles.input, gridColumn: "1", gridRow: "1" }}
                               >
                                 <option value="CBE">
                                   CBE
@@ -3337,6 +3590,8 @@ export default function MaSemainePage() {
                                 <div
                                   style={{
                                     ...styles.input,
+                                    gridColumn: "2",
+                                    gridRow: "1",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
@@ -3373,7 +3628,7 @@ export default function MaSemainePage() {
                                       }
                                     );
                                   }}
-                                  style={styles.input}
+                                  style={{ ...styles.input, gridColumn: "2", gridRow: "1" }}
                                 >
                                   <option value="">
                                     Choisir une activité...
@@ -3426,9 +3681,11 @@ export default function MaSemainePage() {
                                     }
                                   )
                                 }
-                                style={
-                                  styles.input
-                                }
+                                style={{
+                                  ...styles.input,
+                                  gridColumn: "3",
+                                  gridRow: "1",
+                                }}
                               />
 
                               {/* DESCRIPTION */}
@@ -3449,9 +3706,11 @@ export default function MaSemainePage() {
                                     }
                                   )
                                 }
-                                style={
-                                  styles.input
-                                }
+                                style={{
+                                  ...styles.input,
+                                  gridColumn: "1 / 4",
+                                  gridRow: "2",
+                                }}
                               />
 
                               {/* CODE */}
@@ -3475,6 +3734,8 @@ export default function MaSemainePage() {
                                 }
                                 style={{
                                   ...styles.input,
+                                  gridColumn: "4",
+                                  gridRow: "1",
                                   background:
                                     ligne.typeAffaire !== "Divers" &&
                                     !ligne.activiteId
@@ -3502,7 +3763,7 @@ export default function MaSemainePage() {
                               {ligne.typeAffaire !== "Divers" &&
                                 ligne.activiteId &&
                                 getCodesPourLigne(ligne).length === 0 && (
-                                  <div style={styles.codeHelp}>
+                                  <div style={{ ...styles.codeHelp, gridRow: "3" }}>
                                     Aucun code n'est associé à cette activité dans Gestion-activites.
                                   </div>
                                 )}
@@ -3528,9 +3789,11 @@ export default function MaSemainePage() {
                                     }
                                   )
                                 }
-                                style={
-                                  styles.input
-                                }
+                                style={{
+                                  ...styles.input,
+                                  gridColumn: "4",
+                                  gridRow: "2",
+                                }}
                               />
 
                               {/* SUPPRESSION */}
@@ -3543,9 +3806,11 @@ export default function MaSemainePage() {
                                   )
                                 }
                                 title="Supprimer l'imputation"
-                                style={
-                                  styles.deleteButton
-                                }
+                                style={{
+                                  ...styles.deleteButton,
+                                  gridColumn: "5",
+                                  gridRow: "1 / 3",
+                                }}
                               >
                                 ×
                               </button>
@@ -3732,9 +3997,9 @@ export default function MaSemainePage() {
 
         <div style={styles.actionZone}>
           <div style={styles.actionExplanation}>
-            <strong>Enregistrer</strong> sauvegarde votre saisie en brouillon.
+            <strong>Enregistrer</strong> garde votre saisie en brouillon.
             <span> · </span>
-            <strong>Valider</strong> transmet définitivement la semaine à POLYNOV.
+            <strong>Valider ma semaine</strong> contrôle puis transmet la semaine à POLYNOV.
           </div>
 
           <div style={styles.bottomActions}>
@@ -4094,25 +4359,39 @@ export default function MaSemainePage() {
             </div>
             <div style={{ color: "#666", lineHeight: 1.5, marginBottom: 20 }}>
               Cette semaine comporte <strong>+{formatHeures(heuresSupplementaires)} h</strong> supplémentaires.
+              <br />Le compteur démarre à <strong>{formatHeures(compteurBaseSemaine)} h</strong> et se situe actuellement à <strong>{formatHeures(compteurApresRE)} h</strong> après les récupérations saisies.
               <br />Choisissez explicitement leur traitement avant l'enregistrement.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <button
                 type="button"
+                disabled={compteurDepasse30AvecHS}
                 onClick={() => {
-                  setModeHeuresSupplementaires("COMPTEUR");
+                  if (compteurDepasse30AvecHS) return;
                   setChoixHeuresSupOuvert(false);
                   void validerSemaine("COMPTEUR");
                 }}
-                style={{ border: "2px solid #c00000", background: "#fff5f5", color: "#c00000", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
+                style={{
+                  border: "2px solid #c00000",
+                  background: compteurDepasse30AvecHS ? "#f2f2f2" : "#fff5f5",
+                  color: compteurDepasse30AvecHS ? "#999" : "#c00000",
+                  borderRadius: 10,
+                  padding: 16,
+                  fontWeight: 800,
+                  cursor: compteurDepasse30AvecHS ? "not-allowed" : "pointer",
+                  opacity: compteurDepasse30AvecHS ? 0.85 : 1,
+                }}
               >
                 ↻ Mettre au compteur
-                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures alimentent le compteur RE.</span>
+                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>
+                  {compteurDepasse30AvecHS
+                    ? `Impossible : le compteur atteindrait ${formatHeures(compteurPrevisionnelAvecHS)} h.`
+                    : `Le compteur passerait à ${formatHeures(compteurPrevisionnelAvecHS)} h / 30 h.`}
+                </span>
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setModeHeuresSupplementaires("PAYE");
                   setChoixHeuresSupOuvert(false);
                   void validerSemaine("PAYE");
                 }}
@@ -4380,9 +4659,10 @@ const styles: Record<
   cards: {
     display: "grid",
     gridTemplateColumns:
-      "repeat(3, 1fr)",
-    gap: 14,
+      "repeat(4, minmax(0, 1fr))",
+    gap: 12,
     marginBottom: 16,
+    minWidth: 0,
   },
 
   card: {
@@ -4390,30 +4670,32 @@ const styles: Record<
     border:
       "1px solid #e3e3e3",
     borderRadius: 11,
-    padding: 16,
+    padding: 13,
     minHeight: 105,
+    minWidth: 0,
     boxShadow:
       "0 2px 7px rgba(0,0,0,.045)",
   },
 
   cardLabel: {
     color: "#777",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 800,
-    letterSpacing: ".6px",
-    marginBottom: 7,
+    letterSpacing: ".45px",
+    marginBottom: 6,
+    lineHeight: 1.2,
   },
 
   cardValue: {
-    fontSize: 25,
+    fontSize: 23,
     fontWeight: 800,
     lineHeight: 1.1,
   },
 
   cardHint: {
     color: "#888",
-    fontSize: 11,
-    lineHeight: 1.3,
+    fontSize: 10.5,
+    lineHeight: 1.28,
     marginTop: 6,
   },
 
@@ -4475,7 +4757,7 @@ const styles: Record<
     border:
       "1px solid #e3e3e3",
     borderRadius: 11,
-    overflowX: "auto",
+    overflowX: "hidden",
     boxShadow:
       "0 2px 8px rgba(0,0,0,.06)",
   },
@@ -4483,8 +4765,8 @@ const styles: Record<
   tableHeader: {
     display: "grid",
     gridTemplateColumns:
-      "145px minmax(760px, 1fr) 150px 150px",
-    minWidth: 1205,
+      "120px minmax(0, 1fr) 205px",
+    minWidth: 0,
     borderBottom:
       "1px solid #ddd",
     background: "#f7f7f7",
@@ -4514,7 +4796,7 @@ const styles: Record<
   },
 
   dayBlock: {
-    minWidth: 1205,
+    minWidth: 0,
     borderBottom:
       "1px solid #e2e2e2",
   },
@@ -4522,7 +4804,9 @@ const styles: Record<
   dayGrid: {
     display: "grid",
     gridTemplateColumns:
-      "145px minmax(760px, 1fr) 150px 150px",
+      "120px minmax(0, 1fr) 205px",
+    gridTemplateRows: "auto auto",
+    minWidth: 0,
     minHeight: 120,
   },
 
@@ -4531,6 +4815,8 @@ const styles: Record<
   ---------------------------------------------------------- */
 
   dayCell: {
+    gridColumn: "1",
+    gridRow: "1 / span 2",
     padding: 13,
     borderRight:
       "1px solid #ddd",
@@ -4575,9 +4861,11 @@ const styles: Record<
   ---------------------------------------------------------- */
 
   imputationCell: {
+    gridColumn: "2",
+    gridRow: "1 / span 2",
     padding: 11,
     minWidth: 0,
-    overflowX: "auto",
+    overflowX: "hidden",
     overflowY: "visible",
   },
 
@@ -4625,8 +4913,8 @@ const styles: Record<
   imputationRow: {
     display: "grid",
     gridTemplateColumns:
-      "60px 130px 62px minmax(130px, 1fr) 150px 62px 38px",
-    minWidth: 690,
+      "70px minmax(115px, 1.1fr) 70px minmax(135px, 1.3fr) 36px",
+    minWidth: 0,
     gap: 6,
     alignItems: "center",
     marginBottom: 7,
@@ -4716,6 +5004,8 @@ const styles: Record<
   ---------------------------------------------------------- */
 
   presenceCell: {
+    gridColumn: "3",
+    gridRow: "1",
     padding: 11,
     borderLeft:
       "1px solid #eee",
@@ -4735,7 +5025,10 @@ const styles: Record<
   ---------------------------------------------------------- */
 
   ticketCell: {
-    padding: 11,
+    gridColumn: "3",
+    gridRow: "2",
+    padding: "11px 13px",
+    minWidth: 0,
     borderLeft:
       "1px solid #eee",
     display: "flex",
@@ -4745,6 +5038,7 @@ const styles: Record<
 
   ticketLabel: {
     display: "flex",
+    whiteSpace: "nowrap",
     alignItems: "center",
     gap: 7,
     fontSize: 13,
@@ -4753,6 +5047,7 @@ const styles: Record<
 
   ticketHint: {
     color: "#888",
+    maxWidth: 170,
     fontSize: 10,
     marginTop: 6,
     lineHeight: 1.25,
@@ -4768,6 +5063,19 @@ const styles: Record<
       "1px solid #ddd",
     textAlign: "center",
     background: "#fafafa",
+  },
+
+  cpHoursLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+
+  cpRemaining: {
+    fontWeight: 700,
+    color: "#138113",
   },
 
   /* ----------------------------------------------------------
