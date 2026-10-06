@@ -740,32 +740,104 @@ export default function BilanActivitesPage() {
           )}
 
           {lignesActivites.length > 0 && (
-            <div style={styles.detailGrid}>
-              {lignesActivites.map(ligne => (
-                <div key={ligne.id} style={styles.detailBox}>
-                  <div style={styles.detailTitle}>{ligne.nom}</div>
-                  <div style={styles.detailLine}>
-                    <span>CBE</span>
-                    <strong>
-                      {formatHeures(ligne.cbe)} h ({formatPourcentage(pourcentage(ligne.cbe, ligne.heures))}%)
-                    </strong>
-                  </div>
-                  <div style={styles.detailLine}>
-                    <span>DBE</span>
-                    <strong>
-                      {formatHeures(ligne.dbe)} h ({formatPourcentage(pourcentage(ligne.dbe, ligne.heures))}%)
-                    </strong>
-                  </div>
-                  <div style={styles.detailLine}>
-                    <span>Collaborateurs</span>
-                    <strong>{ligne.collaborateurs}</strong>
-                  </div>
-                  <div style={styles.detailLine}>
-                    <span>Lignes</span>
-                    <strong>{ligne.lignes}</strong>
-                  </div>
-                </div>
-              ))}
+            <div style={styles.activityBreakdown}>
+              <div style={styles.breakdownTitle}>
+                Détail par type d'affaire
+              </div>
+
+              <div style={styles.tableScroll}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.thLeft}>Activité</th>
+                      <th style={styles.thCenter}>CBE</th>
+                      <th style={styles.thCenter}>% activité</th>
+                      <th style={styles.thCenter}>DBE</th>
+                      <th style={styles.thCenter}>% activité</th>
+                      <th style={styles.thCenter}>Total</th>
+                      <th style={styles.thCenter}>% global</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lignesActivites.map(ligne => (
+                      <tr key={ligne.id}>
+                        <td style={styles.tdLeft}>
+                          <strong>{ligne.nom}</strong>
+                          <span style={styles.personName}>{ligne.code}</span>
+                        </td>
+
+                        <td style={styles.tdCenter}>
+                          {formatHeures(ligne.cbe)} h
+                        </td>
+
+                        <td style={styles.tdCenter}>
+                          {formatPourcentage(
+                            pourcentage(ligne.cbe, ligne.heures)
+                          )}%
+                        </td>
+
+                        <td style={styles.tdCenter}>
+                          {formatHeures(ligne.dbe)} h
+                        </td>
+
+                        <td style={styles.tdCenter}>
+                          {formatPourcentage(
+                            pourcentage(ligne.dbe, ligne.heures)
+                          )}%
+                        </td>
+
+                        <td style={{ ...styles.tdCenter, fontWeight: 800 }}>
+                          {formatHeures(ligne.heures)} h
+                        </td>
+
+                        <td style={styles.tdCenter}>
+                          {formatPourcentage(ligne.pourcentage)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+
+                  <tfoot>
+                    <tr>
+                      <td style={{ ...styles.tdLeft, fontWeight: 900 }}>
+                        Total
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        {formatHeures(
+                          lignesActivites.reduce((sum, ligne) => sum + ligne.cbe, 0)
+                        )} h
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        {formatPourcentage(
+                          pourcentage(
+                            lignesActivites.reduce((sum, ligne) => sum + ligne.cbe, 0),
+                            heuresActivites
+                          )
+                        )}%
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        {formatHeures(
+                          lignesActivites.reduce((sum, ligne) => sum + ligne.dbe, 0)
+                        )} h
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        {formatPourcentage(
+                          pourcentage(
+                            lignesActivites.reduce((sum, ligne) => sum + ligne.dbe, 0),
+                            heuresActivites
+                          )
+                        )}%
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        {formatHeures(heuresActivites)} h
+                      </td>
+                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
+                        100%
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
         </section>
@@ -1154,29 +1226,13 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignItems: "flex-end",
   },
-  detailGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-    gap: 10,
+  activityBreakdown: {
     padding: "0 20px 20px",
   },
-  detailBox: {
-    background: "#fafafa",
-    border: "1px solid #ececec",
-    borderRadius: 9,
-    padding: 13,
-  },
-  detailTitle: {
+  breakdownTitle: {
+    fontSize: 14,
     fontWeight: 900,
-    marginBottom: 8,
-  },
-  detailLine: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    fontSize: 12,
-    padding: "4px 0",
-    borderTop: "1px solid #ededed",
+    marginBottom: 10,
   },
   tableScroll: {
     overflowX: "auto",
@@ -1203,6 +1259,14 @@ const styles: Record<string, CSSProperties> = {
     borderBottom: "1px solid #e2e5e9",
     whiteSpace: "nowrap",
   },
+  thCenter: {
+    padding: "10px 12px",
+    textAlign: "center",
+    background: "#f7f8f9",
+    color: "#626970",
+    borderBottom: "1px solid #e2e5e9",
+    whiteSpace: "nowrap",
+  },
   tdLeft: {
     padding: "10px 12px",
     textAlign: "left",
@@ -1210,6 +1274,12 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
   },
   tdRight: {
+    padding: "10px 12px",
+    textAlign: "center",
+    borderBottom: "1px solid #eceeef",
+    whiteSpace: "nowrap",
+  },
+  tdCenter: {
     padding: "10px 12px",
     textAlign: "center",
     borderBottom: "1px solid #eceeef",
