@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -49,6 +50,11 @@ export default function DashboardPage() {
   const [nom, setNom] = useState("");
   const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("");
+
+  const accesFeuilles =
+    role === "ADMIN" ||
+    trigramme.trim().toUpperCase() === "MMO" ||
+    trigramme.trim().toUpperCase() === "FVI";
 
   const accesExportExcel =
     role === "ADMIN" ||
@@ -888,6 +894,19 @@ if (!collaborateur) {
               )
             }
           />
+
+          {accesFeuilles && role !== "ADMIN" && (
+            <Carte
+              icone="📋"
+              titre="Suivi des feuilles"
+              description="Consulter les feuilles de temps de tous les collaborateurs"
+              onClick={() =>
+                router.push(
+                  "/admin/feuilles"
+                )
+              }
+            />
+          )}
 
           <Carte
             icone="📊"

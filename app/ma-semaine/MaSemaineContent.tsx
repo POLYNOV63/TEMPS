@@ -722,6 +722,9 @@ export default function MaSemainePage() {
   const [choixHeuresSupOuvert, setChoixHeuresSupOuvert] =
     useState(false);
 
+  const [confirmationValidationOuverte, setConfirmationValidationOuverte] =
+    useState(false);
+
   const [feuilleVerrouillee, setFeuilleVerrouillee] =
     useState(false);
 
@@ -1209,12 +1212,48 @@ export default function MaSemainePage() {
       return Math.max(0, base);
     }, [semaine]);
 
-  const heuresSupplementaires =
-    Math.max(
-      0,
-      totalHeuresSemaine -
-        base35Semaine
+  /*
+   * IMPORTANT : les heures supplémentaires et les heures manquantes
+   * sont désormais calculées JOUR PAR JOUR.
+   *
+   * Ainsi, une heure faite en plus mardi ne peut jamais masquer une
+   * heure manquante vendredi. C'est le comportement métier attendu :
+   * chaque journée doit être justifiée séparément.
+   *
+   * On conserve également la règle POLYNOV des profils à 37,5 h :
+   * leur écart par rapport à la base de 35 h reste considéré comme HS.
+   */
+  const detailsJours = useMemo(() => {
+    return semaine.map(jour => {
+      const cible = cibleTravailJour(jour, codesImputation);
+      const heures = totalImputations(jour);
+
+      return {
+        jour,
+        cible,
+        heures,
+        manquantes: Math.max(0, cible - heures),
+        supplementaires: Math.max(0, heures - cible),
+      };
+    });
+  }, [semaine, codesImputation]);
+
+  const heuresSupplementairesJour = useMemo(() => {
+    return detailsJours.reduce(
+      (total, detail) => total + detail.supplementaires,
+      0
     );
+  }, [detailsJours]);
+
+  const heuresSupplementairesBase35 = Math.max(
+    0,
+    totalHeuresSemaine - base35Semaine
+  );
+
+  const heuresSupplementaires = Math.max(
+    heuresSupplementairesJour,
+    heuresSupplementairesBase35
+  );
 
   const totalRE =
     useMemo(() => {
@@ -1250,15 +1289,19 @@ export default function MaSemainePage() {
       ? compteurPrevisionnelAvecHS
       : compteurApresRE;
 
-  const heuresManquantes =
-    Math.max(
-      0,
-      totalHeuresTheoriques -
-        totalHeuresSemaine
+  const heuresManquantes = useMemo(() => {
+    return detailsJours.reduce(
+      (total, detail) => total + detail.manquantes,
+      0
     );
+  }, [detailsJours]);
+
+  const joursEnDeficit = useMemo(() => {
+    return detailsJours.filter(detail => detail.manquantes > 0.01);
+  }, [detailsJours]);
 
   const semaineComplete =
-    heuresManquantes <= 0.01;
+    joursEnDeficit.length === 0;
 
   const totalTickets =
     semaine.filter(
@@ -1577,6 +1620,31 @@ export default function MaSemainePage() {
   }
 
   /* ============================================================
+     VALIDATION DES IMPUTATIONS
+  ============================================================ */
+
+  function ligneImputationCommencee(ligne: Imputation) {
+    return Boolean(
+      ligne.activiteId ||
+      ligne.code ||
+      ligne.heures ||
+      ligne.numeroAffaire ||
+      ligne.description
+    );
+  }
+
+  function afficherErreurImputation(
+    jour: JourSemaine,
+    numeroLigne: number,
+    message: string
+  ) {
+    setMessage(
+      `Le ${jour.jour} ${dateAffichage(jour.date)} — imputation ${numeroLigne} : ${message}`
+    );
+    setMessageType("DANGER");
+  }
+
+  /* ============================================================
      VALIDATION
   ============================================================ */
 
@@ -1726,98 +1794,115 @@ export default function MaSemainePage() {
         continue;
       }
 
-      for (const ligne of jour.imputations) {
+      for (const [index, ligne] of jour.imputations.entries()) {
+        if (!ligneImputationCommencee(ligne)) {
+          continue;
+        }
+
+        const numeroLigne = index + 1;
+        const estDivers = ligne.typeAffaire === "Divers";
+        const heuresRenseignees = ligne.heures.trim() !== "";
         const heures = convertirHeures(ligne.heures);
 
-        if (
-          ligne.typeAffaire !== "Divers" &&
-          ligne.numeroAffaire &&
-          !/^\d{4}$/.test(ligne.numeroAffaire)
-        ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : le numéro d'affaire doit comporter exactement 4 chiffres.`
+        /*
+         * La description reste totalement optionnelle.
+         * Pour une affaire (CBE/DBE), les champs indispensables sont :
+         *   - activité
+         *   - code
+         *   - numéro d'affaire sur 4 chiffres
+         *   - heures > 0
+         *
+         * Pour Divers :
+         *   - code
+         *   - heures > 0
+         */
+        if (!estDivers) {
+          if (!ligne.activiteId) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "choisissez une activité. La description de l'affaire est facultative."
+            );
+            return false;
+          }
+
+          if (!ligne.code) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "sélectionnez un code d'imputation."
+            );
+            return false;
+          }
+
+          if (!ligne.numeroAffaire || !/^\d{4}$/.test(ligne.numeroAffaire)) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "renseignez un numéro d'affaire composé exactement de 4 chiffres."
+            );
+            return false;
+          }
+
+          if (!heuresRenseignees) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "renseignez le nombre d'heures."
+            );
+            return false;
+          }
+        } else {
+          if (!ligne.code) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "sélectionnez un code Divers."
+            );
+            return false;
+          }
+
+          if (!heuresRenseignees) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "renseignez le nombre d'heures."
+            );
+            return false;
+          }
+        }
+
+        if (heuresRenseignees && heures <= 0) {
+          afficherErreurImputation(
+            jour,
+            numeroLigne,
+            "le nombre d'heures doit être supérieur à 0."
           );
-          setMessageType("DANGER");
           return false;
         }
 
-        const ligneRenseignee = Boolean(
-          ligne.activiteId ||
-          ligne.code ||
-          ligne.heures ||
-          ligne.numeroAffaire ||
-          ligne.description
-        );
-
         if (
-          ligneRenseignee &&
-          ligne.typeAffaire !== "Divers" &&
-          !ligne.activiteId
-        ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : choisissez d'abord une activité pour cette imputation.`
-          );
-          setMessageType("DANGER");
-          return false;
-        }
-
-        if (
-          ligneRenseignee &&
-          ligne.typeAffaire !== "Divers" &&
+          !estDivers &&
           ligne.activiteId &&
           ligne.code &&
           !getCodesPourLigne(ligne).some(
             code => normaliserCode(code.code) === normaliserCode(ligne.code)
           )
         ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : le code ${ligne.code} n'est pas autorisé pour l'activité sélectionnée.`
+          afficherErreurImputation(
+            jour,
+            numeroLigne,
+            `le code ${ligne.code} n'est pas autorisé pour l'activité sélectionnée.`
           );
-          setMessageType("DANGER");
-          return false;
-        }
-
-        if (
-          ligne.heures &&
-          ligne.typeAffaire !== "Divers" &&
-          (!ligne.code || !/^\d{4}$/.test(ligne.numeroAffaire))
-        ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : impossible de saisir des heures sans code affaire et numéro d'affaire sur 4 chiffres.`
-          );
-          setMessageType("DANGER");
-          return false;
-        }
-
-        if (
-          ligne.heures &&
-          ligne.typeAffaire === "Divers" &&
-          !ligne.code
-        ) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : impossible de saisir des heures sans sélectionner un code Divers.`
-          );
-          setMessageType("DANGER");
           return false;
         }
 
         if (heures < 0) {
-          setMessage(
-            `Le ${jour.jour} ${dateAffichage(
-              jour.date
-            )} : le nombre d'heures ne peut pas être négatif.`
+          afficherErreurImputation(
+            jour,
+            numeroLigne,
+            "le nombre d'heures ne peut pas être négatif."
           );
-          setMessageType("DANGER");
           return false;
         }
       }
@@ -2113,19 +2198,14 @@ export default function MaSemainePage() {
       // Une feuille peut exister en base tout en étant incomplète.
       // Le badge « Semaine enregistrée » ne doit apparaître que si
       // la semaine chargée atteint bien son objectif d'heures.
-      const totalHeuresChargees = semaineChargee.reduce(
-        (total, jour) => total + totalImputations(jour),
-        0
+      const semaineChargeeAvecDeficit = semaineChargee.some(
+        jour =>
+          totalImputations(jour) <
+          cibleTravailJour(jour, codesImputation) -
+            0.01
       );
 
-      const totalTheoriqueCharge = semaineChargee.reduce(
-        (total, jour) =>
-          total + cibleTravailJour(jour, codesImputation),
-        0
-      );
-
-      const feuilleEstComplete =
-        totalHeuresChargees >= totalTheoriqueCharge - 0.01;
+      const feuilleEstComplete = !semaineChargeeAvecDeficit;
 
       const feuilleEstValidee =
         feuille.statut === "A_TRAITER" && feuilleEstComplete;
@@ -2232,6 +2312,14 @@ export default function MaSemainePage() {
       return;
     }
 
+    if (semaineValidee && !modeAdmin) {
+      setMessage(
+        "Cette semaine est déjà validée. Elle n'est plus modifiable."
+      );
+      setMessageType("DANGER");
+      return;
+    }
+
     if (!collaborateur) {
       setMessage("Le collaborateur n'est pas chargé.");
       setMessageType("DANGER");
@@ -2328,7 +2416,7 @@ export default function MaSemainePage() {
         error: erreurRecherche,
       } = await supabase
         .from("feuilles_heures")
-        .select("id")
+        .select("id, statut, verrouillee")
         .eq("collaborateur_id", collaborateur.id)
         .eq("semaine_debut", semaineDebut)
         .maybeSingle();
@@ -2337,12 +2425,30 @@ export default function MaSemainePage() {
         throw erreurRecherche;
       }
 
-      const statut = validationFinale
-        ? "A_TRAITER"
-        : "BROUILLON";
+      if (
+        feuilleExistante &&
+        feuilleExistante.statut === "A_TRAITER" &&
+        !modeAdmin
+      ) {
+        setMessage(
+          "Cette semaine est déjà validée. Elle n'est plus modifiable."
+        );
+        setMessageType("DANGER");
+        return;
+      }
 
+      const feuilleEtaitVerrouillee = Boolean(
+        feuilleExistante?.verrouillee
+      );
+
+      /*
+       * Pendant la reconstruction de la feuille, elle reste en
+       * BROUILLON. Le passage à A_TRAITER est effectué uniquement
+       * après insertion des journées et imputations, via la RPC
+       * sécurisée valider_feuille_heures.
+       */
       const donneesFeuille = {
-        statut,
+        statut: "BROUILLON",
         total_heures: totalHeuresSemaine,
         total_theorique: base35Semaine,
         heures_supplementaires: heuresSupplementaires,
@@ -2550,6 +2656,19 @@ export default function MaSemainePage() {
       }
 
       if (validationFinale) {
+        const { error: erreurValidation } = await supabase.rpc(
+          "valider_feuille_heures",
+          {
+            p_feuille_id: feuilleId,
+          }
+        );
+
+        if (erreurValidation) {
+          throw erreurValidation;
+        }
+      }
+
+      if (validationFinale) {
         const {
           data: feuillesSuivantes,
           error: erreurSuivantes,
@@ -2606,7 +2725,9 @@ export default function MaSemainePage() {
         setModeHeuresSupplementaires(modeEffectif);
       }
 
-      setFeuilleVerrouillee(false);
+      setFeuilleVerrouillee(
+        feuilleEtaitVerrouillee
+      );
       setSemaineEnregistree(true);
       setSemaineValidee(validationFinale);
       semaineModifieeRef.current = false;
@@ -2665,6 +2786,40 @@ export default function MaSemainePage() {
     } finally {
       setEnregistrement(false);
     }
+  }
+
+  function demanderValidationFinale() {
+    if (enregistrement) return;
+
+    const valide = verifierSemaine(true);
+    if (!valide) {
+      return;
+    }
+
+    if (heuresSupplementaires > 0.01 && modeHeuresSupplementaires === null) {
+      setChoixHeuresSupOuvert(true);
+      return;
+    }
+
+    setConfirmationValidationOuverte(true);
+  }
+
+  function choisirTraitementHeuresSupplementaires(
+    mode: ModeHeuresSupplementaires
+  ) {
+    setModeHeuresSupplementaires(mode);
+    setChoixHeuresSupOuvert(false);
+    setConfirmationValidationOuverte(true);
+  }
+
+  async function confirmerValidationFinale() {
+    setConfirmationValidationOuverte(false);
+    await sauvegarderSemaine(
+      true,
+      heuresSupplementaires > 0.01
+        ? modeHeuresSupplementaires ?? "COMPTEUR"
+        : undefined
+    );
   }
 
   async function enregistrerBrouillon() {
@@ -2917,7 +3072,10 @@ export default function MaSemainePage() {
         ==================================================== */}
 
         <fieldset
-          disabled={feuilleVerrouillee && !modeAdmin}
+          disabled={
+            !modeAdmin &&
+            (feuilleVerrouillee || semaineValidee)
+          }
           style={{
             border: 0,
             padding: 0,
@@ -2926,7 +3084,23 @@ export default function MaSemainePage() {
           }}
         >
         <div style={styles.cards}>
-          {!modeAdmin && feuilleVerrouillee && (
+          {!modeAdmin && semaineValidee && (
+            <div
+              style={{
+                ...styles.message,
+                ...styles.messageDanger,
+                marginBottom: 16,
+              }}
+            >
+              <div style={styles.messageIcon}>✓</div>
+              <div>
+                Cette semaine est <strong>validée</strong>.
+                Vous pouvez la consulter, mais elle n'est plus modifiable.
+              </div>
+            </div>
+          )}
+
+          {!modeAdmin && feuilleVerrouillee && !semaineValidee && (
             <div style={{...styles.message, ...styles.messageDanger, marginBottom: 16}}>
               <div style={styles.messageIcon}>🔒</div>
               <div>Cette feuille est <strong>verrouillée par l'administration</strong>. Vous pouvez la consulter, mais elle n'est plus modifiable.</div>
@@ -3236,11 +3410,26 @@ export default function MaSemainePage() {
                               style={{
                                 fontSize: 11,
                                 color: "#138113",
-                                fontWeight: 700,
+                                fontWeight: 800,
                                 marginTop: 3,
                               }}
                             >
-                              +{formatHeures(heuresJour - cibleTravailJour(jour, codesImputation))} h
+                              +{formatHeures(heuresJour - cibleTravailJour(jour, codesImputation))} h supplémentaire(s)
+                            </div>
+                          )}
+
+                        {!jour.estWeekend &&
+                          !jour.estFerie &&
+                          heuresJour < cibleTravailJour(jour, codesImputation) - 0.01 && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "#c00000",
+                                fontWeight: 800,
+                                marginTop: 3,
+                              }}
+                            >
+                              Il manque {formatHeures(cibleTravailJour(jour, codesImputation) - heuresJour)} h
                             </div>
                           )}
                       </div>
@@ -3995,11 +4184,25 @@ export default function MaSemainePage() {
             ACTIONS
         ==================================================== */}
 
+        {!modeAdmin && !semaineValidee && (
+          <div style={styles.finalValidationWarning}>
+            <div style={styles.finalValidationWarningIcon}>🔒</div>
+            <div>
+              <strong>La validation est définitive.</strong>
+              <div>
+                Une fois votre semaine validée, vous ne pourrez plus la modifier. Vérifiez bien chaque journée, vos absences, vos RE et vos heures supplémentaires.
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={styles.actionZone}>
           <div style={styles.actionExplanation}>
             <strong>Enregistrer</strong> garde votre saisie en brouillon.
             <span> · </span>
-            <strong>Valider ma semaine</strong> contrôle puis transmet la semaine à POLYNOV.
+            <strong>Valider ma semaine</strong> contrôle chaque journée puis transmet la feuille à POLYNOV.
+            <span> · </span>
+            <strong>Attention :</strong> la validation est définitive et verrouille la semaine pour le collaborateur.
           </div>
 
           <div style={styles.bottomActions}>
@@ -4008,7 +4211,8 @@ export default function MaSemainePage() {
               onClick={enregistrerBrouillon}
               disabled={
                 enregistrement ||
-                (feuilleVerrouillee && !modeAdmin)
+                (!modeAdmin &&
+                  (feuilleVerrouillee || semaineValidee))
               }
               style={styles.buttonDraft}
             >
@@ -4019,12 +4223,13 @@ export default function MaSemainePage() {
 
             <button
               type="button"
-              onClick={() => validerSemaine()}
+              onClick={demanderValidationFinale}
               disabled={
                 enregistrement ||
                 !semaineComplete ||
                 (semaineValidee && !semaineModifiee) ||
-                (feuilleVerrouillee && !modeAdmin)
+                (!modeAdmin &&
+                  (feuilleVerrouillee || semaineValidee))
               }
               style={{
                 ...styles.buttonValidate,
@@ -4032,14 +4237,16 @@ export default function MaSemainePage() {
                   enregistrement ||
                   !semaineComplete ||
                   (semaineValidee && !semaineModifiee) ||
-                  (feuilleVerrouillee && !modeAdmin)
+                  (!modeAdmin &&
+                    (feuilleVerrouillee || semaineValidee))
                     ? 0.55
                     : 1,
                 cursor:
                   enregistrement ||
                   !semaineComplete ||
                   (semaineValidee && !semaineModifiee) ||
-                  (feuilleVerrouillee && !modeAdmin)
+                  (!modeAdmin &&
+                    (feuilleVerrouillee || semaineValidee))
                     ? "not-allowed"
                     : "pointer",
               }}
@@ -4070,18 +4277,48 @@ export default function MaSemainePage() {
               !
             </div>
 
-            <div>
+            <div style={{ flex: 1 }}>
               <strong>
-                Heures manquantes
+                Des heures manquent sur une ou plusieurs journées
               </strong>
 
-              <div>
-                Il manque{" "}
-                {formatHeures(
-                  heuresManquantes
-                )}{" "}
-                h par rapport au
-                rythme prévu de la semaine.
+              <div style={{ marginTop: 4 }}>
+                Il manque au total {formatHeures(heuresManquantes)} h.
+              </div>
+
+              <div
+                style={{
+                  marginTop: 6,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                }}
+              >
+                {joursEnDeficit.map(detail => (
+                  <span
+                    key={detail.jour.date}
+                    style={{
+                      background: "#fff",
+                      border: "1px solid #e1b5b5",
+                      borderRadius: 5,
+                      padding: "4px 7px",
+                      fontWeight: 700,
+                      color: "#8d0000",
+                    }}
+                  >
+                    {detail.jour.jour} : −{formatHeures(detail.manquantes)} h
+                  </span>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 7,
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                Une heure supplémentaire réalisée un autre jour ne compense pas cette absence d'heures.
               </div>
             </div>
           </div>
@@ -4330,6 +4567,135 @@ export default function MaSemainePage() {
 
       </div>
     
+      {confirmationValidationOuverte && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 560,
+              background: "#fff",
+              borderRadius: 16,
+              padding: 28,
+              boxShadow: "0 20px 60px rgba(0,0,0,.28)",
+              fontFamily: "Calibri, Arial, sans-serif",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 24,
+                fontWeight: 800,
+                marginBottom: 10,
+                color: "#8d0000",
+              }}
+            >
+              Valider définitivement la semaine ?
+            </div>
+
+            <div
+              style={{
+                background: "#fff4f4",
+                border: "1px solid #e6b5b5",
+                borderLeft: "5px solid #c00000",
+                borderRadius: 9,
+                padding: "12px 14px",
+                marginBottom: 18,
+                lineHeight: 1.45,
+                color: "#5d1b1b",
+              }}
+            >
+              <strong>Attention : cette validation est définitive.</strong>
+              <br />
+              Après validation, vous ne pourrez plus modifier cette semaine. Toute correction devra passer par l'administration.
+            </div>
+
+            <div style={{ lineHeight: 1.6, color: "#444", marginBottom: 18 }}>
+              {heuresSupplementaires > 0.01 ? (
+                <>
+                  <div>Heures supplémentaires : <strong>+{formatHeures(heuresSupplementaires)} h</strong></div>
+                  <div>Traitement choisi : <strong>{modeHeuresSupplementaires === "PAYE" ? "heures payées" : "mise au compteur"}</strong></div>
+                  <div>Compteur après validation : <strong>{formatHeures(totalCompteurChoisi)} h</strong></div>
+                </>
+              ) : (
+                <div>Aucune heure supplémentaire cette semaine.</div>
+              )}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              {heuresSupplementaires > 0.01 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmationValidationOuverte(false);
+                    setChoixHeuresSupOuvert(true);
+                  }}
+                  style={{
+                    border: "1px solid #ccc",
+                    background: "#fff",
+                    color: "#444",
+                    borderRadius: 8,
+                    padding: "10px 14px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Modifier le traitement des HS
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setConfirmationValidationOuverte(false)}
+                style={{
+                  border: "1px solid #ccc",
+                  background: "#fff",
+                  color: "#444",
+                  borderRadius: 8,
+                  padding: "10px 16px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Annuler
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void confirmerValidationFinale()}
+                style={{
+                  border: "none",
+                  background: "#c00000",
+                  color: "#fff",
+                  borderRadius: 8,
+                  padding: "10px 18px",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                🔒 Valider définitivement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {choixHeuresSupOuvert && heuresSupplementaires > 0.01 && (
         <div
           style={{
@@ -4368,8 +4734,7 @@ export default function MaSemainePage() {
                 disabled={compteurDepasse30AvecHS}
                 onClick={() => {
                   if (compteurDepasse30AvecHS) return;
-                  setChoixHeuresSupOuvert(false);
-                  void validerSemaine("COMPTEUR");
+                  choisirTraitementHeuresSupplementaires("COMPTEUR");
                 }}
                 style={{
                   border: "2px solid #c00000",
@@ -4392,13 +4757,12 @@ export default function MaSemainePage() {
               <button
                 type="button"
                 onClick={() => {
-                  setChoixHeuresSupOuvert(false);
-                  void validerSemaine("PAYE");
+                  choisirTraitementHeuresSupplementaires("PAYE");
                 }}
                 style={{ border: "2px solid #138113", background: "#f2faf2", color: "#138113", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
               >
                 € Heures payées
-                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures ne alimentent pas le compteur RE.</span>
+                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures n’alimentent pas le compteur RE.</span>
               </button>
             </div>
           </div>
@@ -4932,14 +5296,13 @@ const styles: Record<
     minWidth: 0,
     gap: 6,
     alignItems: "center",
-    marginBottom: 7,
-    padding: "7px 7px 7px 8px",
-    background: "#fafafa",
-    border:
-      "1px solid #ededed",
-    borderLeft:
-      "3px solid #c00000",
-    borderRadius: 6,
+    marginBottom: 9,
+    padding: "8px 8px 8px 9px",
+    background: "#ffffff",
+    border: "1px solid #d8d8d8",
+    borderLeft: "4px solid #c00000",
+    borderRadius: 7,
+    boxShadow: "0 1px 3px rgba(0,0,0,.04)",
   },
 
   deleteButton: {
@@ -5188,6 +5551,33 @@ const styles: Record<
     fontFamily: "Calibri, Arial, sans-serif",
     fontSize: 14,
     boxShadow: "0 2px 4px rgba(19,129,19,.15)",
+  },
+
+  finalValidationWarning: {
+    marginTop: 16,
+    background: "#fff4f4",
+    border: "1px solid #e1b6b6",
+    borderLeft: "5px solid #c00000",
+    borderRadius: 10,
+    padding: "12px 15px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    color: "#6d2020",
+    fontSize: 13,
+    lineHeight: 1.4,
+  },
+
+  finalValidationWarningIcon: {
+    width: 31,
+    height: 31,
+    borderRadius: "50%",
+    background: "#c00000",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
 
   saveReminder: {

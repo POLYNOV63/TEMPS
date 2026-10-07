@@ -11,6 +11,7 @@ type FeuilleHeures = {
   total_theorique: number;
   heures_supplementaires: number;
   created_at: string;
+  statut: string | null;
   verrouillee?: boolean | null;
   verrouillee_le?: string | null;
 };
@@ -58,6 +59,18 @@ function numeroSemaine(dateString: string) {
         7
     )
   );
+}
+
+function etatWorkflow(feuille: FeuilleHeures) {
+  if (Boolean(feuille.verrouillee)) {
+    return "verrouillee" as const;
+  }
+
+  if ((feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER") {
+    return "envoyee" as const;
+  }
+
+  return "brouillon" as const;
 }
 
 export default function MesFeuillesPage() {
@@ -395,12 +408,40 @@ export default function MesFeuillesPage() {
                           <tbody>
                             {feuillesAnnee.map((feuille) => {
                               const complete = feuille.total_heures >= feuille.total_theorique - 0.01;
-                              const verrouillee = Boolean(feuille.verrouillee);
+                              const workflow = etatWorkflow(feuille);
                               const couleurFond = !complete
                                 ? "#fffaf0"
                                 : feuille.heures_supplementaires > 0
                                   ? "#fff8f8"
                                   : "#ffffff";
+
+                              const workflowConfig =
+                                workflow === "envoyee"
+                                  ? {
+                                      icon: "📤",
+                                      titre: "Envoyée à POLYNOV",
+                                      sousTitre: "Non modifiable par le collaborateur",
+                                      color: "#138113",
+                                      background: "#edf8ef",
+                                      border: "1px solid #cfe8d4",
+                                    }
+                                  : workflow === "verrouillee"
+                                    ? {
+                                        icon: "🔒",
+                                        titre: "Verrouillée par l'administration",
+                                        sousTitre: "Non modifiable",
+                                        color: "#7a4b00",
+                                        background: "#fff7e6",
+                                        border: "1px solid #eed39a",
+                                      }
+                                    : {
+                                        icon: "📝",
+                                        titre: "Brouillon",
+                                        sousTitre: "Encore modifiable",
+                                        color: "#9a7000",
+                                        background: "#fff8e7",
+                                        border: "1px solid #f0dfaa",
+                                      };
 
                               return (
                                 <tr key={feuille.id} style={{ background: couleurFond }}>
@@ -438,33 +479,36 @@ export default function MesFeuillesPage() {
                                   </td>
 
                                   <td style={tdStyle}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                                      <span
-                                        title={
-                                          verrouillee
-                                            ? `Feuille verrouillée${feuille.verrouillee_le ? ` le ${formatDateHeure(feuille.verrouillee_le)}` : ""}`
-                                            : "Feuille ouverte et modifiable"
-                                        }
-                                        style={{
-                                          width: 34,
-                                          height: 34,
-                                          borderRadius: 9,
-                                          display: "inline-flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          background: verrouillee ? "#f1f1f2" : "#e9f8ee",
-                                          border: verrouillee ? "1px solid #dddde0" : "1px solid #bfe6ca",
-                                          fontSize: 17,
-                                        }}
-                                      >
-                                        {verrouillee ? "🔒" : "🔓"}
-                                      </span>
+                                    <div
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        background: workflowConfig.background,
+                                        border: workflowConfig.border,
+                                        borderRadius: 9,
+                                        padding: "7px 10px",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 17 }}>{workflowConfig.icon}</span>
                                       <div>
-                                        <div style={{ fontWeight: 700, color: verrouillee ? "#444" : "#197a37" }}>
-                                          {verrouillee ? "Verrouillée" : "Ouverte"}
+                                        <div
+                                          style={{
+                                            fontWeight: 800,
+                                            color: workflowConfig.color,
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          {workflowConfig.titre}
                                         </div>
-                                        <div style={{ marginTop: 2, fontSize: 11, color: "#888" }}>
-                                          {verrouillee ? "Non modifiable" : "Modifiable"}
+                                        <div
+                                          style={{
+                                            marginTop: 2,
+                                            fontSize: 11,
+                                            color: "#777",
+                                          }}
+                                        >
+                                          {workflowConfig.sousTitre}
                                         </div>
                                       </div>
                                     </div>
@@ -476,16 +520,16 @@ export default function MesFeuillesPage() {
                                         router.push(`/ma-semaine?semaine=${feuille.semaine_debut}`)
                                       }
                                       style={{
-                                        background: verrouillee ? "#f4f5f6" : "#c00000",
-                                        color: verrouillee ? "#333" : "white",
-                                        border: verrouillee ? "1px solid #ddd" : "none",
+                                        background: workflow === "brouillon" ? "#c00000" : "#f4f5f6",
+                                        color: workflow === "brouillon" ? "white" : "#333",
+                                        border: workflow === "brouillon" ? "none" : "1px solid #ddd",
                                         borderRadius: 8,
                                         padding: "8px 13px",
                                         cursor: "pointer",
                                         fontWeight: 700,
                                       }}
                                     >
-                                      {verrouillee ? "Consulter" : "Ouvrir"}
+                                      {workflow === "brouillon" ? "Reprendre" : "Consulter"}
                                     </button>
                                   </td>
                                 </tr>
@@ -496,7 +540,7 @@ export default function MesFeuillesPage() {
                       </div>
 
                       <div style={{ padding: "11px 18px", background: "#fafafa", borderTop: "1px solid #ececec", fontSize: 12, color: "#777" }}>
-                        💡 Une feuille verrouillée peut toujours être consultée, mais elle ne peut plus être modifiée.
+                        💡 Un brouillon reste modifiable. Après validation, la feuille est envoyée à POLYNOV et devient non modifiable par le collaborateur. Le verrouillage administratif est un verrouillage supplémentaire.
                       </div>
                     </div>
                   )}

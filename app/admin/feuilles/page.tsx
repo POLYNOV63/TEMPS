@@ -22,6 +22,7 @@ type Feuille = {
   total_theorique: number;
   heures_supplementaires: number;
   updated_at: string;
+  statut: string | null;
   verrouillee: boolean;
   verrouillee_le: string | null;
 };
@@ -90,6 +91,15 @@ function statutFeuille(feuille: Feuille | undefined): Statut {
   if (!feuille) return "missing";
   if (feuille.total_heures >= feuille.total_theorique) return "complete";
   return "incomplete";
+}
+
+function etatWorkflowFeuille(feuille: Feuille | undefined) {
+  if (!feuille) return "missing" as const;
+  if (Boolean(feuille.verrouillee)) return "verrouillee" as const;
+  if ((feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER") {
+    return "envoyee" as const;
+  }
+  return "brouillon" as const;
 }
 
 function formatHeures(value: number) {
@@ -161,6 +171,16 @@ export default function FeuillesPage() {
   }, []);
 
   async function basculerVerrouillage(feuille: Feuille) {
+    const estEnvoyee =
+      (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER";
+
+    if (!feuille.verrouillee && !estEnvoyee) {
+      setErreur(
+        "Le verrouillage administratif n'est disponible qu'après l'envoi de la feuille par le collaborateur."
+      );
+      return;
+    }
+
     const verrouiller = !Boolean(feuille.verrouillee);
     const action = verrouiller ? "verrouiller" : "déverrouiller";
 
@@ -851,15 +871,75 @@ function CollaborateurRow({
         )}
       </div>
 
-      {feuille?.verrouillee && (
-        <div
-          style={{
-            ...styles.statusArea,
-            color: "#7a4b00",
-            fontWeight: 700,
-          }}
-        >
-          🔒 Verrouillée
+      {feuille && (
+        <div style={styles.statusArea}>
+          {(() => {
+            const workflow = etatWorkflowFeuille(feuille);
+
+            if (workflow === "envoyee") {
+              return (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "5px 8px",
+                    borderRadius: 7,
+                    background: "#edf8ef",
+                    border: "1px solid #cfe8d4",
+                    color: "#138113",
+                    fontWeight: 800,
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  📤 Envoyée
+                </span>
+              );
+            }
+
+            if (workflow === "verrouillee") {
+              return (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "5px 8px",
+                    borderRadius: 7,
+                    background: "#fff7e6",
+                    border: "1px solid #eed39a",
+                    color: "#7a4b00",
+                    fontWeight: 800,
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  🔒 Verrouillée
+                </span>
+              );
+            }
+
+            return (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "5px 8px",
+                  borderRadius: 7,
+                  background: "#fff8e7",
+                  border: "1px solid #f0dfaa",
+                  color: "#9a7000",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                📝 Brouillon
+              </span>
+            );
+          })()}
         </div>
       )}
 
@@ -884,7 +964,7 @@ function CollaborateurRow({
             )
           }
         >
-          {feuille ? "Ouvrir" : "Créer"}
+          {feuille ? "Modifier" : "Créer"}
           <span style={styles.buttonArrow}>→</span>
         </button>
 
@@ -894,12 +974,16 @@ function CollaborateurRow({
               type="button"
               disabled={
                 Boolean(suppression) ||
-                verrouillageEnCours === feuille.id
+                verrouillageEnCours === feuille.id ||
+                (!feuille.verrouillee &&
+                  (feuille.statut ?? "").trim().toUpperCase() !== "A_TRAITER")
               }
               title={
                 feuille.verrouillee
                   ? "Déverrouiller cette feuille"
-                  : "Verrouiller cette feuille"
+                  : (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER"
+                    ? "Verrouiller administrativement cette feuille"
+                    : "Disponible après envoi de la feuille"
               }
               onClick={() => basculerVerrouillage(feuille)}
               style={{
