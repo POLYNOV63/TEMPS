@@ -672,10 +672,17 @@ export default function MaSemainePage() {
       "semaine"
     );
 
-  // Lorsqu'un collaborateur est passé explicitement dans l'URL,
-  // la page est ouverte depuis l'administration : l'admin peut donc
-  // consulter/modifier une feuille même si elle est verrouillée.
-  const modeAdmin = Boolean(collaborateurIdUrl);
+  // Les accès à une autre feuille que la sienne sont réservés aux
+  // gestionnaires de feuilles : ADMIN = modification, MMO/FVI = consultation.
+  const [niveauGestionFeuilles, setNiveauGestionFeuilles] =
+    useState<"AUCUN" | "CONSULTATION" | "ADMIN">("AUCUN");
+
+  const modeAdmin =
+    Boolean(collaborateurIdUrl) && niveauGestionFeuilles === "ADMIN";
+
+  const modeConsultationGestionnaire =
+    Boolean(collaborateurIdUrl) &&
+    niveauGestionFeuilles === "CONSULTATION";
 
   const [
     semaine,
@@ -933,6 +940,53 @@ export default function MaSemainePage() {
         setMessageType("DANGER");
         setChargement(false);
 
+        return;
+      }
+
+      const { data: utilisateurConnecte, error: erreurUtilisateurConnecte } =
+        await supabase
+          .from("collaborateurs")
+          .select("role, trigramme")
+          .eq("auth_user_id", user.id)
+          .maybeSingle();
+
+      if (erreurUtilisateurConnecte) {
+        setMessage(
+          `Impossible de vérifier vos droits : ${erreurUtilisateurConnecte.message}`
+        );
+        setMessageType("DANGER");
+        setChargement(false);
+        return;
+      }
+
+      const roleUtilisateur = String(
+        utilisateurConnecte?.role ?? ""
+      ).trim().toUpperCase();
+
+      const trigrammeUtilisateur = String(
+        utilisateurConnecte?.trigramme ?? ""
+      ).trim().toUpperCase();
+
+      const estAdminConnecte = roleUtilisateur === "ADMIN";
+      const estGestionnaire =
+        estAdminConnecte ||
+        trigrammeUtilisateur === "MMO" ||
+        trigrammeUtilisateur === "FVI";
+
+      setNiveauGestionFeuilles(
+        estAdminConnecte
+          ? "ADMIN"
+          : estGestionnaire
+            ? "CONSULTATION"
+            : "AUCUN"
+      );
+
+      if (collaborateurIdUrl && !estGestionnaire) {
+        setMessage(
+          "Vous n'avez pas accès à la consultation des feuilles des autres collaborateurs."
+        );
+        setMessageType("DANGER");
+        setChargement(false);
         return;
       }
 
@@ -1317,6 +1371,10 @@ export default function MaSemainePage() {
     date: string,
     modification: Partial<JourSemaine>
   ) {
+    if (modeConsultationGestionnaire) {
+      return;
+    }
+
     if (feuilleVerrouillee && !modeAdmin) {
       return;
     }
@@ -2304,6 +2362,14 @@ export default function MaSemainePage() {
     validationFinale: boolean,
     modeForce?: ModeHeuresSupplementaires
   ) {
+    if (modeConsultationGestionnaire) {
+      setMessage(
+        "Cette feuille est consultable uniquement depuis le suivi des feuilles. Seul un administrateur peut la modifier."
+      );
+      setMessageType("DANGER");
+      return;
+    }
+
     if (feuilleVerrouillee && !modeAdmin) {
       setMessage(
         "Cette feuille est verrouillée par l'administration. Elle ne peut plus être modifiée."
@@ -2442,13 +2508,21 @@ export default function MaSemainePage() {
       );
 
       /*
-       * Pendant la reconstruction de la feuille, elle reste en
-       * BROUILLON. Le passage à A_TRAITER est effectué uniquement
-       * après insertion des journées et imputations, via la RPC
-       * sécurisée valider_feuille_heures.
+       * Pendant une saisie collaborateur, la feuille reste en
+       * BROUILLON pendant toute la reconstruction.
+       *
+       * Exception importante : lorsqu'un ADMIN corrige une feuille
+       * déjà envoyée (A_TRAITER), elle doit rester envoyée.
+       * Cela évite qu'une simple correction administrative ne rende
+       * la feuille à nouveau modifiable par le collaborateur.
        */
+      const statutApresSauvegarde =
+        modeAdmin && feuilleExistante?.statut === "A_TRAITER"
+          ? "A_TRAITER"
+          : "BROUILLON";
+
       const donneesFeuille = {
-        statut: "BROUILLON",
+        statut: statutApresSauvegarde,
         total_heures: totalHeuresSemaine,
         total_theorique: base35Semaine,
         heures_supplementaires: heuresSupplementaires,
@@ -2729,7 +2803,9 @@ export default function MaSemainePage() {
         feuilleEtaitVerrouillee
       );
       setSemaineEnregistree(true);
-      setSemaineValidee(validationFinale);
+      setSemaineValidee(
+        validationFinale || statutApresSauvegarde === "A_TRAITER"
+      );
       semaineModifieeRef.current = false;
       setSemaineModifiee(false);
 
@@ -2738,6 +2814,13 @@ export default function MaSemainePage() {
           `Semaine du ${dateAffichage(
             semaineDebut
           )} validée et transmise à POLYNOV.`
+        );
+      } else if (
+        modeAdmin &&
+        feuilleExistante?.statut === "A_TRAITER"
+      ) {
+        setMessage(
+          `Correction enregistrée par l'administration. La semaine reste envoyée et n'est pas modifiable par le collaborateur.`
         );
       } else if (heuresManquantes > 0.01) {
         setMessage(
@@ -3073,8 +3156,9 @@ export default function MaSemainePage() {
 
         <fieldset
           disabled={
-            !modeAdmin &&
-            (feuilleVerrouillee || semaineValidee)
+            modeConsultationGestionnaire ||
+            (!modeAdmin &&
+              (feuilleVerrouillee || semaineValidee))
           }
           style={{
             border: 0,
@@ -3084,7 +3168,20 @@ export default function MaSemainePage() {
           }}
         >
         <div style={styles.cards}>
-          {!modeAdmin && semaineValidee && (
+          {modeConsultationGestionnaire && (
+            <div
+              style={{
+                ...styles.message,
+                ...styles.messageOk,
+                marginBottom: 16,
+              }}
+            >
+              <div style={styles.messageIcon}>👁</div>
+              <div>Cette feuille est affichée en <strong>consultation</strong>. Seul un administrateur peut la modifier.</div>
+            </div>
+          )}
+
+          {!modeAdmin && semaineValidee && !modeConsultationGestionnaire && (
             <div
               style={{
                 ...styles.message,
@@ -4211,6 +4308,7 @@ export default function MaSemainePage() {
               onClick={enregistrerBrouillon}
               disabled={
                 enregistrement ||
+                modeConsultationGestionnaire ||
                 (!modeAdmin &&
                   (feuilleVerrouillee || semaineValidee))
               }
@@ -4226,6 +4324,7 @@ export default function MaSemainePage() {
               onClick={demanderValidationFinale}
               disabled={
                 enregistrement ||
+                modeConsultationGestionnaire ||
                 !semaineComplete ||
                 (semaineValidee && !semaineModifiee) ||
                 (!modeAdmin &&
@@ -4235,6 +4334,7 @@ export default function MaSemainePage() {
                 ...styles.buttonValidate,
                 opacity:
                   enregistrement ||
+                  modeConsultationGestionnaire ||
                   !semaineComplete ||
                   (semaineValidee && !semaineModifiee) ||
                   (!modeAdmin &&

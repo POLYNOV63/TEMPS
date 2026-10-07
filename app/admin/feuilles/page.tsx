@@ -127,6 +127,8 @@ export default function FeuillesPage() {
   const [erreur, setErreur] = useState("");
   const [suppressionEnCours, setSuppressionEnCours] = useState<string | null>(null);
   const [verrouillageEnCours, setVerrouillageEnCours] = useState<string | null>(null);
+  const [accesFeuilles, setAccesFeuilles] = useState(false);
+  const [estAdmin, setEstAdmin] = useState(false);
 
   useEffect(() => {
     let actif = true;
@@ -135,7 +137,47 @@ export default function FeuillesPage() {
       setChargement(true);
       setErreur("");
 
-      const [collaborateursResult, feuillesResult] = await Promise.all([
+      try {
+        const {
+          data: { user },
+          error: erreurUtilisateur,
+        } = await supabase.auth.getUser();
+
+        if (erreurUtilisateur) throw erreurUtilisateur;
+
+        if (!user) {
+          router.push("/login");
+          return;
+        }
+
+        const { data: moi, error: erreurMoi } = await supabase
+          .from("collaborateurs")
+          .select("role, trigramme")
+          .eq("auth_user_id", user.id)
+          .maybeSingle();
+
+        if (erreurMoi) throw erreurMoi;
+
+        const roleUtilisateur = String(moi?.role ?? "").trim().toUpperCase();
+        const trigrammeUtilisateur = String(moi?.trigramme ?? "").trim().toUpperCase();
+        const utilisateurAdmin = roleUtilisateur === "ADMIN";
+        const utilisateurGestionnaire =
+          utilisateurAdmin ||
+          trigrammeUtilisateur === "MMO" ||
+          trigrammeUtilisateur === "FVI";
+
+        if (!utilisateurGestionnaire) {
+          setAccesFeuilles(false);
+          router.push("/dashboard");
+          return;
+        }
+
+        if (!actif) return;
+
+        setAccesFeuilles(true);
+        setEstAdmin(utilisateurAdmin);
+
+        const [collaborateursResult, feuillesResult] = await Promise.all([
         supabase
           .from("collaborateurs")
           .select("*")
@@ -159,18 +201,30 @@ export default function FeuillesPage() {
         setErreur("Impossible de charger les feuilles de temps.");
       }
 
-      setCollaborateurs(collaborateursResult.data ?? []);
-      setFeuilles(feuillesResult.data ?? []);
-      setChargement(false);
+        setCollaborateurs(collaborateursResult.data ?? []);
+        setFeuilles(feuillesResult.data ?? []);
+      } catch (error: any) {
+        console.error("Erreur chargement feuilles :", error);
+        if (actif) {
+          setErreur(error?.message || "Impossible de charger les feuilles de temps.");
+        }
+      } finally {
+        if (actif) setChargement(false);
+      }
     }
 
     charger();
     return () => {
       actif = false;
     };
-  }, []);
+  }, [router]);
 
   async function basculerVerrouillage(feuille: Feuille) {
+    if (!estAdmin) {
+      setErreur("Le verrouillage administratif est réservé à un administrateur.");
+      return;
+    }
+
     const estEnvoyee =
       (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER";
 
@@ -245,6 +299,11 @@ export default function FeuillesPage() {
     feuille: Feuille,
     collaborateur: Collaborateur
   ) {
+    if (!estAdmin) {
+      setErreur("La suppression des feuilles est réservée à un administrateur.");
+      return;
+    }
+
     if (suppressionEnCours !== null) return;
 
     const libelle = libelleSemaine(feuille.semaine_debut);
@@ -381,7 +440,7 @@ export default function FeuillesPage() {
       <div style={styles.container}>
         <section style={styles.pageIntro}>
           <div>
-            <div style={styles.eyebrow}>ADMINISTRATION</div>
+            <div style={styles.eyebrow}>{estAdmin ? "ADMINISTRATION" : "SUIVI DES FEUILLES"}</div>
             <h1 style={styles.pageTitle}>Feuilles collaborateurs</h1>
             <p style={styles.pageDescription}>
               Suivez l'état des feuilles de temps semaine par semaine.
@@ -549,6 +608,7 @@ export default function FeuillesPage() {
                 supprimerFeuille={supprimerFeuille}
                 verrouillageEnCours={verrouillageEnCours}
                 basculerVerrouillage={basculerVerrouillage}
+                estAdmin={estAdmin}
               />
             );
           })}
@@ -600,6 +660,7 @@ function SemaineCard({
   supprimerFeuille,
   verrouillageEnCours,
   basculerVerrouillage,
+  estAdmin,
 }: {
   semaine: string;
   libelle: { numero: number; debut: string; fin: string };
@@ -619,6 +680,7 @@ function SemaineCard({
   ) => Promise<void>;
   verrouillageEnCours: string | null;
   basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  estAdmin: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
 
@@ -733,6 +795,7 @@ function SemaineCard({
                   supprimerFeuille={supprimerFeuille}
                   verrouillageEnCours={verrouillageEnCours}
                   basculerVerrouillage={basculerVerrouillage}
+                  estAdmin={estAdmin}
                 />
               );
             })}
@@ -753,6 +816,7 @@ function CollaborateurRow({
   supprimerFeuille,
   verrouillageEnCours,
   basculerVerrouillage,
+  estAdmin,
 }: {
   collaborateur: Collaborateur;
   feuille: Feuille | undefined;
@@ -766,6 +830,7 @@ function CollaborateurRow({
   ) => Promise<void>;
   verrouillageEnCours: string | null;
   basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  estAdmin: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
   const status = statutFeuille(feuille);
@@ -872,74 +937,58 @@ function CollaborateurRow({
       </div>
 
       {feuille && (
-        <div style={styles.statusArea}>
-          {(() => {
-            const workflow = etatWorkflowFeuille(feuille);
-
-            if (workflow === "envoyee") {
-              return (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 8px",
-                    borderRadius: 7,
-                    background: "#edf8ef",
-                    border: "1px solid #cfe8d4",
-                    color: "#138113",
-                    fontWeight: 800,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  📤 Envoyée
-                </span>
-              );
-            }
-
-            if (workflow === "verrouillee") {
-              return (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 8px",
-                    borderRadius: 7,
-                    background: "#fff7e6",
-                    border: "1px solid #eed39a",
-                    color: "#7a4b00",
-                    fontWeight: 800,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  🔒 Verrouillée
-                </span>
-              );
-            }
-
-            return (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "5px 8px",
-                  borderRadius: 7,
-                  background: "#fff8e7",
-                  border: "1px solid #f0dfaa",
-                  color: "#9a7000",
-                  fontWeight: 800,
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                📝 Brouillon
-              </span>
-            );
-          })()}
+        <div
+          title={
+            feuille.verrouillee
+              ? "La feuille est verrouillée et non modifiable."
+              : "La feuille est déverrouillée et reste modifiable par l'administration."
+          }
+          style={{
+            minWidth: 150,
+            padding: "8px 10px",
+            borderRadius: 9,
+            border: feuille.verrouillee
+              ? "1px solid #e6c36a"
+              : "1px solid #cfe0d2",
+            background: feuille.verrouillee ? "#fff7e6" : "#f2faf3",
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+          }}
+        >
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 7,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: feuille.verrouillee ? "#ffe7ad" : "#dff0e2",
+              fontSize: 15,
+              flexShrink: 0,
+            }}
+          >
+            {feuille.verrouillee ? "🔒" : "🔓"}
+          </div>
+          <div>
+            <div
+              style={{
+                fontWeight: 800,
+                fontSize: 12,
+                color: feuille.verrouillee ? "#7a4b00" : "#267338",
+              }}
+            >
+              {feuille.verrouillee ? "Verrouillée" : "Modifiable"}
+            </div>
+            <div style={{ marginTop: 2, fontSize: 10, color: "#888" }}>
+              {feuille.verrouillee
+                ? "Aucun accès collaborateur"
+                : feuille.statut === "A_TRAITER"
+                  ? "Envoyée · intervention ADMIN possible"
+                  : "Brouillon · encore saisissable"}
+            </div>
+          </div>
         </div>
       )}
 
@@ -964,11 +1013,11 @@ function CollaborateurRow({
             )
           }
         >
-          {feuille ? "Modifier" : "Créer"}
+          {feuille ? (estAdmin ? "Modifier" : "Consulter") : "Créer"}
           <span style={styles.buttonArrow}>→</span>
         </button>
 
-        {feuille && (
+        {feuille && estAdmin && (
           <>
             <button
               type="button"
@@ -980,24 +1029,29 @@ function CollaborateurRow({
               }
               title={
                 feuille.verrouillee
-                  ? "Déverrouiller cette feuille"
-                  : (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER"
-                    ? "Verrouiller administrativement cette feuille"
-                    : "Disponible après envoi de la feuille"
+                  ? "Cliquer pour déverrouiller la feuille"
+                  : "Cliquer pour verrouiller définitivement la feuille"
+              }
+              aria-label={
+                feuille.verrouillee
+                  ? "Déverrouiller la feuille"
+                  : "Verrouiller la feuille"
               }
               onClick={() => basculerVerrouillage(feuille)}
               style={{
                 ...styles.deleteButton,
-                background: feuille.verrouillee ? "#fff7e6" : "#f4f4f4",
-                color: feuille.verrouillee ? "#8a6500" : "#555",
-                borderColor: feuille.verrouillee ? "#e6c36a" : "#ddd",
+                width: 42,
+                minWidth: 42,
+                background: feuille.verrouillee ? "#fff7e6" : "#f2faf3",
+                color: feuille.verrouillee ? "#8a6500" : "#267338",
+                borderColor: feuille.verrouillee ? "#e6c36a" : "#cfe0d2",
               }}
             >
               {verrouillageEnCours === feuille.id
                 ? "…"
                 : feuille.verrouillee
-                  ? "🔓"
-                  : "🔒"}
+                  ? "🔒"
+                  : "🔓"}
             </button>
 
             <button
