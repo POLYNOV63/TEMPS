@@ -84,6 +84,9 @@ export default function DashboardPage() {
   const [semaineCourante, setSemaineCourante] =
     useState("");
 
+  const [monCollaborateurId, setMonCollaborateurId] =
+    useState<string | null>(null);
+
   /* =============================================================
      CHARGEMENT
   ============================================================= */
@@ -158,6 +161,8 @@ if (!collaborateur) {
         setTrigramme(
           collaborateur.trigramme ?? ""
         );
+
+        setMonCollaborateurId(collaborateur.id);
 
         const roleUtilisateur =
           String(
@@ -308,13 +313,16 @@ if (!collaborateur) {
         feuilles.find(
           (feuille) =>
             feuille.semaine_debut ===
-            semaineCourante
+            semaineCourante &&
+            feuille.collaborateur_id ===
+            monCollaborateurId
         ) ?? null
       );
     }, [
       feuilles,
       semaineCourante,
       role,
+      monCollaborateurId,
     ]);
 
   /* =============================================================
@@ -825,26 +833,6 @@ if (!collaborateur) {
                   </span>
                 )}
 
-                <span
-                  style={
-                    styles.hoursValue
-                  }
-                >
-                  {formatHeures(
-                    maFeuille.total_heures
-                  )}
-                  {" / "}
-                  <span
-                    style={
-                      styles.hoursTheoretical
-                    }
-                  >
-                    {formatHeures(
-                      maFeuille.total_theorique
-                    )}{" "}
-                    h
-                  </span>
-                </span>
               </>
             ) : (
               <span

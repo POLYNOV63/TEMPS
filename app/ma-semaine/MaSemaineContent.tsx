@@ -3923,6 +3923,12 @@ export default function MaSemainePage() {
         </div>
 
         {/* ====================================================
+            ACTIONS — juste au-dessus de l'en-tête du tableau
+        ==================================================== */}
+
+        {blocActionsFeuille()}
+
+        {/* ====================================================
             TABLEAU
         ==================================================== */}
 
@@ -3960,12 +3966,6 @@ export default function MaSemainePage() {
               </div>
             </div>
           </div>
-
-          {/* ====================================================
-              ACTIONS JUSTE AVANT LE LUNDI
-          ==================================================== */}
-
-          {blocActionsFeuille()}
 
           {semaine
             .filter(
