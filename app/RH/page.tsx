@@ -48,6 +48,8 @@ type Demande = {
   date_validation: string | null;
   signature_demandeur: string | null;
   signature_validateur: string | null;
+  rh_transmise: boolean;
+  rh_transmise_le: string | null;
 };
 
 const rouge = "#c00000";
@@ -133,66 +135,105 @@ function estCP(type: string) {
   ].includes(type);
 }
 
-function joursOuvresInclusifs(
-  debut: string,
-  fin: string
-) {
-  if (!debut || !fin) return 0;
+function calculerPaques(annee: number) {
+  const a = annee % 19;
+  const b = Math.floor(annee / 100);
+  const c = annee % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mois = Math.floor((h + l - 7 * m + 114) / 31);
+  const jour = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(annee, mois - 1, jour);
+}
 
+function ajouterJours(date: Date, nombre: number) {
+  const resultat = new Date(date);
+  resultat.setDate(resultat.getDate() + nombre);
+  return resultat;
+}
+
+function joursFeriesFrancais(annee: number) {
+  const paques = calculerPaques(annee);
+  return new Set([
+    new Date(annee, 0, 1),
+    ajouterJours(paques, 1),
+    new Date(annee, 4, 1),
+    new Date(annee, 4, 8),
+    ajouterJours(paques, 39),
+    ajouterJours(paques, 50),
+    new Date(annee, 6, 14),
+    new Date(annee, 7, 15),
+    new Date(annee, 10, 1),
+    new Date(annee, 10, 11),
+    new Date(annee, 11, 25),
+  ].map(dateISO));
+}
+
+function estJourOuvre(date: Date) {
+  const jour = date.getDay();
+  if (jour === 0 || jour === 6) return false;
+  return !joursFeriesFrancais(date.getFullYear()).has(dateISO(date));
+}
+
+function estVendredi(dateString: string) {
+  if (!dateString) return false;
+  return new Date(`${dateString}T00:00:00`).getDay() === 5;
+}
+
+function joursOuvresInclusifs(debut: string, fin: string) {
+  if (!debut || !fin) return 0;
   const d1 = new Date(`${debut}T00:00:00`);
   const d2 = new Date(`${fin}T00:00:00`);
-
   if (d2 < d1) return 0;
 
   let total = 0;
   const courant = new Date(d1);
-
   while (courant <= d2) {
-    const jour = courant.getDay();
-
-    if (jour !== 0 && jour !== 6) {
-      total += 1;
-    }
-
+    if (estJourOuvre(courant)) total += 1;
     courant.setDate(courant.getDate() + 1);
   }
-
   return total;
 }
 
-/** Calcule automatiquement la date de fin à partir d'une durée en jours ouvrés.
- * Les durées sont exprimées par pas de 0,5 jour. Une demi-journée le vendredi est interdite.
- */
-function calculerFinDepuisDuree(debut: string, duree: number) {
-  if (!debut || !Number.isFinite(duree) || duree <= 0) {
-    return { dateFin: "", demiJourneeVendredi: false };
-  }
+function calculerDureePeriode(
+  dateDebut: string,
+  dateFin: string,
+  demiDebut: boolean,
+  demiFin: boolean
+) {
+  if (!dateDebut || !dateFin) return { valide: false, duree: 0, erreur: "Veuillez renseigner les deux dates." };
 
-  let courant = new Date(`${debut}T00:00:00`);
-  let reste = Math.round(Number(duree) * 2) / 2;
+  const debut = new Date(`${dateDebut}T00:00:00`);
+  const fin = new Date(`${dateFin}T00:00:00`);
 
-  while (courant.getDay() === 0 || courant.getDay() === 6) {
-    courant.setDate(courant.getDate() + 1);
-  }
+  if (fin < debut) return { valide: false, duree: 0, erreur: "La date de fin doit être postérieure ou égale à la date de début." };
+  if (!estJourOuvre(debut)) return { valide: false, duree: 0, erreur: "La date de début doit être un jour ouvré. Les week-ends et jours fériés ne peuvent pas être le début d'une demande." };
+  if (!estJourOuvre(fin)) return { valide: false, duree: 0, erreur: "La date de fin doit être un jour ouvré. Les week-ends et jours fériés ne peuvent pas être la fin d'une demande." };
+  if (demiDebut && estVendredi(dateDebut)) return { valide: false, duree: 0, erreur: "Une demi-journée ne peut pas être posée le vendredi (début de demande)." };
+  if (demiFin && estVendredi(dateFin)) return { valide: false, duree: 0, erreur: "Une demi-journée ne peut pas être posée le vendredi (fin de demande)." };
 
-  while (reste > 0.001) {
-    const segment = reste >= 1 ? 1 : 0.5;
+  const jours = joursOuvresInclusifs(dateDebut, dateFin);
+  if (jours <= 0) return { valide: false, duree: 0, erreur: "La période ne contient aucun jour ouvré." };
 
-    if (segment === 0.5 && courant.getDay() === 5) {
-      return { dateFin: dateISO(courant), demiJourneeVendredi: true };
+  if (dateDebut === dateFin) {
+    if (demiDebut !== demiFin) {
+      return { valide: false, duree: 0, erreur: "Pour une seule journée, sélectionnez la même durée au début et à la fin." };
     }
-
-    reste = Math.round((reste - segment) * 2) / 2;
-    if (reste <= 0.001) break;
-
-    courant.setDate(courant.getDate() + 1);
-    while (courant.getDay() === 0 || courant.getDay() === 6) {
-      courant.setDate(courant.getDate() + 1);
-    }
+    return { valide: true, duree: demiDebut ? 0.5 : 1, erreur: "" };
   }
 
-  return { dateFin: dateISO(courant), demiJourneeVendredi: false };
+  const duree = jours - (demiDebut ? 0.5 : 0) - (demiFin ? 0.5 : 0);
+  if (duree <= 0) return { valide: false, duree: 0, erreur: "La durée calculée est invalide." };
+  return { valide: true, duree: Math.round(duree * 2) / 2, erreur: "" };
 }
+
 
 function Badge({
   statut,
@@ -398,11 +439,11 @@ export default function RHPage() {
   const [dateFin, setDateFin] =
     useState("");
 
-  const [dureeAbsence, setDureeAbsence] =
-    useState(1);
+  const [demiJourneeDebut, setDemiJourneeDebut] =
+    useState(false);
 
-  const [dureeRTT, setDureeRTT] =
-    useState<0.5 | 1>(1);
+  const [demiJourneeFin, setDemiJourneeFin] =
+    useState(false);
 
   const [heuresRE, setHeuresRE] =
     useState("");
@@ -468,7 +509,7 @@ export default function RHPage() {
         supabase
           .from("rh_demandes")
           .select(
-            "id,exercice,type_demande,date_debut,date_fin,duree_jours,heures_re,commentaire,justificatif_nom,justificatif_url,statut,created_at,validateur_id,date_validation,signature_demandeur,signature_validateur,motif_refus"
+            "id,exercice,type_demande,date_debut,date_fin,duree_jours,heures_re,commentaire,justificatif_nom,justificatif_url,statut,created_at,validateur_id,date_validation,signature_demandeur,signature_validateur,motif_refus,rh_transmise,rh_transmise_le"
           )
           .eq(
             "collaborateur_id",
@@ -761,57 +802,42 @@ export default function RHPage() {
   }).length;
 
   const periodeDemandeCalculee = useMemo(() => {
-    const duree = estCP(type)
-      ? Number(dureeAbsence)
-      : type === "RTT"
-        ? Number(dureeRTT)
-        : 1;
-
-    if (!dateDebut) {
-      return { dateFin: "", demiJourneeVendredi: false };
+    if (type === "RE") {
+      return { valide: Boolean(dateDebut) && estJourOuvre(new Date(`${dateDebut}T00:00:00`)), duree: 0, erreur: "" };
     }
 
-    return calculerFinDepuisDuree(dateDebut, duree);
-  }, [type, dateDebut, dureeAbsence, dureeRTT]);
-
-  const dateFinCalculee = periodeDemandeCalculee.dateFin;
-  const demiJourneeVendredi = periodeDemandeCalculee.demiJourneeVendredi;
-  const dureeCPCalculee = estCP(type) ? Number(dureeAbsence) : 0;
-  const dureeDemandeeAffichage = estCP(type)
-    ? Number(dureeAbsence)
-    : type === "RTT"
-      ? Number(dureeRTT)
-      : 0;
+    return calculerDureePeriode(
+      dateDebut,
+      dateFin,
+      demiJourneeDebut,
+      demiJourneeFin
+    );
+  }, [type, dateDebut, dateFin, demiJourneeDebut, demiJourneeFin]);
 
   function reinitialiserDatesPourType(nouveauType: string) {
     setType(nouveauType);
-    setDureeAbsence(1);
-    setDureeRTT(1);
-
-    const calcul = calculerFinDepuisDuree(dateDebut, 1);
-    setDateFin(calcul.dateFin);
+    setDemiJourneeDebut(false);
+    setDemiJourneeFin(false);
+    if (dateDebut) {
+      setDateFin(dateDebut);
+    }
   }
 
   async function supprimerDemande(
     d: Demande
   ) {
-    if (d.statut !== "EN_ATTENTE") return;
-
-    if (
-      !window.confirm(
-        "Supprimer cette demande ? Cette action est définitive."
-      )
-    ) {
+    if (!(d.statut === "EN_ATTENTE" || d.statut === "REFUSEE")) {
+      setErreur("Seules les demandes en attente ou refusées peuvent être supprimées par le collaborateur.");
       return;
     }
 
-    setErreur("");
+    if (!window.confirm("Supprimer définitivement cette demande ?")) return;
 
-    const { error } =
-      await supabase
-        .from("rh_demandes")
-        .delete()
-        .eq("id", d.id);
+    setErreur("");
+    const { error } = await supabase
+      .from("rh_demandes")
+      .delete()
+      .eq("id", d.id);
 
     if (error) {
       setErreur(error.message);
@@ -837,40 +863,39 @@ export default function RHPage() {
       return;
     }
 
-    const jourDebut = new Date(`${dateDebut}T00:00:00`).getDay();
-    if (jourDebut === 0 || jourDebut === 6) {
+    const dateDebutObjet = new Date(`${dateDebut}T00:00:00`);
+
+    if (!estJourOuvre(dateDebutObjet)) {
       setErreur(
-        "La date de début doit être un jour ouvré (du lundi au vendredi)."
+        "La date de début doit être un jour ouvré : les week-ends et jours fériés ne peuvent pas être sélectionnés."
       );
       return;
     }
 
-    const dureeDemandee = estCP(type)
-      ? Number(dureeAbsence)
-      : type === "RE"
+    if (type !== "RE") {
+      const calcul = calculerDureePeriode(
+        dateDebut,
+        dateFin,
+        demiJourneeDebut,
+        demiJourneeFin
+      );
+
+      if (!calcul.valide) {
+        setErreur(calcul.erreur);
+        return;
+      }
+    }
+
+    const dureeDemandee =
+      type === "RE"
         ? 1
-        : Number(dureeRTT);
+        : periodeDemandeCalculee.duree;
 
     const dateFinDemande =
-      (estCP(type) || type === "RTT")
-        ? periodeDemandeCalculee.dateFin
-        : dateDebut;
+      type === "RE" ? dateDebut : dateFin;
 
-    if (
-      (estCP(type) || type === "RTT") &&
-      !dateFinDemande
-    ) {
-      setErreur("Impossible de calculer la période de la demande.");
-      return;
-    }
-
-    if (
-      (estCP(type) || type === "RTT") &&
-      demiJourneeVendredi
-    ) {
-      setErreur(
-        "Une demi-journée ne peut pas être posée le vendredi. Choisissez une autre durée."
-      );
+    if (!dateFinDemande) {
+      setErreur("Veuillez renseigner une date de fin.");
       return;
     }
 
@@ -1016,6 +1041,8 @@ export default function RHPage() {
                 collab.nom || ""
               }`.trim() +
               ` (${collab.trigramme || ""})`,
+            rh_transmise: false,
+            rh_transmise_le: null,
           })
           .select("id")
           .single();
@@ -1051,8 +1078,8 @@ export default function RHPage() {
 
       setDateDebut("");
       setDateFin("");
-      setDureeAbsence(1);
-      setDureeRTT(1);
+      setDemiJourneeDebut(false);
+      setDemiJourneeFin(false);
       setHeuresRE("");
       setCommentaire("");
       setFichier(null);
@@ -1468,13 +1495,7 @@ export default function RHPage() {
               </select>
             </Field>
 
-            <Field
-              label={
-                estCP(type)
-                  ? "Date de début CP"
-                  : "Date"
-              }
-            >
+            <Field label="Date de début">
               <input
                 type="date"
                 style={styles.input}
@@ -1482,65 +1503,82 @@ export default function RHPage() {
                 onChange={(e) => {
                   const value = e.target.value;
                   setDateDebut(value);
-
-                  const calcul = calculerFinDepuisDuree(
-                    value,
-                    estCP(type) ? dureeAbsence : type === "RTT" ? dureeRTT : 1
-                  );
-                  setDateFin(calcul.dateFin);
+                  if (!dateFin || dateFin < value) setDateFin(value);
+                  if (estVendredi(value)) setDemiJourneeDebut(false);
                 }}
                 required
               />
             </Field>
 
-            {(estCP(type) || type === "RTT") && (
-              <Field label="Durée de l'absence">
+            {type !== "RE" && (
+              <Field label="Début de période">
                 <select
                   style={styles.input}
-                  value={estCP(type) ? dureeAbsence : dureeRTT}
-                  onChange={(e) => {
-                    const valeur = Number(e.target.value);
-                    if (estCP(type)) {
-                      setDureeAbsence(valeur);
-                    } else {
-                      setDureeRTT(valeur as 0.5 | 1);
-                    }
-                    const calcul = calculerFinDepuisDuree(
-                      dateDebut,
-                      valeur
-                    );
-                    setDateFin(calcul.dateFin);
-                  }}
+                  value={demiJourneeDebut ? "0.5" : "1"}
+                  onChange={(e) =>
+                    setDemiJourneeDebut(e.target.value === "0.5")
+                  }
                 >
-                  {Array.from({ length: 20 }, (_, index) => (index + 1) / 2).map((valeur) => {
-                    if (type === "RTT" && valeur > 1) return null;
-                    const calcul = calculerFinDepuisDuree(dateDebut, valeur);
-                    return (
-                      <option
-                        key={valeur}
-                        value={valeur}
-                        disabled={calcul.demiJourneeVendredi}
-                      >
-                        {fmt(valeur)} jour{valeur > 1 ? "s" : ""}
-                        {valeur === 0.5 ? " — ½ journée" : ""}
-                        {calcul.demiJourneeVendredi ? " — impossible : ½ journée le vendredi" : ""}
-                      </option>
-                    );
-                  })}
+                  <option value="1">Journée</option>
+                  <option
+                    value="0.5"
+                    disabled={estVendredi(dateDebut)}
+                  >
+                    ½ journée
+                  </option>
                 </select>
               </Field>
             )}
 
-            {(estCP(type) || type === "RTT") && (
+            {type !== "RE" && (
+              <Field label="Date de fin (incluse)">
+                <input
+                  type="date"
+                  style={styles.input}
+                  value={dateFin}
+                  min={dateDebut || undefined}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setDateFin(value);
+                    if (estVendredi(value)) setDemiJourneeFin(false);
+                  }}
+                  required
+                />
+              </Field>
+            )}
+
+            {type !== "RE" && (
+              <Field label="Fin de période">
+                <select
+                  style={styles.input}
+                  value={demiJourneeFin ? "0.5" : "1"}
+                  onChange={(e) =>
+                    setDemiJourneeFin(e.target.value === "0.5")
+                  }
+                >
+                  <option value="1">Journée</option>
+                  <option
+                    value="0.5"
+                    disabled={estVendredi(dateFin)}
+                  >
+                    ½ journée
+                  </option>
+                </select>
+              </Field>
+            )}
+
+            {type !== "RE" && (
               <div style={styles.durationPreview}>
-                <span>Période calculée automatiquement</span>
+                <span>Période réellement décomptée</span>
                 <strong>
-                  {dateFinCalculee
-                    ? `${dateFR(dateDebut)} → ${dateFR(dateFinCalculee)}`
-                    : "Choisissez une date de début"}
+                  {dateDebut && dateFin
+                    ? `${dateFR(dateDebut)} → ${dateFR(dateFin)}`
+                    : "Choisissez les deux dates"}
                 </strong>
                 <small>
-                  {fmt(dureeDemandeeAffichage)} jour{dureeDemandeeAffichage > 1 ? "s" : ""} · week-ends ignorés · aucune ½ journée le vendredi
+                  {periodeDemandeCalculee.valide
+                    ? `${fmt(periodeDemandeCalculee.duree)} jour${periodeDemandeCalculee.duree > 1 ? "s" : ""} ouvré${periodeDemandeCalculee.duree > 1 ? "s" : ""} · week-ends et jours fériés non décomptés`
+                    : periodeDemandeCalculee.erreur || "La durée sera calculée automatiquement."}
                 </small>
               </div>
             )}
@@ -1579,7 +1617,7 @@ export default function RHPage() {
               </Field>
             )}
 
-            <Field label="Commentaire">
+            <Field label="Commentaire (facultatif)">
               <textarea
                 style={{
                   ...styles.input,
@@ -1636,6 +1674,7 @@ export default function RHPage() {
                   <th>Durée</th>
                   <th>Statut</th>
                   <th>Validation</th>
+                  <th>Transmission RH</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -1713,8 +1752,25 @@ export default function RHPage() {
                     </td>
 
                     <td>
-                      {d.statut ===
-                      "EN_ATTENTE" ? (
+                      <span
+                        style={{
+                          ...styles.transmissionBadge,
+                          ...(d.rh_transmise
+                            ? styles.transmissionOui
+                            : styles.transmissionNon),
+                        }}
+                      >
+                        {d.rh_transmise ? "✓ Transmise au RH" : "— Non transmise"}
+                      </span>
+                      {d.rh_transmise_le && (
+                        <div style={styles.transmissionDate}>
+                          {new Date(d.rh_transmise_le).toLocaleString("fr-FR")}
+                        </div>
+                      )}
+                    </td>
+
+                    <td>
+                      {(d.statut === "EN_ATTENTE" || d.statut === "REFUSEE") ? (
                         <button
                           style={
                             styles.deleteButton
@@ -1969,6 +2025,26 @@ const styles: Record<
     borderRadius: 7,
     padding: "6px 8px",
     textAlign: "left",
+  },
+  transmissionBadge: {
+    display: "inline-block",
+    padding: "4px 8px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 800,
+  },
+  transmissionOui: {
+    background: "#e8f7ed",
+    color: "#19713c",
+  },
+  transmissionNon: {
+    background: "#f3f3f3",
+    color: "#777",
+  },
+  transmissionDate: {
+    marginTop: 4,
+    fontSize: 10,
+    color: "#888",
   },
 
   deleteButton: {
