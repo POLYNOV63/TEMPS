@@ -400,7 +400,7 @@ export default function BilanRHPage() {
 
             return {
               collaborateur,
-              feuillesAttendues: semainesAttendues.length,
+              feuillesAttendues: semainesAttenduesCollaborateur.length,
               feuillesValidees: feuillesValideesDuCycle.length,
               feuillesManquantes,
               brouillons,
@@ -462,8 +462,17 @@ export default function BilanRHPage() {
   }, [periode]);
 
   const bilanPret = useMemo(() => {
-    return lignes.length > 0 && lignes.every(
-      (ligne) => ligne.feuillesManquantes === 0 && ligne.brouillons === 0
+    // Le bilan RH n'est prêt que si chaque collaborateur concerné
+    // a au moins une semaine attendue et que toutes ces semaines sont validées.
+    return (
+      lignes.length > 0 &&
+      lignes.every(
+        (ligne) =>
+          ligne.feuillesAttendues > 0 &&
+          ligne.feuillesManquantes === 0 &&
+          ligne.brouillons === 0 &&
+          ligne.feuillesValidees >= ligne.feuillesAttendues
+      )
     );
   }, [lignes]);
 
@@ -503,11 +512,15 @@ export default function BilanRHPage() {
           Number(ligne.heuresPayees.toFixed(2)),
           ligne.compteurFin == null ? "" : Number(ligne.compteurFin.toFixed(2)),
           ligne.absencesJustifier,
-          ligne.feuillesManquantes > 0
-            ? "FEUILLE MANQUANTE"
-            : ligne.brouillons > 0
-              ? "BROUILLON"
-              : "COMPLET",
+          ligne.feuillesAttendues === 0
+            ? "NON CONCERNE"
+            : ligne.feuillesManquantes > 0
+              ? "FEUILLE MANQUANTE"
+              : ligne.brouillons > 0
+                ? "BROUILLON"
+                : ligne.feuillesValidees < ligne.feuillesAttendues
+                  ? "A VERIFIER"
+                  : "COMPLET",
         ]),
         [],
         ["TOTAL", "", totaux.tr, totaux.tt, totaux.hs, totaux.compteur, totaux.payees, "", totaux.absences, ""],
@@ -749,12 +762,21 @@ export default function BilanRHPage() {
                     </thead>
                     <tbody>
                       {lignes.map((ligne) => {
-                        const incomplet = ligne.feuillesManquantes > 0 || ligne.brouillons > 0;
-                        const etat = incomplet
-                          ? ligne.feuillesManquantes > 0
+                        const aucuneFeuilleAttendue = ligne.feuillesAttendues === 0;
+                        const incomplet =
+                          !aucuneFeuilleAttendue &&
+                          (ligne.feuillesManquantes > 0 || ligne.brouillons > 0 ||
+                            ligne.feuillesValidees < ligne.feuillesAttendues);
+
+                        const etat = aucuneFeuilleAttendue
+                          ? "Non concerné"
+                          : ligne.feuillesManquantes > 0
                             ? "Feuille manquante"
-                            : "Brouillon"
-                          : "Complet";
+                            : ligne.brouillons > 0
+                              ? "Brouillon"
+                              : ligne.feuillesValidees < ligne.feuillesAttendues
+                                ? "À vérifier"
+                                : "Complet";
 
                         return (
                           <tr key={ligne.collaborateur.id}>
