@@ -1236,6 +1236,17 @@ if (!collaborateur) {
               />
 
               <Carte
+                icone="🧑‍💼"
+                titre="Bilan RH mensuel"
+                description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
+                onClick={() =>
+                  router.push(
+                    "/admin/bilan-rh"
+                  )
+                }
+              />
+
+              <Carte
                 icone="📊"
                 titre="Export Excel"
                 description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"

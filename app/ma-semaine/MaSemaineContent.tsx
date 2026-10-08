@@ -28,10 +28,6 @@ type TypeAffaire =
 
 type CodeAbsence = string;
 
-type ModeHeuresSupplementaires =
-  | "PAYE"
-  | "COMPTEUR";
-
 type Activite = {
   id: string;
   code: string;
@@ -218,6 +214,148 @@ function dateAffichage(date: string) {
     day: "2-digit",
     month: "2-digit",
   });
+}
+
+
+/* ============================================================
+   CALENDRIER / CLÔTURE MENSUELLE
+============================================================ */
+
+function ajouterJoursISO(date: string, nombre: number) {
+  const [annee, mois, jour] = date.split("-").map(Number);
+  const d = new Date(annee, mois - 1, jour);
+  d.setDate(d.getDate() + nombre);
+  return dateISO(d);
+}
+
+function dernierJourDuMois(annee: number, moisZeroBase: number) {
+  return new Date(annee, moisZeroBase + 1, 0);
+}
+
+/**
+ * Vendredi de clôture du mois :
+ * - lundi à jeudi : vendredi suivant
+ * - vendredi : le jour même
+ * - samedi/dimanche : vendredi précédent
+ *
+ * Ainsi, si le 31 tombe un jeudi, la clôture est bien le vendredi suivant.
+ */
+function dateClotureMensuelle(annee: number, moisZeroBase: number) {
+  const dernier = dernierJourDuMois(annee, moisZeroBase);
+  const jourSemaine = dernier.getDay(); // 0 = dimanche ... 6 = samedi
+  const vendredi = new Date(dernier);
+
+  if (jourSemaine >= 1 && jourSemaine <= 4) {
+    vendredi.setDate(dernier.getDate() + (5 - jourSemaine));
+  } else if (jourSemaine === 5) {
+    vendredi.setDate(dernier.getDate());
+  } else {
+    vendredi.setDate(dernier.getDate() - (jourSemaine === 6 ? 1 : 2));
+  }
+
+  return dateISO(vendredi);
+}
+
+function debutSemaineISO(dateISOValue: string) {
+  const [annee, mois, jour] = dateISOValue.split("-").map(Number);
+  const date = new Date(annee, mois - 1, jour);
+  const jourSemaine = date.getDay();
+
+  const decalage =
+    jourSemaine === 0
+      ? -6
+      : 1 - jourSemaine;
+
+  date.setDate(date.getDate() + decalage);
+
+  return dateISO(date);
+}
+
+function trouverPeriodeClotureMensuelle(vendrediISO: string) {
+  const [anneeBase, moisBase, jourBase] = vendrediISO.split("-").map(Number);
+  const dateVendredi = new Date(anneeBase, moisBase - 1, jourBase);
+
+  let meilleurePeriode: {
+    annee: number;
+    moisZeroBase: number;
+    dateCloture: string;
+    dateCloturePrecedente: string;
+    libelleMois: string;
+  } | null = null;
+
+  /*
+   * Cette fonction sert à déterminer la période mensuelle à laquelle
+   * appartient la semaine affichée.
+   *
+   * IMPORTANT :
+   * elle NE dit PAS que la semaine affichée est la semaine de clôture.
+   * Une semaine comme S41 peut très bien être rattachée à octobre alors
+   * que sa clôture n'interviendra qu'en S44.
+   */
+  for (let decalage = -1; decalage <= 2; decalage += 1) {
+    const candidat = new Date(
+      dateVendredi.getFullYear(),
+      dateVendredi.getMonth() + decalage,
+      1
+    );
+
+    const annee = candidat.getFullYear();
+    const moisZeroBase = candidat.getMonth();
+    const cloture = dateClotureMensuelle(annee, moisZeroBase);
+
+    if (cloture < vendrediISO) continue;
+
+    if (
+      !meilleurePeriode ||
+      cloture < meilleurePeriode.dateCloture
+    ) {
+      const moisCourant = new Date(annee, moisZeroBase, 1);
+      const moisPrecedent = new Date(annee, moisZeroBase - 1, 1);
+      const cloturePrecedente = dateClotureMensuelle(
+        moisPrecedent.getFullYear(),
+        moisPrecedent.getMonth()
+      );
+
+      meilleurePeriode = {
+        annee,
+        moisZeroBase,
+        dateCloture: cloture,
+        dateCloturePrecedente: cloturePrecedente,
+        libelleMois: moisCourant.toLocaleDateString("fr-FR", {
+          month: "long",
+          year: "numeric",
+        }),
+      };
+    }
+  }
+
+  return meilleurePeriode;
+}
+
+/**
+ * La fenêtre de répartition ne doit apparaître QUE sur la semaine
+ * qui contient le vendredi de clôture.
+ *
+ * Exemple octobre 2026 :
+ * - fin de mois : samedi 31/10
+ * - vendredi de clôture : vendredi 30/10
+ * - semaine de clôture : lundi 26/10 -> S44
+ *
+ * Donc S41, S42 et S43 : aucune fenêtre de répartition.
+ *
+ * Exemple si le 31 tombe un jeudi :
+ * - le vendredi suivant devient la date de clôture ;
+ * - la semaine qui contient ce vendredi devient la semaine de clôture.
+ */
+function estSemaineClotureMensuelle(
+  semaineDebut: string,
+  periode: {
+    dateCloture: string;
+  } | null
+) {
+  if (!periode) return false;
+
+  return debutSemaineISO(periode.dateCloture) === semaineDebut;
 }
 
 function exercicePOLYNOV(dateISOString: string) {
@@ -717,14 +855,26 @@ export default function MaSemainePage() {
   const [activitesCharges, setActivitesCharges] =
     useState(false);
 
-  const [modeHeuresSupplementaires, setModeHeuresSupplementaires] =
-    useState<ModeHeuresSupplementaires | null>(null);
-
   const [compteurBaseSemaine, setCompteurBaseSemaine] =
     useState<number>(0);
 
   const [horairesProfil, setHorairesProfil] =
     useState<HorairesSemaine>(HORAIRES_DEFAUT);
+
+  const [semaineEstClotureMensuelle, setSemaineEstClotureMensuelle] =
+    useState(false);
+
+  const [libellePeriodeMensuelle, setLibellePeriodeMensuelle] =
+    useState<string>("");
+
+  const [heuresSupMensuellesAvantSemaine, setHeuresSupMensuellesAvantSemaine] =
+    useState<number>(0);
+
+  const [repartitionCompteurMensuelle, setRepartitionCompteurMensuelle] =
+    useState<number | null>(null);
+
+  const [repartitionPayeeMensuelle, setRepartitionPayeeMensuelle] =
+    useState<number | null>(null);
 
   const [choixHeuresSupOuvert, setChoixHeuresSupOuvert] =
     useState(false);
@@ -1102,6 +1252,11 @@ export default function MaSemainePage() {
         horaires
       );
 
+      await chargerCumulHeuresSupplementaires(
+        collaborateurCharge.id,
+        semaineACharger
+      );
+
       setChargement(false);
     }
 
@@ -1325,23 +1480,43 @@ export default function MaSemainePage() {
     }, [semaine]);
 
   /*
-   * Projection dynamique du compteur de récupération.
+   * Les heures supplémentaires ne sont plus arbitrées semaine par semaine.
+   * Elles alimentent un cumul mensuel jusqu'à la semaine de clôture.
    */
   const compteurApresRE =
     compteurBaseSemaine - totalRE;
 
-  const compteurPrevisionnelAvecHS =
-    compteurBaseSemaine +
-    heuresSupplementaires -
-    totalRE;
-
-  const compteurDepasse30AvecHS =
-    compteurPrevisionnelAvecHS > 30.01;
+  const repartitionCompteurEffective =
+    semaineEstClotureMensuelle && repartitionCompteurMensuelle !== null
+      ? repartitionCompteurMensuelle
+      : 0;
 
   const totalCompteurChoisi =
-    modeHeuresSupplementaires === "COMPTEUR"
-      ? compteurPrevisionnelAvecHS
-      : compteurApresRE;
+    compteurApresRE + repartitionCompteurEffective;
+
+  const totalHeuresSupMensuelles =
+    heuresSupMensuellesAvantSemaine + heuresSupplementaires;
+
+  const compteurAllocationMinimum = Math.max(
+    0,
+    -30 - compteurApresRE
+  );
+
+  const compteurAllocationMaximum = Math.max(
+    0,
+    Math.min(
+      totalHeuresSupMensuelles,
+      30 - compteurApresRE
+    )
+  );
+
+  const repartitionValide =
+    !semaineEstClotureMensuelle ||
+    totalHeuresSupMensuelles <= 0.01 ||
+    (repartitionCompteurMensuelle !== null &&
+      repartitionCompteurMensuelle >= compteurAllocationMinimum - 0.01 &&
+      repartitionCompteurMensuelle <= compteurAllocationMaximum + 0.01 &&
+      repartitionCompteurMensuelle <= totalHeuresSupMensuelles + 0.01);
 
   const heuresManquantes = useMemo(() => {
     return detailsJours.reduce(
@@ -1395,9 +1570,13 @@ export default function MaSemainePage() {
     setSemaineEnregistree(false);
     setSemaineValidee(false);
 
-    // Toute modification invalide le choix précédent PAYE/COMPTEUR.
-    // La prochaine validation demandera donc une action explicite.
-    setModeHeuresSupplementaires(null);
+    // Si la semaine est la semaine de clôture mensuelle, une modification
+    // change potentiellement le total d'HS à répartir : on invalide donc
+    // la répartition précédente afin d'éviter tout décalage avec les heures.
+    if (semaineEstClotureMensuelle) {
+      setRepartitionCompteurMensuelle(null);
+      setRepartitionPayeeMensuelle(null);
+    }
 
     semaineModifieeRef.current =
       true;
@@ -1630,6 +1809,11 @@ export default function MaSemainePage() {
         nouvelleSemaine[0].date,
         horairesProfil
       );
+
+      chargerCumulHeuresSupplementaires(
+        collaborateur.id,
+        nouvelleSemaine[0].date
+      );
     }
 
     setMessage("");
@@ -1666,6 +1850,11 @@ export default function MaSemainePage() {
         collaborateur.id,
         nouvelleSemaine[0].date,
         horairesProfil
+      );
+
+      chargerCumulHeuresSupplementaires(
+        collaborateur.id,
+        nouvelleSemaine[0].date
       );
     }
 
@@ -2000,6 +2189,96 @@ export default function MaSemainePage() {
     return true;
   }
 
+  async function chargerCumulHeuresSupplementaires(
+    collaborateurId: string,
+    semaineDebut: string
+  ) {
+    // Réinitialisation immédiate à chaque changement de semaine.
+    // Une semaine précédente ne doit jamais laisser sa fenêtre active.
+    setSemaineEstClotureMensuelle(false);
+    setLibellePeriodeMensuelle("");
+    setHeuresSupMensuellesAvantSemaine(0);
+    setRepartitionCompteurMensuelle(null);
+    setRepartitionPayeeMensuelle(null);
+    setChoixHeuresSupOuvert(false);
+
+    const vendrediSemaine = ajouterJoursISO(semaineDebut, 4);
+    const periode = trouverPeriodeClotureMensuelle(vendrediSemaine);
+
+    /*
+     * On distingue bien deux notions :
+     * 1. la période mensuelle à laquelle appartient la semaine ;
+     * 2. la semaine précise sur laquelle la répartition doit être demandée.
+     *
+     * La simple existence d'une clôture future ne doit donc PLUS ouvrir
+     * la fenêtre de répartition.
+     */
+    const semaineDeCloture = estSemaineClotureMensuelle(
+      semaineDebut,
+      periode
+    );
+
+    setSemaineEstClotureMensuelle(semaineDeCloture);
+    setLibellePeriodeMensuelle(periode?.libelleMois ?? "");
+
+    if (!periode) return;
+
+    const semaineCourante = semaineDebut;
+    const semaineCloturePrecedente = periode.dateCloturePrecedente;
+
+    // On exclut entièrement la semaine de la précédente clôture.
+    // Le nouveau cycle commence le lundi suivant.
+    const debutCycle = ajouterJoursISO(semaineCloturePrecedente, 3);
+
+    const { data: feuilles, error: erreurFeuilles } = await supabase
+      .from("feuilles_heures")
+      .select("semaine_debut, heures_supplementaires, statut")
+      .eq("collaborateur_id", collaborateurId)
+      .eq("statut", "A_TRAITER")
+      .gte("semaine_debut", debutCycle)
+      .lt("semaine_debut", semaineCourante)
+      .order("semaine_debut", { ascending: true });
+
+    if (erreurFeuilles) {
+      console.error("Erreur cumul HS mensuel", erreurFeuilles);
+      throw erreurFeuilles;
+    }
+
+    const cumulAvant = (feuilles ?? []).reduce(
+      (total, feuille) =>
+        total + Number(feuille.heures_supplementaires ?? 0),
+      0
+    );
+
+    setHeuresSupMensuellesAvantSemaine(cumulAvant);
+
+    // Si la feuille courante est déjà une clôture enregistrée,
+    // on recharge sa répartition précédente pour permettre une consultation
+    // ou une correction administrative cohérente.
+    const { data: feuilleCourante, error: erreurCourante } = await supabase
+      .from("feuilles_heures")
+      .select(
+        "cloture_mensuelle, heures_supplementaires_a_repartir, heures_supplementaires_compteur, heures_supplementaires_payees"
+      )
+      .eq("collaborateur_id", collaborateurId)
+      .eq("semaine_debut", semaineCourante)
+      .maybeSingle();
+
+    if (erreurCourante) {
+      // Compatibilité temporaire : la migration SQL devra ajouter les colonnes.
+      console.warn("Colonnes de clôture mensuelle non disponibles", erreurCourante);
+      return;
+    }
+
+    if (Boolean(feuilleCourante?.cloture_mensuelle)) {
+      const compteur = Number(feuilleCourante?.heures_supplementaires_compteur ?? 0);
+      const payees = Number(feuilleCourante?.heures_supplementaires_payees ?? 0);
+
+        setRepartitionCompteurMensuelle(compteur);
+      setRepartitionPayeeMensuelle(payees);
+    }
+  }
+
   /* ============================================================
      CHARGEMENT SEMAINE EXISTANTE
   ============================================================ */
@@ -2019,7 +2298,7 @@ export default function MaSemainePage() {
         error: erreurFeuille,
       } = await supabase
         .from("feuilles_heures")
-        .select("id, statut, mode_heures_supplementaires, compteur_avant, compteur_apres, verrouillee")
+        .select("id, statut, mode_heures_supplementaires, compteur_avant, compteur_apres, verrouillee, cloture_mensuelle, heures_supplementaires_a_repartir, heures_supplementaires_compteur, heures_supplementaires_payees")
         .eq(
           "collaborateur_id",
           collaborateurId
@@ -2035,8 +2314,9 @@ export default function MaSemainePage() {
       }
 
       if (!feuille) {
-        setModeHeuresSupplementaires(null);
         setFeuilleVerrouillee(false);
+            setRepartitionCompteurMensuelle(null);
+        setRepartitionPayeeMensuelle(null);
 
         // Une nouvelle feuille prend comme base le compteur de la
         // dernière feuille chronologique précédente. S'il n'y en a
@@ -2096,18 +2376,17 @@ export default function MaSemainePage() {
           : 0
       );
 
-      // Pour un brouillon, le choix COMPTEUR/PAYE n'est pas considéré
-      // comme validé. On le redemande lors de la validation finale si
-      // des heures supplémentaires existent.
-      setModeHeuresSupplementaires(
-        feuille.statut === "BROUILLON"
-          ? null
-          : feuille.mode_heures_supplementaires === "PAYE"
-            ? "PAYE"
-            : feuille.mode_heures_supplementaires === "COMPTEUR"
-              ? "COMPTEUR"
-              : null
-      );
+      if (Boolean(feuille.cloture_mensuelle)) {
+        setRepartitionCompteurMensuelle(
+          Number(feuille.heures_supplementaires_compteur ?? 0)
+        );
+        setRepartitionPayeeMensuelle(
+          Number(feuille.heures_supplementaires_payees ?? 0)
+        );
+      } else {
+            setRepartitionCompteurMensuelle(null);
+        setRepartitionPayeeMensuelle(null);
+      }
 
       const {
         data: jours,
@@ -2359,8 +2638,7 @@ export default function MaSemainePage() {
   }
 
   async function sauvegarderSemaine(
-    validationFinale: boolean,
-    modeForce?: ModeHeuresSupplementaires
+    validationFinale: boolean
   ) {
     if (modeConsultationGestionnaire) {
       setMessage(
@@ -2397,20 +2675,11 @@ export default function MaSemainePage() {
       return;
     }
 
-    /*
-     * La base impose un mode non nul.
-     * En brouillon, COMPTEUR sert uniquement de valeur technique.
-     * En validation, le choix PAYE/COMPTEUR est demandé seulement
-     * lorsqu'il y a réellement des heures supplémentaires.
-     */
-    const modeEffectif: ModeHeuresSupplementaires =
-      modeForce ?? modeHeuresSupplementaires ?? "COMPTEUR";
-
     if (
       validationFinale &&
-      heuresSupplementaires > 0.01 &&
-      !modeForce &&
-      modeHeuresSupplementaires === null
+      semaineEstClotureMensuelle &&
+      totalHeuresSupMensuelles > 0.01 &&
+      !repartitionValide
     ) {
       setChoixHeuresSupOuvert(true);
       return;
@@ -2435,15 +2704,23 @@ export default function MaSemainePage() {
 
       setCompteurBaseSemaine(compteurAvantEnregistrement);
 
-      const heuresSupplementairesCompteur =
-        validationFinale && modeEffectif === "COMPTEUR"
-          ? heuresSupplementaires
+      const repartitionCompteur =
+        validationFinale && semaineEstClotureMensuelle
+          ? Number(repartitionCompteurMensuelle ?? 0)
+          : 0;
+
+      const repartitionPayee =
+        validationFinale && semaineEstClotureMensuelle
+          ? Math.max(
+              0,
+              totalHeuresSupMensuelles - repartitionCompteur
+            )
           : 0;
 
       const compteurApresEnregistrement =
         validationFinale
           ? compteurAvantEnregistrement +
-            heuresSupplementairesCompteur -
+            repartitionCompteur -
             totalRE
           : compteurAvantEnregistrement;
 
@@ -2482,7 +2759,7 @@ export default function MaSemainePage() {
         error: erreurRecherche,
       } = await supabase
         .from("feuilles_heures")
-        .select("id, statut, verrouillee")
+        .select("id, statut, verrouillee, mode_heures_supplementaires")
         .eq("collaborateur_id", collaborateur.id)
         .eq("semaine_debut", semaineDebut)
         .maybeSingle();
@@ -2526,17 +2803,29 @@ export default function MaSemainePage() {
         total_heures: totalHeuresSemaine,
         total_theorique: base35Semaine,
         heures_supplementaires: heuresSupplementaires,
-        // Le statut BROUILLON permet de sauvegarder à tout moment.
-        // On conserve une valeur technique COMPTEUR pour rester compatible
-        // avec une éventuelle contrainte NOT NULL sur cette colonne ;
-        // elle est volontairement ignorée au rechargement d'un brouillon.
+        // Compatibilité avec l'ancien champ hebdomadaire.
+        // Le nouveau fonctionnement mensuel utilise les quatre champs
+        // cloture_mensuelle / heures_supplementaires_* comme source de vérité.
         mode_heures_supplementaires:
-          modeEffectif ?? "COMPTEUR",
+          feuilleExistante?.mode_heures_supplementaires ?? "PAYE",
         total_re: totalRE,
         compteur_avant: compteurAvantEnregistrement,
         compteur_apres: validationFinale
           ? compteurApresEnregistrement
           : compteurAvantEnregistrement,
+        cloture_mensuelle: validationFinale && semaineEstClotureMensuelle,
+        heures_supplementaires_a_repartir:
+          validationFinale && semaineEstClotureMensuelle
+            ? totalHeuresSupMensuelles
+            : 0,
+        heures_supplementaires_compteur:
+          validationFinale && semaineEstClotureMensuelle
+            ? repartitionCompteur
+            : 0,
+        heures_supplementaires_payees:
+          validationFinale && semaineEstClotureMensuelle
+            ? repartitionPayee
+            : 0,
         updated_at: new Date().toISOString(),
       };
 
@@ -2749,7 +3038,7 @@ export default function MaSemainePage() {
         } = await supabase
           .from("feuilles_heures")
           .select(
-            "id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re"
+            "id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re, cloture_mensuelle, heures_supplementaires_compteur"
           )
           .eq("collaborateur_id", collaborateur.id)
           .eq("statut", "A_TRAITER")
@@ -2763,10 +3052,14 @@ export default function MaSemainePage() {
         let compteurCourant = compteurApresEnregistrement;
 
         for (const suivante of feuillesSuivantes ?? []) {
-          const hsCompteur =
-            suivante.mode_heures_supplementaires === "COMPTEUR"
-              ? Number(suivante.heures_supplementaires ?? 0)
-              : 0;
+          const hsCompteur = Boolean(suivante.cloture_mensuelle)
+            ? Number(suivante.heures_supplementaires_compteur ?? 0)
+            : Number(
+                suivante.heures_supplementaires_compteur ??
+                  (suivante.mode_heures_supplementaires === "COMPTEUR"
+                    ? suivante.heures_supplementaires
+                    : 0)
+              );
 
           const re = Number(suivante.total_re ?? 0);
           const apres = compteurCourant + hsCompteur - re;
@@ -2793,10 +3086,6 @@ export default function MaSemainePage() {
 
           compteurCourant = apres;
         }
-      }
-
-      if (validationFinale) {
-        setModeHeuresSupplementaires(modeEffectif);
       }
 
       setFeuilleVerrouillee(
@@ -2871,6 +3160,79 @@ export default function MaSemainePage() {
     }
   }
 
+  function ouvrirRepartitionHeuresSup() {
+    const valeurInitiale =
+      repartitionCompteurMensuelle !== null
+        ? repartitionCompteurMensuelle
+        : compteurAllocationMinimum > 0
+          ? compteurAllocationMinimum
+          : null;
+
+    setRepartitionCompteurMensuelle(valeurInitiale);
+    setRepartitionPayeeMensuelle(
+      valeurInitiale === null
+        ? null
+        : Math.max(0, totalHeuresSupMensuelles - valeurInitiale)
+    );
+    setChoixHeuresSupOuvert(true);
+  }
+
+  function changerRepartitionCompteur(value: string) {
+    const normalisee = value.replace(",", ".").replace(/[^0-9.]/g, "");
+    if (!normalisee) {
+      setRepartitionCompteurMensuelle(null);
+      setRepartitionPayeeMensuelle(null);
+      return;
+    }
+
+    const nombre = Number(normalisee);
+    if (!Number.isFinite(nombre)) return;
+
+    const borne = Math.min(
+      Math.max(nombre, compteurAllocationMinimum),
+      compteurAllocationMaximum
+    );
+
+    setRepartitionCompteurMensuelle(borne);
+    setRepartitionPayeeMensuelle(
+      Math.max(0, totalHeuresSupMensuelles - borne)
+    );
+  }
+
+  function confirmerRepartitionHeuresSup() {
+    if (!semaineEstClotureMensuelle) return;
+
+    if (repartitionCompteurMensuelle === null) {
+      setMessage(
+        "Saisissez le nombre d'heures que vous souhaitez mettre au compteur. Le reste sera automatiquement placé en heures payées."
+      );
+      setMessageType("DANGER");
+      return;
+    }
+
+    const compteur = Number(repartitionCompteurMensuelle);
+    if (
+      compteur < compteurAllocationMinimum - 0.01 ||
+      compteur > compteurAllocationMaximum + 0.01 ||
+      compteur > totalHeuresSupMensuelles + 0.01
+    ) {
+      setMessage(
+        `Répartition impossible : choisissez entre ${formatHeures(
+          compteurAllocationMinimum
+        )} h et ${formatHeures(compteurAllocationMaximum)} h au compteur.`
+      );
+      setMessageType("DANGER");
+      return;
+    }
+
+    setRepartitionCompteurMensuelle(compteur);
+    setRepartitionPayeeMensuelle(
+      Math.max(0, totalHeuresSupMensuelles - compteur)
+    );
+    setChoixHeuresSupOuvert(false);
+    setConfirmationValidationOuverte(true);
+  }
+
   function demanderValidationFinale() {
     if (enregistrement) return;
 
@@ -2879,40 +3241,29 @@ export default function MaSemainePage() {
       return;
     }
 
-    if (heuresSupplementaires > 0.01 && modeHeuresSupplementaires === null) {
-      setChoixHeuresSupOuvert(true);
+    if (
+      semaineEstClotureMensuelle &&
+      totalHeuresSupMensuelles > 0.01 &&
+      !repartitionValide
+    ) {
+      ouvrirRepartitionHeuresSup();
       return;
     }
 
     setConfirmationValidationOuverte(true);
   }
 
-  function choisirTraitementHeuresSupplementaires(
-    mode: ModeHeuresSupplementaires
-  ) {
-    setModeHeuresSupplementaires(mode);
-    setChoixHeuresSupOuvert(false);
-    setConfirmationValidationOuverte(true);
-  }
-
   async function confirmerValidationFinale() {
     setConfirmationValidationOuverte(false);
-    await sauvegarderSemaine(
-      true,
-      heuresSupplementaires > 0.01
-        ? modeHeuresSupplementaires ?? "COMPTEUR"
-        : undefined
-    );
+    await sauvegarderSemaine(true);
   }
 
   async function enregistrerBrouillon() {
     await sauvegarderSemaine(false);
   }
 
-  async function validerSemaine(
-    modeForce?: ModeHeuresSupplementaires
-  ) {
-    await sauvegarderSemaine(true, modeForce);
+  async function validerSemaine() {
+    await sauvegarderSemaine(true);
   }
 
   /* ============================================================
@@ -3034,6 +3385,25 @@ export default function MaSemainePage() {
             imputations d'affaires
             pour la semaine.
           </p>
+
+          {semaineEstClotureMensuelle && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: "11px 14px",
+                borderRadius: 9,
+                border: "1px solid #d9b45f",
+                background: "#fff9e9",
+                color: "#6b5100",
+                lineHeight: 1.45,
+                fontSize: 13,
+              }}
+            >
+              <strong>Clôture mensuelle — {libellePeriodeMensuelle}</strong>
+              <br />
+              Cette semaine permet de répartir les heures supplémentaires cumulées sur la période entre le compteur de récupération et les heures payées.
+            </div>
+          )}
         </div>
 
         {/* ====================================================
@@ -3233,67 +3603,66 @@ export default function MaSemainePage() {
           {/* HEURES SUPPLEMENTAIRES */}
 
           <div style={styles.card}>
-            <div
-              style={styles.cardLabel}
-            >
+            <div style={styles.cardLabel}>
               HEURES SUPPLÉMENTAIRES
             </div>
 
             <div
               style={{
                 ...styles.cardValue,
-                color:
-                  heuresSupplementaires >
-                  0
-                    ? "#138113"
-                    : heuresSupplementaires <
-                        0
-                      ? "#c00000"
-                      : "#333",
+                color: heuresSupplementaires > 0 ? "#138113" : "#333",
               }}
             >
-              {heuresSupplementaires >
-              0
-                ? "+"
-                : ""}
-              {formatHeures(
-                heuresSupplementaires
-              )}{" "}
-              h
+              {heuresSupplementaires > 0 ? "+" : ""}
+              {formatHeures(heuresSupplementaires)} h
             </div>
 
             <div style={styles.cardHint}>
-              Base normale : 35 h. Les heures au-delà sont comptées en heures sup.
+              Heures supplémentaires de la semaine, calculées jour par jour.
+              Elles sont conservées dans le cumul mensuel jusqu'à la clôture.
             </div>
 
-            {heuresSupplementaires > 0.01 && (
+            {totalHeuresSupMensuelles > 0.01 && semaineEstClotureMensuelle ? (
               <div
                 style={{
                   marginTop: 12,
-                  padding: "10px 12px",
+                  padding: "11px 12px",
                   borderRadius: 8,
-                  border: modeHeuresSupplementaires
-                    ? "1px solid #acd2b0"
-                    : "1px solid #dfc777",
-                  background: modeHeuresSupplementaires
-                    ? "#f2faf2"
-                    : "#fffaf0",
+                  border: "1px solid #d8b56a",
+                  background: "#fffaf0",
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                }}
+              >
+                <strong>
+                  ⚠ Clôture mensuelle — {libellePeriodeMensuelle}
+                </strong>
+                <div style={{ marginTop: 4 }}>
+                  Total à répartir : <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong>
+                </div>
+                <div style={{ marginTop: 3, color: "#666" }}>
+                  {repartitionCompteurMensuelle !== null
+                    ? `${formatHeures(repartitionCompteurMensuelle)} h au compteur · ${formatHeures(repartitionPayeeMensuelle ?? 0)} h payées`
+                    : "La répartition compteur / heures payées doit être choisie avant la validation."}
+                </div>
+              </div>
+            ) : totalHeuresSupMensuelles > 0.01 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "9px 11px",
+                  borderRadius: 8,
+                  border: "1px solid #d7d7d7",
+                  background: "#fafafa",
                   fontSize: 12,
                   lineHeight: 1.4,
                 }}
               >
-                <strong>
-                  {modeHeuresSupplementaires === "COMPTEUR"
-                    ? "✓ Heures sup : compteur"
-                    : modeHeuresSupplementaires === "PAYE"
-                      ? "✓ Heures sup : payées"
-                      : "⚠ Choix obligatoire lors de la validation"}
-                </strong>
-                <div style={{ marginTop: 3, color: "#666" }}>
-                  Le choix PAYÉES / COMPTEUR sera demandé explicitement à la validation.
-                </div>
+                Cumul provisoire sur la période mensuelle :
+                <strong> +{formatHeures(totalHeuresSupMensuelles)} h</strong>.
+                <br />La répartition compteur / heures payées sera demandée lors de la semaine de clôture.
               </div>
-            )}
+            ) : null}
           </div>
 
           {/* COMPTEUR DE RÉCUPÉRATION */}
@@ -3307,11 +3676,9 @@ export default function MaSemainePage() {
               style={{
                 ...styles.cardValue,
                 color:
-                  totalCompteurChoisi > 30.01
+                  totalCompteurChoisi > 30.01 || totalCompteurChoisi < -30
                     ? "#c00000"
-                    : totalCompteurChoisi < -30
-                      ? "#c00000"
-                      : "#333",
+                    : "#333",
               }}
             >
               {formatHeures(totalCompteurChoisi)} h
@@ -3324,10 +3691,14 @@ export default function MaSemainePage() {
                   <br />− {formatHeures(totalRE)} h de récupération saisie
                 </>
               )}
-              {heuresSupplementaires > 0.01 && (
+              {semaineEstClotureMensuelle && repartitionCompteurMensuelle !== null && (
                 <>
-                  <br />
-                  Si les +{formatHeures(heuresSupplementaires)} h sup vont au compteur : {formatHeures(compteurPrevisionnelAvecHS)} h / 30 h
+                  <br />+ {formatHeures(repartitionCompteurMensuelle)} h affectées au compteur ce mois-ci
+                </>
+              )}
+              {!semaineEstClotureMensuelle && totalHeuresSupMensuelles > 0.01 && (
+                <>
+                  <br />+ {formatHeures(totalHeuresSupMensuelles)} h en cours d'accumulation mensuelle
                 </>
               )}
             </div>
@@ -3788,6 +4159,27 @@ export default function MaSemainePage() {
                           <div style={styles.absenceInfo}>
                             <strong>{libelleAbsence(jour.absence, codesImputation)}</strong>
                             {" — aucune imputation d'heures sur cette journée."}
+                          </div>
+                        )}
+
+                      {!modeAdmin &&
+                        !modeConsultationGestionnaire &&
+                        jour.absence &&
+                        normaliserCode(jour.absence) !== CODE_FE && (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              marginBottom: 8,
+                              padding: "10px 12px",
+                              borderRadius: 8,
+                              border: "1px solid #e2b94d",
+                              background: "#fff9e8",
+                              color: "#6d5200",
+                              fontSize: 12,
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            <strong>⚠ Justificatif RH :</strong> cette absence doit être justifiée via vos outils RH habituels.
                           </div>
                         )}
 
@@ -4287,7 +4679,7 @@ export default function MaSemainePage() {
             <div>
               <strong>La validation est définitive.</strong>
               <div>
-                Une fois votre semaine validée, vous ne pourrez plus la modifier. Vérifiez bien chaque journée, vos absences, vos RE et vos heures supplémentaires.
+                Une fois votre semaine validée, vous ne pourrez plus la modifier. Vérifiez bien chaque journée, vos absences, vos RE et vos heures supplémentaires. Lors de la clôture mensuelle, vérifiez également la répartition entre compteur et heures payées.
               </div>
             </div>
           </div>
@@ -4720,10 +5112,18 @@ export default function MaSemainePage() {
             </div>
 
             <div style={{ lineHeight: 1.6, color: "#444", marginBottom: 18 }}>
-              {heuresSupplementaires > 0.01 ? (
+              {semaineEstClotureMensuelle && totalHeuresSupMensuelles > 0.01 ? (
                 <>
-                  <div>Heures supplémentaires : <strong>+{formatHeures(heuresSupplementaires)} h</strong></div>
-                  <div>Traitement choisi : <strong>{modeHeuresSupplementaires === "PAYE" ? "heures payées" : "mise au compteur"}</strong></div>
+                  <div>Période clôturée : <strong>{libellePeriodeMensuelle}</strong></div>
+                  <div>Heures supplémentaires à répartir : <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong></div>
+                  <div>Au compteur : <strong>{formatHeures(repartitionCompteurMensuelle ?? 0)} h</strong></div>
+                  <div>Payées : <strong>{formatHeures(repartitionPayeeMensuelle ?? 0)} h</strong></div>
+                  <div>Compteur après validation : <strong>{formatHeures(totalCompteurChoisi)} h</strong></div>
+                </>
+              ) : heuresSupplementaires > 0.01 ? (
+                <>
+                  <div>Heures supplémentaires cette semaine : <strong>+{formatHeures(heuresSupplementaires)} h</strong></div>
+                  <div>Ces heures restent dans le cumul mensuel jusqu'à la clôture.</div>
                   <div>Compteur après validation : <strong>{formatHeures(totalCompteurChoisi)} h</strong></div>
                 </>
               ) : (
@@ -4739,12 +5139,12 @@ export default function MaSemainePage() {
                 flexWrap: "wrap",
               }}
             >
-              {heuresSupplementaires > 0.01 && (
+              {semaineEstClotureMensuelle && totalHeuresSupMensuelles > 0.01 && (
                 <button
                   type="button"
                   onClick={() => {
                     setConfirmationValidationOuverte(false);
-                    setChoixHeuresSupOuvert(true);
+                    ouvrirRepartitionHeuresSup();
                   }}
                   style={{
                     border: "1px solid #ccc",
@@ -4756,7 +5156,7 @@ export default function MaSemainePage() {
                     cursor: "pointer",
                   }}
                 >
-                  Modifier le traitement des HS
+                  Modifier la répartition
                 </button>
               )}
 
@@ -4796,7 +5196,11 @@ export default function MaSemainePage() {
         </div>
       )}
 
-      {choixHeuresSupOuvert && heuresSupplementaires > 0.01 && (
+      {/* La répartition mensuelle ne peut être ouverte que sur la
+          semaine exacte de clôture, jamais sur les semaines précédentes. */}
+      {choixHeuresSupOuvert &&
+        semaineEstClotureMensuelle &&
+        totalHeuresSupMensuelles > 0.01 && (
         <div
           style={{
             position: "fixed",
@@ -4812,7 +5216,7 @@ export default function MaSemainePage() {
           <div
             style={{
               width: "100%",
-              maxWidth: 480,
+              maxWidth: 520,
               background: "#fff",
               borderRadius: 16,
               padding: 28,
@@ -4821,48 +5225,128 @@ export default function MaSemainePage() {
             }}
           >
             <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>
-              Que souhaitez-vous faire de vos heures supplémentaires ?
+              Clôture mensuelle des heures supplémentaires
             </div>
-            <div style={{ color: "#666", lineHeight: 1.5, marginBottom: 20 }}>
-              Cette semaine comporte <strong>+{formatHeures(heuresSupplementaires)} h</strong> supplémentaires.
-              <br />Le compteur démarre à <strong>{formatHeures(compteurBaseSemaine)} h</strong> et se situe actuellement à <strong>{formatHeures(compteurApresRE)} h</strong> après les récupérations saisies.
-              <br />Choisissez explicitement leur traitement avant l'enregistrement.
+
+            <div style={{ color: "#555", lineHeight: 1.55, marginBottom: 18 }}>
+              Nous sommes sur la semaine de clôture de <strong>{libellePeriodeMensuelle}</strong>.
+              <br />
+              Vous avez cumulé <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong> d'heures supplémentaires sur la période.
+              <br />
+              Répartissez vous-même ces heures entre le compteur de récupération et les heures payées.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <button
-                type="button"
-                disabled={compteurDepasse30AvecHS}
-                onClick={() => {
-                  if (compteurDepasse30AvecHS) return;
-                  choisirTraitementHeuresSupplementaires("COMPTEUR");
-                }}
+
+            <div
+              style={{
+                marginBottom: 18,
+                padding: "12px 14px",
+                borderRadius: 9,
+                background: "#fff7f7",
+                border: "1px solid #e5b7b7",
+                color: "#5e2020",
+                lineHeight: 1.45,
+                fontSize: 13,
+              }}
+            >
+              Le compteur après prise en compte des récupérations de la semaine est de <strong>{formatHeures(compteurApresRE)} h</strong>.
+              <br />
+              Vous pouvez affecter au compteur entre <strong>{formatHeures(compteurAllocationMinimum)} h</strong> et <strong>{formatHeures(compteurAllocationMaximum)} h</strong>.
+            </div>
+
+            <label style={{ display: "block", fontWeight: 800, marginBottom: 7 }}>
+              Heures à mettre au compteur
+            </label>
+            <input
+              autoFocus
+              type="number"
+              min={compteurAllocationMinimum}
+              max={compteurAllocationMaximum}
+              step="0.5"
+              value={repartitionCompteurMensuelle ?? ""}
+              onChange={e => changerRepartitionCompteur(e.target.value)}
+              style={{
+                ...styles.input,
+                width: "100%",
+                fontSize: 18,
+                fontWeight: 700,
+                marginBottom: 12,
+              }}
+            />
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginBottom: 20,
+              }}
+            >
+              <div
                 style={{
-                  border: "2px solid #c00000",
-                  background: compteurDepasse30AvecHS ? "#f2f2f2" : "#fff5f5",
-                  color: compteurDepasse30AvecHS ? "#999" : "#c00000",
-                  borderRadius: 10,
-                  padding: 16,
-                  fontWeight: 800,
-                  cursor: compteurDepasse30AvecHS ? "not-allowed" : "pointer",
-                  opacity: compteurDepasse30AvecHS ? 0.85 : 1,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#f3f8f3",
+                  border: "1px solid #b9d2bb",
                 }}
               >
-                ↻ Mettre au compteur
-                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>
-                  {compteurDepasse30AvecHS
-                    ? `Impossible : le compteur atteindrait ${formatHeures(compteurPrevisionnelAvecHS)} h.`
-                    : `Le compteur passerait à ${formatHeures(compteurPrevisionnelAvecHS)} h / 30 h.`}
-                </span>
+                <div style={{ fontSize: 11, color: "#666" }}>COMPTEUR</div>
+                <strong style={{ fontSize: 18 }}>
+                  {formatHeures(repartitionCompteurMensuelle ?? 0)} h
+                </strong>
+              </div>
+
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "#f8f8f8",
+                  border: "1px solid #d2d2d2",
+                }}
+              >
+                <div style={{ fontSize: 11, color: "#666" }}>HEURES PAYÉES</div>
+                <strong style={{ fontSize: 18 }}>
+                  {formatHeures(repartitionPayeeMensuelle ?? 0)} h
+                </strong>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setChoixHeuresSupOuvert(false)}
+                style={{
+                  border: "1px solid #ccc",
+                  background: "#fff",
+                  color: "#444",
+                  borderRadius: 8,
+                  padding: "10px 16px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Annuler
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  choisirTraitementHeuresSupplementaires("PAYE");
+                onClick={confirmerRepartitionHeuresSup}
+                style={{
+                  border: "none",
+                  background: "#c00000",
+                  color: "#fff",
+                  borderRadius: 8,
+                  padding: "10px 18px",
+                  fontWeight: 800,
+                  cursor: "pointer",
                 }}
-                style={{ border: "2px solid #138113", background: "#f2faf2", color: "#138113", borderRadius: 10, padding: 16, fontWeight: 800, cursor: "pointer" }}
               >
-                € Heures payées
-                <span style={{ display: "block", fontSize: 12, fontWeight: 400, marginTop: 5 }}>Les heures n’alimentent pas le compteur RE.</span>
+                Confirmer la répartition
               </button>
             </div>
           </div>
