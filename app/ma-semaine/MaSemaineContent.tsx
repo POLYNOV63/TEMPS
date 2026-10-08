@@ -918,6 +918,21 @@ export default function MaSemainePage() {
   const semaineModifieeRef =
     useRef(false);
 
+  // Sauvegarde automatique du brouillon : on attend une courte pause
+  // après la dernière modification afin d'éviter un enregistrement réseau
+  // à chaque frappe de clavier.
+  const autoSaveTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const autoSaveEnCoursRef =
+    useRef(false);
+
+  const [autoSaveEtat, setAutoSaveEtat] =
+    useState<"IDLE" | "ATTENTE" | "COURS" | "OK">("IDLE");
+
+  const [heureDernierAutoSave, setHeureDernierAutoSave] =
+    useState("");
+
   const [
     weekendOuvert,
     setWeekendOuvert,
@@ -977,6 +992,89 @@ export default function MaSemainePage() {
       );
     };
   }, [feuilleVerrouillee, modeAdmin]);
+
+  /* ============================================================
+     AUTO-SAVE BROUILLON
+  ============================================================ */
+
+  useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    // L'auto-save concerne la saisie du collaborateur.
+    // ADMIN et gestionnaires travaillent volontairement sans ce mécanisme.
+    if (
+      !semaineModifiee ||
+      chargement ||
+      !codesCharges ||
+      !activitesCharges ||
+      modeAdmin ||
+      modeConsultationGestionnaire ||
+      feuilleVerrouillee ||
+      semaineValidee
+    ) {
+      if (!semaineModifiee) {
+        setAutoSaveEtat("IDLE");
+      }
+      return;
+    }
+
+    setAutoSaveEtat("ATTENTE");
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (autoSaveEnCoursRef.current || !semaineModifieeRef.current) {
+        return;
+      }
+
+      autoSaveEnCoursRef.current = true;
+      setAutoSaveEtat("COURS");
+
+      void sauvegarderSemaine(false, { automatique: true })
+        .then(() => {
+          setHeureDernierAutoSave(
+            new Date().toLocaleTimeString("fr-FR", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          );
+          setAutoSaveEtat("OK");
+        })
+        .catch((error) => {
+          console.error("Erreur sauvegarde automatique", error);
+          setAutoSaveEtat("IDLE");
+        })
+        .finally(() => {
+          autoSaveEnCoursRef.current = false;
+          autoSaveTimerRef.current = null;
+        });
+    }, 1200);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [
+    semaineModifiee,
+    chargement,
+    codesCharges,
+    activitesCharges,
+    modeAdmin,
+    modeConsultationGestionnaire,
+    feuilleVerrouillee,
+    semaineValidee,
+  ]);
+
+  function annulerAutoSaveProgramme() {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    setAutoSaveEtat("IDLE");
+  }
 
   function confirmerAvantQuitter() {
     if (
@@ -2638,8 +2736,14 @@ export default function MaSemainePage() {
   }
 
   async function sauvegarderSemaine(
-    validationFinale: boolean
+    validationFinale: boolean,
+    options?: { automatique?: boolean }
   ) {
+    const automatique = options?.automatique === true;
+
+    if (!automatique) {
+      annulerAutoSaveProgramme();
+    }
     if (modeConsultationGestionnaire) {
       setMessage(
         "Cette feuille est consultable uniquement depuis le suivi des feuilles. Seul un administrateur peut la modifier."
@@ -2670,7 +2774,13 @@ export default function MaSemainePage() {
       return;
     }
 
-    const valide = verifierSemaine(validationFinale);
+    // L'auto-save doit accepter un brouillon partiellement renseigné :
+    // c'est précisément ce qui permet de récupérer une saisie après un
+    // plantage du navigateur. La validation métier complète reste réservée
+    // à l'enregistrement manuel / à la validation finale.
+    const valide = automatique
+      ? true
+      : verifierSemaine(validationFinale);
     if (!valide) {
       return;
     }
@@ -2686,12 +2796,14 @@ export default function MaSemainePage() {
     }
 
     setEnregistrement(true);
-    setMessage(
-      validationFinale
-        ? "Validation et enregistrement de la semaine..."
-        : "Enregistrement du brouillon..."
-    );
-    setMessageType("OK");
+    if (!automatique) {
+      setMessage(
+        validationFinale
+          ? "Validation et enregistrement de la semaine..."
+          : "Enregistrement du brouillon..."
+      );
+      setMessageType("OK");
+    }
 
     try {
       const semaineDebut = semaine[0].date;
@@ -3098,20 +3210,21 @@ export default function MaSemainePage() {
       semaineModifieeRef.current = false;
       setSemaineModifiee(false);
 
-      if (validationFinale) {
+      if (!automatique && validationFinale) {
         setMessage(
           `Semaine du ${dateAffichage(
             semaineDebut
           )} validée et transmise à POLYNOV.`
         );
       } else if (
+        !automatique &&
         modeAdmin &&
         feuilleExistante?.statut === "A_TRAITER"
       ) {
         setMessage(
           `Correction enregistrée par l'administration. La semaine reste envoyée et n'est pas modifiable par le collaborateur.`
         );
-      } else if (heuresManquantes > 0.01) {
+      } else if (!automatique && heuresManquantes > 0.01) {
         setMessage(
           `Brouillon de la semaine du ${dateAffichage(
             semaineDebut
@@ -3119,7 +3232,7 @@ export default function MaSemainePage() {
             heuresManquantes
           )} h à renseigner.`
         );
-      } else {
+      } else if (!automatique) {
         setMessage(
           `Brouillon de la semaine du ${dateAffichage(
             semaineDebut
@@ -3127,7 +3240,7 @@ export default function MaSemainePage() {
         );
       }
 
-      setMessageType("OK");
+      setMessageType(automatique ? "" : "OK");
     } catch (error) {
       console.error("Erreur sauvegarde semaine", error);
 
@@ -3148,6 +3261,10 @@ export default function MaSemainePage() {
       ]
         .filter(Boolean)
         .join(" — ");
+
+      if (automatique) {
+        throw error;
+      }
 
       setMessage(
         `Impossible de sauvegarder la semaine : ${
@@ -3264,6 +3381,79 @@ export default function MaSemainePage() {
 
   async function validerSemaine() {
     await sauvegarderSemaine(true);
+  }
+
+  function blocActionsFeuille() {
+    const boutonsBloques =
+      enregistrement ||
+      modeConsultationGestionnaire ||
+      (!modeAdmin && (feuilleVerrouillee || semaineValidee));
+
+    const validationBloquee =
+      boutonsBloques ||
+      !semaineComplete ||
+      (semaineValidee && !semaineModifiee);
+
+    return (
+      <div style={styles.actionZone}>
+        <div style={styles.actionExplanation}>
+          <strong>Enregistrer</strong> garde votre saisie en brouillon.
+          <span> · </span>
+          <strong>Valider ma semaine</strong> contrôle chaque journée puis transmet la feuille à POLYNOV.
+          <span> · </span>
+          <strong>Attention :</strong> la validation est définitive et verrouille la semaine pour le collaborateur.
+        </div>
+
+        {!modeConsultationGestionnaire && !modeAdmin && (
+          <div
+            style={{
+              marginTop: 10,
+              marginBottom: 10,
+              fontSize: 12,
+              color: autoSaveEtat === "OK" ? "#267338" : "#777",
+              minHeight: 18,
+            }}
+          >
+            {autoSaveEtat === "ATTENTE" && "⏳ Sauvegarde automatique du brouillon…"}
+            {autoSaveEtat === "COURS" && "💾 Sauvegarde automatique en cours…"}
+            {autoSaveEtat === "OK" &&
+              `✓ Brouillon sauvegardé automatiquement${
+                heureDernierAutoSave ? ` à ${heureDernierAutoSave}` : ""
+              }.`}
+          </div>
+        )}
+
+        <div style={styles.bottomActions}>
+          <button
+            type="button"
+            onClick={enregistrerBrouillon}
+            disabled={boutonsBloques}
+            style={{
+              ...styles.buttonDraft,
+              opacity: boutonsBloques ? 0.55 : 1,
+              cursor: boutonsBloques ? "not-allowed" : "pointer",
+            }}
+          >
+            {enregistrement ? "Enregistrement..." : "💾 Enregistrer"}
+          </button>
+
+          <button
+            type="button"
+            onClick={demanderValidationFinale}
+            disabled={validationBloquee}
+            style={{
+              ...styles.buttonValidate,
+              opacity: validationBloquee ? 0.55 : 1,
+              cursor: validationBloquee ? "not-allowed" : "pointer",
+            }}
+          >
+            {semaineValidee && !semaineModifiee
+              ? "✓ Semaine validée"
+              : "✓ Valider ma semaine"}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   /* ============================================================
@@ -3573,6 +3763,9 @@ export default function MaSemainePage() {
               <div>Cette feuille est <strong>verrouillée par l'administration</strong>. Vous pouvez la consulter, mais elle n'est plus modifiable.</div>
             </div>
           )}
+
+          {/* ACTIONS HAUT DE FEUILLE */}
+          {blocActionsFeuille()}
 
           {/* HEURES SAISIES */}
 
@@ -4685,70 +4878,7 @@ export default function MaSemainePage() {
           </div>
         )}
 
-        <div style={styles.actionZone}>
-          <div style={styles.actionExplanation}>
-            <strong>Enregistrer</strong> garde votre saisie en brouillon.
-            <span> · </span>
-            <strong>Valider ma semaine</strong> contrôle chaque journée puis transmet la feuille à POLYNOV.
-            <span> · </span>
-            <strong>Attention :</strong> la validation est définitive et verrouille la semaine pour le collaborateur.
-          </div>
-
-          <div style={styles.bottomActions}>
-            <button
-              type="button"
-              onClick={enregistrerBrouillon}
-              disabled={
-                enregistrement ||
-                modeConsultationGestionnaire ||
-                (!modeAdmin &&
-                  (feuilleVerrouillee || semaineValidee))
-              }
-              style={styles.buttonDraft}
-            >
-              {enregistrement
-                ? "Enregistrement..."
-                : "💾 Enregistrer"}
-            </button>
-
-            <button
-              type="button"
-              onClick={demanderValidationFinale}
-              disabled={
-                enregistrement ||
-                modeConsultationGestionnaire ||
-                !semaineComplete ||
-                (semaineValidee && !semaineModifiee) ||
-                (!modeAdmin &&
-                  (feuilleVerrouillee || semaineValidee))
-              }
-              style={{
-                ...styles.buttonValidate,
-                opacity:
-                  enregistrement ||
-                  modeConsultationGestionnaire ||
-                  !semaineComplete ||
-                  (semaineValidee && !semaineModifiee) ||
-                  (!modeAdmin &&
-                    (feuilleVerrouillee || semaineValidee))
-                    ? 0.55
-                    : 1,
-                cursor:
-                  enregistrement ||
-                  !semaineComplete ||
-                  (semaineValidee && !semaineModifiee) ||
-                  (!modeAdmin &&
-                    (feuilleVerrouillee || semaineValidee))
-                    ? "not-allowed"
-                    : "pointer",
-              }}
-            >
-              {semaineValidee && !semaineModifiee
-                ? "✓ Semaine validée"
-                : "✓ Valider ma semaine"}
-            </button>
-          </div>
-        </div>
+        {blocActionsFeuille()}
 
         {/* ====================================================
             ALERTE HEURES MANQUANTES
