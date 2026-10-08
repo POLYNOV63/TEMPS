@@ -3764,9 +3764,6 @@ export default function MaSemainePage() {
             </div>
           )}
 
-          {/* ACTIONS HAUT DE FEUILLE */}
-          {blocActionsFeuille()}
-
           {/* HEURES SAISIES */}
 
           <div style={styles.card}>
@@ -3963,6 +3960,12 @@ export default function MaSemainePage() {
               </div>
             </div>
           </div>
+
+          {/* ====================================================
+              ACTIONS JUSTE AVANT LE LUNDI
+          ==================================================== */}
+
+          {blocActionsFeuille()}
 
           {semaine
             .filter(
