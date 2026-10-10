@@ -17,6 +17,7 @@ type Collaborateur = {
   rythme?: string | null;
   actif: boolean;
   compteur_recuperation?: number | null;
+  inclus_statistiques?: boolean | null;
 };
 
 type ProfilHoraire = {
@@ -97,6 +98,7 @@ export default function CollaborateursPage() {
     nom: "",
     trigramme: "",
     role: "COLLABORATEUR",
+    inclusStatistiques: true,
   });
   const [editEnCours, setEditEnCours] = useState(false);
 
@@ -612,6 +614,7 @@ const { data: profil, error: erreurProfil } = await supabase
       nom: c.nom || "",
       trigramme: c.trigramme || "",
       role: normaliserRole(c.role),
+      inclusStatistiques: c.inclus_statistiques !== false,
     });
 
     setEditModal(c);
@@ -679,6 +682,7 @@ const { data: profil, error: erreurProfil } = await supabase
         nom: nomSaisi,
         trigramme: trigrammeSaisi,
         role: editForm.role,
+        inclus_statistiques: editForm.inclusStatistiques,
         updated_at: new Date().toISOString(),
       })
       .eq("id", editModal.id);
@@ -905,6 +909,22 @@ const { data: profil, error: erreurProfil } = await supabase
                             }}
                           >
                             {libelleRole(c.role)}
+                          </span>
+                        )}
+
+                        {c.inclus_statistiques === false && (
+                          <span
+                            title="Exclu des statistiques de productivité de l'équipe"
+                            style={{
+                              background: "#6b6b6b",
+                              color: "white",
+                              padding: "3px 8px",
+                              borderRadius: 4,
+                              fontSize: 13,
+                              fontWeight: 700,
+                            }}
+                          >
+                            Encadrement
                           </span>
                         )}
                       </div>
@@ -1206,6 +1226,38 @@ const { data: profil, error: erreurProfil } = await supabase
                 </option>
               ))}
             </select>
+
+            <label
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                marginTop: 16,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={editForm.inclusStatistiques}
+                onChange={(e) =>
+                  setEditForm((f) => ({
+                    ...f,
+                    inclusStatistiques: e.target.checked,
+                  }))
+                }
+                style={{ marginTop: 3 }}
+              />
+
+              <span>
+                <strong>Inclus dans les statistiques de productivité</strong>
+                <br />
+                <span style={{ fontSize: 13, color: "#666" }}>
+                  À décocher pour l'encadrement : ses heures sont alors
+                  présentées à part dans Bilans (bloc « Encadrement ») et ne
+                  comptent ni dans la capacité ni dans les taux de l'équipe.
+                </span>
+              </span>
+            </label>
 
             <div
               style={{

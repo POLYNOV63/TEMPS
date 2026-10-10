@@ -18,6 +18,7 @@ type Collaborateur = {
   actif?: boolean | null;
   role?: string | null;
   profil_horaire_id?: string | null;
+  inclus_statistiques?: boolean | null;
 };
 
 type ProfilHoraire = {
@@ -40,6 +41,7 @@ type HistoriqueImputation = {
   affaire_code: string | null;
   code_imputation: string | null;
   heures: number | null;
+  groupe_code?: string | null;
 };
 
 type HistoriquePresence = {
@@ -97,7 +99,7 @@ type FeuilleImputation = {
   heures: number | null;
 };
 
-type ModePeriode = "EXERCICE" | "ANNEE" | "MOIS" | "LIBRE";
+type ModePeriode = "EXERCICE" | "ANNEE" | "MOIS" | "GLISSANT" | "LIBRE";
 
 type Categorie =
   | "CBE"
@@ -512,15 +514,20 @@ function classifierHistorique(
   if (typeAffaire === "DBE") return "DBE";
 
   const classe = classerCode(code, codesMap);
+
+  // La catégorie du code dans Gestion des codes fait foi. Exemple : HA
+  // (achats lors d'une affaire de négoce) est de la PRODUCTION, même s'il
+  // se trouve dans le bloc administratif du classeur Excel.
   if (classe) return classe;
 
-  // Dans l'historique, une ligne explicitement en DIVERS qui n'est pas
-  // déjà reconnue par Gestion-code est volontairement considérée comme
-  // "Divers de production". C'est précisément le fourre-tout métier
-  // historique : on ne perd pas ces heures simplement parce qu'un nouveau
-  // code n'existait pas encore dans le référentiel.
+  // Code inconnu de Gestion des codes sur une ligne DIVERS : le bloc du
+  // classeur Excel (groupe_code, lu onglet par onglet) décide. Un code du
+  // bloc "CODES AFFAIRES" (ou un ancien import sans bloc) est du "Divers de
+  // production" ; un code du bloc "CODES ADMINISTRATIFS" est classé "Autres".
+  const groupe = String(ligne.groupe_code ?? "").toUpperCase();
+
   if (estLigneDivers(ligne.affaire_code)) {
-    return "AFFAIRES_SANS_TYPE";
+    return groupe === "ADMIN" ? "AUTRES" : "AFFAIRES_SANS_TYPE";
   }
 
   return "AUTRES";
@@ -700,7 +707,7 @@ function BilansPageContenu() {
         supabase
           .from("collaborateurs")
           .select(
-            "id,trigramme,prenom,nom,email,actif,role,profil_horaire_id"
+            "id,trigramme,prenom,nom,email,actif,role,profil_horaire_id,inclus_statistiques"
           )
           .order("nom"),
 
@@ -714,7 +721,7 @@ function BilansPageContenu() {
           supabase
             .from("historique_imputations")
             .select(
-              "id,collaborateur_id,annee,semaine,affaire_code,code_imputation,heures"
+              "id,collaborateur_id,annee,semaine,affaire_code,code_imputation,heures,groupe_code"
             )
             .order("annee", { ascending: true })
             .order("semaine", { ascending: true })
@@ -901,12 +908,24 @@ function BilansPageContenu() {
         Collaborateur
       >();
 
-      collaborateurs.forEach((c) =>
-        map.set(c.id, c)
-      );
+      // Les collaborateurs "hors statistiques" (encadrement) n'entrent pas dans
+      // la consolidation de l'équipe : voir le bloc « Encadrement ».
+      collaborateurs
+        .filter((c) => c.inclus_statistiques !== false)
+        .forEach((c) => map.set(c.id, c));
 
       return map;
     }, [collaborateurs]);
+
+  const idsExclus = useMemo(
+    () =>
+      new Set(
+        collaborateurs
+          .filter((c) => c.inclus_statistiques === false)
+          .map((c) => c.id)
+      ),
+    [collaborateurs]
+  );
 
   const profilsMap =
     useMemo(() => {
@@ -1197,6 +1216,24 @@ feuilles.forEach((f) => {
         };
       }
 
+      if (modePeriode === "GLISSANT") {
+        return {
+          debut: new Date(
+            maintenant.getFullYear(),
+            maintenant.getMonth() - 11,
+            1
+          ),
+          fin: new Date(
+            maintenant.getFullYear(),
+            maintenant.getMonth(),
+            maintenant.getDate(),
+            23,
+            59,
+            59
+          ),
+        };
+      }
+
       /*
         EXERCICE :
         1er novembre -> 31 octobre
@@ -1269,18 +1306,7 @@ feuilles.forEach((f) => {
         SemaineConsolidee
       >();
 
-      console.log("BILAN DEBUG consolidation", {
-        modePeriode,
-        annee,
-        historique: historique.length,
-        presences: presencesHistorique.length,
-        feuilles: feuilles.length,
-        jours: jours.length,
-        imputations: imputations.length,
-        periodeActive,
-      });
-
-      function creerSemaine(
+            function creerSemaine(
         anneeSemaine: number,
         semaine: number,
         source: "HISTORIQUE" | "NOUVEAU"
@@ -2099,6 +2125,26 @@ feuilles.forEach((f) => {
       */
 
       map.forEach((semaine) => {
+        /*
+          CAPACITE NETTE (identique pour l'historique et le nouveau système).
+
+          - Nouveau système : la capacité est déjà nette (total_theorique de la
+            feuille = 35 h moins fériés, congés, récupérations, absences).
+          - Historique : la capacité de départ est brute (35 h). On en retire
+            les absences et les heures hors bilan (CP, fériés...) pour obtenir
+            la même base de calcul que le nouveau système.
+        */
+        Object.values(
+          semaine.collaborateurs
+        ).forEach((cs) => {
+          if (cs.source === "HISTORIQUE" && cs.capacite > 0) {
+            cs.capacite = Math.max(
+              0,
+              cs.capacite - cs.absence - cs.ignorees
+            );
+          }
+        });
+
         semaine.capacite =
           Object.values(
             semaine.collaborateurs
@@ -2130,13 +2176,12 @@ feuilles.forEach((f) => {
             expliqué — simplement mal typé.
           */
 
+          // La capacité est nette : les absences en sont déjà déduites.
           cs.nonExplique =
             Math.max(
               0,
               cs.capacite -
-                cs.travaille -
-                cs.absence -
-                cs.ignorees
+                cs.travaille
             );
         });
 
@@ -2350,12 +2395,16 @@ feuilles.forEach((f) => {
       categorie: string;
       classification: Categorie | null;
       heures: number;
+      personnes: Set<string>;
+      semaines: Set<string>;
     }>();
 
     const ajouter = (
       codeBrut: string | null,
       h: number,
-      classification: Categorie | null
+      classification: Categorie | null,
+      collaborateurId: string,
+      cleSemaine: string
     ) => {
       const code = normaliserTexte(codeBrut);
       if (!code || h <= 0) return;
@@ -2367,8 +2416,12 @@ feuilles.forEach((f) => {
         categorie: ref?.categorie ?? "NON CLASSE",
         classification,
         heures: 0,
+        personnes: new Set<string>(),
+        semaines: new Set<string>(),
       };
       existant.heures += h;
+      existant.personnes.add(collaborateurId);
+      existant.semaines.add(`${collaborateurId}-${cleSemaine}`);
       result.set(cle, existant);
     };
 
@@ -2381,10 +2434,11 @@ feuilles.forEach((f) => {
     );
 
     historique.forEach((l) => {
+      if (idsExclus.has(l.collaborateur_id)) return;
       if (!semaineDansPeriode(l.annee, l.semaine)) return;
       if (feuillesNouvelles.has(`${l.collaborateur_id}-${l.annee}-${l.semaine}`)) return;
       const classification = classifierHistorique(l, codesMap);
-      ajouter(l.code_imputation, nombre(l.heures), classification);
+      ajouter(l.code_imputation, nombre(l.heures), classification, l.collaborateur_id, `${l.annee}-${l.semaine}`);
     });
 
     const feuillesMap = new Map(feuilles.map((f) => [f.id, f]));
@@ -2393,6 +2447,7 @@ feuilles.forEach((f) => {
       const jour = joursMap.get(imp.jour_id);
       const feuille = jour ? feuillesMap.get(jour.feuille_id) : undefined;
       if (!feuille) return;
+      if (idsExclus.has(feuille.collaborateur_id)) return;
       const d = new Date(`${feuille.semaine_debut}T00:00:00`);
       const w = isoSemaine(d);
       if (!semaineDansPeriode(w.annee, w.semaine)) return;
@@ -2405,11 +2460,142 @@ feuilles.forEach((f) => {
       else if (type === "DIVERS") classification = classerCode(normaliserTexte(imp.code), codesMap) ?? "AFFAIRES_SANS_TYPE";
       else classification = classerCode(normaliserTexte(imp.code), codesMap) ?? "AUTRES";
 
-      ajouter(imp.code, nombre(imp.heures), classification);
+      ajouter(imp.code, nombre(imp.heures), classification, feuille.collaborateur_id, `${w.annee}-${w.semaine}`);
     });
 
-    return Array.from(result.values()).sort((a, b) => b.heures - a.heures);
-  }, [historique, imputations, jours, feuilles, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
+    return Array.from(result.values())
+      .map(({ personnes, semaines, ...reste }) => ({
+        ...reste,
+        nbPersonnes: personnes.size,
+        nbSemaines: semaines.size,
+      }))
+      .sort((a, b) => b.heures - a.heures);
+  }, [historique, imputations, jours, feuilles, idsExclus, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
+
+  /* =====================================================
+     ENCADREMENT (hors statistiques de productivité)
+  ===================================================== */
+
+  type LigneEncadrement = {
+    id: string;
+    trigramme: string;
+    nom: string;
+    cbe: number;
+    dbe: number;
+    cn: number;
+    ni: number;
+    formation: number;
+    production: number;
+    autres: number;
+  };
+
+  const encadrement = useMemo(() => {
+    const exclus = collaborateurs.filter(
+      (c) => c.inclus_statistiques === false
+    );
+
+    if (exclus.length === 0) return [] as LigneEncadrement[];
+
+    const lignes = new Map<string, LigneEncadrement>();
+
+    exclus.forEach((c) =>
+      lignes.set(c.id, {
+        id: c.id,
+        trigramme: c.trigramme ?? "",
+        nom: `${c.prenom ?? ""} ${c.nom ?? ""}`.trim(),
+        cbe: 0,
+        dbe: 0,
+        cn: 0,
+        ni: 0,
+        formation: 0,
+        production: 0,
+        autres: 0,
+      })
+    );
+
+    const ajouter = (
+      id: string,
+      classification: Categorie | null,
+      h: number
+    ) => {
+      const ligne = lignes.get(id);
+      if (!ligne || h <= 0) return;
+
+      switch (classification) {
+        case "CBE":
+          ligne.cbe += h;
+          break;
+        case "DBE":
+          ligne.dbe += h;
+          break;
+        case "CN":
+          ligne.cn += h;
+          break;
+        case "NI":
+          ligne.ni += h;
+          break;
+        case "FORMATION":
+          ligne.formation += h;
+          break;
+        case "AFFAIRES_SANS_TYPE":
+          ligne.production += h;
+          break;
+        case "DIVERS_ABSENCES":
+        case "IGNORE":
+          break;
+        default:
+          ligne.autres += h;
+      }
+    };
+
+    const feuillesNouvelles = new Set(
+      feuilles.map((f) => {
+        const w = isoSemaine(new Date(`${f.semaine_debut}T00:00:00`));
+        return `${f.collaborateur_id}-${w.annee}-${w.semaine}`;
+      })
+    );
+
+    historique.forEach((l) => {
+      if (!idsExclus.has(l.collaborateur_id)) return;
+      if (!semaineDansPeriode(l.annee, l.semaine)) return;
+      if (feuillesNouvelles.has(`${l.collaborateur_id}-${l.annee}-${l.semaine}`)) return;
+
+      ajouter(l.collaborateur_id, classifierHistorique(l, codesMap), nombre(l.heures));
+    });
+
+    const feuillesMap = new Map(feuilles.map((f) => [f.id, f]));
+    const joursMap = new Map(jours.map((j) => [j.id, j]));
+
+    imputations.forEach((imp) => {
+      const jour = joursMap.get(imp.jour_id);
+      const feuille = jour ? feuillesMap.get(jour.feuille_id) : undefined;
+      if (!feuille || !idsExclus.has(feuille.collaborateur_id)) return;
+
+      const w = isoSemaine(new Date(`${feuille.semaine_debut}T00:00:00`));
+      if (!semaineDansPeriode(w.annee, w.semaine)) return;
+
+      const type = normaliserTexte(imp.type_affaire);
+      const numero = String(imp.numero_affaire ?? "").trim();
+      const code = normaliserTexte(imp.code);
+
+      let classification: Categorie | null;
+
+      if (type === "CBE" || /^CBE/i.test(numero)) classification = "CBE";
+      else if (type === "DBE" || /^DBE/i.test(numero)) classification = "DBE";
+      else if (type === "DIVERS") classification = classerCode(code, codesMap) ?? "AFFAIRES_SANS_TYPE";
+      else classification = classerCode(code, codesMap) ?? "AUTRES";
+
+      ajouter(feuille.collaborateur_id, classification, nombre(imp.heures));
+    });
+
+    return Array.from(lignes.values()).sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
+  }, [collaborateurs, idsExclus, historique, imputations, jours, feuilles, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
+
+  // Heures de formation d'un code donné (FI = interne, FO = externe).
+  const heuresFormationCode = (code: string) =>
+    detailCodes
+      .filter((x) => x.classification === "FORMATION" && x.code === code)
+      .reduce((total, x) => total + x.heures, 0);
 
   /* =====================================================
      LIGNES NON EXPLIQUEES
@@ -2845,6 +3031,7 @@ feuilles.forEach((f) => {
                 "EXERCICE",
                 "ANNEE",
                 "MOIS",
+                "GLISSANT",
                 "LIBRE",
               ] as ModePeriode[]
             ).map((mode) => (
@@ -2870,6 +3057,8 @@ feuilles.forEach((f) => {
                   ? "Année"
                   : mode === "MOIS"
                   ? "Mois"
+                  : mode === "GLISSANT"
+                  ? "12 derniers mois"
                   : "Libre"}
               </button>
             ))}
@@ -3067,6 +3256,7 @@ feuilles.forEach((f) => {
                 </option>
 
                 {collaborateurs
+                  .filter((c) => c.inclus_statistiques !== false)
                   .slice()
                   .sort(
                     (a, b) => {
@@ -3173,7 +3363,7 @@ feuilles.forEach((f) => {
               COULEURS.bleuCN
             }
           
-            onClick={() => setCodeDetailFiltre("COMMERCIAL")}
+            onClick={() => setCodeDetailFiltre("CN")}
             clickable/>
 
           <Kpi
@@ -3181,7 +3371,7 @@ feuilles.forEach((f) => {
             value={heures(
               global.formation
             )}
-            sub={`${pourcentage(taux(global.formation, global.capacite))} de la capacité`}
+            sub={`${pourcentage(taux(global.formation, global.capacite))} de la capacité · FI ${heures(heuresFormationCode("FI"))} · FO ${heures(heuresFormationCode("FO"))}`}
             color={
               COULEURS.violet
             }
@@ -3194,7 +3384,7 @@ feuilles.forEach((f) => {
             value={heures(
               global.absence
             )}
-            sub={`${pourcentage(taux(global.absence, global.capacite))} de la capacité`}
+            sub="heures déjà déduites de la capacité"
             color={
               COULEURS.turquoiseAbsence
             }
@@ -3216,6 +3406,18 @@ feuilles.forEach((f) => {
             clickable/>
 
           <Kpi
+            label="Autres (non classés)"
+            value={heures(
+              global.autres
+            )}
+            sub={`${pourcentage(taux(global.autres, global.capacite))} de la capacité`}
+            color={
+              COULEURS.ambre
+            }
+            onClick={() => setCodeDetailFiltre("AUTRES")}
+            clickable/>
+
+          <Kpi
             label="Non expliqué"
             value={heures(
               global.nonExplique
@@ -3231,6 +3433,68 @@ feuilles.forEach((f) => {
             }
           />
         </section>
+
+        {encadrement.length > 0 && (
+          <section style={{ ...styles.detailBox, marginTop: 14 }}>
+            <div style={{ fontWeight: 800, marginBottom: 4 }}>
+              Encadrement — hors statistiques de productivité
+            </div>
+
+            <div
+              style={{
+                color: COULEURS.texteSecondaire,
+                fontSize: 12,
+                marginBottom: 10,
+                lineHeight: 1.45,
+              }}
+            >
+              Ces personnes ne comptent ni dans la capacité ni dans les taux de
+              l'équipe. Leurs heures sont présentées à part : le « NI » de
+              l'encadrement est du temps d'encadrement, pas un manque de charge.
+            </div>
+
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={{ textAlign: "right" }}>
+                    <th style={{ textAlign: "left" }}>Collaborateur</th>
+                    <th>CBE</th>
+                    <th>DBE</th>
+                    <th>CN</th>
+                    <th>NI</th>
+                    <th>Formation</th>
+                    <th>Div. production</th>
+                    <th>Autres</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {encadrement.map((ligne) => (
+                    <tr key={ligne.id} style={{ textAlign: "right" }}>
+                      <td style={{ textAlign: "left" }}>
+                        <strong>{ligne.trigramme}</strong> {ligne.nom}
+                      </td>
+                      <td>{heures(ligne.cbe)}</td>
+                      <td>{heures(ligne.dbe)}</td>
+                      <td>{heures(ligne.cn)}</td>
+                      <td>{heures(ligne.ni)}</td>
+                      <td>{heures(ligne.formation)}</td>
+                      <td>{heures(ligne.production)}</td>
+                      <td>{heures(ligne.autres)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <strong>Chiffrage total (équipe + encadrement) :</strong>{" "}
+              {heures(global.dbe + encadrement.reduce((total, ligne) => total + ligne.dbe, 0))}{" "}
+              dont {heures(encadrement.reduce((total, ligne) => total + ligne.dbe, 0))} pour
+              l'encadrement.
+            </div>
+          </section>
+        )}
 
         {codeDetailFiltre && (
           <section style={{ ...styles.detailBox, marginTop: 14 }}>
@@ -3248,7 +3512,7 @@ feuilles.forEach((f) => {
                 .map((x) => (
                   <div key={x.code} style={{ border: `1px solid ${COULEURS.bordure}`, borderRadius: 8, padding: "9px 11px", background: "#fff" }}>
                     <strong>{x.code}</strong> — {x.libelle}
-                    <div style={{ marginTop: 4, color: COULEURS.texteSecondaire }}>{heures(x.heures)}</div>
+                    <div style={{ marginTop: 4, color: COULEURS.texteSecondaire }}>{heures(x.heures)} · {x.nbPersonnes} pers. · {x.nbSemaines} sem.</div>
                   </div>
                 ))}
             </div>
@@ -3336,6 +3600,12 @@ feuilles.forEach((f) => {
           "PILOTAGE" && (
           <>
             <ChargeTimeline
+              semaines={
+                semainesFiltrees
+              }
+            />
+
+            <CourbeCBEDevis
               semaines={
                 semainesFiltrees
               }
@@ -4370,6 +4640,251 @@ function ChargeTimeline({
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   COURBE CBE VENDU / DEVIS
+========================================================= */
+
+const MOIS_COURTS = [
+  "janv.",
+  "févr.",
+  "mars",
+  "avr.",
+  "mai",
+  "juin",
+  "juil.",
+  "août",
+  "sept.",
+  "oct.",
+  "nov.",
+  "déc.",
+];
+
+function CourbeCBEDevis({
+  semaines,
+}: {
+  semaines: SemaineConsolidee[];
+}) {
+  const [regroupement, setRegroupement] = useState<"MOIS" | "SEMAINE">("MOIS");
+
+  const points = useMemo(() => {
+    const lignes = [...semaines]
+      .filter((semaine) => semaine.capacite > 0)
+      .sort((a, b) => a.annee - b.annee || a.semaine - b.semaine);
+
+    if (regroupement === "SEMAINE") {
+      return lignes.map((semaine) => ({
+        cle: `${semaine.annee}-${semaine.semaine}`,
+        libelle: `S${String(semaine.semaine).padStart(2, "0")}`,
+        cbe: (semaine.cbe / semaine.capacite) * 100,
+        dbe: (semaine.dbe / semaine.capacite) * 100,
+      }));
+    }
+
+    const groupes = new Map<
+      string,
+      { libelle: string; cbe: number; dbe: number; capacite: number }
+    >();
+
+    for (const semaine of lignes) {
+      const lundi = lundiSemaine(semaine.annee, semaine.semaine);
+      const cle = `${lundi.getUTCFullYear()}-${String(lundi.getUTCMonth() + 1).padStart(2, "0")}`;
+
+      const groupe = groupes.get(cle) ?? {
+        libelle: `${MOIS_COURTS[lundi.getUTCMonth()]} ${String(lundi.getUTCFullYear()).slice(2)}`,
+        cbe: 0,
+        dbe: 0,
+        capacite: 0,
+      };
+
+      groupe.cbe += semaine.cbe;
+      groupe.dbe += semaine.dbe;
+      groupe.capacite += semaine.capacite;
+
+      groupes.set(cle, groupe);
+    }
+
+    return Array.from(groupes.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([cle, groupe]) => ({
+        cle,
+        libelle: groupe.libelle,
+        cbe: (groupe.cbe / groupe.capacite) * 100,
+        dbe: (groupe.dbe / groupe.capacite) * 100,
+      }));
+  }, [semaines, regroupement]);
+
+  const pourcent = (valeur: number) =>
+    `${valeur.toFixed(1).replace(".", ",")} %`;
+
+  const couleurDevis = "#dc4f84";
+
+  const entete = (
+    <div style={styles.cardHeader}>
+      <div>
+        <div style={styles.sectionEyebrow}>Tendance</div>
+
+        <h2 style={styles.cardTitle}>
+          Évolution du CBE vendu et des devis
+        </h2>
+
+        <p style={styles.cardSubtitle}>
+          Part de la capacité occupée par les heures CBE vendues et par les
+          heures DBE / devis, sur la période choisie ci-dessus (essayez
+          « 12 derniers mois » ou « Exercice »).
+        </p>
+      </div>
+
+      <div style={styles.periodButtons}>
+        {(["MOIS", "SEMAINE"] as const).map((valeur) => (
+          <button
+            key={valeur}
+            type="button"
+            onClick={() => setRegroupement(valeur)}
+            style={{
+              ...styles.periodButton,
+              ...(regroupement === valeur ? styles.periodButtonActive : {}),
+            }}
+          >
+            {valeur === "MOIS" ? "Par mois" : "Par semaine"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (points.length < 2) {
+    return (
+      <section style={styles.card}>
+        {entete}
+
+        <p style={styles.cardSubtitle}>
+          Il faut au moins deux points pour tracer une courbe : élargissez la
+          période.
+        </p>
+      </section>
+    );
+  }
+
+  const largeur = 900;
+  const hauteur = 300;
+  const marge = { haut: 20, droite: 26, bas: 46, gauche: 52 };
+
+  const maxValeur = Math.max(10, ...points.flatMap((p) => [p.cbe, p.dbe]));
+  const maxAxe = Math.ceil(maxValeur / 10) * 10;
+
+  const x = (index: number) =>
+    marge.gauche +
+    (index * (largeur - marge.gauche - marge.droite)) / (points.length - 1);
+
+  const y = (valeur: number) =>
+    marge.haut + (hauteur - marge.haut - marge.bas) * (1 - valeur / maxAxe);
+
+  const chemin = (cle: "cbe" | "dbe") =>
+    points
+      .map(
+        (p, index) =>
+          `${index === 0 ? "M" : "L"}${x(index).toFixed(1)},${y(p[cle]).toFixed(1)}`
+      )
+      .join(" ");
+
+  const moyenne = (cle: "cbe" | "dbe") =>
+    points.reduce((total, p) => total + p[cle], 0) / points.length;
+
+  const graduations = [0, 0.25, 0.5, 0.75, 1].map((part) => part * maxAxe);
+  const pasLibelle = Math.ceil(points.length / 13);
+
+  return (
+    <section style={styles.card}>
+      {entete}
+
+      <div style={styles.legend}>
+        <Legend color={COULEURS.rouge} label="CBE vendu" />
+        <Legend color={couleurDevis} label="DBE / devis" />
+      </div>
+
+      <svg
+        viewBox={`0 0 ${largeur} ${hauteur}`}
+        style={{ width: "100%", height: "auto", display: "block" }}
+        role="img"
+        aria-label="Courbe du CBE vendu et des devis en pourcentage de la capacité"
+      >
+        {graduations.map((valeur) => (
+          <g key={valeur}>
+            <line
+              x1={marge.gauche}
+              x2={largeur - marge.droite}
+              y1={y(valeur)}
+              y2={y(valeur)}
+              stroke="#e5e7ea"
+              strokeWidth={1}
+            />
+
+            <text
+              x={marge.gauche - 8}
+              y={y(valeur) + 4}
+              textAnchor="end"
+              fontSize={11}
+              fill="#777"
+            >
+              {Math.round(valeur)} %
+            </text>
+          </g>
+        ))}
+
+        {points.map((p, index) =>
+          index % pasLibelle === 0 ? (
+            <text
+              key={p.cle}
+              x={x(index)}
+              y={hauteur - 18}
+              textAnchor="middle"
+              fontSize={11}
+              fill="#777"
+            >
+              {p.libelle}
+            </text>
+          ) : null
+        )}
+
+        <path
+          d={chemin("dbe")}
+          fill="none"
+          stroke={couleurDevis}
+          strokeWidth={3}
+          strokeLinejoin="round"
+        />
+
+        <path
+          d={chemin("cbe")}
+          fill="none"
+          stroke={COULEURS.rouge}
+          strokeWidth={3}
+          strokeLinejoin="round"
+        />
+
+        {points.map((p, index) => (
+          <g key={`points-${p.cle}`}>
+            <circle cx={x(index)} cy={y(p.dbe)} r={4} fill={couleurDevis}>
+              <title>{`${p.libelle} : DBE / devis ${pourcent(p.dbe)}`}</title>
+            </circle>
+
+            <circle cx={x(index)} cy={y(p.cbe)} r={4} fill={COULEURS.rouge}>
+              <title>{`${p.libelle} : CBE vendu ${pourcent(p.cbe)}`}</title>
+            </circle>
+          </g>
+        ))}
+      </svg>
+
+      <p style={{ ...styles.cardSubtitle, marginTop: 8 }}>
+        Moyenne sur la période : CBE vendu{" "}
+        <strong>{pourcent(moyenne("cbe"))}</strong> · DBE / devis{" "}
+        <strong>{pourcent(moyenne("dbe"))}</strong>. Passez la souris sur un
+        point pour voir sa valeur.
+      </p>
     </section>
   );
 }

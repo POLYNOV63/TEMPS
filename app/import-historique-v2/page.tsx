@@ -14,9 +14,15 @@ type Collaborateur = {
   actif: boolean;
 };
 
+/* Bloc du classeur Excel dans lequel se trouve la colonne du code :
+   "CODES AFFAIRES" (production) ou "CODES ADMINISTRATIFS". Il est lu
+   onglet par onglet : un code peut changer de bloc d'un onglet à l'autre. */
+type GroupeCode = "AFFAIRES" | "ADMIN";
+
 type Ventilation = {
   code: string;
   heures: number;
+  groupe: GroupeCode;
 };
 
 type Imputation = {
@@ -63,6 +69,7 @@ type LigneHistorique = {
   collaborateur_id: string;
   affaire_code: string | null;
   code_imputation: string;
+  groupe_code: GroupeCode | null;
   heures: number;
   source: string;
 };
@@ -90,8 +97,10 @@ type LignePresence = {
 };
 
 const SOURCE = "IMPORT_EXCEL";
+// L'historique commence à la semaine du 1er novembre 2024 (début de l'exercice
+// 2024-2025) : S44-2024. L'import s'arrête à la dernière semaine renseignée.
 const FIRST_YEAR = 2024;
-const FIRST_WEEK = 1;
+const FIRST_WEEK = 44;
 const TOLERANCE = 0.01;
 
 // Excel : E:AO = colonnes de ventilation.
@@ -105,11 +114,12 @@ const DAILY_STATUS_OFFSET = 1;
 
 const CBE_PREFIXES = ["CBE", "CAS", "CIM", "COF"];
 const DBE_PREFIXES = ["DBE", "DAS", "DIM", "DOF"];
-const ABSENCE_CODES = new Set(["CP", "RE", "RTT", "ML", "FE", "AUTRE", "AA", "AT", "AI", "VM"]);
+const ABSENCE_CODES = new Set(["CP", "RE", "RTT", "ML", "FE", "AUTRE", "AA", "AT", "AI", "VM", "EC"]);
 // Les codes d'absence restent importés afin que le Bilan puisse expliquer
 // les heures (ex. CP = congés payés) au lieu de les faire apparaître
-// artificiellement en "Non expliqué". EC reste volontairement hors import.
-const IGNORED_CODES = new Set(["EC"]);
+// artificiellement en "Non expliqué". EC (alternant à l'école) est désormais
+// importé : le code EC doit exister dans Gestion des codes (catégorie ABSENCE).
+const IGNORED_CODES = new Set<string>();
 
 // Collaboratrice volontairement exclue de l'import historique.
 // Ses heures sont comptabilisées séparément et ne constituent pas une anomalie.
@@ -176,6 +186,42 @@ function feuillesImportables(sheetNames: string[]): string[] {
     .filter((x) => comparerSemaine(x, debut) >= 0)
     .sort(comparerSemaine)
     .map((x) => x.nom);
+}
+
+/* Nombre de semaines ISO d'une année (52 ou 53). */
+function nombreSemainesIso(annee: number): number {
+  const d = new Date(Date.UTC(annee, 11, 28));
+  const jour = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - jour);
+  const debut = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - debut.getTime()) / 86400000 + 1) / 7);
+}
+
+/* Semaines absentes du classeur entre la première et la dernière semaine retenues. */
+function semainesAbsentes(nomsPresents: string[], derniere: { semaine: number; annee: number }): string[] {
+  const presentes = new Set(
+    nomsPresents
+      .map((nom) => extraireSemaineAnnee(nom))
+      .filter((x): x is { semaine: number; annee: number } => !!x)
+      .map((x) => `${x.annee}-${x.semaine}`)
+  );
+
+  const absentes: string[] = [];
+  let courant = { annee: FIRST_YEAR, semaine: FIRST_WEEK };
+
+  while (comparerSemaine(courant, derniere) <= 0) {
+    if (!presentes.has(`${courant.annee}-${courant.semaine}`)) {
+      absentes.push(`S${String(courant.semaine).padStart(2, "0")}-${courant.annee}`);
+    }
+
+    if (courant.semaine >= nombreSemainesIso(courant.annee)) {
+      courant = { annee: courant.annee + 1, semaine: 1 };
+    } else {
+      courant = { annee: courant.annee, semaine: courant.semaine + 1 };
+    }
+  }
+
+  return absentes;
 }
 
 function cleCollaborateur(nom: string, prenom: string): string {
@@ -268,10 +314,71 @@ function trouverBlocs(rows: unknown[][], collaborateurs: Collaborateur[]) {
   return blocs;
 }
 
-function lireCodesLigne2(rows: unknown[][]): string[] {
+/* Disposition des colonnes d'UN onglet. Elle est relue à chaque onglet à
+   partir des titres de la ligne 1 ("CODES AFFAIRES", "CODES ADMINISTRATIFS",
+   "LUNDI ...") : si des codes sont ajoutés ou retirés d'un onglet à l'autre,
+   l'import suit. Les anciennes positions ne servent que de repli. */
+type StructureFeuille = {
+  debutVentilation: number;
+  finVentilation: number;
+  debutAdmin: number;
+  debutJours: number;
+  finJours: number;
+  detectee: boolean;
+};
+
+function structureParDefaut(): StructureFeuille {
+  return {
+    debutVentilation: VENTILATION_START,
+    finVentilation: VENTILATION_END,
+    debutAdmin: 25,
+    debutJours: PRESENCE_START,
+    finJours: PRESENCE_END,
+    detectee: false,
+  };
+}
+
+function lireStructure(rows: unknown[][]): StructureFeuille {
+  const ligne1 = rows[0] ?? [];
+
+  let debutAffaires = -1;
+  let debutAdmin = -1;
+  let debutJours = -1;
+
+  for (let col = 0; col < ligne1.length; col++) {
+    const texte = normaliser(ligne1[col]);
+
+    if (debutAffaires < 0 && texte.startsWith("CODES AFFAIRES")) {
+      debutAffaires = col;
+    } else if (debutAdmin < 0 && texte.startsWith("CODES ADMINISTRATI")) {
+      debutAdmin = col;
+    } else if (debutJours < 0 && texte.startsWith("LUNDI")) {
+      debutJours = col;
+    }
+  }
+
+  if (
+    debutAffaires < 0 ||
+    debutAdmin <= debutAffaires ||
+    debutJours <= debutAdmin
+  ) {
+    return structureParDefaut();
+  }
+
+  return {
+    debutVentilation: debutAffaires,
+    finVentilation: debutJours - 1,
+    debutAdmin,
+    debutJours,
+    finJours: debutJours + 13,
+    detectee: true,
+  };
+}
+
+function lireCodesLigne2(rows: unknown[][], structure: StructureFeuille): string[] {
   const ligne2 = rows[1] ?? [];
   const codes: string[] = [];
-  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+  for (let col = structure.debutVentilation; col <= structure.finVentilation; col++) {
     codes[col] = normaliserCode(ligne2[col]);
   }
   return codes;
@@ -292,21 +399,33 @@ function parserAffaire(valeur: unknown): { type: "CBE" | "DBE"; code: string } |
   return null;
 }
 
-function extraireVentilations(ligne: unknown[], codesLigne2: string[]): Ventilation[] {
+function extraireVentilations(
+  ligne: unknown[],
+  codesLigne2: string[],
+  structure: StructureFeuille
+): Ventilation[] {
   const resultat: Ventilation[] = [];
-  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+  for (let col = structure.debutVentilation; col <= structure.finVentilation; col++) {
     const code = codesLigne2[col];
     if (!code || IGNORED_CODES.has(code)) continue;
     const heures = nombre(ligne[col]);
     if (Math.abs(heures) <= TOLERANCE) continue;
-    resultat.push({ code, heures: arrondir(heures) });
+    resultat.push({
+      code,
+      heures: arrondir(heures),
+      groupe: col < structure.debutAdmin ? "AFFAIRES" : "ADMIN",
+    });
   }
   return resultat;
 }
 
-function extraireHeuresVentileesBrutes(ligne: unknown[], codesLigne2: string[]): number {
+function extraireHeuresVentileesBrutes(
+  ligne: unknown[],
+  codesLigne2: string[],
+  structure: StructureFeuille
+): number {
   let total = 0;
-  for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+  for (let col = structure.debutVentilation; col <= structure.finVentilation; col++) {
     const code = codesLigne2[col];
     if (!code || IGNORED_CODES.has(code)) continue;
     total += nombre(ligne[col]);
@@ -323,7 +442,8 @@ function analyserAnomaliesBrutes(
   nomFeuille: string,
   info: { semaine: number; annee: number },
   collaborateurs: Collaborateur[],
-  codesLigne2: string[]
+  codesLigne2: string[],
+  structure: StructureFeuille
 ): {
   anomalies: Anomalie[];
   heuresSource: number;
@@ -369,7 +489,7 @@ function analyserAnomaliesBrutes(
     const estActivite = !!parserAffaire(ligne[2]) || estDivers(ligne);
     if (!estActivite) continue;
 
-    const heures = extraireHeuresVentileesBrutes(ligne, codesLigne2);
+    const heures = extraireHeuresVentileesBrutes(ligne, codesLigne2, structure);
     if (heures <= TOLERANCE) continue;
 
     // Les heures d'Aurélie sont volontairement sorties du périmètre importable.
@@ -402,7 +522,7 @@ function analyserAnomaliesBrutes(
       });
     }
 
-    for (let col = VENTILATION_START; col <= VENTILATION_END; col++) {
+    for (let col = structure.debutVentilation; col <= structure.finVentilation; col++) {
       const code = codesLigne2[col];
       const valeur = nombre(ligne[col]);
       if (valeur <= TOLERANCE) continue;
@@ -451,7 +571,7 @@ function trouverLigneDansBloc(rows: unknown[][], debut: number, fin: number, lib
   return -1;
 }
 
-function extraireJours(rows: unknown[][], ligneHJour: number): Jour[] {
+function extraireJours(rows: unknown[][], ligneHJour: number, structure: StructureFeuille): Jour[] {
   if (ligneHJour < 0) return [];
   const ligneHeures = rows[ligneHJour] ?? [];
   const ligneTotal = ligneHJour + 2;
@@ -459,8 +579,8 @@ function extraireJours(rows: unknown[][], ligneHJour: number): Jour[] {
 
   const jours: Jour[] = [];
   for (let i = 0; i < 7; i++) {
-    const colHeures = PRESENCE_START + i * 2 + DAILY_HOURS_OFFSET;
-    const colStatut = PRESENCE_START + i * 2 + DAILY_STATUS_OFFSET;
+    const colHeures = structure.debutJours + i * 2 + DAILY_HOURS_OFFSET;
+    const colStatut = structure.debutJours + i * 2 + DAILY_STATUS_OFFSET;
     jours.push({
       heures: arrondir(nombre(ligneHeures[colHeures])),
       statut: normaliser(ligneStatuts[colHeures]),
@@ -469,7 +589,7 @@ function extraireJours(rows: unknown[][], ligneHJour: number): Jour[] {
   return jours;
 }
 
-function extraireHeuresSup(rows: unknown[][], debut: number, fin: number): number {
+function extraireHeuresSup(rows: unknown[][], debut: number, fin: number, structure: StructureFeuille): number {
   const ligne = trouverLigneDansBloc(rows, debut, fin, "HEURES SUP");
   if (ligne < 0) return 0;
   // Ici, et uniquement ici, la colonne D est utilisée.
@@ -477,11 +597,11 @@ function extraireHeuresSup(rows: unknown[][], debut: number, fin: number): numbe
   if (Math.abs(valeurD) > TOLERANCE) return arrondir(valeurD);
 
   let total = 0;
-  for (let col = PRESENCE_START; col <= PRESENCE_END; col += 2) total += nombre(rows[ligne]?.[col]);
+  for (let col = structure.debutJours; col <= structure.finJours; col += 2) total += nombre(rows[ligne]?.[col]);
   return arrondir(total);
 }
 
-function analyserBloc(rows: unknown[][], bloc: { collaborateur: Collaborateur; debut: number; fin: number }, codesLigne2: string[]): DonneesCollaborateur {
+function analyserBloc(rows: unknown[][], bloc: { collaborateur: Collaborateur; debut: number; fin: number }, codesLigne2: string[], structure: StructureFeuille): DonneesCollaborateur {
   const imputations: Imputation[] = [];
   let ticketsRestaurant = 0;
 
@@ -491,21 +611,21 @@ function analyserBloc(rows: unknown[][], bloc: { collaborateur: Collaborateur; d
 
     if (c) {
       ticketsRestaurant = Math.max(ticketsRestaurant, extraireTickets(ligne));
-      const ventilations = extraireVentilations(ligne, codesLigne2);
+      const ventilations = extraireVentilations(ligne, codesLigne2, structure);
       if (ventilations.length) imputations.push({ affaireCode: c.code, type: c.type, ventilations });
       continue;
     }
 
     if (estDivers(ligne)) {
       ticketsRestaurant = Math.max(ticketsRestaurant, extraireTickets(ligne));
-      const ventilations = extraireVentilations(ligne, codesLigne2);
+      const ventilations = extraireVentilations(ligne, codesLigne2, structure);
       if (ventilations.length) imputations.push({ affaireCode: null, type: "DIVERS", ventilations });
     }
   }
 
   const ligneHJour = trouverLigneDansBloc(rows, bloc.debut, bloc.fin, "H/JOUR");
-  const jours = extraireJours(rows, ligneHJour);
-  const heuresSup = extraireHeuresSup(rows, bloc.debut, bloc.fin);
+  const jours = extraireJours(rows, ligneHJour, structure);
+  const heuresSup = extraireHeuresSup(rows, bloc.debut, bloc.fin, structure);
 
   return { collaborateur: bloc.collaborateur, ticketsRestaurant, jours, heuresSup, imputations };
 }
@@ -514,10 +634,11 @@ function analyserFeuille(rows: unknown[][], nomFeuille: string, collaborateurs: 
   const info = extraireSemaineAnnee(nomFeuille);
   if (!info) throw new Error(`Feuille invalide : ${nomFeuille}`);
 
-  const codesLigne2 = lireCodesLigne2(rows);
+  const structure = lireStructure(rows);
+  const codesLigne2 = lireCodesLigne2(rows, structure);
   const blocs = trouverBlocs(rows, collaborateurs);
-  const donnees = blocs.map((bloc) => analyserBloc(rows, bloc, codesLigne2));
-  const controle = analyserAnomaliesBrutes(rows, nomFeuille, info, collaborateurs, codesLigne2);
+  const donnees = blocs.map((bloc) => analyserBloc(rows, bloc, codesLigne2, structure));
+  const controle = analyserAnomaliesBrutes(rows, nomFeuille, info, collaborateurs, codesLigne2, structure);
 
   return {
     feuille: nomFeuille,
@@ -548,6 +669,7 @@ function construireLignesImputations(semaine: SemaineAnalyse): LigneHistorique[]
             collaborateur_id: d.collaborateur.id,
             affaire_code: imp.affaireCode,
             code_imputation: v.code,
+            groupe_code: v.groupe,
             heures: arrondir(v.heures),
             source: SOURCE,
           });
@@ -643,6 +765,8 @@ function ImportHistoriqueV3Contenu() {
   const [erreur, setErreur] = useState("");
   const [inconnus, setInconnus] = useState<string[]>([]);
   const [codesInconnus, setCodesInconnus] = useState<string[]>([]);
+  const [absentes, setAbsentes] = useState<string[]>([]);
+  const [ignoreesFin, setIgnoreesFin] = useState<string[]>([]);
 
   const stats = useMemo(() => statistiques(semaines), [semaines]);
 
@@ -660,13 +784,15 @@ function ImportHistoriqueV3Contenu() {
     setProgression(0);
     setInconnus([]);
     setCodesInconnus([]);
+    setAbsentes([]);
+    setIgnoreesFin([]);
 
     try {
       await chargerCollaborateurs();
       const buffer = await f.arrayBuffer();
       const wb = XLSX.read(buffer, { type: "array", cellDates: true });
       const noms = feuillesImportables(wb.SheetNames);
-      if (!noms.length) throw new Error("Aucune feuille Sxx-aaaa à partir de S01-2024.");
+      if (!noms.length) throw new Error("Aucune feuille Sxx-aaaa à partir de S44-2024 (semaine du 1er novembre 2024).");
 
       // On recharge localement les collaborateurs après le select pour garantir la correspondance.
       const { data: collabsDB, error: collabError } =
@@ -707,6 +833,25 @@ function ImportHistoriqueV3Contenu() {
         setProgression(Math.round(((i + 1) / noms.length) * 100));
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
+
+      // « Jusqu'au dernier rempli » : les onglets vides situés après la dernière
+      // semaine renseignée sont ignorés (modèles de semaines futures, par exemple).
+      let dernier = resultats.length - 1;
+      while (
+        dernier >= 0 &&
+        resultats[dernier].heuresSource <= TOLERANCE &&
+        resultats[dernier].donnees.every((d) => d.imputations.length === 0)
+      ) {
+        dernier--;
+      }
+
+      const ignoreesApres = resultats.slice(dernier + 1).map((x) => x.feuille);
+      resultats.length = dernier + 1;
+
+      if (!resultats.length) throw new Error("Aucune semaine renseignée n'a été trouvée dans le classeur.");
+
+      setIgnoreesFin(ignoreesApres);
+      setAbsentes(semainesAbsentes(noms, resultats[resultats.length - 1]));
 
       // Vérification des codes réellement trouvés.
       const codes = Array.from(new Set(resultats.flatMap(construireLignesImputations).map((x) => x.code_imputation)));
@@ -796,7 +941,14 @@ function ImportHistoriqueV3Contenu() {
 
         if (lignes.length) {
           const { error } = await supabase.from("historique_imputations").insert(lignes);
-          if (error) throw new Error(`${semaine.feuille} imputations : ${error.message}`);
+          if (error) {
+            if (/groupe_code/i.test(error.message)) {
+              throw new Error(
+                "La colonne groupe_code est absente de la base : exécutez d'abord le script SQL 05_historique_groupe_code.sql."
+              );
+            }
+            throw new Error(`${semaine.feuille} imputations : ${error.message}`);
+          }
         }
 
         if (presence.length) {
@@ -833,7 +985,7 @@ function ImportHistoriqueV3Contenu() {
         forme="encadre"
         section="Administration"
         titre="Import historique Excel — V3"
-        description="Import du fichier « Récupération heures » à partir de S01-2024."
+        description="Import du fichier « Récupération heures » de la semaine du 1er novembre 2024 (S44-2024) à la dernière semaine renseignée."
       >
         <div style={styles.badge}>
           {collaborateurs.filter((c) => c.actif).length} actifs
@@ -888,6 +1040,16 @@ function ImportHistoriqueV3Contenu() {
 
           {inconnus.length > 0 && <div style={styles.warning}><b>Collaborateurs inconnus :</b> {inconnus.join(", ")}</div>}
           {codesInconnus.length > 0 && <div style={styles.error}><b>Codes inconnus :</b> {codesInconnus.join(", ")}</div>}
+          {absentes.length > 0 && (
+            <div style={styles.warning}>
+              <b>Semaines absentes du classeur :</b> {absentes.join(", ")}. Ces semaines n'auront aucune donnée dans l'historique.
+            </div>
+          )}
+          {ignoreesFin.length > 0 && (
+            <div style={styles.warning}>
+              <b>Onglets vides ignorés après la dernière semaine renseignée :</b> {ignoreesFin.join(", ")}
+            </div>
+          )}
 
           {anomalies.length > 0 && (
             <div style={styles.anomalyBox}>

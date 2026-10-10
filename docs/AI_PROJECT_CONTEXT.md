@@ -22,7 +22,7 @@ La protection réelle est la RLS Supabase (fonctions `rh_est_admin()`,
 
 | Niveau | Rôle (`collaborateurs.role`) | Accès |
 |---|---|---|
-| 0 | COLLABORATEUR | Ses feuilles (Ma semaine, Mes feuilles), son espace RH, Bilan affaire |
+| 0 | COLLABORATEUR | Ses feuilles (Ma semaine, Mes feuilles), son espace RH, Bilan affaire, Mon bilan |
 | 1 | RESPONSABLE | Niveau 0 + Suivi des feuilles et Ma semaine d'un autre collaborateur en consultation, Bilan RH mensuel, Export Excel |
 | 2 | ADMIN | Tout : modification de n'importe quelle feuille, collaborateurs, profils horaires, codes, activités, bilans, imports, validation RH, Export IA |
 
@@ -97,6 +97,16 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   presse-papiers, puis se colle sur un jour ou sur plusieurs jours choisis ; une absence
   (CP, RTT, RE...) se copie et se colle de la même façon ; une ligne peut être dupliquée.
   La copie reste possible sur une feuille verrouillée ou validée.
+- **Assistant de saisie** : bandeau collant en haut de la feuille (état de chaque jour, accès
+  direct, premier jour incomplet) ; « Affaires récentes » (affaires des 10 dernières semaines)
+  à l'ajout d'une ligne ; bouton « +X » (solde) qui complète une journée ; reprise des affaires
+  de la semaine précédente (sans les heures) ; application, sur demande, des CP / RTT /
+  récupérations déjà validés dans l'espace RH (journées entières uniquement) ; code choisi
+  automatiquement quand il n'y en a qu'un ; nouvelle ligne qui reprend le type et l'activité de la
+  précédente ; aide repliée par défaut.
+- **Saisie sur téléphone** (écran de moins de 760 px) : un seul jour affiché à la fois (choix par le bandeau ou par
+  ◀ ▶), mise en page sur une colonne, champs agrandis, barre fixe en bas (jour précédent / suivant, Enregistrer,
+  Valider). Aucun changement sur ordinateur. Composants : `SaisieMobile.tsx`, `AssistantSaisie.tsx`.
 
 ## Autres règles connues
 
@@ -111,6 +121,44 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   n'est possible que si aucune donnée n'existe (fonction SQL `supprimer_collaborateur`).
   Un nouveau collaborateur reçoit un profil horaire et un historique de rythme (à partir du
   lundi de sa semaine d'entrée) ; son espace est actif dès sa première connexion Microsoft.
+
+## Import historique (classeur Excel « Récupération heures »)
+
+- Un onglet par semaine (Sxx-aaaa). Import de S44-2024 (semaine du 1er novembre 2024) à la
+  dernière semaine renseignée ; les onglets vides en fin de classeur sont ignorés et les semaines
+  absentes sont signalées.
+- Disposition relue onglet par onglet : bloc « CODES AFFAIRES » (production), bloc « CODES
+  ADMINISTRATIFS », puis les 7 jours. Le bloc de chaque code est conservé
+  (`historique_imputations.groupe_code` = AFFAIRES ou ADMIN).
+- Par collaborateur : lignes CBE n° / DBE n° / Divers, ventilées par code.
+- **Divers de production** = ligne Divers portant un code de catégorie PRODUCTION. La catégorie du
+  code dans Gestion des codes fait foi : NI, CN (commercial), Formation (FI interne, FO externe),
+  absences, production (ex. HA = achats lors d'une affaire de négoce, même s'il figure dans le bloc
+  administratif du classeur). Pour un code inconnu de Gestion des codes sur une ligne Divers, le bloc
+  du classeur décide (affaires = production, administratif = « Autres »).
+- **NI** = temps non imputable : la personne n'a pas de charge. **EC** = alternant à l'école
+  (importé, catégorie ABSENCE).
+
+## Statistiques de productivité (Bilans)
+
+- **Capacité nette** (même base pour l'historique et le nouveau système) : 35 h moins fériés,
+  congés, récupérations et absences. Les taux (CBE, DBE, CN, Divers de production, NI...) sont
+  calculés sur cette capacité.
+- **Encadrement** : les collaborateurs décochés « Inclus dans les statistiques de productivité »
+  (colonne `collaborateurs.inclus_statistiques` : AMA, PLG) ne comptent ni dans la capacité ni dans les
+  taux. Leurs heures sont affichées à part ; le NI de l'encadrement est du temps d'encadrement, pas un
+  manque de charge. Le chiffrage total additionne les DBE de l'équipe et de l'encadrement.
+- Le détail par code indique les heures, le nombre de personnes et le nombre de semaines (ex. ML).
+
+## Mon bilan (page personnelle)
+
+- Page `/mon-bilan` : ma répartition du temps (CBE vendus, DBE, CN, Divers de production, NI, Formation FI / FO,
+  non expliqué) sur la période choisie (mois, exercice, année, 12 derniers mois), mes affaires, l'évolution mois
+  par mois. Seules les données de la personne connectée sont lues.
+- Mêmes définitions que Bilans : classement dans `lib/categoriesBilan.ts` (la page Bilans conserve sa propre copie
+  de ces règles ; toute évolution des définitions doit être faite aux deux endroits, ou unifiée).
+- Ne reprend pas : saisie et compteur (Ma semaine), liste des feuilles (Mes feuilles), congés et RTT (RH).
+- Une personne exclue des statistiques (encadrement) voit ses heures sans capacité ni taux.
 
 ## Conventions de code
 

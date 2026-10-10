@@ -74,7 +74,7 @@ type LigneSemaine = {
   heuresParActivite: Record<string, number>;
 };
 
-type Periode = "ANNEE" | "SEMAINE";
+type Periode = "SEMAINE" | "MOIS" | "EXERCICE" | "ANNEE";
 type StatutFiltre = "A_TRAITER" | "BROUILLON" | "TOUS";
 
 /* Durée légale hebdomadaire : sert de capacité de référence pour chaque
@@ -146,6 +146,100 @@ function debutAnneeISO(annee: number) {
   return dateISO(lundiSemaineISO(annee, 1));
 }
 
+/* ---------------------------------------------------------------
+   PERIODE ANALYSEE : type de période + date de référence
+--------------------------------------------------------------- */
+
+const NOMS_MOIS = [
+  "janvier",
+  "février",
+  "mars",
+  "avril",
+  "mai",
+  "juin",
+  "juillet",
+  "août",
+  "septembre",
+  "octobre",
+  "novembre",
+  "décembre",
+];
+
+const LIBELLES_PERIODE: Record<Periode, string> = {
+  SEMAINE: "Semaine",
+  MOIS: "Mois",
+  EXERCICE: "Exercice (nov. → oct.)",
+  ANNEE: "Année",
+};
+
+type PlagePeriode = {
+  debut: string;
+  fin: string;
+  titre: string;
+  detail: string;
+};
+
+function dateDepuisISO(valeur: string) {
+  const [a, m, j] = valeur.split("-").map(Number);
+  return new Date(a, m - 1, j, 12, 0, 0);
+}
+
+/* fin = borne exclusive ; une feuille appartient à la période
+   si son lundi (semaine_debut) est dans [debut, fin[ */
+function calculerPlage(periode: Periode, reference: string): PlagePeriode {
+  const ref = dateDepuisISO(reference);
+
+  if (periode === "SEMAINE") {
+    const lundi = new Date(ref);
+    lundi.setDate(lundi.getDate() + 1 - (lundi.getDay() || 7));
+
+    const dimanche = new Date(lundi);
+    dimanche.setDate(dimanche.getDate() + 6);
+
+    const suivant = new Date(lundi);
+    suivant.setDate(suivant.getDate() + 7);
+
+    return {
+      debut: dateISO(lundi),
+      fin: dateISO(suivant),
+      titre: `Semaine ${numeroSemaine(lundi)} · ${anneeISO(lundi)}`,
+      detail: `du ${formatDate(dateISO(lundi))} au ${formatDate(dateISO(dimanche))}`,
+    };
+  }
+
+  if (periode === "MOIS") {
+    const debut = new Date(ref.getFullYear(), ref.getMonth(), 1, 12);
+    const fin = new Date(ref.getFullYear(), ref.getMonth() + 1, 1, 12);
+
+    return {
+      debut: dateISO(debut),
+      fin: dateISO(fin),
+      titre: `${NOMS_MOIS[ref.getMonth()].charAt(0).toUpperCase()}${NOMS_MOIS[ref.getMonth()].slice(1)} ${ref.getFullYear()}`,
+      detail: "feuilles dont la semaine commence ce mois-là",
+    };
+  }
+
+  if (periode === "EXERCICE") {
+    const annee = ref.getMonth() >= 10 ? ref.getFullYear() : ref.getFullYear() - 1;
+
+    return {
+      debut: `${annee}-11-01`,
+      fin: `${annee + 1}-11-01`,
+      titre: `Exercice ${annee}-${annee + 1}`,
+      detail: `du 1er novembre ${annee} au 31 octobre ${annee + 1}`,
+    };
+  }
+
+  const annee = anneeISO(ref);
+
+  return {
+    debut: debutAnneeISO(annee),
+    fin: debutAnneeISO(annee + 1),
+    titre: `Année ${annee}`,
+    detail: "de la première à la dernière semaine de l'année",
+  };
+}
+
 function formatHeures(value: number) {
   return value.toLocaleString("fr-FR", {
     minimumFractionDigits: 0,
@@ -181,12 +275,27 @@ function normaliserNom(prenom: string, nom: string) {
 }
 
 export default function BilanActivitesPage() {
-  const anneeCourante = new Date().getFullYear();
-  const semaineCourante = numeroSemaine(new Date());
-
   const [periode, setPeriode] = useState<Periode>("ANNEE");
-  const [annee, setAnnee] = useState(anneeCourante);
-  const [semaine, setSemaine] = useState(semaineCourante);
+  const [reference, setReference] = useState(() => dateISO(new Date()));
+
+  const plage = useMemo(
+    () => calculerPlage(periode, reference),
+    [periode, reference]
+  );
+
+  function decalerPeriode(sens: 1 | -1) {
+    const ref = dateDepuisISO(reference);
+
+    if (periode === "SEMAINE") {
+      ref.setDate(ref.getDate() + 7 * sens);
+    } else if (periode === "MOIS") {
+      ref.setMonth(ref.getMonth() + sens, 15);
+    } else {
+      ref.setFullYear(ref.getFullYear() + sens);
+    }
+
+    setReference(dateISO(ref));
+  }
   const [statut, setStatut] = useState<StatutFiltre>("TOUS");
   const [collaborateurId, setCollaborateurId] = useState("TOUS");
   const [activiteId, setActiviteId] = useState("TOUTES");
@@ -200,12 +309,6 @@ export default function BilanActivitesPage() {
   const [heuresSansActivite, setHeuresSansActivite] = useState(0);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
-
-  const anneesDisponibles = useMemo(
-    () =>
-      Array.from({ length: 6 }, (_, index) => anneeCourante - 4 + index),
-    [anneeCourante]
-  );
 
   const activitesAffichees = useMemo(() => {
     const source = activites
@@ -274,15 +377,8 @@ export default function BilanActivitesPage() {
 
       setActivites(activitesData);
       setCollaborateurs(collaborateursData);
-      let debut = debutAnneeISO(annee);
-      let fin = debutAnneeISO(annee + 1);
-
-      if (periode === "SEMAINE") {
-        debut = dateISO(lundiSemaineISO(annee, semaine));
-        const finDate = lundiSemaineISO(annee, semaine);
-        finDate.setDate(finDate.getDate() + 7);
-        fin = dateISO(finDate);
-      }
+      const debut = plage.debut;
+      const fin = plage.fin;
 
       let feuillesQuery = supabase
         .from("feuilles_heures")
@@ -527,7 +623,7 @@ export default function BilanActivitesPage() {
       setErreur(e.message ?? "Impossible de charger le bilan activités.");
       setChargement(false);
     }
-  }, [annee, anneeCourante, activiteId, collaborateurId, periode, semaine, statut]);
+  }, [plage, activiteId, collaborateurId, statut]);
 
   useEffect(() => {
     chargerDonnees();
@@ -539,12 +635,7 @@ export default function BilanActivitesPage() {
     [lignesActivites]
   );
 
-  const titrePeriode = useMemo(() => {
-    if (periode === "SEMAINE") {
-      return `S${String(semaine).padStart(2, "0")} ${annee}`;
-    }
-    return `Année ${annee}`;
-  }, [annee, periode, semaine]);
+  const titrePeriode = plage.titre;
 
   const heuresMaxActivite = Math.max(
     0,
@@ -617,52 +708,74 @@ export default function BilanActivitesPage() {
         </section>
 
         <section style={styles.filtersCard}>
-          <div style={styles.filtersTitle}>Filtres</div>
+          <div style={styles.filtersTitle}>Période analysée</div>
+
+          <div style={styles.periodeLigne}>
+            <div
+              style={styles.segments}
+              role="radiogroup"
+              aria-label="Type de période"
+            >
+              {(["SEMAINE", "MOIS", "EXERCICE", "ANNEE"] as Periode[]).map(
+                valeur => (
+                  <button
+                    key={valeur}
+                    type="button"
+                    role="radio"
+                    aria-checked={periode === valeur}
+                    onClick={() => setPeriode(valeur)}
+                    style={{
+                      ...styles.segment,
+                      ...(periode === valeur ? styles.segmentActif : {}),
+                    }}
+                  >
+                    {LIBELLES_PERIODE[valeur]}
+                  </button>
+                )
+              )}
+            </div>
+
+            <div style={styles.navigationPeriode}>
+              <button
+                type="button"
+                onClick={() => decalerPeriode(-1)}
+                style={styles.fleche}
+                aria-label="Période précédente"
+                title="Période précédente"
+              >
+                ◀
+              </button>
+
+              <div style={styles.periodeActuelle}>
+                <strong>{plage.titre}</strong>
+                <span>{plage.detail}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => decalerPeriode(1)}
+                style={styles.fleche}
+                aria-label="Période suivante"
+                title="Période suivante"
+              >
+                ▶
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setReference(dateISO(new Date()))}
+                style={styles.lienAujourdhui}
+              >
+                Aujourd'hui
+              </button>
+            </div>
+          </div>
+
+          <div style={{ ...styles.filtersTitle, marginTop: 22 }}>
+            Filtrer sur
+          </div>
 
           <div style={styles.filtersGrid}>
-            <label style={styles.fieldLabel}>
-              <span>Vue</span>
-              <select
-                value={periode}
-                onChange={e => setPeriode(e.target.value as Periode)}
-                style={styles.select}
-              >
-                <option value="ANNEE">Année</option>
-                <option value="SEMAINE">Semaine</option>
-              </select>
-            </label>
-
-            <label style={styles.fieldLabel}>
-              <span>Année</span>
-              <select
-                value={annee}
-                onChange={e => setAnnee(Number(e.target.value))}
-                style={styles.select}
-              >
-                {anneesDisponibles.map(value => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label style={styles.fieldLabel}>
-              <span>Semaine</span>
-              <select
-                value={semaine}
-                disabled={periode !== "SEMAINE"}
-                onChange={e => setSemaine(Number(e.target.value))}
-                style={styles.select}
-              >
-                {Array.from({ length: 53 }, (_, index) => index + 1).map(value => (
-                  <option key={value} value={value}>
-                    S{String(value).padStart(2, "0")}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <label style={styles.fieldLabel}>
               <span>Statut des feuilles</span>
               <select
@@ -985,7 +1098,7 @@ export default function BilanActivitesPage() {
           )}
         </section>
 
-        {periode === "ANNEE" && (
+        {periode !== "SEMAINE" && (
           <section style={styles.sectionCard}>
             <div style={styles.sectionHeader}>
               <div>
@@ -1055,6 +1168,79 @@ export default function BilanActivitesPage() {
 }
 
 const styles: Record<string, CSSProperties> = {
+  periodeLigne: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 18,
+    flexWrap: "wrap",
+  },
+
+  segments: {
+    display: "inline-flex",
+    border: "1px solid #cfcfcf",
+    borderRadius: 9,
+    overflow: "hidden",
+    background: "#fff",
+  },
+
+  segment: {
+    border: "none",
+    borderRight: "1px solid #e1e1e1",
+    background: "#fff",
+    color: "#444",
+    padding: "10px 16px",
+    fontWeight: 700,
+    fontSize: 13,
+    fontFamily: "inherit",
+    cursor: "pointer",
+  },
+
+  segmentActif: {
+    background: "#c00000",
+    color: "#fff",
+  },
+
+  navigationPeriode: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  fleche: {
+    width: 34,
+    height: 34,
+    border: "1px solid #cfcfcf",
+    borderRadius: 8,
+    background: "#fff",
+    color: "#c00000",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+
+  periodeActuelle: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    minWidth: 220,
+    fontSize: 13,
+    color: "#666",
+    lineHeight: 1.3,
+  },
+
+  lienAujourdhui: {
+    background: "transparent",
+    border: "none",
+    color: "#1f4e99",
+    fontWeight: 700,
+    textDecoration: "underline",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: 13,
+  },
+
   barreActiviteTrack: {
     height: 28,
     background: "#f1f2f4",

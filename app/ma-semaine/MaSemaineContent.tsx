@@ -13,6 +13,15 @@ import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import EnTetePage from "@/components/EnTetePage";
 import { BarrePressePapiers, BoutonLecture } from "./BarrePressePapiers";
+import {
+  AffairesRecentes,
+  BandeauSemaine,
+  BoutonSolde,
+  type AffaireRecente,
+  type DemandeConges,
+  type JourBandeau,
+} from "./AssistantSaisie";
+import { BarreActionsMobile } from "./SaisieMobile";
 export const dynamic = "force-dynamic";
 
 /* ============================================================
@@ -879,6 +888,34 @@ export default function MaSemainePage() {
 
   const [joursCibles, setJoursCibles] = useState<string[]>([]);
 
+  /* ASSISTANT_SAISIE_V1 - affaires récentes, solde, bandeau, reprise, congés validés */
+  const [affairesRecentes, setAffairesRecentes] = useState<AffaireRecente[]>([]);
+  const [recentesOuvertesDate, setRecentesOuvertesDate] = useState<
+    string | null
+  >(null);
+  const [repriseEnCours, setRepriseEnCours] = useState(false);
+  const [demandesCongesValidees, setDemandesCongesValidees] = useState<
+    DemandeConges[]
+  >([]);
+
+  /* SAISIE_MOBILE_V1 - affichage "un jour à la fois" sur téléphone */
+  const [estMobile, setEstMobile] = useState(false);
+  const [jourMobile, setJourMobile] = useState("");
+
+  useEffect(() => {
+    const majTaille = () => setEstMobile(window.innerWidth < 760);
+
+    majTaille();
+    window.addEventListener("resize", majTaille);
+
+    return () => window.removeEventListener("resize", majTaille);
+  }, []);
+
+  // Sur téléphone, les styles de la feuille sont adaptés (une seule colonne,
+  // champs plus grands). Cette constante masque volontairement le "styles" du
+  // module dans ce composant : toute la feuille en profite sans autre changement.
+  const styles = estMobile ? stylesMobile(stylesBase) : stylesBase;
+
   const [semaineEstClotureMensuelle, setSemaineEstClotureMensuelle] =
     useState(false);
 
@@ -959,7 +996,7 @@ export default function MaSemainePage() {
   const [
     aideOuverte,
     setAideOuverte,
-  ] = useState(true);
+  ] = useState(false);
 
   const [
     message,
@@ -2184,6 +2221,635 @@ export default function MaSemainePage() {
         .filter(Boolean)
         .join(" · ")
     : null;
+
+  /* ============================================================
+     ASSISTANT DE SAISIE
+  ============================================================ */
+
+  const idCollaborateurAssistant = collaborateur?.id ?? null;
+  const debutSemaineAssistant = semaine[0]?.date ?? "";
+
+  // 1) Affaires utilisées ces 10 dernières semaines (propositions à l'ajout d'une ligne)
+  useEffect(() => {
+    if (!idCollaborateurAssistant || !debutSemaineAssistant) return;
+
+    let annule = false;
+
+    async function chargerAffairesRecentes() {
+      try {
+        const borneBasse = ajouterJoursISO(debutSemaineAssistant, -70);
+
+        const { data: feuilles, error: erreurFeuilles } = await supabase
+          .from("feuilles_heures")
+          .select("id")
+          .eq("collaborateur_id", idCollaborateurAssistant)
+          .gte("semaine_debut", borneBasse)
+          .lt("semaine_debut", debutSemaineAssistant);
+
+        if (erreurFeuilles) throw erreurFeuilles;
+
+        if (!feuilles || feuilles.length === 0) {
+          if (!annule) setAffairesRecentes([]);
+          return;
+        }
+
+        const { data: jours, error: erreurJours } = await supabase
+          .from("feuilles_heures_jours")
+          .select("id, date_jour")
+          .in(
+            "feuille_id",
+            feuilles.map((feuille) => feuille.id)
+          );
+
+        if (erreurJours) throw erreurJours;
+
+        const dateParJour = new Map<string, string>(
+          (jours ?? []).map((jour) => [jour.id as string, jour.date_jour as string])
+        );
+
+        if (dateParJour.size === 0) {
+          if (!annule) setAffairesRecentes([]);
+          return;
+        }
+
+        const { data: imputations, error: erreurImputations } = await supabase
+          .from("feuilles_heures_imputations")
+          .select("jour_id, type_affaire, activite_id, numero_affaire, description, code")
+          .in("jour_id", Array.from(dateParJour.keys()));
+
+        if (erreurImputations) throw erreurImputations;
+
+        const regroupees = new Map<string, AffaireRecente>();
+
+        for (const imputation of imputations ?? []) {
+          if (!imputation.code && !imputation.numero_affaire) continue;
+
+          const typeAffaire = imputation.type_affaire as TypeAffaire;
+          const code = normaliserCode(imputation.code ?? "");
+
+          const cle = [
+            typeAffaire,
+            imputation.activite_id ?? "",
+            imputation.numero_affaire ?? "",
+            code,
+          ].join("|");
+
+          const date = dateParJour.get(imputation.jour_id) ?? "";
+          const existante = regroupees.get(cle);
+
+          if (existante) {
+            existante.occurrences += 1;
+
+            if (date > existante.dernierJour) {
+              existante.dernierJour = date;
+              existante.description = imputation.description ?? existante.description;
+            }
+          } else {
+            regroupees.set(cle, {
+              cle,
+              typeAffaire,
+              activiteId: imputation.activite_id ?? null,
+              numeroAffaire: imputation.numero_affaire ?? "",
+              description: imputation.description ?? "",
+              code,
+              occurrences: 1,
+              dernierJour: date,
+            });
+          }
+        }
+
+        const liste = Array.from(regroupees.values())
+          .sort(
+            (a, b) =>
+              b.dernierJour.localeCompare(a.dernierJour) ||
+              b.occurrences - a.occurrences
+          )
+          .slice(0, 12);
+
+        if (!annule) setAffairesRecentes(liste);
+      } catch (erreur) {
+        console.warn("Affaires récentes indisponibles", erreur);
+        if (!annule) setAffairesRecentes([]);
+      }
+    }
+
+    void chargerAffairesRecentes();
+
+    return () => {
+      annule = true;
+    };
+  }, [idCollaborateurAssistant, debutSemaineAssistant]);
+
+  // 2) Demandes de congés déjà validées sur la semaine affichée
+  useEffect(() => {
+    if (!idCollaborateurAssistant || !debutSemaineAssistant) return;
+
+    let annule = false;
+
+    async function chargerDemandesValidees() {
+      try {
+        const { data, error } = await supabase
+          .from("rh_demandes")
+          .select("id, type_demande, date_debut, date_fin, duree_jours, heures_re")
+          .eq("collaborateur_id", idCollaborateurAssistant)
+          .in("statut", ["VALIDEE", "ENVOYEE_RH"])
+          .lte("date_debut", ajouterJoursISO(debutSemaineAssistant, 6))
+          .gte("date_fin", debutSemaineAssistant);
+
+        if (error) throw error;
+
+        if (!annule) {
+          setDemandesCongesValidees((data ?? []) as DemandeConges[]);
+        }
+      } catch (erreur) {
+        console.warn("Demandes RH indisponibles", erreur);
+        if (!annule) setDemandesCongesValidees([]);
+      }
+    }
+
+    void chargerDemandesValidees();
+
+    return () => {
+      annule = true;
+    };
+  }, [idCollaborateurAssistant, debutSemaineAssistant]);
+
+  // 3) Code choisi automatiquement quand une seule possibilité existe (ex. DT en DBE)
+  useEffect(() => {
+    if (feuilleNonModifiable) return;
+
+    let change = false;
+
+    const suivante = semaine.map((jour) => {
+      if (imputationsInterdites(jour, codesImputation)) return jour;
+
+      let jourModifie = false;
+
+      const imputations = jour.imputations.map((ligne) => {
+        if (ligne.code) return ligne;
+        if (ligne.typeAffaire === "CBE" && !ligne.activiteId) return ligne;
+
+        const possibles = getCodesPourLigne(ligne);
+        if (possibles.length !== 1) return ligne;
+
+        jourModifie = true;
+        return { ...ligne, code: possibles[0].code };
+      });
+
+      if (!jourModifie) return jour;
+
+      change = true;
+      return { ...jour, imputations };
+    });
+
+    if (change) {
+      setSemaine(suivante);
+      marquerSemaineModifiee();
+    }
+  }, [semaine, codesImputation, activitesCodes, feuilleNonModifiable]);
+
+  function nomActivite(id: string | null) {
+    return activites.find((activite) => activite.id === id)?.nom ?? "Activité";
+  }
+
+  // 4) Ajout d'une ligne : reprend le type et l'activité de la ligne précédente
+  function ajouterImputationIntelligente(jour: JourSemaine) {
+    if (imputationsInterdites(jour, codesImputation)) return;
+
+    const modele =
+      [...jour.imputations].reverse().find(ligneImputationCommencee) ??
+      semaine
+        .filter((autre) => autre.date < jour.date)
+        .flatMap((autre) => autre.imputations)
+        .filter(ligneImputationCommencee)
+        .pop();
+
+    if (!modele) {
+      ajouterImputation(jour);
+      return;
+    }
+
+    modifierJour(jour.date, {
+      imputations: [
+        ...jour.imputations,
+        {
+          id: crypto.randomUUID(),
+          typeAffaire: modele.typeAffaire,
+          activiteId: modele.activiteId,
+          numeroAffaire: "",
+          description: "",
+          code: "",
+          heures: "",
+        },
+      ],
+    });
+  }
+
+  function ajouterAffaireRecente(jour: JourSemaine, affaire: AffaireRecente) {
+    if (feuilleNonModifiable || imputationsInterdites(jour, codesImputation)) {
+      return;
+    }
+
+    const ligne: Imputation = {
+      id: crypto.randomUUID(),
+      typeAffaire: affaire.typeAffaire,
+      activiteId: affaire.activiteId,
+      numeroAffaire: affaire.numeroAffaire,
+      description: affaire.description,
+      code: affaire.code,
+      heures: "",
+    };
+
+    // Le code n'est conservé que s'il est encore autorisé pour cette sélection.
+    const codeEncoreValide = getCodesPourLigne(ligne).some(
+      (code) => normaliserCode(code.code) === normaliserCode(ligne.code)
+    );
+
+    modifierJour(jour.date, {
+      imputations: [
+        ...jour.imputations,
+        { ...ligne, code: codeEncoreValide ? ligne.code : "" },
+      ],
+    });
+
+    setRecentesOuvertesDate(null);
+  }
+
+  // 5) Solde de la journée : heures qu'il reste à saisir
+  function soldeDuJour(jour: JourSemaine) {
+    return Math.max(
+      0,
+      cibleTravailJour(jour, codesImputation) - totalImputations(jour)
+    );
+  }
+
+  function mettreSoldeSurLigne(jour: JourSemaine, ligne: Imputation) {
+    const solde = soldeDuJour(jour);
+    if (solde <= 0.01) return;
+
+    modifierImputation(jour, ligne.id, {
+      heures: formatHeures(convertirHeures(ligne.heures) + solde),
+    });
+  }
+
+  // 6) Reprise des affaires de la semaine précédente (sans les heures)
+  async function reprendreSemainePrecedente() {
+    if (feuilleNonModifiable || !collaborateur || semaine.length === 0) return;
+
+    setRepriseEnCours(true);
+
+    try {
+      const debutPrecedente = ajouterJoursISO(semaine[0].date, -7);
+
+      const { data: feuille, error: erreurFeuille } = await supabase
+        .from("feuilles_heures")
+        .select("id")
+        .eq("collaborateur_id", collaborateur.id)
+        .eq("semaine_debut", debutPrecedente)
+        .maybeSingle();
+
+      if (erreurFeuille) throw erreurFeuille;
+
+      if (!feuille) {
+        setMessage("Aucune feuille n'existe pour la semaine précédente.");
+        setMessageType("DANGER");
+        return;
+      }
+
+      const { data: jours, error: erreurJours } = await supabase
+        .from("feuilles_heures_jours")
+        .select("id, date_jour")
+        .eq("feuille_id", feuille.id);
+
+      if (erreurJours) throw erreurJours;
+
+      const idsJours = (jours ?? []).map((jour) => jour.id as string);
+
+      const { data: imputations, error: erreurImputations } =
+        idsJours.length === 0
+          ? { data: [], error: null }
+          : await supabase
+              .from("feuilles_heures_imputations")
+              .select("jour_id, type_affaire, activite_id, numero_affaire, description, code")
+              .in("jour_id", idsJours);
+
+      if (erreurImputations) throw erreurImputations;
+
+      const lignesParDate = new Map<string, Imputation[]>();
+
+      for (const jourPrecedent of jours ?? []) {
+        const lignes = (imputations ?? [])
+          .filter((imputation) => imputation.jour_id === jourPrecedent.id)
+          .map((imputation): Imputation => {
+            const ligne: Imputation = {
+              id: crypto.randomUUID(),
+              typeAffaire: imputation.type_affaire as TypeAffaire,
+              activiteId: imputation.activite_id ?? null,
+              numeroAffaire: imputation.numero_affaire ?? "",
+              description: imputation.description ?? "",
+              code: normaliserCode(imputation.code ?? ""),
+              heures: "",
+            };
+
+            const codeEncoreValide = getCodesPourLigne(ligne).some(
+              (code) => normaliserCode(code.code) === ligne.code
+            );
+
+            return { ...ligne, code: codeEncoreValide ? ligne.code : "" };
+          });
+
+        if (lignes.length > 0) {
+          lignesParDate.set(
+            ajouterJoursISO(jourPrecedent.date_jour as string, 7),
+            lignes
+          );
+        }
+      }
+
+      const eligible = (jour: JourSemaine) =>
+        lignesParDate.has(jour.date) &&
+        !jour.estWeekend &&
+        jour.imputations.length === 0 &&
+        !imputationsInterdites(jour, codesImputation);
+
+      const joursRemplis = semaine.filter(eligible);
+
+      if (joursRemplis.length === 0) {
+        setMessage(
+          "Rien à reprendre : les jours de cette semaine ont déjà des imputations, ou la semaine précédente n'en contenait pas."
+        );
+        setMessageType("DANGER");
+        return;
+      }
+
+      setSemaine((ancienne) =>
+        ancienne.map((jour) =>
+          eligible(jour)
+            ? { ...jour, imputations: lignesParDate.get(jour.date) ?? [] }
+            : jour
+        )
+      );
+
+      marquerSemaineModifiee();
+
+      const nbLignes = joursRemplis.reduce(
+        (total, jour) => total + (lignesParDate.get(jour.date)?.length ?? 0),
+        0
+      );
+
+      setMessage(
+        `${nbLignes} ligne(s) reprise(s) de la semaine précédente sur ${joursRemplis.length} jour(s). Renseignez maintenant les heures.`
+      );
+      setMessageType("OK");
+    } catch (erreur) {
+      console.error("Erreur reprise semaine précédente", erreur);
+      setMessage("Impossible de reprendre la semaine précédente.");
+      setMessageType("DANGER");
+    } finally {
+      setRepriseEnCours(false);
+    }
+  }
+
+  // 7) Congés déjà validés dans l'espace RH : proposition d'application à la feuille
+  function nombreJoursOuvres(debut: string, fin: string) {
+    const feries = new Map<number, Set<string>>();
+    let nombre = 0;
+
+    for (let date = debut; date <= fin; date = ajouterJoursISO(date, 1)) {
+      const annee = Number(date.slice(0, 4));
+
+      if (!feries.has(annee)) feries.set(annee, joursFeriesFrancais(annee));
+
+      const [a, m, j] = date.split("-").map(Number);
+      const jourSemaine = new Date(a, m - 1, j).getDay();
+
+      if (jourSemaine !== 0 && jourSemaine !== 6 && !feries.get(annee)?.has(date)) {
+        nombre += 1;
+      }
+    }
+
+    return nombre;
+  }
+
+  const propositionsConges = (() => {
+    const propositions: {
+      jour: JourSemaine;
+      type: string;
+      cfg: NonNullable<typeof absenceCopiee>;
+    }[] = [];
+    const ignorees: string[] = [];
+
+    for (const demande of demandesCongesValidees) {
+      const type = demande.type_demande;
+
+      if (type !== "CP" && type !== "RTT" && type !== "RE") continue;
+
+      if (type === "RE") {
+        const heures = Number(demande.heures_re ?? 0);
+        const jour = semaine.find((j) => j.date === demande.date_debut);
+
+        if (
+          jour &&
+          heures > 0 &&
+          !jour.absence &&
+          jour.imputations.length === 0 &&
+          !jour.estFerie
+        ) {
+          propositions.push({
+            jour,
+            type: "Récupération",
+            cfg: {
+              absence: CODE_RE,
+              dureeRTT: "JOURNEE",
+              dureeCP: "JOURNEE",
+              heuresRE: String(heures).replace(".", ","),
+              heuresAbsence: "",
+            },
+          });
+        }
+
+        continue;
+      }
+
+      const joursEntiers =
+        Math.abs(
+          Number(demande.duree_jours ?? 0) -
+            nombreJoursOuvres(demande.date_debut, demande.date_fin)
+        ) < 0.01;
+
+      if (!joursEntiers) {
+        ignorees.push(
+          `${type} du ${dateAffichage(demande.date_debut)} au ${dateAffichage(demande.date_fin)}`
+        );
+        continue;
+      }
+
+      for (const jour of semaine) {
+        if (
+          jour.date < demande.date_debut ||
+          jour.date > demande.date_fin ||
+          jour.estWeekend ||
+          jour.estFerie ||
+          jour.absence ||
+          jour.imputations.length > 0
+        ) {
+          continue;
+        }
+
+        propositions.push({
+          jour,
+          type,
+          cfg: {
+            absence: type === "RTT" ? CODE_RT : CODE_CP,
+            dureeRTT: "JOURNEE",
+            dureeCP: "JOURNEE",
+            heuresRE: "",
+            heuresAbsence: "",
+          },
+        });
+      }
+    }
+
+    return { propositions, ignorees };
+  })();
+
+  const libelleCongesProposes = ["CP", "RTT", "Récupération"]
+    .map((type) => {
+      const jours = propositionsConges.propositions
+        .filter((proposition) => proposition.type === type)
+        .map((proposition) => `${proposition.jour.jour.slice(0, 3)} ${dateAffichage(proposition.jour.date)}`);
+
+      return jours.length > 0 ? `${type} ${jours.join(", ")}` : "";
+    })
+    .filter(Boolean)
+    .join(" · ");
+
+  function appliquerCongesValides() {
+    if (feuilleNonModifiable) return;
+
+    const modifications = new Map<string, Partial<JourSemaine>>();
+
+    for (const proposition of propositionsConges.propositions) {
+      const modification = modificationAbsence(proposition.jour, proposition.cfg);
+
+      if (modification) modifications.set(proposition.jour.date, modification);
+    }
+
+    if (modifications.size === 0) return;
+
+    setSemaine((ancienne) =>
+      ancienne.map((jour) =>
+        modifications.has(jour.date)
+          ? { ...jour, ...modifications.get(jour.date) }
+          : jour
+      )
+    );
+
+    marquerSemaineModifiee();
+
+    setMessage(
+      `${modifications.size} jour(s) de congés validés appliqués à la feuille. Complétez maintenant le reste de la semaine.`
+    );
+    setMessageType("OK");
+  }
+
+  // 8) Bandeau de la semaine
+  const joursBandeau: JourBandeau[] = semaine
+    .filter((jour) => !jour.estWeekend || weekendOuvert)
+    .map((jour) => {
+      const detail = detailsJours.find((d) => d.jour.date === jour.date);
+      const libelle = `${jour.jour.slice(0, 3)} ${dateAffichage(jour.date)}`;
+
+      if (jour.estFerie) {
+        return { date: jour.date, libelle, etat: "FERIE", texte: "férié" };
+      }
+
+      if (imputationsInterdites(jour, codesImputation)) {
+        return { date: jour.date, libelle, etat: "ABSENT", texte: "absent" };
+      }
+
+      const manquantes = detail?.manquantes ?? 0;
+
+      if (manquantes > 0.01) {
+        return {
+          date: jour.date,
+          libelle,
+          etat: "MANQUE",
+          texte: `−${formatHeures(manquantes)} h`,
+        };
+      }
+
+      const supplementaires = detail?.supplementaires ?? 0;
+
+      return {
+        date: jour.date,
+        libelle,
+        etat: "COMPLET",
+        texte: supplementaires > 0.01 ? `✓ +${formatHeures(supplementaires)} h` : "✓",
+      };
+    });
+
+  const premierJourIncomplet =
+    joursBandeau.find((jour) => jour.etat === "MANQUE")?.date ?? null;
+
+  function allerAuJour(date: string) {
+    if (estMobile) {
+      setJourMobile(date);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    document
+      .getElementById(`jour-${date}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* ============================================================
+     SAISIE MOBILE : UN JOUR A LA FOIS
+  ============================================================ */
+
+  const joursVisiblesMobile = semaine.filter(
+    (jour) => !jour.estWeekend || weekendOuvert
+  );
+
+  const jourAffiche = (() => {
+    if (
+      jourMobile &&
+      joursVisiblesMobile.some((jour) => jour.date === jourMobile)
+    ) {
+      return jourMobile;
+    }
+
+    const aujourdhui = dateISO(new Date());
+    const duJour = joursVisiblesMobile.find((jour) => jour.date === aujourdhui);
+
+    return (duJour ?? joursVisiblesMobile[0])?.date ?? "";
+  })();
+
+  const indexJourAffiche = joursVisiblesMobile.findIndex(
+    (jour) => jour.date === jourAffiche
+  );
+
+  const jourAfficheObjet = joursVisiblesMobile[indexJourAffiche];
+
+  function changerJourMobile(sens: 1 | -1) {
+    const cible = joursVisiblesMobile[indexJourAffiche + sens];
+
+    if (!cible) return;
+
+    setJourMobile(cible.date);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const boutonsBloquesMobile =
+    enregistrement ||
+    modeConsultationGestionnaire ||
+    (!modeAdmin && (feuilleVerrouillee || semaineValidee));
+
+  const validationBloqueeMobile =
+    boutonsBloquesMobile ||
+    !semaineComplete ||
+    (semaineValidee && !semaineModifiee);
 
   function semainePrecedente() {
     if (!confirmerAvantQuitter()) {
@@ -3689,6 +4355,8 @@ export default function MaSemainePage() {
   }
 
   function blocActionsFeuille() {
+    if (estMobile) return null;
+
     const boutonsBloques =
       enregistrement ||
       modeConsultationGestionnaire ||
@@ -3983,6 +4651,26 @@ export default function MaSemainePage() {
             COMPTEURS
         ==================================================== */}
 
+        <BandeauSemaine
+          jours={joursBandeau}
+          resume={`${formatHeures(totalHeuresSemaine)} h saisies sur ${formatHeures(totalHeuresTheoriques)} h prévues`}
+          premierIncomplet={premierJourIncomplet}
+          onAllerA={allerAuJour}
+          aideOuverte={aideOuverte}
+          onBasculerAide={() => setAideOuverte((valeur) => !valeur)}
+          compact={estMobile}
+          jourSelectionne={estMobile ? jourAffiche : undefined}
+          desactive={feuilleNonModifiable}
+          repriseEnCours={repriseEnCours}
+          onReprendre={reprendreSemainePrecedente}
+          propositionConges={
+            propositionsConges.propositions.length > 0
+              ? { libelle: libelleCongesProposes, onAppliquer: appliquerCongesValides }
+              : null
+          }
+          congesIgnores={propositionsConges.ignorees}
+        />
+
         <fieldset
           disabled={
             modeConsultationGestionnaire ||
@@ -4258,8 +4946,8 @@ export default function MaSemainePage() {
           {semaine
             .filter(
               jour =>
-                !jour.estWeekend ||
-                weekendOuvert
+                (!jour.estWeekend || weekendOuvert) &&
+                (!estMobile || jour.date === jourAffiche)
             )
             .map(jour => {
               const verrouille =
@@ -4285,8 +4973,10 @@ export default function MaSemainePage() {
               return (
                 <div
                   key={jour.date}
+                  id={`jour-${jour.date}`}
                   style={{
                     ...styles.dayBlock,
+                    scrollMarginTop: 90,
                     background:
                       jour.estFerie &&
                       jour.absence ===
@@ -4707,9 +5397,8 @@ export default function MaSemainePage() {
                               key={
                                 ligne.id
                               }
-                              style={
-                                styles.imputationRow
-                              }
+                              className="ligne-imputation"
+                              style={styles.imputationRow}
                             >
                               {/* TYPE */}
 
@@ -4963,31 +5652,34 @@ export default function MaSemainePage() {
 
                               {/* HEURES */}
 
-                              <input
-                                value={
-                                  ligne.heures
-                                }
-                                inputMode="decimal"
-                                placeholder="0,0"
-                                onChange={e =>
-                                  modifierImputation(
-                                    jour,
-                                    ligne.id,
-                                    {
-                                      heures:
-                                        e.target.value.replace(
-                                          /[^0-9.,]/g,
-                                          ""
-                                        ),
-                                    }
-                                  )
-                                }
+                              <div
                                 style={{
-                                  ...styles.input,
                                   gridColumn: "4",
                                   gridRow: "2",
+                                  display: "flex",
+                                  gap: 4,
+                                  minWidth: 0,
                                 }}
-                              />
+                              >
+                                <input
+                                  value={ligne.heures}
+                                  inputMode="decimal"
+                                  placeholder="0,0"
+                                  onChange={(e) =>
+                                    modifierImputation(jour, ligne.id, {
+                                      heures: e.target.value.replace(/[^0-9.,]/g, ""),
+                                    })
+                                  }
+                                  style={{ ...styles.input, flex: 1, minWidth: 0 }}
+                                />
+
+                                {soldeDuJour(jour) > 0.01 && (
+                                  <BoutonSolde
+                                    heures={formatHeures(soldeDuJour(jour))}
+                                    onClick={() => mettreSoldeSurLigne(jour, ligne)}
+                                  />
+                                )}
+                              </div>
 
                               {/* SUPPRESSION */}
 
@@ -5036,11 +5728,21 @@ export default function MaSemainePage() {
                           }}
                         >
                           <button
-                            onClick={() => ajouterImputation(jour)}
+                            onClick={() => ajouterImputationIntelligente(jour)}
                             style={styles.addButton}
                           >
                             + Ajouter une imputation
                           </button>
+
+                          <AffairesRecentes
+                            ouvert={recentesOuvertesDate === jour.date}
+                            affaires={affairesRecentes}
+                            nomActivite={nomActivite}
+                            onBasculer={() =>
+                              setRecentesOuvertesDate(recentesOuvertesDate === jour.date ? null : jour.date)
+                            }
+                            onChoisir={(affaire) => ajouterAffaireRecente(jour, affaire)}
+                          />
 
                           {jour.imputations.length > 0 && (
                             <button
@@ -5850,6 +6552,22 @@ export default function MaSemainePage() {
             </div>
           </div>
         </div>
+      )}
+      {estMobile && jourAfficheObjet && (
+        <BarreActionsMobile
+          jourLibelle={`${jourAfficheObjet.jour} ${dateAffichage(jourAfficheObjet.date)}`}
+          peutPrecedent={indexJourAffiche > 0}
+          peutSuivant={indexJourAffiche < joursVisiblesMobile.length - 1}
+          onPrecedent={() => changerJourMobile(-1)}
+          onSuivant={() => changerJourMobile(1)}
+          onEnregistrer={enregistrerBrouillon}
+          onValider={demanderValidationFinale}
+          enregistrement={enregistrement}
+          boutonsBloques={boutonsBloquesMobile}
+          validationBloquee={validationBloqueeMobile}
+          validee={semaineValidee && !semaineModifiee}
+          modifiee={semaineModifiee}
+        />
       )}
 </main>
   );
@@ -6892,6 +7610,131 @@ const styles: Record<
     padding: 12,
   },
 };
+
+/* ============================================================
+   SAISIE MOBILE : STYLES
+============================================================ */
+
+const stylesBase = styles;
+
+function stylesMobile(
+  base: Record<string, CSSProperties>
+): Record<string, CSSProperties> {
+  return {
+    ...base,
+
+    container: { ...base.container, padding: "12px 10px 130px" },
+
+    navigation: {
+      ...base.navigation,
+      gridTemplateColumns: "1fr",
+      gap: 10,
+      padding: 12,
+    },
+
+    navigationCenter: { ...base.navigationCenter, minWidth: 0 },
+
+    cards: { ...base.cards, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
+
+    tableHeader: { ...base.tableHeader, display: "none" },
+
+    dayGrid: {
+      ...base.dayGrid,
+      gridTemplateColumns: "1fr",
+      gridTemplateRows: "none",
+      minHeight: 0,
+    },
+
+    dayCell: {
+      ...base.dayCell,
+      gridColumn: "1",
+      gridRow: "auto",
+      order: 0,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      justifyContent: "flex-start",
+      alignItems: "baseline",
+      gap: 10,
+      borderRight: "none",
+      borderBottom: "1px solid #ddd",
+      padding: 12,
+      textAlign: "left",
+    },
+
+    dayHours: { ...base.dayHours, marginTop: 0, paddingTop: 0, marginLeft: "auto" },
+
+    presenceCell: {
+      ...base.presenceCell,
+      gridColumn: "1",
+      gridRow: "auto",
+      order: 1,
+      borderLeft: "none",
+      padding: "10px 12px 4px",
+    },
+
+    ticketCell: {
+      ...base.ticketCell,
+      gridColumn: "1",
+      gridRow: "auto",
+      order: 2,
+      borderLeft: "none",
+      padding: "4px 12px 10px",
+    },
+
+    imputationCell: {
+      ...base.imputationCell,
+      gridColumn: "1",
+      gridRow: "auto",
+      order: 3,
+      padding: 10,
+    },
+
+    input: { ...base.input, fontSize: 16, minHeight: 44 },
+
+    addButton: { ...base.addButton, minHeight: 44, fontSize: 14 },
+
+    buttonSecondary: { ...base.buttonSecondary, minHeight: 44, fontSize: 14 },
+
+    deleteButton: { ...base.deleteButton, width: 44, height: 44 },
+  };
+}
+
+if (
+  typeof document !== "undefined" &&
+  !document.getElementById("polynov-ma-semaine-mobile")
+) {
+  const styleMobile = document.createElement("style");
+
+  styleMobile.id = "polynov-ma-semaine-mobile";
+
+  // Les lignes d'imputation placent leurs champs dans une grille à 5 colonnes :
+  // sur téléphone, elles passent sur 2 colonnes (le dernier bloc, avec copier /
+  // supprimer, prend toute la largeur).
+  styleMobile.innerHTML = `
+    @media (max-width: 759px) {
+      .ligne-imputation {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+        padding: 10px !important;
+      }
+
+      .ligne-imputation > * {
+        grid-column: auto !important;
+        grid-row: auto !important;
+        min-width: 0 !important;
+      }
+
+      .ligne-imputation > :last-child {
+        grid-column: 1 / -1 !important;
+        flex-direction: row !important;
+        justify-content: flex-end !important;
+        gap: 12px !important;
+      }
+    }
+  `;
+
+  document.head.appendChild(styleMobile);
+}
 
 /* ============================================================
    ANIMATION

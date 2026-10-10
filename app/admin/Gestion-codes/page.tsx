@@ -4,6 +4,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -138,6 +139,45 @@ function GestionCodesPageContenu() {
     useState(false);
 
   /* ==========================================================
+     MODIFICATIONS NON ENREGISTREES
+  ========================================================== */
+
+  // Photo des codes tels qu'ils sont en base au dernier chargement.
+  const codesInitiauxRef = useRef("");
+
+  const modificationsEnAttente = useMemo(
+    () =>
+      !chargement &&
+      (JSON.stringify(codes) !== codesInitiauxRef.current ||
+        nouvelleLigne.code.trim() !== "" ||
+        nouvelleLigne.libelle.trim() !== ""),
+    [codes, nouvelleLigne, chargement]
+  );
+
+  // Avertit avant de fermer ou de recharger la page avec une saisie non enregistrée.
+  useEffect(() => {
+    function avertir(event: BeforeUnloadEvent) {
+      if (!modificationsEnAttente) return;
+
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", avertir);
+
+    return () => window.removeEventListener("beforeunload", avertir);
+  }, [modificationsEnAttente]);
+
+  function confirmerAvantQuitter() {
+    return (
+      !modificationsEnAttente ||
+      window.confirm(
+        "Des modifications n'ont pas été enregistrées.\n\nQuitter cette page sans enregistrer ?"
+      )
+    );
+  }
+
+  /* ==========================================================
      CHARGEMENT
   ========================================================== */
 
@@ -213,6 +253,7 @@ const codesCharges: CodeNouveau[] =
     };
   });
 
+      codesInitiauxRef.current = JSON.stringify(codesCharges);
       setCodes(codesCharges);
     } catch (e) {
       console.error(e);
@@ -760,6 +801,7 @@ const codesCharges: CodeNouveau[] =
   }) {
     return (
       <tr
+        key={code.code}
         style={{
           ...styles.tr,
           backgroundColor:
@@ -969,7 +1011,10 @@ const codesCharges: CodeNouveau[] =
           HEADER
       ====================================================== */}
 
-      <EnTetePage section="Gestion des codes" />
+      <EnTetePage
+        section="Gestion des codes"
+        avantNavigation={confirmerAvantQuitter}
+      />
 
       {/* ======================================================
           CONTENU
@@ -1166,11 +1211,7 @@ const codesCharges: CodeNouveau[] =
               <tbody>
                 {codesActifs.map(
                   (code, index) => (
-                    <LigneCode
-                      key={code.code}
-                      code={code}
-                      index={index}
-                    />
+                    LigneCode({ code, index })
                   )
                 )}
 
@@ -1548,11 +1589,7 @@ const codesCharges: CodeNouveau[] =
                   <tbody>
                     {codesInactifs.map(
                       (code, index) => (
-                        <LigneCode
-                          key={code.code}
-                          code={code}
-                          index={index}
-                        />
+                        LigneCode({ code, index })
                       )
                     )}
                   </tbody>
@@ -1593,6 +1630,74 @@ const codesCharges: CodeNouveau[] =
           </div>
         </section>
       </div>
+      {modificationsEnAttente && (
+        <>
+          <div style={{ height: 84 }} />
+
+          <div
+            role="status"
+            style={{
+              position: "fixed",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 50,
+              background: "#fff8e7",
+              borderTop: "3px solid #c8a63b",
+              padding: "12px 24px",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+              boxShadow: "0 -4px 14px rgba(0,0,0,.12)",
+              fontFamily: "Calibri, Arial, sans-serif",
+              color: "#6b5100",
+              fontWeight: 700,
+            }}
+          >
+            <span>● Modifications non enregistrées</span>
+
+            <button
+              type="button"
+              onClick={enregistrerModifications}
+              disabled={enregistrement}
+              style={{
+                ...styles.saveButton,
+                opacity: enregistrement ? 0.6 : 1,
+              }}
+            >
+              {enregistrement ? "Enregistrement en cours..." : "Enregistrer"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Annuler toutes les modifications non enregistrées ?"
+                  )
+                ) {
+                  setNouvelleLigne(creerCodeVide());
+                  chargerCodes();
+                }
+              }}
+              style={{
+                background: "#fff",
+                color: "#6b5100",
+                border: "1px solid #c8a63b",
+                borderRadius: 7,
+                padding: "10px 16px",
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Annuler les modifications
+            </button>
+          </div>
+        </>
+      )}
     </main>
   );
 }

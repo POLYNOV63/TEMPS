@@ -66,6 +66,12 @@ export default function DashboardPage() {
   const [feuilles, setFeuilles] =
     useState<Feuille[]>([]);
 
+  const [feuillesPrecedentes, setFeuillesPrecedentes] =
+    useState<Feuille[]>([]);
+
+  const [nombreDemandesRH, setNombreDemandesRH] =
+    useState(0);
+
   const [erreur, setErreur] =
     useState<string | null>(null);
 
@@ -223,6 +229,34 @@ if (!collaborateur) {
           if (erreurFeuilles) {
             throw erreurFeuilles;
           }
+
+          // A traiter : feuilles de la semaine dernière non validées
+          // et demandes RH en attente de validation.
+          const [anneeLundi, moisLundi, jourLundi] = lundiString
+            .split("-")
+            .map(Number);
+
+          const precedent = new Date(anneeLundi, moisLundi - 1, jourLundi - 7);
+
+          const lundiPrecedentString = `${precedent.getFullYear()}-${String(
+            precedent.getMonth() + 1
+          ).padStart(2, "0")}-${String(precedent.getDate()).padStart(2, "0")}`;
+
+          const { data: feuillesPrecedentesData } = await supabase
+            .from("feuilles_heures")
+            .select(
+              "id, collaborateur_id, semaine_debut, total_heures, total_theorique, heures_supplementaires, statut"
+            )
+            .eq("semaine_debut", lundiPrecedentString);
+
+          setFeuillesPrecedentes(feuillesPrecedentesData ?? []);
+
+          const { count: demandesEnAttente } = await supabase
+            .from("rh_demandes")
+            .select("id", { count: "exact", head: true })
+            .eq("statut", "EN_ATTENTE");
+
+          setNombreDemandesRH(demandesEnAttente ?? 0);
 
           setCollaborateurs(
             collaborateursActifs ?? []
@@ -404,61 +438,31 @@ if (!collaborateur) {
   ============================================================= */
 
   const surveillance =
-    useMemo<LigneSurveillance[]>(
-      () => {
-        if (role !== "ADMIN") {
-          return [];
-        }
+    useMemo<LigneSurveillance[]>(() => {
+      if (role !== "ADMIN") {
+        return [];
+      }
 
-        return collaborateurs
-          .map(
-            (
-              collaborateur
-            ) => {
-              const feuille =
-                feuilles.find(
-                  (f) =>
-                    f.collaborateur_id ===
-                    collaborateur.id
-                );
+      // Une feuille de la semaine dernière qui n'est pas validée est en retard.
+      return collaborateurs
+        .map((collaborateur): LigneSurveillance | null => {
+          const feuille = feuillesPrecedentes.find(
+            (f) => f.collaborateur_id === collaborateur.id
+          );
 
-              if (!feuille) {
-                return {
-                  collaborateur,
-                  feuille: undefined,
-                  etat: "manquante",
-                };
-              }
+          if (!feuille) {
+            return { collaborateur, feuille: undefined, etat: "manquante" };
+          }
 
-              if (
-                estFeuilleComplete(
-                  feuille
-                )
-              ) {
-                return null;
-              }
+          if (feuille.statut === "A_TRAITER") {
+            return null;
+          }
 
-              return {
-                collaborateur,
-                feuille,
-                etat: "incomplete",
-              };
-            }
-          )
-          .filter(
-            (
-              ligne
-            ): ligne is LigneSurveillance =>
-              ligne !== null
-          )
-          .slice(0, 5);
-      },
-      [
-        role,
-        collaborateurs,
-        feuilles,
-      ]
-    );
+          return { collaborateur, feuille, etat: "incomplete" };
+        })
+        .filter((ligne): ligne is LigneSurveillance => ligne !== null)
+        .slice(0, 8);
+    }, [role, collaborateurs, feuillesPrecedentes]);
 
   /* =============================================================
      CHARGEMENT
@@ -896,6 +900,17 @@ if (!collaborateur) {
           />
 
           <Carte
+            icone="📈"
+            titre="Mon bilan"
+            description="Ma répartition du temps : vendu, devis, production, formation"
+            onClick={() =>
+              router.push(
+                "/mon-bilan"
+              )
+            }
+          />
+
+          <Carte
             icone="🧑‍💼"
             titre="RH"
             description="Gérer mes demandes de congés, RTT et récupération"
@@ -1011,7 +1026,7 @@ if (!collaborateur) {
                       styles.monitorTitle
                     }
                   >
-                    À surveiller
+                    À traiter
                   </div>
 
                   <div
@@ -1019,8 +1034,7 @@ if (!collaborateur) {
                       styles.monitorSubtitle
                     }
                   >
-                    Feuilles absentes ou
-                    incomplètes cette semaine
+                    Feuilles de la semaine dernière non validées et demandes RH en attente
                   </div>
                 </div>
 
@@ -1036,6 +1050,38 @@ if (!collaborateur) {
                   {surveillance.length}
                 </div>
               </div>
+
+              {nombreDemandesRH > 0 && (
+                <div style={styles.monitorRow}>
+                  <div
+                    style={{
+                      ...styles.monitorStatus,
+                      ...styles.monitorStatusIncomplete,
+                    }}
+                  >
+                    ✉
+                  </div>
+
+                  <div style={styles.monitorPerson}>
+                    <strong>
+                      {nombreDemandesRH} demande
+                      {nombreDemandesRH > 1 ? "s" : ""} RH en attente
+                    </strong>
+
+                    <span style={{ color: "#888", fontSize: 12 }}>
+                      À valider dans l'espace de validation RH
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    style={styles.monitorButton}
+                    onClick={() => router.push("/admin/Valid_RH")}
+                  >
+                    Valider →
+                  </button>
+                </div>
+              )}
 
               {surveillance.length ===
               0 ? (
@@ -1053,9 +1099,7 @@ if (!collaborateur) {
                   </div>
 
                   <span>
-                    Toutes les feuilles
-                    de la semaine sont
-                    complètes.
+                    Rien à relancer : toutes les feuilles de la semaine dernière sont validées.
                   </span>
                 </div>
               ) : (
@@ -1126,7 +1170,7 @@ if (!collaborateur) {
                               {ligne.etat ===
                               "manquante"
                                 ? "Feuille non saisie"
-                                : `Feuille incomplète — ${formatHeures(
+                                : `Brouillon non validé — ${formatHeures(
                                     ligne
                                       .feuille
                                       ?.total_heures
