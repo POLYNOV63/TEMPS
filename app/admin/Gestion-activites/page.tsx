@@ -6,8 +6,9 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 type Activite = {
   id: string;
@@ -56,8 +57,7 @@ function codeEligiblePourActivite(
   );
 }
 
-export default function GestionActivitesPage() {
-  const router = useRouter();
+function GestionActivitesPageContenu() {
 
   const [activites, setActivites] =
     useState<Activite[]>([]);
@@ -551,37 +551,7 @@ export default function GestionActivitesPage() {
 
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <button
-            type="button"
-            onClick={() =>
-              router.push("/dashboard")
-            }
-            style={styles.retour}
-          >
-            ← Tableau de bord
-          </button>
-
-          <div style={styles.brandLine}>
-            <div style={styles.logo}>
-              POLYNOV
-            </div>
-
-            <div
-              style={styles.headerSeparator}
-            >
-              /
-            </div>
-
-            <div
-              style={styles.headerSubtitle}
-            >
-              Gestion des activités
-            </div>
-          </div>
-        </div>
-      </header>
+      <EnTetePage section="Gestion des activités" />
 
       <div style={styles.container}>
         <section style={styles.pageIntro}>
@@ -1493,3 +1463,11 @@ const styles: Record<
     borderRadius: 8,
   },
 };
+
+export default function GestionActivitesPage() {
+  return (
+    <GardeAcces droit={"administration"}>
+      <GestionActivitesPageContenu />
+    </GardeAcces>
+  );
+}

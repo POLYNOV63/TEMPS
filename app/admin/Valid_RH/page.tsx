@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
 
 type Demande={
  id:string;collaborateur_id:string;exercice:number;type_demande:string;date_debut:string;date_fin:string;duree_jours:number;heures_re:number|null;commentaire:string|null;justificatif_nom:string|null;justificatif_url:string|null;statut:string;traitee_par:string|null;traitee_le:string|null;motif_refus:string|null;email_rh:string;email_envoye_le:string|null;created_at:string;validateur_id:string|null;date_validation:string|null;validation_trigramme:string|null;signature_demandeur:string|null;signature_validateur:string|null;rh_transmise:boolean;rh_transmise_le:string|null;rh_transmise_par:string|null;trigramme:string|null;prenom:string|null;nom:string|null;collaborateur_email:string|null;validateur_trigramme:string|null;validateur_prenom:string|null;validateur_nom:string|null;
@@ -99,7 +100,12 @@ export default function ValidRHPage(){
  }
 
  return <main style={styles.page}>
-  <header style={styles.header}><div><div style={styles.kicker}>POLYNOV · ADMINISTRATION RH</div><h1 style={styles.h1}>Validation RH</h1><p style={styles.sub}>Les demandes sont conservées et classées automatiquement par année puis par mois.</p></div><button style={styles.headerButton} onClick={()=>window.location.href="/dashboard"}>← Tableau de bord</button></header>
+  <EnTetePage
+    forme="encadre"
+    section="Administration RH"
+    titre="Validation RH"
+    description="Les demandes sont conservées et classées automatiquement par année puis par mois."
+  />
   {erreur&&<div style={styles.alert}>{erreur}</div>}
   <section style={styles.toolbar}><label><strong>Statut</strong><select value={filtre} onChange={e=>setFiltre(e.target.value)} style={styles.input}><option value="EN_ATTENTE">En attente</option><option value="VALIDEE">Validées</option><option value="REFUSEE">Refusées</option><option value="TOUTES">Toutes</option></select></label><label><strong>Transmission RH</strong><select value={filtreTransmission} onChange={e=>setFiltreTransmission(e.target.value)} style={styles.input}><option value="TOUTES">Toutes</option><option value="NON_TRANSMISE">Non transmises</option><option value="TRANSMISE">Transmises</option></select></label><label><strong>Email RH</strong><input style={styles.input} value={emailRH} onChange={e=>setEmailRH(e.target.value)}/></label><button style={styles.refresh} onClick={charger}>↻ Actualiser</button></section>
   {chargement?<div style={styles.card}>Chargement…</div>:

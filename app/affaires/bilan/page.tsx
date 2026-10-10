@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 /* =========================================================
    TYPES
@@ -461,8 +462,7 @@ function EvolutionCodes({
    PAGE PRINCIPALE
 ========================================================= */
 
-export default function BilanAffairePage() {
-  const router = useRouter();
+function BilanAffairePageContenu() {
   const [typeAffaire, setTypeAffaire] = useState("CBE");
   const [numero, setNumero] = useState("");
 
@@ -920,77 +920,11 @@ export default function BilanAffairePage() {
           HEADER
       ===================================================== */}
 
-      <header style={styles.header}>
-  <div
-    style={{
-      maxWidth: 1500,
-      margin: "0 auto",
-    }}
-  >
-    <button
-      type="button"
-      onClick={() => router.push("/dashboard")}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        marginBottom: 18,
-        padding: "8px 14px",
-        border: "1px solid rgba(255,255,255,0.35)",
-        borderRadius: 7,
-        background: "rgba(255,255,255,0.12)",
-        color: "#fff",
-        fontFamily:
-          "Calibri, Arial, sans-serif",
-        fontSize: 14,
-        fontWeight: 700,
-        cursor: "pointer",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 18,
-          lineHeight: 1,
-        }}
-      >
-        ←
-      </span>
-
-      Retour au tableau de bord
-    </button>
-
-    <div
-      style={{
-        fontSize: 13,
-        opacity: 0.85,
-        marginBottom: 4,
-      }}
-    >
-      POLYNOV
-    </div>
-
-    <h1
-      style={{
-        margin: 0,
-        fontSize: 28,
-        fontWeight: 700,
-      }}
-    >
-      Bilan affaire
-    </h1>
-
-    <div
-      style={{
-        marginTop: 5,
-        fontSize: 14,
-        opacity: 0.9,
-      }}
-    >
-      Analyse des heures imputées par affaire,
-      semaine et collaborateur
-    </div>
-  </div>
-</header>
+      <EnTetePage
+        section="Gestion des temps & activités"
+        titre="Bilan affaire"
+        description="Analyse des heures imputées par affaire, semaine et collaborateur"
+      />
 
       {/* =====================================================
           CONTENU
@@ -1744,5 +1678,13 @@ export default function BilanAffairePage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function BilanAffairePage() {
+  return (
+    <GardeAcces droit={null}>
+      <BilanAffairePageContenu />
+    </GardeAcces>
   );
 }

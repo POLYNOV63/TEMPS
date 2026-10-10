@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as XLSX from "xlsx-js-style";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import { peut } from "@/lib/droits";
 
 export const dynamic = "force-dynamic";
 
@@ -209,7 +211,7 @@ export default function BilanRHPage() {
   const [chargement, setChargement] = useState(true);
   const [exportation, setExportation] = useState(false);
   const [erreur, setErreur] = useState("");
-  const [estAdmin, setEstAdmin] = useState(false);
+  const [aAcces, setAAcces] = useState(false);
 
   const periode = periodes[periodeIndex];
 
@@ -236,10 +238,11 @@ export default function BilanRHPage() {
 
         if (erreurMoi) throw erreurMoi;
 
-        const admin = String(moi?.role ?? "").trim().toUpperCase() === "ADMIN";
-        setEstAdmin(admin);
+        // Accès : ADMIN et RESPONSABLE (voir lib/droits.ts)
+        const autorise = peut(moi?.role, "bilanRH");
+        setAAcces(autorise);
 
-        if (!admin) {
+        if (!autorise) {
           router.push("/dashboard");
           return;
         }
@@ -626,20 +629,15 @@ export default function BilanRHPage() {
     }
   }
 
-  if (!estAdmin && !chargement) return null;
+  if (!aAcces && !chargement) return null;
 
   return (
     <main style={styles.page}>
       <div style={styles.container}>
+        <EnTetePage forme="encadre" section="Bilan RH mensuel" />
+
         <div style={styles.header}>
           <div>
-            <button
-              type="button"
-              onClick={() => router.push("/dashboard")}
-              style={styles.backButton}
-            >
-              ← Tableau de bord
-            </button>
             <div style={styles.kicker}>ESPACE RH</div>
             <h1 style={styles.title}>Bilan RH mensuel</h1>
             <p style={styles.subtitle}>

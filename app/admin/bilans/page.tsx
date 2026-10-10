@@ -1,8 +1,9 @@
 "use client";
 export const dynamic = "force-dynamic";
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 /* =========================================================
    TYPES
@@ -565,8 +566,7 @@ function estCadreForfait(
    PAGE
 ========================================================= */
 
-export default function BilansPage() {
-  const router = useRouter();
+function BilansPageContenu() {
 
   const maintenant = new Date();
 
@@ -2702,33 +2702,7 @@ feuilles.forEach((f) => {
   if (erreur) {
     return (
       <div style={styles.page}>
-        <header style={styles.header}>
-          <div>
-            <div style={styles.logo}>
-              POLYNOV
-            </div>
-            <div
-              style={
-                styles.headerTitle
-              }
-            >
-              Bilans & pilotage
-            </div>
-          </div>
-
-          <button
-            style={
-              styles.dashboardButton
-            }
-            onClick={() =>
-              router.push(
-                "/dashboard"
-              )
-            }
-          >
-            ← Dashboard
-          </button>
-        </header>
+        <EnTetePage section="Bilans & pilotage" />
 
         <div
           style={{
@@ -2770,34 +2744,7 @@ feuilles.forEach((f) => {
           HEADER
       ================================================= */}
 
-      <header style={styles.header}>
-        <div>
-          <div style={styles.logo}>
-            POLYNOV
-          </div>
-
-          <div
-            style={
-              styles.headerTitle
-            }
-          >
-            Bilans & pilotage
-          </div>
-        </div>
-
-        <button
-          style={
-            styles.dashboardButton
-          }
-          onClick={() =>
-            router.push(
-              "/dashboard"
-            )
-          }
-        >
-          ← Dashboard
-        </button>
-      </header>
+      <EnTetePage section="Bilans & pilotage" />
 
       <main style={styles.main}>
         {/* =================================================
@@ -5791,4 +5738,12 @@ if (
       style
     );
   }
+}
+
+export default function BilansPage() {
+  return (
+    <GardeAcces droit={"administration"}>
+      <BilansPageContenu />
+    </GardeAcces>
+  );
 }

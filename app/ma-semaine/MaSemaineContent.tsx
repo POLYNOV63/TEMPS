@@ -10,6 +10,9 @@ import {
   type CSSProperties,
 } from "react";
 import { supabase } from "@/lib/supabase";
+import { peut } from "@/lib/droits";
+import EnTetePage from "@/components/EnTetePage";
+import { BarrePressePapiers, BoutonLecture } from "./BarrePressePapiers";
 export const dynamic = "force-dynamic";
 
 /* ============================================================
@@ -861,6 +864,21 @@ export default function MaSemainePage() {
   const [horairesProfil, setHorairesProfil] =
     useState<HorairesSemaine>(HORAIRES_DEFAUT);
 
+  /* BLOCS_IMPUTATION_V1 - presse-papiers de blocs d'imputations et d'absences */
+  const [lignesCopiees, setLignesCopiees] = useState<
+    (Omit<Imputation, "id"> & { sourceId: string })[]
+  >([]);
+
+  const [absenceCopiee, setAbsenceCopiee] = useState<{
+    absence: CodeAbsence;
+    dureeRTT: DureeRTT;
+    dureeCP: DureeCP;
+    heuresRE: string;
+    heuresAbsence: string;
+  } | null>(null);
+
+  const [joursCibles, setJoursCibles] = useState<string[]>([]);
+
   const [semaineEstClotureMensuelle, setSemaineEstClotureMensuelle] =
     useState(false);
 
@@ -1211,15 +1229,8 @@ export default function MaSemainePage() {
         utilisateurConnecte?.role ?? ""
       ).trim().toUpperCase();
 
-      const trigrammeUtilisateur = String(
-        utilisateurConnecte?.trigramme ?? ""
-      ).trim().toUpperCase();
-
       const estAdminConnecte = roleUtilisateur === "ADMIN";
-      const estGestionnaire =
-        estAdminConnecte ||
-        trigrammeUtilisateur === "MMO" ||
-        trigrammeUtilisateur === "FVI";
+      const estGestionnaire = peut(roleUtilisateur, "voirFeuillesEquipe");
 
       setNiveauGestionFeuilles(
         estAdminConnecte
@@ -1879,6 +1890,300 @@ export default function MaSemainePage() {
   /* ============================================================
      NAVIGATION
   ============================================================ */
+
+  /* ============================================================
+     BLOCS D'IMPUTATIONS : COPIER / COLLER
+  ============================================================ */
+
+  const feuilleNonModifiable =
+    modeConsultationGestionnaire ||
+    (!modeAdmin && (feuilleVerrouillee || semaineValidee));
+
+  function copieLigne(ligne: Imputation) {
+    const { id, ...reste } = ligne;
+    return { ...reste, sourceId: id };
+  }
+
+  // Une copie suit les modifications de sa ligne d'origine tant que celle-ci
+  // est affichée ; sinon elle garde le contenu au moment de la copie.
+  useEffect(() => {
+    setLignesCopiees((precedent) => {
+      if (precedent.length === 0) return precedent;
+
+      const courantes = new Map(
+        semaine
+          .flatMap((jour) => jour.imputations)
+          .map((ligne) => [ligne.id, ligne] as const)
+      );
+
+      let change = false;
+
+      const suivant = precedent.map((copie) => {
+        const courante = courantes.get(copie.sourceId);
+        if (!courante) return copie;
+
+        const maj = copieLigne(courante);
+        if (JSON.stringify(maj) === JSON.stringify(copie)) return copie;
+
+        change = true;
+        return maj;
+      });
+
+      return change ? suivant : precedent;
+    });
+  }, [semaine]);
+
+  function basculerCopieLigne(ligne: Imputation) {
+    setLignesCopiees((precedent) =>
+      precedent.some((copie) => copie.sourceId === ligne.id)
+        ? precedent.filter((copie) => copie.sourceId !== ligne.id)
+        : [...precedent, copieLigne(ligne)]
+    );
+  }
+
+  function copierJournee(jour: JourSemaine) {
+    const lignes = jour.imputations.filter(ligneImputationCommencee);
+    if (lignes.length === 0) return;
+
+    setLignesCopiees(lignes.map(copieLigne));
+    setMessage(
+      `${lignes.length} imputation(s) du ${jour.jour} copiée(s) dans le presse-papiers.`
+    );
+    setMessageType("OK");
+  }
+
+  function copierAbsence(jour: JourSemaine) {
+    if (!jour.absence) return;
+
+    setAbsenceCopiee({
+      absence: jour.absence,
+      dureeRTT: jour.dureeRTT,
+      dureeCP: jour.dureeCP,
+      heuresRE: jour.heuresRE,
+      heuresAbsence: jour.heuresAbsence,
+    });
+    setMessage(
+      `Absence « ${libelleAbsence(jour.absence, codesImputation)} » du ${jour.jour} copiée dans le presse-papiers.`
+    );
+    setMessageType("OK");
+  }
+
+  function viderPressePapiers() {
+    setLignesCopiees([]);
+    setAbsenceCopiee(null);
+    setJoursCibles([]);
+  }
+
+  // Mêmes effets de bord qu'une modification de jour (modifierJour).
+  function marquerSemaineModifiee() {
+    setSemaineEnregistree(false);
+    setSemaineValidee(false);
+
+    if (semaineEstClotureMensuelle) {
+      setRepartitionCompteurMensuelle(null);
+      setRepartitionPayeeMensuelle(null);
+    }
+
+    semaineModifieeRef.current = true;
+    setSemaineModifiee(true);
+  }
+
+  function nouvellesLignes() {
+    return lignesCopiees.map(({ sourceId, ...ligne }) => ({
+      ...ligne,
+      id: crypto.randomUUID(),
+    }));
+  }
+
+  function collerSurJours(dates: string[]) {
+    if (
+      feuilleNonModifiable ||
+      lignesCopiees.length === 0 ||
+      dates.length === 0
+    ) {
+      return;
+    }
+
+    const cibles = semaine.filter((jour) => dates.includes(jour.date));
+    const collables = cibles.filter(
+      (jour) => !imputationsInterdites(jour, codesImputation)
+    );
+    const ignores = cibles.filter((jour) =>
+      imputationsInterdites(jour, codesImputation)
+    );
+
+    if (collables.length === 0) {
+      setMessage(
+        "Aucun des jours choisis n'accepte d'imputation (jour férié ou absence sur la journée)."
+      );
+      setMessageType("DANGER");
+      return;
+    }
+
+    const datesCollables = new Set(collables.map((jour) => jour.date));
+
+    setSemaine((ancienne) =>
+      ancienne.map((jour) =>
+        datesCollables.has(jour.date)
+          ? {
+              ...jour,
+              imputations: [...jour.imputations, ...nouvellesLignes()],
+            }
+          : jour
+      )
+    );
+
+    marquerSemaineModifiee();
+
+    setMessage(
+      `${lignesCopiees.length} imputation(s) collée(s) sur ${collables.length} jour(s).` +
+        (ignores.length > 0
+          ? ` Ignoré : ${ignores.map((jour) => jour.jour).join(", ")} (jour férié ou absence sur la journée).`
+          : "") +
+        " Vérifiez les heures de chaque journée."
+    );
+    setMessageType("OK");
+  }
+
+  function collerBlocDansJour(jour: JourSemaine) {
+    collerSurJours([jour.date]);
+  }
+
+  function dupliquerDerniereLigne(jour: JourSemaine) {
+    if (
+      feuilleNonModifiable ||
+      imputationsInterdites(jour, codesImputation) ||
+      jour.imputations.length === 0
+    ) {
+      return;
+    }
+
+    const derniere = jour.imputations[jour.imputations.length - 1];
+
+    modifierJour(jour.date, {
+      imputations: [
+        ...jour.imputations,
+        { ...derniere, id: crypto.randomUUID() },
+      ],
+    });
+  }
+
+  // Reprend la logique de changerAbsence / changerDureeRTT pour un jour cible.
+  function modificationAbsence(
+    jour: JourSemaine,
+    cfg: NonNullable<typeof absenceCopiee>
+  ): Partial<JourSemaine> | null {
+    if (jour.estFerie) return null;
+
+    const absence = cfg.absence;
+
+    const estAbsent = absenceTotale(
+      absence,
+      cfg.dureeRTT,
+      cfg.dureeCP,
+      codesImputation
+    );
+
+    const demiJournee =
+      (absence === CODE_RT && cfg.dureeRTT === "DEMI_JOURNEE") ||
+      (absence === CODE_CP && cfg.dureeCP === "DEMI_JOURNEE");
+
+    let ticket = jour.ticketRestaurant;
+    if (estAbsent) ticket = false;
+    if (absence === CODE_RT || absence === CODE_CP) {
+      ticket = demiJournee && !jour.estWeekend;
+    }
+    if (absence === CODE_RE) ticket = !jour.estWeekend;
+
+    const presence: Presence = estAbsent
+      ? "ABSENT"
+      : jour.presence === "ABSENT" && !jour.estWeekend
+        ? "PRESENTIEL"
+        : jour.presence;
+
+    return {
+      absence,
+      presence,
+      ticketRestaurant: ticket,
+      dureeRTT: absence === CODE_RT ? cfg.dureeRTT : "JOURNEE",
+      dureeCP: absence === CODE_CP ? cfg.dureeCP : "JOURNEE",
+      heuresRE: absence === CODE_RE ? cfg.heuresRE : "",
+      heuresAbsence:
+        demiJournee || absenceNecessiteHeures(absence)
+          ? cfg.heuresAbsence
+          : "",
+      imputations: estAbsent ? [] : jour.imputations,
+    };
+  }
+
+  function collerAbsenceSurJours(dates: string[]) {
+    if (feuilleNonModifiable || !absenceCopiee || dates.length === 0) return;
+
+    const modifications = new Map<string, Partial<JourSemaine>>();
+    const ignores: string[] = [];
+
+    for (const jour of semaine.filter((j) => dates.includes(j.date))) {
+      const modification = modificationAbsence(jour, absenceCopiee);
+
+      if (modification) {
+        modifications.set(jour.date, modification);
+      } else {
+        ignores.push(jour.jour);
+      }
+    }
+
+    if (modifications.size === 0) {
+      setMessage("Cette absence ne peut pas être collée sur un jour férié.");
+      setMessageType("DANGER");
+      return;
+    }
+
+    setSemaine((ancienne) =>
+      ancienne.map((jour) =>
+        modifications.has(jour.date)
+          ? { ...jour, ...modifications.get(jour.date) }
+          : jour
+      )
+    );
+
+    marquerSemaineModifiee();
+
+    setMessage(
+      `Absence collée sur ${modifications.size} jour(s).` +
+        (ignores.length > 0
+          ? ` Ignoré : ${ignores.join(", ")} (jour férié).`
+          : "") +
+        " Vérifiez les heures saisies pour chaque journée."
+    );
+    setMessageType("OK");
+  }
+
+  const totalHeuresCopiees = lignesCopiees.reduce(
+    (total, ligne) => total + convertirHeures(ligne.heures),
+    0
+  );
+
+  const detailAbsenceCopiee = !absenceCopiee
+    ? ""
+    : absenceCopiee.absence === CODE_CP
+      ? absenceCopiee.dureeCP === "DEMI_JOURNEE"
+        ? `1/2 journée${absenceCopiee.heuresAbsence ? ` (${absenceCopiee.heuresAbsence} h)` : ""}`
+        : "journée"
+      : absenceCopiee.absence === CODE_RT
+        ? absenceCopiee.dureeRTT === "DEMI_JOURNEE"
+          ? `1/2 journée${absenceCopiee.heuresAbsence ? ` (${absenceCopiee.heuresAbsence} h)` : ""}`
+          : "journée"
+        : absenceCopiee.absence === CODE_RE
+          ? `${absenceCopiee.heuresRE} h`
+          : absenceNecessiteHeures(absenceCopiee.absence)
+            ? `${absenceCopiee.heuresAbsence} h`
+            : "";
+
+  const resumeAbsenceCopiee = absenceCopiee
+    ? [libelleAbsence(absenceCopiee.absence, codesImputation), detailAbsenceCopiee]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
 
   function semainePrecedente() {
     if (!confirmerAvantQuitter()) {
@@ -3463,22 +3768,7 @@ export default function MaSemainePage() {
   if (chargement || !codesCharges || !activitesCharges) {
     return (
       <main style={styles.page}>
-        <header style={styles.header}>
-          <div style={styles.headerInner}>
-            <div>
-              <div style={styles.logo}>
-                POLYNOV
-              </div>
-
-              <div
-                style={styles.subtitle}
-              >
-                Gestion des temps &
-                activités
-              </div>
-            </div>
-          </div>
-        </header>
+        <EnTetePage section="Ma semaine" />
 
         <div style={styles.loadingCard}>
           <div style={styles.spinner} />
@@ -3501,57 +3791,36 @@ export default function MaSemainePage() {
           HEADER
       ====================================================== */}
 
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <div>
-            <button
-              onClick={() => {
-                if (confirmerAvantQuitter()) {
-                  window.location.href = "/dashboard";
-                }
+      <EnTetePage section="Ma semaine" avantNavigation={confirmerAvantQuitter}>
+        {collaborateur && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontWeight: 800,
+              fontSize: 16,
+            }}
+          >
+            <span
+              style={{
+                background: "rgba(255,255,255,.18)",
+                border: "1px solid rgba(255,255,255,.32)",
+                borderRadius: 7,
+                padding: "4px 8px",
+                fontSize: 12,
+                letterSpacing: ".5px",
               }}
-              style={
-                styles.headerBackButton
-              }
             >
-              ← Retour au tableau de
-              bord
-            </button>
+              {collaborateur.trigramme}
+            </span>
 
-            <div style={styles.logo}>
-              POLYNOV
-            </div>
-
-            <div
-              style={styles.subtitle}
-            >
-              Gestion des temps &
-              activités
-            </div>
+            <span>
+              {collaborateur.prenom} {collaborateur.nom}
+            </span>
           </div>
-
-          {collaborateur && (
-            <div
-              style={
-                styles.collaborateurHeader
-              }
-            >
-              <div
-                style={
-                  styles.collaborateurTrigramme
-                }
-              >
-                {collaborateur.trigramme}
-              </div>
-
-              <div>
-                {collaborateur.prenom}{" "}
-                {collaborateur.nom}
-              </div>
-            </div>
-          )}
-        </div>
-      </header>
+        )}
+      </EnTetePage>
 
       <div style={styles.container}>
         {/* ====================================================
@@ -3932,6 +4201,25 @@ export default function MaSemainePage() {
             TABLEAU
         ==================================================== */}
 
+        <BarrePressePapiers
+          nbLignes={lignesCopiees.length}
+          totalHeures={formatHeures(totalHeuresCopiees)}
+          resumeAbsence={resumeAbsenceCopiee}
+          jours={semaine
+            .filter((jour) => !jour.estWeekend || weekendOuvert)
+            .map((jour) => ({
+              date: jour.date,
+              libelle: `${jour.jour.slice(0, 3)} ${dateAffichage(jour.date)}`,
+              ferie: jour.estFerie,
+            }))}
+          cibles={joursCibles}
+          onChangerCibles={setJoursCibles}
+          onCollerImputations={() => collerSurJours(joursCibles)}
+          onCollerAbsence={() => collerAbsenceSurJours(joursCibles)}
+          onVider={viderPressePapiers}
+          desactive={feuilleNonModifiable}
+        />
+
         <div style={styles.table}>
           <div
             style={styles.tableHeader}
@@ -4158,6 +4446,37 @@ export default function MaSemainePage() {
                           </select>
                         )}
                       </div>
+
+                      {!jour.estFerie && (Boolean(jour.absence) || absenceCopiee !== null) && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            marginBottom: 9,
+                          }}
+                        >
+                          {jour.absence && (
+                            <BoutonLecture
+                              onClick={() => copierAbsence(jour)}
+                              title="Copier cette absence (type, durée, heures) pour la coller sur d'autres jours"
+                            >
+                              ⧉ Copier cette absence
+                            </BoutonLecture>
+                          )}
+
+                          {absenceCopiee && (
+                            <button
+                              type="button"
+                              onClick={() => collerAbsenceSurJours([jour.date])}
+                              style={styles.addButton}
+                            >
+                              📋 Coller l'absence ({resumeAbsenceCopiee})
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {/* RE */}
 
@@ -4672,40 +4991,87 @@ export default function MaSemainePage() {
 
                               {/* SUPPRESSION */}
 
-                              <button
-                                onClick={() =>
-                                  supprimerImputation(
-                                    jour,
-                                    ligne.id
-                                  )
-                                }
-                                title="Supprimer l'imputation"
+                              <div
                                 style={{
-                                  ...styles.deleteButton,
                                   gridColumn: "5",
                                   gridRow: "1 / 3",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  gap: 4,
                                 }}
                               >
-                                ×
-                              </button>
+                                <BoutonLecture
+                                  onClick={() => basculerCopieLigne(ligne)}
+                                  title={
+                                    lignesCopiees.some((copie) => copie.sourceId === ligne.id)
+                                      ? "Retirer cette imputation du presse-papiers"
+                                      : "Copier cette imputation dans le presse-papiers"
+                                  }
+                                  actif={lignesCopiees.some((copie) => copie.sourceId === ligne.id)}
+                                >
+                                  ⧉
+                                </BoutonLecture>
+
+                                <button
+                                  onClick={() => supprimerImputation(jour, ligne.id)}
+                                  title="Supprimer l'imputation"
+                                  style={styles.deleteButton}
+                                >
+                                  ×
+                                </button>
+                              </div>
                             </div>
                           )
                         )}
 
                       {!verrouille && (
-                        <button
-                          onClick={() =>
-                            ajouterImputation(
-                              jour
-                            )
-                          }
-                          style={
-                            styles.addButton
-                          }
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 8,
+                            alignItems: "center",
+                          }}
                         >
-                          + Ajouter une
-                          imputation
-                        </button>
+                          <button
+                            onClick={() => ajouterImputation(jour)}
+                            style={styles.addButton}
+                          >
+                            + Ajouter une imputation
+                          </button>
+
+                          {jour.imputations.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => dupliquerDerniereLigne(jour)}
+                              title="Ajoute une copie de la dernière ligne : pratique pour une même affaire avec plusieurs codes"
+                              style={styles.addButton}
+                            >
+                              ⧉ Dupliquer la dernière ligne
+                            </button>
+                          )}
+
+                          {jour.imputations.some(ligneImputationCommencee) && (
+                            <BoutonLecture
+                              onClick={() => copierJournee(jour)}
+                              title="Copier toutes les imputations de cette journée"
+                            >
+                              ⧉ Copier la journée
+                            </BoutonLecture>
+                          )}
+
+                          {lignesCopiees.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => collerBlocDansJour(jour)}
+                              style={styles.addButton}
+                            >
+                              📋 Coller le bloc ({lignesCopiees.length})
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
 

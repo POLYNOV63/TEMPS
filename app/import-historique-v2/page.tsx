@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 type Collaborateur = {
   id: string;
@@ -631,8 +632,7 @@ function statistiques(semaine: SemaineAnalyse[]) {
   };
 }
 
-export default function ImportHistoriqueV3() {
-  const router = useRouter();
+function ImportHistoriqueV3Contenu() {
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
   const [fichier, setFichier] = useState<File | null>(null);
   const [semaines, setSemaines] = useState<SemaineAnalyse[]>([]);
@@ -829,18 +829,18 @@ export default function ImportHistoriqueV3() {
 
   return (
     <main style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <div style={styles.kicker}>POLYNOV · ADMINISTRATION</div>
-          <h1 style={styles.title}>Import historique Excel — V3</h1>
-          <p style={styles.subtitle}>Import du fichier « Récupération heures » à partir de S01-2024.</p>
-        </div>
+      <EnTetePage
+        forme="encadre"
+        section="Administration"
+        titre="Import historique Excel — V3"
+        description="Import du fichier « Récupération heures » à partir de S01-2024."
+      >
         <div style={styles.badge}>
           {collaborateurs.filter((c) => c.actif).length} actifs
           {" · "}
           {collaborateurs.filter((c) => !c.actif).length} anciens
         </div>
-      </div>
+      </EnTetePage>
 
       <section style={styles.card}>
         <div style={styles.fileHeader}>
@@ -848,14 +848,6 @@ export default function ImportHistoriqueV3() {
             <h2 style={styles.h2}>1. Sélection du fichier</h2>
             <p style={styles.fileHint}>Choisis le fichier Excel « Récupération heures » à importer.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard")}
-            style={styles.dashboardButton}
-            disabled={chargement || importEnCours}
-          >
-            ← Retour au dashboard
-          </button>
         </div>
 
         <label style={styles.fileButton}>
@@ -1052,3 +1044,11 @@ const styles: Record<string, React.CSSProperties> = {
   tableWrap: { overflowX: "auto" },
   table: { width: "100%", borderCollapse: "collapse" },
 };
+
+export default function ImportHistoriqueV3() {
+  return (
+    <GardeAcces droit={"administration"}>
+      <ImportHistoriqueV3Contenu />
+    </GardeAcces>
+  );
+}

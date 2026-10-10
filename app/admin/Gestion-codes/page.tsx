@@ -8,6 +8,8 @@ import React, {
 } from "react";
 
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 /* ============================================================
    TYPES
@@ -111,7 +113,7 @@ function creerCodeVide(): CodeNouveau {
    PAGE
 ============================================================ */
 
-export default function GestionCodesPage() {
+function GestionCodesPageContenu() {
   const [codes, setCodes] = useState<CodeNouveau[]>([]);
 
   const [chargement, setChargement] =
@@ -967,36 +969,7 @@ const codesCharges: CodeNouveau[] =
           HEADER
       ====================================================== */}
 
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <div>
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href =
-                  "/dashboard";
-              }}
-              style={
-                styles.backButton
-              }
-            >
-              ← Retour au tableau de bord
-            </button>
-
-            <div style={styles.logo}>
-              POLYNOV
-            </div>
-
-            <div
-              style={
-                styles.headerSubtitle
-              }
-            >
-              Gestion des temps & activités
-            </div>
-          </div>
-        </div>
-      </header>
+      <EnTetePage section="Gestion des codes" />
 
       {/* ======================================================
           CONTENU
@@ -1974,3 +1947,11 @@ const styles: Record<
     color: "#666",
   },
 };
+
+export default function GestionCodesPage() {
+  return (
+    <GardeAcces droit={"administration"}>
+      <GestionCodesPageContenu />
+    </GardeAcces>
+  );
+}

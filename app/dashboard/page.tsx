@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
+import { peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
 
 /* ===============================================================
@@ -51,23 +52,10 @@ export default function DashboardPage() {
   const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("");
 
-  const accesFeuilles =
-    role === "ADMIN" ||
-    trigramme.trim().toUpperCase() === "MMO" ||
-    trigramme.trim().toUpperCase() === "FVI";
-
-  const accesExportExcel =
-    role === "ADMIN" ||
-    trigramme.trim().toUpperCase() === "MMO" ||
-    trigramme.trim().toUpperCase() === "FVI" ||
-    `${prenom.trim()} ${nom.trim()}`
-      .trim()
-      .toUpperCase() ===
-      "MATHIEU MONTBRIZON" ||
-    `${prenom.trim()} ${nom.trim()}`
-      .trim()
-      .toUpperCase() ===
-      "FABIEN VILLENEUVE";
+  // Droits liés au rôle (ADMIN / RESPONSABLE) : voir lib/droits.ts
+  const accesFeuilles = peut(role, "voirFeuillesEquipe");
+  const accesBilanRH = peut(role, "bilanRH");
+  const accesExportExcel = peut(role, "exporterExcel");
 
   const [chargement, setChargement] =
     useState(true);
@@ -931,6 +919,19 @@ if (!collaborateur) {
                 }
               />
             )}
+
+          {accesBilanRH && role !== "ADMIN" && (
+            <Carte
+              icone="🧑‍💼"
+              titre="Bilan RH mensuel"
+              description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
+              onClick={() =>
+                router.push(
+                  "/admin/bilan-rh"
+                )
+              }
+            />
+          )}
         </div>
 
         {/* =====================================================

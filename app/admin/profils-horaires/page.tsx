@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
 
 /* ===============================================================
    TYPES
@@ -110,8 +111,7 @@ function formatDecimal(heures: number) {
    PAGE
 ================================================================ */
 
-export default function ProfilsHorairesPage() {
-  const router = useRouter();
+function ProfilsHorairesPageContenu() {
 
   const [profils, setProfils] = useState<Profil[]>([]);
   const [chargement, setChargement] = useState(true);
@@ -545,17 +545,7 @@ export default function ProfilsHorairesPage() {
   if (chargement) {
     return (
       <main className="min-h-screen bg-gray-50 font-calibri">
-        <header className="border-b-4 border-[#c00000] bg-white">
-          <div className="mx-auto max-w-7xl px-8 py-6">
-            <div className="text-3xl font-bold text-[#c00000]">
-              POLYNOV
-            </div>
-
-            <div className="mt-1 text-sm text-gray-500">
-              Administration · Profils horaires
-            </div>
-          </div>
-        </header>
+        <EnTetePage section="Profils horaires" />
 
         <div className="mx-auto max-w-7xl px-8 py-16 text-center">
           <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-[#c00000]" />
@@ -578,39 +568,7 @@ export default function ProfilsHorairesPage() {
           HEADER
       ========================================================= */}
 
-      <header className="border-b-4 border-[#c00000] bg-white shadow-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-5">
-          <div>
-            <button
-              type="button"
-              onClick={() =>
-                router.push("/dashboard")
-              }
-              className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-bold text-[#c00000] transition hover:bg-red-100"
-            >
-              ← Tableau de bord
-            </button>
-
-            <div className="text-3xl font-extrabold tracking-tight text-[#c00000]">
-              POLYNOV
-            </div>
-
-            <div className="mt-1 text-sm text-gray-500">
-              Bureau d'études mécaniques
-            </div>
-          </div>
-
-          <div className="hidden text-right sm:block">
-            <div className="text-xl font-bold text-gray-800">
-              Administration
-            </div>
-
-            <div className="mt-1 text-sm text-gray-500">
-              Profils horaires
-            </div>
-          </div>
-        </div>
-      </header>
+      <EnTetePage section="Profils horaires" />
 
       {/* =========================================================
           CONTENU
@@ -1423,5 +1381,13 @@ function Kpi({
         {label}
       </div>
     </div>
+  );
+}
+
+export default function ProfilsHorairesPage() {
+  return (
+    <GardeAcces droit={"administration"}>
+      <ProfilsHorairesPageContenu />
+    </GardeAcces>
   );
 }

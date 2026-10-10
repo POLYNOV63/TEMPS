@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import { peut } from "@/lib/droits";
 
 type Collaborateur = {
   id: string;
@@ -127,6 +129,7 @@ export default function FeuillesPage() {
   const [erreur, setErreur] = useState("");
   const [suppressionEnCours, setSuppressionEnCours] = useState<string | null>(null);
   const [verrouillageEnCours, setVerrouillageEnCours] = useState<string | null>(null);
+  const [peutAdministrer, setPeutAdministrer] = useState(false);
 
   useEffect(() => {
     let actif = true;
@@ -134,6 +137,31 @@ export default function FeuillesPage() {
     async function charger() {
       setChargement(true);
       setErreur("");
+
+      // Accès : ADMIN (gestion complète) et RESPONSABLE (consultation).
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      const { data: moi } = await supabase
+        .from("collaborateurs")
+        .select("role")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (!actif) return;
+
+      if (!peut(moi?.role, "voirFeuillesEquipe")) {
+        router.push("/dashboard");
+        return;
+      }
+
+      setPeutAdministrer(peut(moi?.role, "administrerFeuilles"));
 
       const [collaborateursResult, feuillesResult] = await Promise.all([
         supabase
@@ -367,29 +395,7 @@ export default function FeuillesPage() {
 
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard")}
-            style={styles.retour}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.24)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.14)";
-            }}
-          >
-            ← Tableau de bord
-          </button>
-
-          <div style={styles.brandLine}>
-            <div style={styles.logo}>POLYNOV</div>
-            <div style={styles.headerSeparator}>/</div>
-            <div style={styles.headerSubtitle}>Gestion des temps & activités</div>
-          </div>
-        </div>
-      </header>
+      <EnTetePage section="Feuilles collaborateurs" />
 
       <div style={styles.container}>
         <section style={styles.pageIntro}>
@@ -562,6 +568,7 @@ export default function FeuillesPage() {
                 supprimerFeuille={supprimerFeuille}
                 verrouillageEnCours={verrouillageEnCours}
                 basculerVerrouillage={basculerVerrouillage}
+                peutAdministrer={peutAdministrer}
               />
             );
           })}
@@ -613,6 +620,7 @@ function SemaineCard({
   supprimerFeuille,
   verrouillageEnCours,
   basculerVerrouillage,
+  peutAdministrer,
 }: {
   semaine: string;
   libelle: { numero: number; debut: string; fin: string };
@@ -632,6 +640,7 @@ function SemaineCard({
   ) => Promise<void>;
   verrouillageEnCours: string | null;
   basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  peutAdministrer: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
 
@@ -746,6 +755,7 @@ function SemaineCard({
                   supprimerFeuille={supprimerFeuille}
                   verrouillageEnCours={verrouillageEnCours}
                   basculerVerrouillage={basculerVerrouillage}
+                  peutAdministrer={peutAdministrer}
                 />
               );
             })}
@@ -766,6 +776,7 @@ function CollaborateurRow({
   supprimerFeuille,
   verrouillageEnCours,
   basculerVerrouillage,
+  peutAdministrer,
 }: {
   collaborateur: Collaborateur;
   feuille: Feuille | undefined;
@@ -779,6 +790,7 @@ function CollaborateurRow({
   ) => Promise<void>;
   verrouillageEnCours: string | null;
   basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  peutAdministrer: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
   const status = statutFeuille(feuille);
@@ -957,31 +969,33 @@ function CollaborateurRow({
       )}
 
       <div style={styles.actions}>
-        <button
-          type="button"
-          disabled={Boolean(suppression)}
-          style={{
-            ...styles.openButton,
-            background: feuille
-              ? survol
-                ? "#a80000"
-                : "#c00000"
-              : survol
-                ? "#0e6c0e"
-                : "#138113",
-            opacity: suppression ? 0.7 : 1,
-          }}
-          onClick={() =>
-            router.push(
-              `/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`
-            )
-          }
-        >
-          {feuille ? "Modifier" : "Créer"}
-          <span style={styles.buttonArrow}>→</span>
-        </button>
+        {(peutAdministrer || feuille) && (
+          <button
+            type="button"
+            disabled={Boolean(suppression)}
+            style={{
+              ...styles.openButton,
+              background: feuille
+                ? survol
+                  ? "#a80000"
+                  : "#c00000"
+                : survol
+                  ? "#0e6c0e"
+                  : "#138113",
+              opacity: suppression ? 0.7 : 1,
+            }}
+            onClick={() =>
+              router.push(
+                `/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`
+              )
+            }
+          >
+            {feuille ? (peutAdministrer ? "Modifier" : "Consulter") : "Créer"}
+            <span style={styles.buttonArrow}>→</span>
+          </button>
+        )}
 
-        {feuille && (
+        {peutAdministrer && feuille && (
           <>
             <button
               type="button"

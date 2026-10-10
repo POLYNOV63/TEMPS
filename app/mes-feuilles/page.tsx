@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
 
 type FeuilleHeures = {
   id: string;
@@ -213,55 +214,11 @@ export default function MesFeuillesPage() {
         color: "#202020",
       }}
     >
-      <header
-        style={{
-          background: "linear-gradient(135deg, #c00000 0%, #a80000 100%)",
-          color: "white",
-          padding: "22px 32px 24px",
-          boxShadow: "0 3px 12px rgba(0,0,0,.12)",
-        }}
-      >
-        <button
-          onClick={() => router.push("/dashboard")}
-          style={{
-            background: "rgba(255,255,255,0.14)",
-            border: "1px solid rgba(255,255,255,0.30)",
-            color: "white",
-            borderRadius: 9,
-            padding: "8px 14px",
-            cursor: "pointer",
-            fontWeight: 700,
-            marginBottom: 16,
-          }}
-        >
-          🏠 Retour au tableau de bord
-        </button>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: 14,
-              background: "rgba(255,255,255,.14)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 25,
-            }}
-          >
-            🗂️
-          </div>
-          <div>
-            <div style={{ fontSize: 29, fontWeight: 800, letterSpacing: "-0.4px" }}>
-              Mes feuilles
-            </div>
-            <div style={{ marginTop: 4, opacity: 0.88, fontSize: 15 }}>
-              Retrouvez vos feuilles de temps classées par année.
-            </div>
-          </div>
-        </div>
-      </header>
+      <EnTetePage
+        section="Espace collaborateur"
+        titre="Mes feuilles"
+        description="Retrouvez vos feuilles de temps classées par année."
+      />
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "30px 24px 50px" }}>
         <div
@@ -446,8 +403,34 @@ export default function MesFeuillesPage() {
                               return (
                                 <tr key={feuille.id} style={{ background: couleurFond }}>
                                   <td style={tdStyle}>
-                                    <div style={{ fontWeight: 800, color: "#252525" }}>
+                                    <div
+                                      style={{
+                                        fontWeight: 800,
+                                        color: "#252525",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                      }}
+                                    >
                                       S{numeroSemaine(feuille.semaine_debut)}
+                                      <span
+                                        role="img"
+                                        title={
+                                          feuille.verrouillee
+                                            ? "Feuille verrouillée par l'administration"
+                                            : "Feuille non verrouillée"
+                                        }
+                                        aria-label={
+                                          feuille.verrouillee ? "Feuille verrouillée" : "Feuille non verrouillée"
+                                        }
+                                        style={{
+                                          fontSize: 14,
+                                          lineHeight: 1,
+                                          opacity: feuille.verrouillee ? 1 : 0.45,
+                                        }}
+                                      >
+                                        {feuille.verrouillee ? "🔒" : "🔓"}
+                                      </span>
                                     </div>
                                     <div style={{ marginTop: 3, fontSize: 12, color: "#777" }}>
                                       Du {new Date(`${feuille.semaine_debut}T00:00:00`).toLocaleDateString("fr-FR")} au {dateFinSemaine(feuille.semaine_debut).toLocaleDateString("fr-FR")}
@@ -540,7 +523,7 @@ export default function MesFeuillesPage() {
                       </div>
 
                       <div style={{ padding: "11px 18px", background: "#fafafa", borderTop: "1px solid #ececec", fontSize: 12, color: "#777" }}>
-                        💡 Un brouillon reste modifiable. Après validation, la feuille est envoyée à POLYNOV et devient non modifiable par le collaborateur. Le verrouillage administratif est un verrouillage supplémentaire.
+                        🔒 feuille verrouillée par l'administration · 🔓 non verrouillée. 💡 Un brouillon reste modifiable. Après validation, la feuille est envoyée à POLYNOV et devient non modifiable par le collaborateur. Le verrouillage administratif est un verrouillage supplémentaire.
                       </div>
                     </div>
                   )}

@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx-js-style";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
+import { peut } from "@/lib/droits";
 
 type Collaborateur = {
   id: string;
@@ -808,8 +810,7 @@ function appliquerBordureSuperieure(
   };
 }
 
-export default function ExportExcelPage() {
-  const router = useRouter();
+function ExportExcelPageContenu() {
   const semaineActuelle = infoSemaineISO();
 
   const [semaine, setSemaine] = useState(
@@ -821,8 +822,7 @@ export default function ExportExcelPage() {
   const [chargement, setChargement] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Les administrateurs, ainsi que Mathieu MONTBRIZON (MMO) et
-  // Fabien VILLENEUVE (FVI), sont autorisés à lancer l'export.
+  // Export autorisé aux niveaux ADMIN et RESPONSABLE (voir lib/droits.ts).
   async function verifierDroitExport() {
     const {
       data: { user },
@@ -837,7 +837,7 @@ export default function ExportExcelPage() {
     const { data: collaborateur, error } =
       await supabase
         .from("collaborateurs")
-        .select("role, prenom, nom, trigramme")
+        .select("role")
         .eq("auth_user_id", user.id)
         .single();
 
@@ -845,37 +845,7 @@ export default function ExportExcelPage() {
       throw error;
     }
 
-    const roleUtilisateur =
-      String(collaborateur?.role || "")
-        .trim()
-        .toUpperCase();
-
-    const trigramme =
-      String(collaborateur?.trigramme || "")
-        .trim()
-        .toUpperCase();
-
-    const nomComplet = `${
-      String(collaborateur?.prenom || "")
-        .trim()
-    } ${
-      String(collaborateur?.nom || "")
-        .trim()
-    }`
-      .trim()
-      .toUpperCase();
-
-    const autoriseParNom =
-      nomComplet === "MATHIEU MONTBRIZON" ||
-      nomComplet === "FABIEN VILLENEUVE";
-
-    const autorise =
-      roleUtilisateur === "ADMIN" ||
-      trigramme === "MMO" ||
-      trigramme === "FVI" ||
-      autoriseParNom;
-
-    if (!autorise) {
+    if (!peut(collaborateur?.role, "exporterExcel")) {
       throw new Error(
         "Vous n'avez pas les droits pour lancer l'export Excel."
       );
@@ -2945,32 +2915,12 @@ export default function ExportExcelPage() {
           margin: "0 auto",
         }}
       >
-        <div
-          style={{
-            background: "#c00000",
-            color: "white",
-            borderRadius: "12px 12px 0 0",
-            padding: "22px 26px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 28,
-              fontWeight: 800,
-            }}
-          >
-            Export Excel
-          </div>
-          <div
-            style={{
-              marginTop: 5,
-              opacity: 0.9,
-              fontSize: 14,
-            }}
-          >
-            Sélectionnez la semaine à extraire
-          </div>
-        </div>
+        <EnTetePage
+          forme="joint"
+          section="Export Excel"
+          titre="Export Excel"
+          description="Sélectionnez la semaine à extraire"
+        />
 
         <div
           style={{
@@ -2980,28 +2930,6 @@ export default function ExportExcelPage() {
             boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
           }}
         >
-          <button
-            type="button"
-            onClick={() => router.push("/dashboard")}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 24,
-              padding: "10px 14px",
-              border: "1px solid #d9d9d9",
-              borderRadius: 8,
-              background: "white",
-              color: "#333",
-              cursor: "pointer",
-              fontFamily: "Calibri, Arial, sans-serif",
-              fontSize: 14,
-              fontWeight: 700,
-            }}
-          >
-            ← Retour au dashboard
-          </button>
-
           <div
             style={{
               display: "grid",
@@ -3159,5 +3087,13 @@ export default function ExportExcelPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function ExportExcelPage() {
+  return (
+    <GardeAcces droit={"exporterExcel"}>
+      <ExportExcelPageContenu />
+    </GardeAcces>
   );
 }

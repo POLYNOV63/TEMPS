@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,8 @@ type LigneCollaborateur = {
   nom: string;
   total: number;
   heuresParActivite: Record<string, number>;
+  semaines: number;
+  capacite: number;
 };
 
 type LigneSemaine = {
@@ -73,6 +76,31 @@ type LigneSemaine = {
 
 type Periode = "ANNEE" | "SEMAINE";
 type StatutFiltre = "A_TRAITER" | "BROUILLON" | "TOUS";
+
+/* Durée légale hebdomadaire : sert de capacité de référence pour chaque
+   feuille de temps de la période analysée. */
+const HEURES_LEGALES_HEBDO = 35;
+
+/* Sous ce taux d'imputation sur des activités, l'écart est signalé en orange. */
+const SEUIL_FAIBLE_IMPUTATION = 50;
+
+const COULEUR_CBE = "#c00000";
+const COULEUR_DBE = "#dc4f84";
+
+const PALETTE_ACTIVITES = [
+  "#2f6db5",
+  "#2a9d8f",
+  "#e08a1e",
+  "#7b5ea7",
+  "#6b8e23",
+  "#c4572e",
+  "#3d8fa8",
+  "#9a6b4f",
+  "#5c6f82",
+  "#b5a642",
+  "#8d5fd3",
+  "#4a9d5b",
+];
 
 function numeroSemaine(date: Date) {
   const d = new Date(date);
@@ -293,6 +321,15 @@ export default function BilanActivitesPage() {
 
       const feuilleIds = feuilles.map(f => f.id);
 
+      // Nombre de feuilles par collaborateur : base de sa capacité légale.
+      const semainesParCollaborateur = new Map<string, number>();
+      for (const f of feuilles) {
+        semainesParCollaborateur.set(
+          f.collaborateur_id,
+          (semainesParCollaborateur.get(f.collaborateur_id) ?? 0) + 1
+        );
+      }
+
       const { data: joursData, error: joursError } = await supabase
         .from("feuilles_heures_jours")
         .select("id, feuille_id, date_jour")
@@ -428,16 +465,19 @@ export default function BilanActivitesPage() {
         .sort((a, b) => b.heures - a.heures);
 
       const lignesCollaborateursData: LigneCollaborateur[] = Array.from(
-        collaborateurStats.entries()
+        semainesParCollaborateur.entries()
       )
-        .map(([collabId, stats]) => {
+        .map(([collabId, semaines]) => {
           const collab = collaborateursMap.get(collabId);
+          const stats = collaborateurStats.get(collabId);
           const heuresParActivite: Record<string, number> = {};
           let total = 0;
 
-          for (const [id, hours] of stats.entries()) {
-            heuresParActivite[id] = hours;
-            total += hours;
+          if (stats) {
+            for (const [id, hours] of stats.entries()) {
+              heuresParActivite[id] = hours;
+              total += hours;
+            }
           }
 
           return {
@@ -448,6 +488,8 @@ export default function BilanActivitesPage() {
               : "Collaborateur inconnu",
             total,
             heuresParActivite,
+            semaines,
+            capacite: semaines * HEURES_LEGALES_HEBDO,
           };
         })
         .sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
@@ -504,15 +546,31 @@ export default function BilanActivitesPage() {
     return `Année ${annee}`;
   }, [annee, periode, semaine]);
 
+  const heuresMaxActivite = Math.max(
+    0,
+    ...lignesActivites.map(ligne => ligne.heures)
+  );
+
+  const echelleMaxPct = Math.max(
+    100,
+    ...lignesCollaborateurs.map(ligne =>
+      ligne.capacite > 0 ? (ligne.total / ligne.capacite) * 100 : 0
+    )
+  );
+
+  const activitesLegende = activitesAffichees.filter(activite =>
+    lignesCollaborateurs.some(ligne => (ligne.heuresParActivite[activite.id] ?? 0) > 0)
+  );
+
+  const couleurActivite = (id: string) => {
+    const index = activitesAffichees.findIndex(activite => activite.id === id);
+    return PALETTE_ACTIVITES[(index < 0 ? 0 : index) % PALETTE_ACTIVITES.length];
+  };
+
   if (chargement) {
     return (
       <main style={styles.page}>
-        <header style={styles.header}>
-          <div>
-            <div style={styles.logo}>POLYNOV</div>
-            <div style={styles.headerTitle}>Bilan activités</div>
-          </div>
-        </header>
+        <EnTetePage section="Bilan activités" />
         <div style={styles.loadingCard}>
           <div style={styles.spinner} />
           <div>Chargement du bilan activités...</div>
@@ -524,20 +582,7 @@ export default function BilanActivitesPage() {
   if (erreur) {
     return (
       <main style={styles.page}>
-        <header style={styles.header}>
-          <div>
-            <div style={styles.logo}>POLYNOV</div>
-            <div style={styles.headerTitle}>Bilan activités</div>
-          </div>
-          <button
-            style={styles.headerButton}
-            onClick={() => {
-              window.location.href = "/dashboard";
-            }}
-          >
-            ← Dashboard
-          </button>
-        </header>
+        <EnTetePage section="Bilan activités" />
 
         <div style={{ ...styles.errorBox, margin: 24 }}>
           <strong>Impossible de charger le bilan</strong>
@@ -552,21 +597,7 @@ export default function BilanActivitesPage() {
 
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
-        <div>
-          <div style={styles.logo}>POLYNOV</div>
-          <div style={styles.headerTitle}>Bilan activités</div>
-        </div>
-
-        <button
-          style={styles.headerButton}
-          onClick={() => {
-            window.location.href = "/dashboard";
-          }}
-        >
-          ← Retour au tableau de bord
-        </button>
-      </header>
+      <EnTetePage section="Bilan activités" />
 
       <div style={styles.main}>
         <section style={styles.hero}>
@@ -706,6 +737,17 @@ export default function BilanActivitesPage() {
             <div style={styles.sectionTotal}>{formatHeures(heuresActivites)} h</div>
           </div>
 
+          <div style={styles.legende}>
+            <span style={styles.legendeItem}>
+              <i style={{ ...styles.pastille, background: COULEUR_CBE }} />
+              CBE
+            </span>
+            <span style={styles.legendeItem}>
+              <i style={{ ...styles.pastille, background: COULEUR_DBE }} />
+              DBE
+            </span>
+          </div>
+
           {lignesActivites.length === 0 ? (
             <div style={styles.emptyState}>Aucune heure d'activité sur la sélection.</div>
           ) : (
@@ -717,13 +759,51 @@ export default function BilanActivitesPage() {
                     <span>{ligne.code}</span>
                   </div>
 
-                  <div style={styles.activityBarTrack}>
+                  <div style={styles.barreActiviteTrack}>
                     <div
                       style={{
-                        ...styles.activityBar,
-                        width: `${Math.min(100, ligne.pourcentage)}%`,
+                        ...styles.barreActivitePile,
+                        width: `${
+                          heuresMaxActivite > 0
+                            ? (ligne.heures / heuresMaxActivite) * 100
+                            : 0
+                        }%`,
                       }}
-                    />
+                    >
+                      {ligne.cbe > 0 && (
+                        <div
+                          title={`CBE : ${formatHeures(ligne.cbe)} h (${formatPourcentage(
+                            pourcentage(ligne.cbe, ligne.heures)
+                          )} %)`}
+                          style={{
+                            ...styles.segmentBarre,
+                            flex: `${ligne.cbe} 1 0%`,
+                            background: COULEUR_CBE,
+                          }}
+                        >
+                          {heuresMaxActivite > 0 && ligne.cbe / heuresMaxActivite >= 0.07
+                            ? `${formatHeures(ligne.cbe)} h`
+                            : ""}
+                        </div>
+                      )}
+
+                      {ligne.dbe > 0 && (
+                        <div
+                          title={`DBE : ${formatHeures(ligne.dbe)} h (${formatPourcentage(
+                            pourcentage(ligne.dbe, ligne.heures)
+                          )} %)`}
+                          style={{
+                            ...styles.segmentBarre,
+                            flex: `${ligne.dbe} 1 0%`,
+                            background: COULEUR_DBE,
+                          }}
+                        >
+                          {heuresMaxActivite > 0 && ligne.dbe / heuresMaxActivite >= 0.07
+                            ? `${formatHeures(ligne.dbe)} h`
+                            : ""}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div style={styles.activityNumber}>
@@ -739,107 +819,6 @@ export default function BilanActivitesPage() {
             </div>
           )}
 
-          {lignesActivites.length > 0 && (
-            <div style={styles.activityBreakdown}>
-              <div style={styles.breakdownTitle}>
-                Détail par type d'affaire
-              </div>
-
-              <div style={styles.tableScroll}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.thLeft}>Activité</th>
-                      <th style={styles.thCenter}>CBE</th>
-                      <th style={styles.thCenter}>% activité</th>
-                      <th style={styles.thCenter}>DBE</th>
-                      <th style={styles.thCenter}>% activité</th>
-                      <th style={styles.thCenter}>Total</th>
-                      <th style={styles.thCenter}>% global</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lignesActivites.map(ligne => (
-                      <tr key={ligne.id}>
-                        <td style={styles.tdLeft}>
-                          <strong>{ligne.nom}</strong>
-                          <span style={styles.personName}>{ligne.code}</span>
-                        </td>
-
-                        <td style={styles.tdCenter}>
-                          {formatHeures(ligne.cbe)} h
-                        </td>
-
-                        <td style={styles.tdCenter}>
-                          {formatPourcentage(
-                            pourcentage(ligne.cbe, ligne.heures)
-                          )}%
-                        </td>
-
-                        <td style={styles.tdCenter}>
-                          {formatHeures(ligne.dbe)} h
-                        </td>
-
-                        <td style={styles.tdCenter}>
-                          {formatPourcentage(
-                            pourcentage(ligne.dbe, ligne.heures)
-                          )}%
-                        </td>
-
-                        <td style={{ ...styles.tdCenter, fontWeight: 800 }}>
-                          {formatHeures(ligne.heures)} h
-                        </td>
-
-                        <td style={styles.tdCenter}>
-                          {formatPourcentage(ligne.pourcentage)}%
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-
-                  <tfoot>
-                    <tr>
-                      <td style={{ ...styles.tdLeft, fontWeight: 900 }}>
-                        Total
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        {formatHeures(
-                          lignesActivites.reduce((sum, ligne) => sum + ligne.cbe, 0)
-                        )} h
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        {formatPourcentage(
-                          pourcentage(
-                            lignesActivites.reduce((sum, ligne) => sum + ligne.cbe, 0),
-                            heuresActivites
-                          )
-                        )}%
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        {formatHeures(
-                          lignesActivites.reduce((sum, ligne) => sum + ligne.dbe, 0)
-                        )} h
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        {formatPourcentage(
-                          pourcentage(
-                            lignesActivites.reduce((sum, ligne) => sum + ligne.dbe, 0),
-                            heuresActivites
-                          )
-                        )}%
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        {formatHeures(heuresActivites)} h
-                      </td>
-                      <td style={{ ...styles.tdCenter, fontWeight: 900 }}>
-                        100%
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
         </section>
 
         <section style={styles.sectionCard}>
@@ -847,53 +826,162 @@ export default function BilanActivitesPage() {
             <div>
               <div style={styles.sectionEyebrow}>COLLABORATEURS</div>
               <h2 style={styles.sectionTitle}>Répartition des heures par collaborateur</h2>
-              <div style={styles.sectionHint}>Les pourcentages indiquent la part de chaque activité dans le total du collaborateur.</div>
+              <div style={styles.sectionHint}>
+                Chaque barre est comparée à la capacité légale du collaborateur :{" "}
+                {HEURES_LEGALES_HEBDO} h × le nombre de feuilles de la période. Les
+                couleurs donnent la répartition par activité ; la zone grise est la
+                capacité non imputée sur une activité (absences, divers, heures non
+                rattachées) ; la zone hachurée est un dépassement.
+              </div>
             </div>
           </div>
 
           {lignesCollaborateurs.length === 0 ? (
-            <div style={styles.emptyState}>Aucun collaborateur avec des heures d'activité.</div>
+            <div style={styles.emptyState}>Aucune feuille de temps sur la sélection.</div>
           ) : (
-            <div style={styles.tableScroll}>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.thLeft}>Collaborateur</th>
-                    {activitesAffichees.map(activite => (
-                      <th key={activite.id} style={styles.thRight}>
-                        {activite.nom}
-                      </th>
-                    ))}
-                    <th style={styles.thRight}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lignesCollaborateurs.map(ligne => (
-                    <tr key={ligne.collaborateurId}>
-                      <td style={styles.tdLeft}>
+            <>
+              <div style={styles.legende}>
+                {activitesLegende.map(activite => (
+                  <span key={activite.id} style={styles.legendeItem}>
+                    <i
+                      style={{
+                        ...styles.pastille,
+                        background: couleurActivite(activite.id),
+                      }}
+                    />
+                    {activite.nom}
+                  </span>
+                ))}
+                <span style={styles.legendeItem}>
+                  <i
+                    style={{
+                      ...styles.pastille,
+                      background: "#e9ecef",
+                      border: "1px solid #cfd4da",
+                    }}
+                  />
+                  Capacité non imputée
+                </span>
+                <span style={styles.legendeItem}>
+                  <i
+                    style={{
+                      ...styles.pastille,
+                      background:
+                        "repeating-linear-gradient(45deg, #c00000 0 3px, #f6c9c9 3px 6px)",
+                    }}
+                  />
+                  Dépassement
+                </span>
+              </div>
+
+              <div style={styles.barresCollaborateurs}>
+                {lignesCollaborateurs.map(ligne => {
+                  const pct =
+                    ligne.capacite > 0 ? (ligne.total / ligne.capacite) * 100 : 0;
+                  const largeurCapacite = (100 / echelleMaxPct) * 100;
+                  const largeurRemplie = (pct / echelleMaxPct) * 100;
+                  const depassement = Math.max(0, ligne.total - ligne.capacite);
+                  const faible = pct < SEUIL_FAIBLE_IMPUTATION;
+
+                  return (
+                    <div key={ligne.collaborateurId} style={styles.barreLigne}>
+                      <div style={styles.barreNom}>
                         <strong>{ligne.trigramme}</strong>
-                        <span style={styles.personName}>{ligne.nom}</span>
-                      </td>
-                      {activitesAffichees.map(activite => {
-                        const heures = ligne.heuresParActivite[activite.id] ?? 0;
-                        const part = pourcentage(heures, ligne.total);
-                        return (
-                          <td key={activite.id} style={styles.tdRight}>
-                            <div style={styles.hoursCell}>
-                              <strong>{formatHeures(heures)} h</strong>
-                              <span>{formatPourcentage(part)}%</span>
-                            </div>
-                          </td>
-                        );
-                      })}
-                      <td style={{ ...styles.tdRight, fontWeight: 800 }}>
-                        {formatHeures(ligne.total)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        <span>{ligne.nom}</span>
+                      </div>
+
+                      <div style={styles.barreZone}>
+                        <div
+                          style={{
+                            ...styles.barreCapacite,
+                            width: `${largeurCapacite}%`,
+                          }}
+                        />
+
+                        <div
+                          style={{
+                            ...styles.barreRemplie,
+                            width: `${largeurRemplie}%`,
+                          }}
+                        >
+                          {activitesAffichees.map(activite => {
+                            const heures = ligne.heuresParActivite[activite.id] ?? 0;
+                            if (heures <= 0) return null;
+
+                            const partActivite = pourcentage(heures, ligne.total);
+                            const partCapacite = pourcentage(heures, ligne.capacite);
+                            const largeurSegment =
+                              ligne.capacite > 0
+                                ? ((heures / ligne.capacite) * 100 / echelleMaxPct) * 100
+                                : 0;
+
+                            return (
+                              <div
+                                key={activite.id}
+                                title={`${activite.nom} : ${formatHeures(heures)} h (${formatPourcentage(
+                                  partActivite
+                                )} % des heures d'activité, ${formatPourcentage(
+                                  partCapacite
+                                )} % de la capacité)`}
+                                style={{
+                                  ...styles.segmentBarre,
+                                  flex: `${heures} 1 0%`,
+                                  background: couleurActivite(activite.id),
+                                }}
+                              >
+                                {largeurSegment >= 5 ? formatHeures(heures) : ""}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {depassement > 0 && (
+                          <div
+                            style={{
+                              ...styles.barreDepassement,
+                              left: `${largeurCapacite}%`,
+                              width: `${Math.max(0, largeurRemplie - largeurCapacite)}%`,
+                            }}
+                          />
+                        )}
+
+                        <div
+                          style={{
+                            ...styles.barreRepere,
+                            left: `${largeurCapacite}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div style={styles.barreResume}>
+                        <div>
+                          <strong>{formatHeures(ligne.total)} h</strong>
+                          <span style={{ color: "#777" }}>
+                            {" "}/ {formatHeures(ligne.capacite)} h
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontWeight: 800,
+                            fontSize: 13,
+                            color:
+                              depassement > 0
+                                ? "#c00000"
+                                : faible
+                                  ? "#b36b00"
+                                  : "#2f7d3b",
+                          }}
+                        >
+                          {depassement > 0
+                            ? `+${formatHeures(depassement)} h au-dessus`
+                            : `${formatPourcentage(pct)} % de la capacité`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
 
@@ -967,6 +1055,129 @@ export default function BilanActivitesPage() {
 }
 
 const styles: Record<string, CSSProperties> = {
+  barreActiviteTrack: {
+    height: 28,
+    background: "#f1f2f4",
+    borderRadius: 7,
+    overflow: "hidden",
+  },
+
+  barreActivitePile: {
+    display: "flex",
+    height: "100%",
+    minWidth: 4,
+  },
+
+  segmentBarre: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 0,
+    color: "white",
+    fontSize: 12,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+  },
+
+  legende: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px 18px",
+    margin: "14px 20px 6px",
+    fontSize: 13,
+    color: "#444",
+  },
+
+  legendeItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+  },
+
+  pastille: {
+    display: "inline-block",
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+  },
+
+  barresCollaborateurs: {
+    display: "grid",
+    gap: 2,
+    padding: "4px 20px 14px",
+  },
+
+  barreLigne: {
+    display: "grid",
+    gridTemplateColumns: "190px minmax(0, 1fr) 190px",
+    gap: 16,
+    alignItems: "center",
+    padding: "9px 0",
+    borderBottom: "1px solid #eef0f2",
+  },
+
+  barreNom: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    fontSize: 14,
+    minWidth: 0,
+  },
+
+  barreZone: {
+    position: "relative",
+    height: 30,
+  },
+
+  barreCapacite: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    height: "100%",
+    background: "#e9ecef",
+    border: "1px solid #d5d9de",
+    borderRadius: 6,
+    boxSizing: "border-box",
+  },
+
+  barreRemplie: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    height: "100%",
+    display: "flex",
+    borderRadius: 6,
+    overflow: "hidden",
+  },
+
+  barreDepassement: {
+    position: "absolute",
+    top: 0,
+    height: "100%",
+    background:
+      "repeating-linear-gradient(45deg, rgba(192,0,0,0.75) 0 3px, rgba(255,255,255,0.35) 3px 6px)",
+    pointerEvents: "none",
+  },
+
+  barreRepere: {
+    position: "absolute",
+    top: -3,
+    bottom: -3,
+    width: 2,
+    marginLeft: -1,
+    background: "#333",
+    pointerEvents: "none",
+  },
+
+  barreResume: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    fontSize: 14,
+    textAlign: "right",
+  },
+
   page: {
     minHeight: "100vh",
     background: "#f4f5f6",

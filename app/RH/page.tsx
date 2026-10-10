@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
 
 type Collaborateur = {
   id: string;
@@ -60,6 +61,21 @@ function exerciceActuel() {
   return d.getMonth() >= 10
     ? d.getFullYear()
     : d.getFullYear() - 1;
+}
+
+function exerciceDeDemande(d: {
+  exercice?: number | null;
+  date_debut: string;
+}) {
+  if (d.exercice !== null && d.exercice !== undefined) {
+    return Number(d.exercice);
+  }
+
+  const date = new Date(`${d.date_debut}T00:00:00`);
+
+  return date.getMonth() >= 10
+    ? date.getFullYear()
+    : date.getFullYear() - 1;
 }
 
 function fmt(n: number) {
@@ -459,9 +475,11 @@ export default function RHPage() {
 
   const exercice = exerciceActuel();
 
-  async function charger() {
-    setChargement(true);
-    setErreur("");
+  async function charger(silencieux = false) {
+    if (!silencieux) {
+      setChargement(true);
+      setErreur("");
+    }
 
     try {
       const {
@@ -653,22 +671,50 @@ export default function RHPage() {
         setJours([]);
       }
     } catch (e: any) {
-      setErreur(
-        e?.message ||
-          "Impossible de charger votre espace RH."
-      );
+      if (!silencieux) {
+        setErreur(
+          e?.message ||
+            "Impossible de charger votre espace RH."
+        );
+      }
     } finally {
-      setChargement(false);
+      if (!silencieux) {
+        setChargement(false);
+      }
     }
   }
 
   useEffect(() => {
     charger();
+
+    // Un administrateur peut modifier les droits RH pendant que la page est
+    // ouverte : on les relit sans écran de chargement en revenant sur l'onglet.
+    function auRetour() {
+      if (document.visibilityState === "visible") {
+        charger(true);
+      }
+    }
+
+    document.addEventListener("visibilitychange", auRetour);
+    window.addEventListener("focus", auRetour);
+
+    return () => {
+      document.removeEventListener("visibilitychange", auRetour);
+      window.removeEventListener("focus", auRetour);
+    };
   }, []);
+
+  // Les droits (Collaborateurs > Droits RH) sont relus à chaque chargement :
+  // ils restent la référence. Seules les demandes de l'exercice en cours sont
+  // décomptées de ces droits.
+  const demandesExercice = useMemo(
+    () => demandes.filter((d) => exerciceDeDemande(d) === exercice),
+    [demandes, exercice]
+  );
 
   const prisesCP = useMemo(
     () =>
-      demandes
+      demandesExercice
         .filter(
           (d) =>
             ["VALIDEE", "ENVOYEE_RH"].includes(
@@ -681,12 +727,12 @@ export default function RHPage() {
             s + Number(d.duree_jours || 0),
           0
         ),
-    [demandes]
+    [demandesExercice]
   );
 
   const attenteCP = useMemo(
     () =>
-      demandes
+      demandesExercice
         .filter(
           (d) =>
             d.statut === "EN_ATTENTE" &&
@@ -697,7 +743,7 @@ export default function RHPage() {
             s + Number(d.duree_jours || 0),
           0
         ),
-    [demandes]
+    [demandesExercice]
   );
 
   const totalCP = droit
@@ -719,7 +765,7 @@ export default function RHPage() {
 
   const prisesRTT = useMemo(
     () =>
-      demandes
+      demandesExercice
         .filter(
           (d) =>
             ["VALIDEE", "ENVOYEE_RH"].includes(
@@ -732,12 +778,12 @@ export default function RHPage() {
             s + Number(d.duree_jours || 0),
           0
         ),
-    [demandes]
+    [demandesExercice]
   );
 
   const attenteRTT = useMemo(
     () =>
-      demandes
+      demandesExercice
         .filter(
           (d) =>
             d.statut === "EN_ATTENTE" &&
@@ -748,7 +794,7 @@ export default function RHPage() {
             s + Number(d.duree_jours || 0),
           0
         ),
-    [demandes]
+    [demandesExercice]
   );
 
   const resteRTT =
@@ -1108,19 +1154,15 @@ export default function RHPage() {
   if (erreur && !collab) {
     return (
       <main style={styles.page}>
+        <EnTetePage
+          forme="encadre"
+          section="Espace collaborateur"
+          titre="Mon espace RH"
+        />
+
         <div style={styles.card}>
           <strong>Erreur</strong>
           <p>{erreur}</p>
-
-          <button
-            style={styles.secondary}
-            onClick={() =>
-              (window.location.href =
-                "/dashboard")
-            }
-          >
-            ← Retour au tableau de bord
-          </button>
         </div>
       </main>
     );
@@ -1128,33 +1170,12 @@ export default function RHPage() {
 
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
-        <div>
-          <div style={styles.kicker}>
-            POLYNOV · ESPACE COLLABORATEUR
-          </div>
-
-          <h1 style={styles.h1}>
-            Mon espace RH
-          </h1>
-
-          <div>
-            {collab?.prenom}{" "}
-            {collab?.nom} ·{" "}
-            {collab?.trigramme}
-          </div>
-        </div>
-
-        <button
-          style={styles.headerButton}
-          onClick={() =>
-            (window.location.href =
-              "/dashboard")
-          }
-        >
-          ← Retour au tableau de bord
-        </button>
-      </header>
+      <EnTetePage
+        forme="encadre"
+        section="Espace collaborateur"
+        titre="Mon espace RH"
+        description={`${collab?.prenom ?? ""} ${collab?.nom ?? ""} · ${collab?.trigramme ?? ""}`}
+      />
 
       {erreur && (
         <div style={styles.alert}>
@@ -1495,76 +1516,93 @@ export default function RHPage() {
               </select>
             </Field>
 
-            <Field label="Date de début">
-              <input
-                type="date"
-                style={styles.input}
-                value={dateDebut}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setDateDebut(value);
-                  if (!dateFin || dateFin < value) setDateFin(value);
-                  if (estVendredi(value)) setDemiJourneeDebut(false);
-                }}
-                required
-              />
-            </Field>
-
-            {type !== "RE" && (
-              <Field label="Début de période">
-                <select
-                  style={styles.input}
-                  value={demiJourneeDebut ? "0.5" : "1"}
-                  onChange={(e) =>
-                    setDemiJourneeDebut(e.target.value === "0.5")
-                  }
-                >
-                  <option value="1">Journée</option>
-                  <option
-                    value="0.5"
-                    disabled={estVendredi(dateDebut)}
-                  >
-                    ½ journée
-                  </option>
-                </select>
-              </Field>
-            )}
-
-            {type !== "RE" && (
-              <Field label="Date de fin (incluse)">
+            {type === "RE" ? (
+              <Field label="Date de début">
                 <input
                   type="date"
                   style={styles.input}
-                  value={dateFin}
-                  min={dateDebut || undefined}
+                  value={dateDebut}
                   onChange={(e) => {
                     const value = e.target.value;
-                    setDateFin(value);
-                    if (estVendredi(value)) setDemiJourneeFin(false);
+                    setDateDebut(value);
+                    if (!dateFin || dateFin < value) setDateFin(value);
+                    if (estVendredi(value)) setDemiJourneeDebut(false);
                   }}
                   required
                 />
               </Field>
-            )}
+            ) : (
+              <div style={styles.periodeGrid}>
+                <div style={styles.periodeColonne}>
+                  <Field label="Date de début">
+                    <input
+                      type="date"
+                      style={styles.input}
+                      value={dateDebut}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDateDebut(value);
+                        if (!dateFin || dateFin < value) setDateFin(value);
+                        if (estVendredi(value)) setDemiJourneeDebut(false);
+                      }}
+                      required
+                    />
+                  </Field>
 
-            {type !== "RE" && (
-              <Field label="Fin de période">
-                <select
-                  style={styles.input}
-                  value={demiJourneeFin ? "0.5" : "1"}
-                  onChange={(e) =>
-                    setDemiJourneeFin(e.target.value === "0.5")
-                  }
-                >
-                  <option value="1">Journée</option>
-                  <option
-                    value="0.5"
-                    disabled={estVendredi(dateFin)}
-                  >
-                    ½ journée
-                  </option>
-                </select>
-              </Field>
+                  <Field label="Début de période">
+                    <select
+                      style={styles.input}
+                      value={demiJourneeDebut ? "0.5" : "1"}
+                      onChange={(e) =>
+                        setDemiJourneeDebut(e.target.value === "0.5")
+                      }
+                    >
+                      <option value="1">Journée entière</option>
+                      <option
+                        value="0.5"
+                        disabled={estVendredi(dateDebut)}
+                      >
+                        ½ journée
+                      </option>
+                    </select>
+                  </Field>
+                </div>
+
+                <div style={styles.periodeColonne}>
+                  <Field label="Date de fin (incluse)">
+                    <input
+                      type="date"
+                      style={styles.input}
+                      value={dateFin}
+                      min={dateDebut || undefined}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setDateFin(value);
+                        if (estVendredi(value)) setDemiJourneeFin(false);
+                      }}
+                      required
+                    />
+                  </Field>
+
+                  <Field label="Fin de période">
+                    <select
+                      style={styles.input}
+                      value={demiJourneeFin ? "0.5" : "1"}
+                      onChange={(e) =>
+                        setDemiJourneeFin(e.target.value === "0.5")
+                      }
+                    >
+                      <option value="1">Journée entière</option>
+                      <option
+                        value="0.5"
+                        disabled={estVendredi(dateFin)}
+                      >
+                        ½ journée
+                      </option>
+                    </select>
+                  </Field>
+                </div>
+              </div>
             )}
 
             {type !== "RE" && (
@@ -1957,6 +1995,20 @@ const styles: Record<
       "repeat(3,minmax(0,1fr))",
     gap: 14,
     marginBottom: 16,
+  },
+
+  periodeGrid: {
+    gridColumn: "span 2",
+    display: "grid",
+    gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+    gap: 14,
+    alignItems: "start",
+  },
+
+  periodeColonne: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
   },
 
   field: {

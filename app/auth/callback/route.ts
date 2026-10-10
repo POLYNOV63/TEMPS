@@ -162,7 +162,11 @@ export async function GET(request: Request) {
     .select(
       "id, prenom, nom, email, actif, auth_user_id"
     )
-    .ilike("email", email)
+    .ilike(
+      "email",
+      // % et _ sont des jokers de ilike : on les neutralise
+      email.replace(/[\\%_]/g, "\\$&")
+    )
     .maybeSingle();
 
   if (erreurRecherche) {
@@ -195,6 +199,23 @@ export async function GET(request: Request) {
       new URL(
         `/login?erreur=${encodeURIComponent(
           "Votre adresse e-mail n'est pas enregistrée comme collaborateur POLYNOV."
+        )}`,
+        requestUrl.origin
+      )
+    );
+  }
+
+  /* ============================================================
+     8 bis. Collaborateur désactivé : connexion refusée
+  ============================================================ */
+
+  if (collaborateur.actif === false) {
+    await supabase.auth.signOut();
+
+    return NextResponse.redirect(
+      new URL(
+        `/login?erreur=${encodeURIComponent(
+          "Votre compte est désactivé. Contactez l'administrateur."
         )}`,
         requestUrl.origin
       )

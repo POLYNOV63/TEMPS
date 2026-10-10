@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import EnTetePage from "@/components/EnTetePage";
+import { ROLES, libelleRole, normaliserRole } from "@/lib/droits";
 
 type Collaborateur = {
   id: string;
+  auth_user_id?: string | null;
   prenom: string | null;
   nom: string | null;
   email: string;
@@ -86,12 +89,25 @@ export default function CollaborateursPage() {
   const [collaborateurSelectionne, setCollaborateurSelectionne] =
     useState<Collaborateur | null>(null);
 
+  // Modification d'un collaborateur (identité + rôle)
+  const [moiId, setMoiId] = useState<string | null>(null);
+  const [editModal, setEditModal] = useState<Collaborateur | null>(null);
+  const [editForm, setEditForm] = useState({
+    prenom: "",
+    nom: "",
+    trigramme: "",
+    role: "COLLABORATEUR",
+  });
+  const [editEnCours, setEditEnCours] = useState(false);
+
   // Formulaire collaborateur
   const [prenom, setPrenom] = useState("");
   const [nom, setNom] = useState("");
   const [email, setEmail] = useState("");
   const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("COLLABORATEUR");
+  const [dateEntree, setDateEntree] = useState("");
+  const [actionSuppression, setActionSuppression] = useState<string | null>(null);
 
   const [baseSelectionnee, setBaseSelectionnee] = useState("");
   const [personnalise, setPersonnalise] = useState(false);
@@ -109,6 +125,17 @@ export default function CollaborateursPage() {
   useEffect(() => {
     chargerDonnees();
   }, []);
+
+  // Lundi de la semaine contenant la date (format AAAA-MM-JJ)
+  function lundiDeLaSemaine(dateISO: string) {
+    const d = new Date(`${dateISO}T12:00:00`);
+    const jour = d.getDay(); // 0 = dimanche
+    d.setDate(d.getDate() + (jour === 0 ? -6 : 1 - jour));
+
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
+  }
 
   function exerciceActuel() { const d=new Date(); return d.getMonth()>=10 ? d.getFullYear() : d.getFullYear()-1; }
 
@@ -150,6 +177,30 @@ export default function CollaborateursPage() {
         .select("*")
         .eq("exercice", exerciceActuel()),
     ]);
+
+    /* -----------------------------------------------------------
+       Accès réservé aux administrateurs
+    ----------------------------------------------------------- */
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const moi = (collaborateursResult.data || []).find(
+      (c: Collaborateur) => c.auth_user_id === user.id
+    );
+
+    if (!moi || normaliserRole(moi.role) !== "ADMIN") {
+      window.location.href = "/dashboard";
+      return;
+    }
+
+    setMoiId(moi.id);
 
     if (collaborateursResult.error) {
       console.error(collaborateursResult.error);
@@ -220,6 +271,29 @@ export default function CollaborateursPage() {
       return;
     }
 
+    const emailNormalise = email.trim().toLowerCase();
+    const trigrammeNormalise = trigramme.trim().toUpperCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalise)) {
+      setErreur("L'adresse email n'est pas valide.");
+      return;
+    }
+
+    if (!dateEntree) {
+      setErreur("Veuillez renseigner la date d'entrée.");
+      return;
+    }
+
+    if (collaborateurs.some((c) => (c.email || "").trim().toLowerCase() === emailNormalise)) {
+      setErreur("Un collaborateur existe déjà avec cette adresse email.");
+      return;
+    }
+
+    if (collaborateurs.some((c) => (c.trigramme || "").trim().toUpperCase() === trigrammeNormalise)) {
+      setErreur("Ce trigramme est déjà utilisé par un autre collaborateur.");
+      return;
+    }
+
     if (!personnalise && !baseSelectionnee) {
       setErreur("Veuillez sélectionner une base horaire.");
       return;
@@ -255,10 +329,11 @@ const { data: profil, error: erreurProfil } = await supabase
         .insert({
           prenom,
           nom,
-          email,
-          trigramme: trigramme.toUpperCase(),
+          email: emailNormalise,
+          trigramme: trigrammeNormalise,
           role,
           profil_horaire_id: profil.id,
+          date_entree: dateEntree,
           actif: true,
         })
         .select()
@@ -266,19 +341,24 @@ const { data: profil, error: erreurProfil } = await supabase
 
     if (erreurCollaborateur || !collaborateur) {
       console.error(erreurCollaborateur);
+
+      // On ne laisse pas de profil horaire orphelin.
+      await supabase.from("profils_horaires").delete().eq("id", profil.id);
+
       setErreur("Impossible de créer le collaborateur.");
       return;
     }
 
-    // Création du premier historique
-    const aujourdHui = new Date().toISOString().split("T")[0];
+    // Création du premier historique : il commence le lundi de la semaine
+    // d'entrée pour que la première feuille de temps soit entièrement couverte.
+    const premierJour = lundiDeLaSemaine(dateEntree);
 
     const { error: erreurHistorique } = await supabase
       .from("historique_profils_horaires")
       .insert({
         collaborateur_id: collaborateur.id,
         profil_horaire_id: profil.id,
-        date_debut: aujourdHui,
+        date_debut: premierJour,
         date_fin: null,
       });
 
@@ -292,6 +372,10 @@ const { data: profil, error: erreurProfil } = await supabase
 
     fermerModalAjout();
     await chargerDonnees();
+
+    // Son espace est activé à sa première connexion Microsoft. On enchaîne sur
+    // ses droits RH (congés, RTT, compteur) pour qu'ils soient renseignés.
+    ouvrirRH(collaborateur as Collaborateur);
   }
 
   async function changerRythme() {
@@ -428,8 +512,24 @@ const { data: profil, error: erreurProfil } = await supabase
   async function desactiverCollaborateur(c: Collaborateur) {
     if (!c.actif) return;
 
+    if (c.id === moiId) {
+      setErreur("Vous ne pouvez pas désactiver votre propre compte.");
+      return;
+    }
+
+    if (normaliserRole(c.role) === "ADMIN") {
+      const autresAdminsActifs = collaborateurs.filter(
+        (x) => x.actif && x.id !== c.id && normaliserRole(x.role) === "ADMIN"
+      ).length;
+
+      if (autresAdminsActifs === 0) {
+        setErreur("Il doit rester au moins un administrateur actif.");
+        return;
+      }
+    }
+
     const nom = nomCollaborateur(c);
-    if (!window.confirm(`Désactiver ${nom} ?\n\nLe collaborateur restera dans l'historique, mais ne sera plus considéré comme actif.`)) {
+    if (!window.confirm(`Désactiver ${nom} ?\n\nLe collaborateur restera dans l'historique, mais ne sera plus considéré comme actif et ne pourra plus se connecter.`)) {
       return;
     }
 
@@ -452,6 +552,41 @@ const { data: profil, error: erreurProfil } = await supabase
     await chargerDonnees();
   }
 
+  async function supprimerCollaborateur(c: Collaborateur) {
+    const nomComplet = nomCollaborateur(c);
+
+    if (c.id === moiId) {
+      setErreur("Vous ne pouvez pas supprimer votre propre fiche.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Supprimer définitivement ${nomComplet} ?\n\nCette action est irréversible. Elle n'est possible que si le collaborateur n'a encore aucune donnée (feuille de temps, historique, demande RH). Dans le cas contraire, désactivez-le pour conserver son historique.`
+      )
+    ) {
+      return;
+    }
+
+    setActionSuppression(c.id);
+    setErreur("");
+
+    const { error } = await supabase.rpc("supprimer_collaborateur", {
+      p_collaborateur_id: c.id,
+    });
+
+    setActionSuppression(null);
+
+    if (error) {
+      console.error(error);
+      setErreur(`Impossible de supprimer ${nomComplet} : ${error.message}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    await chargerDonnees();
+  }
+
   async function reactiverCollaborateur(c: Collaborateur) {
     if (c.actif) return;
     const nom = nomCollaborateur(c);
@@ -469,6 +604,97 @@ const { data: profil, error: erreurProfil } = await supabase
     await chargerDonnees();
   }
 
+  function ouvrirEdition(c: Collaborateur) {
+    setErreur("");
+
+    setEditForm({
+      prenom: c.prenom || "",
+      nom: c.nom || "",
+      trigramme: c.trigramme || "",
+      role: normaliserRole(c.role),
+    });
+
+    setEditModal(c);
+  }
+
+  function fermerEdition() {
+    setEditModal(null);
+    setErreur("");
+  }
+
+  async function enregistrerEdition() {
+    if (!editModal) return;
+
+    setErreur("");
+
+    const prenomSaisi = editForm.prenom.trim();
+    const nomSaisi = editForm.nom.trim();
+    const trigrammeSaisi = editForm.trigramme.trim().toUpperCase();
+
+    if (!prenomSaisi || !nomSaisi || !trigrammeSaisi) {
+      setErreur("Le prénom, le nom et le trigramme sont obligatoires.");
+      return;
+    }
+
+    const trigrammeDejaPris = collaborateurs.some(
+      (c) =>
+        c.id !== editModal.id &&
+        (c.trigramme || "").trim().toUpperCase() === trigrammeSaisi
+    );
+
+    if (trigrammeDejaPris) {
+      setErreur("Ce trigramme est déjà utilisé par un autre collaborateur.");
+      return;
+    }
+
+    // Garde-fous : on ne se retire pas son propre rôle ADMIN et il doit
+    // toujours rester au moins un administrateur actif.
+    const etaitAdmin = normaliserRole(editModal.role) === "ADMIN";
+
+    if (etaitAdmin && editForm.role !== "ADMIN") {
+      if (editModal.id === moiId) {
+        setErreur("Vous ne pouvez pas retirer votre propre rôle Administrateur.");
+        return;
+      }
+
+      const autresAdminsActifs = collaborateurs.filter(
+        (c) =>
+          c.actif &&
+          c.id !== editModal.id &&
+          normaliserRole(c.role) === "ADMIN"
+      ).length;
+
+      if (autresAdminsActifs === 0) {
+        setErreur("Il doit rester au moins un administrateur actif.");
+        return;
+      }
+    }
+
+    setEditEnCours(true);
+
+    const { error } = await supabase
+      .from("collaborateurs")
+      .update({
+        prenom: prenomSaisi,
+        nom: nomSaisi,
+        trigramme: trigrammeSaisi,
+        role: editForm.role,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", editModal.id);
+
+    setEditEnCours(false);
+
+    if (error) {
+      console.error(error);
+      setErreur(`Impossible d'enregistrer les modifications : ${error.message}`);
+      return;
+    }
+
+    setEditModal(null);
+    await chargerDonnees();
+  }
+
   function ouvrirAjout() {
     setErreur("");
 
@@ -477,6 +703,7 @@ const { data: profil, error: erreurProfil } = await supabase
     setEmail("");
     setTrigramme("");
     setRole("COLLABORATEUR");
+    setDateEntree(new Date().toISOString().split("T")[0]);
 
     setBaseSelectionnee("");
     setPersonnalise(false);
@@ -555,67 +782,23 @@ const { data: profil, error: erreurProfil } = await supabase
       }}
     >
       {/* EN-TÊTE */}
-      <header
-        style={{
-          background: "#c00000",
-          color: "white",
-          padding: "20px 32px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontSize: 25,
-              fontWeight: 700,
-            }}
-          >
-            POLYNOV
-          </div>
-
-          <div
-            style={{
-              fontSize: 15,
-              opacity: 0.9,
-            }}
-          >
-            Gestion des collaborateurs
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button
-            onClick={() => (window.location.href = "/dashboard")}
-            style={{
-              background: "rgba(255,255,255,0.14)",
-              color: "white",
-              border: "1px solid rgba(255,255,255,0.55)",
-              borderRadius: 6,
-              padding: "10px 16px",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            ← Tableau de bord
-          </button>
-          <button
-            onClick={ouvrirAjout}
-            style={{
-              background: "white",
-              color: "#c00000",
-              border: "none",
-              borderRadius: 6,
-              padding: "10px 18px",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            + Nouveau collaborateur
-          </button>
-        </div>
-      </header>
+      <EnTetePage section="Gestion des collaborateurs">
+        <button
+          onClick={ouvrirAjout}
+          style={{
+            background: "white",
+            color: "#c00000",
+            border: "none",
+            borderRadius: 8,
+            padding: "9px 16px",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          + Nouveau collaborateur
+        </button>
+      </EnTetePage>
 
       <div
         style={{
@@ -706,6 +889,24 @@ const { data: profil, error: erreurProfil } = await supabase
                         >
                           {c.trigramme || "—"}
                         </span>
+
+                        {normaliserRole(c.role) !== "COLLABORATEUR" && (
+                          <span
+                            style={{
+                              background:
+                                normaliserRole(c.role) === "ADMIN"
+                                  ? "#c00000"
+                                  : "#1f4e79",
+                              color: "white",
+                              padding: "3px 8px",
+                              borderRadius: 4,
+                              fontSize: 13,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {libelleRole(c.role)}
+                          </span>
+                        )}
                       </div>
 
                       <div
@@ -719,6 +920,12 @@ const { data: profil, error: erreurProfil } = await supabase
                     </div>
 
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button
+                      onClick={() => ouvrirEdition(c)}
+                      style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"9px 14px",cursor:"pointer",fontWeight:700}}
+                    >
+                      Modifier
+                    </button>
                     <button
                       onClick={() => ouvrirRH(c)}
                       style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"9px 14px",cursor:"pointer",fontWeight:700}}
@@ -754,6 +961,23 @@ const { data: profil, error: erreurProfil } = await supabase
                         }}
                       >
                         {actionDesactivation === c.id ? "Désactivation…" : "Désactiver"}
+                      </button>
+                    )}
+                    {c.id !== moiId && (
+                      <button
+                        onClick={() => supprimerCollaborateur(c)}
+                        disabled={actionSuppression === c.id}
+                        style={{
+                          border: "1px solid #c00000",
+                          color: "white",
+                          background: "#c00000",
+                          borderRadius: 6,
+                          padding: "9px 14px",
+                          cursor: actionSuppression === c.id ? "wait" : "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {actionSuppression === c.id ? "Suppression…" : "Supprimer"}
                       </button>
                     )}
                     {!c.actif && (
@@ -891,8 +1115,10 @@ const { data: profil, error: erreurProfil } = await supabase
                     <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:15,padding:14,borderTop:"1px solid #eee",background:"#fafafa",borderRadius:8}}>
                       <div><strong>{nomCollaborateur(c)}</strong> <span style={{color:"#777",marginLeft:8}}>{c.trigramme || "—"}</span><div style={{fontSize:13,color:"#777",marginTop:3}}>{c.email}</div></div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                        <button onClick={()=>ouvrirEdition(c)} style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"8px 12px",cursor:"pointer",fontWeight:700}}>Modifier</button>
                         <button onClick={()=>ouvrirRH(c)} style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"8px 12px",cursor:"pointer",fontWeight:700}}>Droits RH</button>
                         <button onClick={()=>reactiverCollaborateur(c)} disabled={actionReactivation===c.id} style={{border:"1px solid #198754",color:"#198754",background:"white",borderRadius:6,padding:"8px 12px",cursor:actionReactivation===c.id?"wait":"pointer",fontWeight:700}}>{actionReactivation===c.id?"Réactivation…":"Réactiver"}</button>
+                        <button onClick={()=>supprimerCollaborateur(c)} disabled={actionSuppression===c.id} style={{border:"1px solid #c00000",color:"white",background:"#c00000",borderRadius:6,padding:"8px 12px",cursor:actionSuppression===c.id?"wait":"pointer",fontWeight:700}}>{actionSuppression===c.id?"Suppression…":"Supprimer"}</button>
                       </div>
                     </div>
                   ))}
@@ -922,6 +1148,99 @@ const { data: profil, error: erreurProfil } = await supabase
             </div>
             <div style={{marginTop:14,padding:12,background:"#fff8e1",borderRadius:7,fontSize:13}}>Le compteur initial doit rester entre -30 h et +30 h. Les soldes CP/RTT seront ensuite calculés avec les demandes RH validées.</div>
             <div style={buttonRowStyle}><button onClick={()=>setRhModal(null)} style={secondaryButtonStyle}>Annuler</button><button onClick={enregistrerRH} style={primaryButtonStyle}>Enregistrer les droits RH</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL MODIFICATION */}
+      {editModal && (
+        <div style={overlayStyle}>
+          <div style={modalStyle}>
+            <h2 style={{ marginTop: 0 }}>
+              Modifier — {nomCollaborateur(editModal)}
+            </h2>
+
+            <div style={gridStyle}>
+              <Champ
+                label="Prénom"
+                value={editForm.prenom}
+                onChange={(v) => setEditForm((f) => ({ ...f, prenom: v }))}
+              />
+
+              <Champ
+                label="Nom"
+                value={editForm.nom}
+                onChange={(v) => setEditForm((f) => ({ ...f, nom: v }))}
+              />
+
+              <Champ
+                label="Trigramme"
+                value={editForm.trigramme}
+                onChange={(v) =>
+                  setEditForm((f) => ({ ...f, trigramme: v.toUpperCase() }))
+                }
+              />
+
+              <div>
+                <label style={labelStyle}>Email</label>
+                <input
+                  value={editModal.email}
+                  disabled
+                  style={{ ...inputStyle, background: "#f3f3f3", color: "#777" }}
+                />
+              </div>
+            </div>
+
+            <label style={labelStyle}>Rôle</label>
+
+            <select
+              value={editForm.role}
+              onChange={(e) =>
+                setEditForm((f) => ({ ...f, role: e.target.value }))
+              }
+              style={inputStyle}
+            >
+              {ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+
+            <div
+              style={{
+                marginTop: 14,
+                padding: 12,
+                background: "#f6f6f6",
+                borderRadius: 7,
+                fontSize: 13,
+                color: "#555",
+              }}
+            >
+              Responsable (niveau 1) : suivi des feuilles en consultation,
+              bilan RH mensuel et export Excel. Le changement s'applique à la
+              prochaine ouverture de page du collaborateur.
+            </div>
+
+            {erreur && (
+              <div style={{ marginTop: 12, color: "#c00000", fontWeight: 700 }}>
+                {erreur}
+              </div>
+            )}
+
+            <div style={buttonRowStyle}>
+              <button onClick={fermerEdition} style={secondaryButtonStyle}>
+                Annuler
+              </button>
+
+              <button
+                onClick={enregistrerEdition}
+                disabled={editEnCours}
+                style={primaryButtonStyle}
+              >
+                {editEnCours ? "Enregistrement…" : "Enregistrer"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -957,6 +1276,19 @@ const { data: profil, error: erreurProfil } = await supabase
                 onChange={setEmail}
                 type="email"
               />
+
+              <Champ
+                label="Date d'entrée"
+                value={dateEntree}
+                onChange={setDateEntree}
+                type="date"
+              />
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 13, color: "#666", lineHeight: 1.45 }}>
+              L'adresse email doit être celle du compte Microsoft 365 avec lequel
+              la personne se connectera. Son espace (feuilles de temps, espace RH)
+              est activé automatiquement à sa première connexion.
             </div>
 
             <label style={labelStyle}>Rôle</label>
@@ -966,8 +1298,11 @@ const { data: profil, error: erreurProfil } = await supabase
               onChange={(e) => setRole(e.target.value)}
               style={inputStyle}
             >
-              <option value="COLLABORATEUR">Collaborateur</option>
-              <option value="ADMIN">Administrateur</option>
+              {ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
             </select>
 
             <label style={labelStyle}>Base horaire</label>
