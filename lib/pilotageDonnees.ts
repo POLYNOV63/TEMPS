@@ -303,3 +303,14 @@ export async function chargerCodesDivers(): Promise<{ code: string; libelle: str
     libelle: c.libelle,
   }));
 }
+
+/* Nombre d'affaires différentes et heures par personne depuis une date (ADMIN et RESPONSABLE). */
+export async function chargerAffairesParPersonne(
+  depuis: string
+): Promise<{ collaborateur_id: string; nb_affaires: number; heures: number | string }[]> {
+  const { data, error } = await supabase.rpc("pilotage_affaires_par_personne", { p_depuis: depuis });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []) as { collaborateur_id: string; nb_affaires: number; heures: number | string }[];
+}

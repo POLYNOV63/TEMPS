@@ -262,6 +262,11 @@ export function etatAffaire(
       if (a.echeance && planning.fin < a.echeance) {
         return { genre: "warn", texte: `Planifiée jusqu’au ${formatDate(planning.fin)}` };
       }
+
+      // Congés et jours fériés repoussent la fin d'une prestation
+      if (a.echeance && planning.fin > a.echeance) {
+        return { genre: "warn", texte: `Fin repoussée au ${formatDate(planning.fin)}` };
+      }
     }
   }
 

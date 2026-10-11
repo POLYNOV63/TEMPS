@@ -1203,11 +1203,11 @@ if (!collaborateur) {
 
               <Carte
                 icone="📅"
-                titre="Planning"
-                description="Frise par ressource : affectations, absences, jalons de remise des DBE"
+                titre="Planning des affaires"
+                description="Affecter des ressources aux affaires en glissant et en étirant : comparaison immédiate au chiffré"
                 onClick={() =>
                   router.push(
-                    "/pilotage/planning"
+                    "/pilotage/affaires"
                   )
                 }
               />
@@ -1215,7 +1215,7 @@ if (!collaborateur) {
               <Carte
                 icone="⚖️"
                 titre="Charge par ressource"
-                description="Capacité, affecté et surcharge de chaque personne, semaine par semaine"
+                description="Charge de chaque personne, taux de service de l'équipe et répartition du travail entre les personnes"
                 onClick={() =>
                   router.push(
                     "/pilotage/ressources"

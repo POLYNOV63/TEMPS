@@ -22,6 +22,7 @@ import {
   deplacerHeures,
   lundiDe,
   numeroSemaine,
+  tauxServiceEquipe,
   type Affectation,
   type JourAffecte,
   type JourRow,
@@ -69,8 +70,8 @@ function RessourcesContenu() {
   const [erreurModal, setErreurModal] = useState("");
   const [enCours, setEnCours] = useState(false);
 
-  // fenêtre : la semaine affichée + 5 semaines suivantes (cibles possibles d'un déplacement)
-  const fenetreFin = ajouterJours(lundi, 6 * 7 - 1);
+  // fenêtre : 12 semaines à partir de la semaine affichée (vue d'ensemble et cibles d'un déplacement)
+  const fenetreFin = ajouterJours(lundi, 12 * 7 - 1);
 
   useEffect(() => {
     let actif = true;
@@ -163,6 +164,21 @@ function RessourcesContenu() {
   const surcharges = equipe.filter((l) => l.semaine.ecart > 0.01);
 
   const echelle = Math.max(ECHELLE_MIN, ...lignes.map((l) => Math.max(l.semaine.net, l.semaine.affecte)));
+
+  /* Vue d'ensemble sur 12 semaines */
+  const semaines12 = useMemo(() => Array.from({ length: 12 }, (_, w) => ajouterJours(lundi, w * 7)), [lundi]);
+  const equipe12 = useMemo(
+    () => annuaire.filter((c) => c.inclus_statistiques && (capacites.get(c.id) ? [...capacites.get(c.id)!.values()].some((j) => j.theorique > 0) : false)),
+    [annuaire, capacites]
+  );
+  const tauxParSemaine = useMemo(
+    () =>
+      semaines12.map((l) => {
+        const t = tauxServiceEquipe(capacites, joursAffectes, equipe12.map((c) => c.id), [l]);
+        return { lundi: l, taux: t.taux, affecte: t.affecte, net: t.net };
+      }),
+    [semaines12, capacites, joursAffectes, equipe12]
+  );
 
   /* ------------------------------ déplacement ------------------------------ */
 
@@ -323,12 +339,85 @@ function RessourcesContenu() {
           />
         </div>
 
+        {/* Vue d'ensemble : charge de chaque personne sur 12 semaines */}
+        <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
+          <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Charge des 12 prochaines semaines</h2>
+          <p style={{ margin: "0 0 12px", color: C.gris, fontSize: 14 }}>
+            Heures affectées ÷ capacité de chaque personne (congés et jours fériés déduits). Elle découle du planning des affaires : rien n’est saisi à part.
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, tableLayout: "fixed" }}>
+              <colgroup>
+                <col style={{ width: 150 }} />
+                {semaines12.map((l) => (
+                  <col key={l} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={page.th} />
+                  {semaines12.map((l) => (
+                    <th key={l} style={{ ...page.th, textAlign: "center", padding: "6px 2px" }}>S{numeroSemaine(l)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {equipe12.map((c) => (
+                  <tr key={c.id}>
+                    <th scope="row" style={{ textAlign: "left", padding: "6px 8px", fontSize: 15 }}>{nomCollab(c)}</th>
+                    {semaines12.map((l) => {
+                      const s = chargeParSemaine(capacites, joursAffectes, c.id, l);
+                      const pct = s.net > 0 ? Math.round((s.affecte / s.net) * 100) : s.affecte > 0 ? 999 : 0;
+                      const surcharge = pct > 100;
+
+                      return (
+                        <td
+                          key={l}
+                          title={`S${numeroSemaine(l)} : ${formatHeures(s.affecte)} affectées pour ${formatHeures(s.net)} disponibles`}
+                          style={{
+                            padding: "6px 2px",
+                            textAlign: "center",
+                            border: "1px solid #ffffff",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            background: surcharge ? "repeating-linear-gradient(45deg,#fde1e1,#fde1e1 5px,#f5b5b0 5px,#f5b5b0 10px)" : pct === 0 ? "#f4f5f7" : pct >= 80 ? "#cfe0f3" : "#e6eef8",
+                            color: surcharge ? "#8f1010" : pct === 0 ? "#9aa0a6" : "#10263d",
+                          }}
+                        >
+                          {pct === 0 ? "—" : surcharge ? `▲ ${pct === 999 ? "!" : pct} %` : `${pct} %`}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                <tr>
+                  <th scope="row" style={{ textAlign: "left", padding: "8px 8px", fontSize: 13, borderTop: `2px solid ${C.ligne}`, background: "#f8f9fa" }}>
+                    Taux de charge
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.gris }}>équipe, hors encadrement</div>
+                  </th>
+                  {tauxParSemaine.map((s) => (
+                    <td
+                      key={s.lundi}
+                      title={`S${numeroSemaine(s.lundi)} : ${formatHeures(s.affecte)} affectées pour ${formatHeures(s.net)} de capacité`}
+                      style={{ padding: "8px 2px", textAlign: "center", borderTop: `2px solid ${C.ligne}`, background: "#f8f9fa", fontSize: 13, fontWeight: 800, color: s.taux > 100 ? "#8f1010" : C.encre }}
+                    >
+                      {s.net > 0 ? `${s.taux > 100 ? "▲ " : ""}${Math.round(s.taux)} %` : "—"}
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <h2 style={{ margin: "0 0 10px", fontSize: 20 }}>Détail de la semaine S{numeroSemaine(lundi)}</h2>
+
         <section style={{ ...page.carte, padding: 16 }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1020 }}>
               <thead>
                 <tr>
-                  <th style={page.th}>Ressource</th>
+                  <th style={{ ...page.th, width: 120 }}>Ressource</th>
                   <th style={{ ...page.th, textAlign: "right" }}>Théorique</th>
                   <th style={{ ...page.th, textAlign: "right" }}>Fériés et absences</th>
                   <th style={{ ...page.th, textAlign: "right" }}>Disponible</th>

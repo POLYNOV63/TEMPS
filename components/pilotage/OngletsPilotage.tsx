@@ -7,7 +7,7 @@ import { C } from "@/components/pilotage/ui";
 
 const ONGLETS = [
   { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage" },
-  { cle: "planning", libelle: "Planning", href: "/pilotage/planning" },
+  { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires" },
   { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources" },
 ] as const;
 

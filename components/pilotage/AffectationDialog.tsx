@@ -11,11 +11,13 @@ import {
   construireCapacites,
   estWeekend,
   genererJours,
+  quantiteJusquaDate,
+  remplirHeures,
+  remplirJours,
   type Affectation,
   type Capacites,
   type JourHeures,
   type JourRow,
-  type ModeAffectation,
 } from "@/lib/pilotagePlanning";
 import {
   formatDate,
@@ -31,19 +33,21 @@ import {
 /* ===============================================================
    PILOTAGE BE - AJOUTER OU MODIFIER UNE AFFECTATION
 
-   Deux cas :
-     - sur une affaire :
-         . « Jusqu'à une date » : on indique la personne et la date de fin,
-           le planning se remplit tout seul selon sa disponibilité
-           (prestations externes) ;
-         . « Un nombre d'heures » : les heures sont réparties sur la période
-           (petites affaires, à plusieurs ressources) ;
-         . un DBE se planifie toujours sur le code DT ;
-     - événement libre (salon, déplacement...) avec son code d'imputation :
-       ses heures remonteront dans ce code.
+   Sur une affaire, quatre façons de planifier :
+     - « Jusqu'à une date »        : prestation (PE, PI...) ; la personne est
+                                     affectée jusqu'à la date, aux jours où elle
+                                     est disponible ;
+     - « Pour un nombre de jours » : idem, pour N journées de travail ;
+     - « Pour un nombre d'heures » : idem, pour N heures ;
+     - « Répartir sur une période » : N heures étalées entre deux dates
+                                     (petites affaires à plusieurs ressources).
+   Pour les trois premières, les jours fériés et les absences (congés...) ne
+   sont pas travaillés : LA DATE DE FIN EST REPOUSSEE d'autant.
 
-   Le logiciel calcule la répartition (jours fériés et absences validées par
-   les RH déduits) et affiche le résultat ; il ne bloque jamais une surcharge.
+   Un DBE se planifie toujours sur le code DT.
+   Événement libre (salon, déplacement...) : intitulé + code d'imputation.
+
+   Le planning calcule et avertit : il ne bloque jamais une surcharge.
 ================================================================ */
 
 export type PrefAffectation = {
@@ -53,6 +57,8 @@ export type PrefAffectation = {
   debut?: string;
 };
 
+type ModeSaisie = "DATE" | "JOURS" | "NB_HEURES" | "PERIODE";
+
 type Props = {
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -61,6 +67,8 @@ type Props = {
   referentiel: ReferentielActivites;
   imputations: Imputation[];
   codesDivers: { code: string; libelle: string }[];
+  /* affectations déjà connues : servent à proposer le même code pour une même affaire */
+  affectationsConnues?: Pick<Affectation, "affaire_id" | "activite_id" | "code" | "date_debut">[];
   prefill?: PrefAffectation;
   edition?: { affectation: Affectation; jours: JourRow[] };
 };
@@ -71,6 +79,8 @@ function prochainJourOuvre(depuis: string): string {
   return j;
 }
 
+const minISO = (a: string, b: string) => (a < b ? a : b);
+
 export default function AffectationDialog({
   onClose,
   onSaved,
@@ -79,6 +89,7 @@ export default function AffectationDialog({
   referentiel,
   imputations,
   codesDivers,
+  affectationsConnues = [],
   prefill,
   edition,
 }: Props) {
@@ -102,24 +113,23 @@ export default function AffectationDialog({
   const debutInitial = edition?.affectation.date_debut ?? prefill?.debut ?? prochainJourOuvre(aujourdhui);
   const [debut, setDebut] = useState(debutInitial);
   const [fin, setFin] = useState(edition?.affectation.date_fin ?? "");
-  const [mode, setMode] = useState<ModeAffectation>("HEURES");
+  const [mode, setMode] = useState<ModeSaisie>("PERIODE");
   const [pourcent, setPourcent] = useState("100");
+  const [nbJours, setNbJours] = useState("");
+  const [nbHeures, setNbHeures] = useState("");
   const [total, setTotal] = useState(
-    edition
-      ? String(Math.round(edition.jours.reduce((t, j) => t + num(j.heures), 0) * 100) / 100).replace(".", ",")
-      : ""
+    edition ? String(arrondi2(edition.jours.reduce((t, j) => t + num(j.heures), 0))).replace(".", ",") : ""
   );
   const [heuresParJour, setHeuresParJour] = useState("");
   const [journeeEntiere, setJourneeEntiere] = useState(true);
 
   // détail jour par jour modifiable (modification d'une affectation existante)
   const [manuel, setManuel] = useState<Map<string, string> | null>(
-    edition
-      ? new Map(edition.jours.map((j) => [j.jour, String(num(j.heures)).replace(".", ",")]))
-      : null
+    edition ? new Map(edition.jours.map((j) => [j.jour, String(num(j.heures)).replace(".", ",")])) : null
   );
 
   const [capacites, setCapacites] = useState<Capacites | null>(null);
+  const [couverture, setCouverture] = useState<{ debut: string; fin: string } | null>(null);
   const [chargementCap, setChargementCap] = useState(false);
   const [erreurCap, setErreurCap] = useState("");
   const [enCours, setEnCours] = useState(false);
@@ -129,11 +139,9 @@ export default function AffectationDialog({
   const imputationAffaire = imputations.find((i) => i.code === affaire?.imputation);
   const planifieParDate = imputationAffaire ? imputationAffaire.charge_obligatoire === false : false;
   const activitesActives = referentiel.activites.filter((a) => a.actif || a.id === activiteId);
+  const modeEffectif: ModeSaisie | "LIBRE" = onglet === "LIBRE" ? "LIBRE" : mode;
 
-  const dtActivite = useMemo(
-    () => referentiel.liens.find((l) => l.code === "DT")?.activite_id ?? "",
-    [referentiel]
-  );
+  const dtActivite = useMemo(() => referentiel.liens.find((l) => l.code === "DT")?.activite_id ?? "", [referentiel]);
 
   const codesActivite = useMemo(
     () =>
@@ -144,12 +152,23 @@ export default function AffectationDialog({
     [referentiel, activiteId]
   );
 
-  // Mode et date de fin proposés selon l'affaire choisie
+  // À l'ouverture d'une affaire : mode proposé, date de fin = échéance de l'affaire, même code que d'habitude
   useEffect(() => {
     if (enEdition || onglet !== "AFFAIRE" || !affaire) return;
 
-    setMode(planifieParDate ? "PLAGE" : "HEURES");
-    setFin((f) => f || affaire.echeance || ajouterJours(debutInitial, 13));
+    setMode(planifieParDate ? "DATE" : "PERIODE");
+    setFin((f) => f || affaire.echeance || "");
+
+    if (affaire.type !== "DBE") {
+      const derniere = affectationsConnues
+        .filter((a) => a.affaire_id === affaire.id)
+        .sort((a, b) => b.date_debut.localeCompare(a.date_debut))[0];
+
+      if (derniere?.activite_id) {
+        setActiviteId((x) => x || derniere.activite_id!);
+        setCode((x) => x || derniere.code || "");
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [affaireId]);
 
@@ -158,68 +177,118 @@ export default function AffectationDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onglet]);
 
-  // Capacités des personnes sur la période choisie
-  const periodeValide = Boolean(debut && fin && fin >= debut);
+  /* Dernier jour dont on a besoin des disponibilités (la fin peut être repoussée par les congés). */
+  const horizon = useMemo(() => {
+    if (!debut) return "";
 
-  useEffect(() => {
-    if (!periodeValide) {
-      setCapacites(null);
-      return;
+    const plafond = ajouterJours(debut, 380);
+
+    if (modeEffectif === "DATE") {
+      return fin && fin >= debut ? minISO(ajouterJours(fin, 150), plafond) : "";
     }
 
-    const nbJours = (Date.parse(fin) - Date.parse(debut)) / 86400000;
+    if (modeEffectif === "JOURS") {
+      const n = num(nbJours.replace(",", "."));
+      return n > 0 ? minISO(ajouterJours(debut, Math.ceil(n * 2.2) + 60), plafond) : "";
+    }
 
-    if (nbJours > 380) {
-      setErreurCap("La période est trop longue (un an au plus).");
-      setCapacites(null);
+    if (modeEffectif === "NB_HEURES") {
+      const h = num(nbHeures.replace(",", "."));
+      const p = Math.min(100, Math.max(1, num(pourcent.replace(",", ".")) || 100)) / 100;
+      const n = Math.ceil(h / Math.max(0.5, 7.5 * p));
+      return h > 0 ? minISO(ajouterJours(debut, Math.ceil(n * 2.2) + 60), plafond) : "";
+    }
+
+    return fin && fin >= debut ? fin : "";
+  }, [debut, fin, modeEffectif, nbJours, nbHeures, pourcent]);
+
+  // Chargement des disponibilités : on n'utilise JAMAIS des données qui ne couvrent pas la période demandée
+  useEffect(() => {
+    setCapacites(null);
+    setCouverture(null);
+    setErreurCap("");
+
+    if (!debut || !horizon || horizon < debut) {
+      setChargementCap(false);
       return;
     }
 
     let actif = true;
     setChargementCap(true);
-    setErreurCap("");
 
     const t = setTimeout(async () => {
       try {
-        const { caps, absences } = await chargerCapacitesAbsences(debut, fin);
-        if (actif) setCapacites(construireCapacites(caps, absences));
+        const { caps, absences } = await chargerCapacitesAbsences(debut, horizon);
+
+        if (actif) {
+          setCapacites(construireCapacites(caps, absences));
+          setCouverture({ debut, fin: horizon });
+        }
       } catch (e) {
         if (actif) setErreurCap(e instanceof Error ? e.message : "Impossible de calculer les disponibilités.");
       } finally {
         if (actif) setChargementCap(false);
       }
-    }, 300);
+    }, 250);
 
     return () => {
       actif = false;
       clearTimeout(t);
     };
-  }, [debut, fin, periodeValide]);
+  }, [debut, horizon]);
 
-  const modeEffectif: ModeAffectation = onglet === "LIBRE" ? "PAR_JOUR" : mode;
+  const pret = Boolean(capacites && couverture && couverture.debut === debut && couverture.fin === horizon && !chargementCap);
+
+  type Rep = {
+    jours: JourHeures[];
+    total: number;
+    fin: string | null;
+    epuise: boolean;
+    finDemandee: string | null;
+  };
 
   const repartitions = useMemo(() => {
-    const resultat = new Map<string, ReturnType<typeof genererJours>>();
+    const resultat = new Map<string, Rep>();
 
-    if (!capacites || !periodeValide) return resultat;
+    if (!pret || !capacites) return resultat;
+
+    const p = num(pourcent.replace(",", ".")) || 100;
 
     for (const id of ressources) {
-      resultat.set(
-        id,
-        genererJours({
-          mode: modeEffectif,
+      const cap = capacites.get(id);
+      const net = (j: string) => cap?.get(j)?.net ?? 0;
+      const theorique = (j: string) => {
+        const x = cap?.get(j);
+        return x && !x.ferie ? x.theorique : 0;
+      };
+
+      if (modeEffectif === "DATE") {
+        const q = quantiteJusquaDate({ debut, fin, capaciteHorsAbsence: theorique, pourcent: p });
+        const r = remplirHeures({ debut, quantiteHeures: q, capaciteJour: net, pourcent: p, horizon });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.fin, epuise: r.epuise, finDemandee: fin });
+      } else if (modeEffectif === "JOURS") {
+        const r = remplirJours({ debut, nbJours: num(nbJours.replace(",", ".")), capaciteJour: net, theoriqueJour: theorique, pourcent: p, horizon });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.fin, epuise: r.epuise, finDemandee: null });
+      } else if (modeEffectif === "NB_HEURES") {
+        const r = remplirHeures({ debut, quantiteHeures: num(nbHeures.replace(",", ".")), capaciteJour: net, pourcent: p, horizon });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.fin, epuise: r.epuise, finDemandee: null });
+      } else if (modeEffectif === "PERIODE") {
+        const r = genererJours({ mode: "HEURES", debut, fin, capaciteJour: net, total: num(total.replace(",", ".")) });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.jours.length ? r.jours[r.jours.length - 1].jour : null, epuise: true, finDemandee: fin });
+      } else {
+        const r = genererJours({
+          mode: "PAR_JOUR",
           debut,
           fin,
-          capaciteJour: (j) => capacites.get(id)?.get(j)?.net ?? 0,
-          pourcent: num(pourcent.replace(",", ".")) || 100,
-          total: num(total.replace(",", ".")),
+          capaciteJour: net,
           heuresParJour: journeeEntiere ? undefined : num(heuresParJour.replace(",", ".")),
-        })
-      );
+        });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.jours.length ? r.jours[r.jours.length - 1].jour : null, epuise: true, finDemandee: fin });
+      }
     }
 
     return resultat;
-  }, [capacites, periodeValide, ressources, modeEffectif, debut, fin, pourcent, total, heuresParJour, journeeEntiere]);
+  }, [pret, capacites, ressources, modeEffectif, debut, fin, horizon, pourcent, nbJours, nbHeures, total, heuresParJour, journeeEntiere]);
 
   function basculerRessource(id: string) {
     if (enEdition) return;
@@ -261,8 +330,25 @@ export default function AffectationDialog({
       return;
     }
 
-    if (!periodeValide) {
-      setErreur("Les dates sont incomplètes ou la date de fin précède le début.");
+    const besoinFin = modeEffectif === "DATE" || modeEffectif === "PERIODE" || modeEffectif === "LIBRE";
+
+    if (!debut || (besoinFin && (!fin || fin < debut))) {
+      setErreur(besoinFin ? "Indiquez la date de début et une date de fin qui ne la précède pas." : "Indiquez la date de début.");
+      return;
+    }
+
+    if (modeEffectif === "JOURS" && num(nbJours.replace(",", ".")) <= 0) {
+      setErreur("Indiquez le nombre de jours.");
+      return;
+    }
+
+    if ((modeEffectif === "NB_HEURES" || modeEffectif === "PERIODE") && num((modeEffectif === "NB_HEURES" ? nbHeures : total).replace(",", ".")) <= 0) {
+      setErreur("Indiquez le nombre d’heures.");
+      return;
+    }
+
+    if (!manuel && !pret) {
+      setErreur("Les disponibilités sont en cours de calcul : réessayez dans un instant.");
       return;
     }
 
@@ -288,11 +374,14 @@ export default function AffectationDialog({
       .filter((r) => r.jours.length > 0);
 
     if (aEnregistrer.length === 0) {
-      setErreur(
-        modeEffectif === "HEURES" && !num(total.replace(",", "."))
-          ? "Indiquez le nombre d’heures."
-          : "Aucun jour disponible sur cette période (week-ends, jours fériés, absences)."
-      );
+      setErreur("Aucun jour disponible sur cette période (week-ends, jours fériés, absences).");
+      return;
+    }
+
+    const incomplet = ressources.some((id) => repartitions.get(id) && !repartitions.get(id)!.epuise);
+
+    if (!manuel && incomplet) {
+      setErreur("La quantité demandée dépasse la période calculée (un an au plus) : réduisez-la.");
       return;
     }
 
@@ -367,9 +456,9 @@ export default function AffectationDialog({
     color: actif ? "#ffffff" : "#3b4046",
     border: `1.5px solid ${actif ? C.rouge : "#b9bec5"}`,
     minHeight: 44,
-    padding: "0 18px",
+    padding: "0 16px",
     fontWeight: 800,
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: "inherit",
     borderRadius: 8,
     cursor: "pointer",
@@ -381,8 +470,15 @@ export default function AffectationDialog({
 
   const manuelTriable = manuel ? [...manuel.keys()].sort() : [];
 
+  const modes: { valeur: ModeSaisie; libelle: string; aide: string }[] = [
+    { valeur: "DATE", libelle: "Jusqu’à une date", aide: "La personne est affectée jusqu’à cette date, les jours où elle est disponible. Congés et jours fériés repoussent la fin." },
+    { valeur: "JOURS", libelle: "Pour un nombre de jours", aide: "La personne est affectée pour N journées de travail. Congés et jours fériés repoussent la fin." },
+    { valeur: "NB_HEURES", libelle: "Pour un nombre d’heures", aide: "La personne est affectée jusqu’à avoir fait ces heures. Congés et jours fériés repoussent la fin." },
+    { valeur: "PERIODE", libelle: "Répartir sur une période", aide: "Les heures sont étalées entre les deux dates, proportionnellement à la disponibilité de chaque jour (petites affaires)." },
+  ];
+
   return (
-    <Modal titre={enEdition ? "Modifier l’affectation" : "Ajouter une affectation"} onClose={onClose} largeur={760}>
+    <Modal titre={enEdition ? "Modifier l’affectation" : "Ajouter une affectation"} onClose={onClose} largeur={780}>
       {erreur && <Message genre="erreur">{erreur}</Message>}
 
       {!enEdition && (
@@ -412,7 +508,7 @@ export default function AffectationDialog({
               {affaire && (
                 <div style={page.aide}>
                   Imputation {affaire.imputation ?? "—"}
-                  {planifieParDate ? " : prestation planifiée par date de fin." : "."}
+                  {planifieParDate ? " : prestation planifiée par date, nombre de jours ou d’heures." : "."}
                   {affaire.echeance ? ` ${affaire.type === "DBE" ? "Remise" : "Échéance"} : ${formatDate(affaire.echeance)}.` : ""}
                 </div>
               )}
@@ -421,8 +517,7 @@ export default function AffectationDialog({
             {affaire?.type === "DBE" ? (
               <div style={{ ...page.aide, marginTop: 0, fontSize: 14, color: "#3b4046" }}>
                 Un DBE se planifie toujours sur le code <strong>DT</strong> (devis technique). Sa date de remise
-                apparaît dans le planning comme un jalon : ne planifiez des heures que si vous voulez réserver du
-                temps pour rédiger l’offre.
+                apparaît dans le planning comme un jalon : ne planifiez des heures que pour réserver du temps de rédaction.
               </div>
             ) : (
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -443,6 +538,9 @@ export default function AffectationDialog({
                       <option key={c.code} value={c.code}>{c.code} — {c.libelle}</option>
                     ))}
                   </select>
+                </div>
+                <div style={{ ...page.aide, flexBasis: "100%", marginTop: -6 }}>
+                  Une prestation garde le même code du début à la fin : celui des heures qui seront imputées.
                 </div>
               </div>
             )}
@@ -492,42 +590,54 @@ export default function AffectationDialog({
           <div>
             <div style={page.etiquette}>Comment planifier</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" aria-pressed={mode === "PLAGE"} style={segment(mode === "PLAGE")} onClick={() => { setMode("PLAGE"); setManuel(null); }}>
-                Jusqu’à une date
-              </button>
-              <button type="button" aria-pressed={mode === "HEURES"} style={segment(mode === "HEURES")} onClick={() => { setMode("HEURES"); setManuel(null); }}>
-                Un nombre d’heures
-              </button>
+              {modes.map((m) => (
+                <button key={m.valeur} type="button" aria-pressed={mode === m.valeur} style={segment(mode === m.valeur)} onClick={() => { setMode(m.valeur); setManuel(null); }}>
+                  {m.libelle}
+                </button>
+              ))}
             </div>
-            <div style={page.aide}>
-              {mode === "PLAGE"
-                ? "La personne y consacre sa disponibilité jusqu’à la date de fin : le planning se remplit tout seul."
-                : "Les heures sont réparties sur la période, proportionnellement à la disponibilité de chaque jour."}
-            </div>
+            <div style={page.aide}>{modes.find((m) => m.valeur === mode)?.aide}</div>
           </div>
         )}
 
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 170px" }}>
-            <label htmlFor="du" style={page.etiquette}>Du</label>
+            <label htmlFor="du" style={page.etiquette}>À partir du</label>
             <input id="du" type="date" value={debut} onChange={(e) => { setDebut(e.target.value); setManuel(null); }} style={page.entrees} />
           </div>
-          <div style={{ flex: "1 1 170px" }}>
-            <label htmlFor="au" style={page.etiquette}>Au</label>
-            <input id="au" type="date" value={fin} onChange={(e) => { setFin(e.target.value); setManuel(null); }} style={page.entrees} />
-          </div>
 
-          {onglet === "AFFAIRE" && mode === "PLAGE" && (
-            <div style={{ flex: "0 1 170px" }}>
-              <label htmlFor="pct" style={page.etiquette}>% de leur temps</label>
-              <input id="pct" type="text" inputMode="numeric" value={pourcent} onChange={(e) => { setPourcent(e.target.value); setManuel(null); }} style={{ ...page.entrees, textAlign: "right" }} />
+          {(modeEffectif === "DATE" || modeEffectif === "PERIODE" || modeEffectif === "LIBRE") && (
+            <div style={{ flex: "1 1 170px" }}>
+              <label htmlFor="au" style={page.etiquette}>{modeEffectif === "DATE" ? "Jusqu’au" : "Au"}</label>
+              <input id="au" type="date" value={fin} onChange={(e) => { setFin(e.target.value); setManuel(null); }} style={page.entrees} />
             </div>
           )}
 
-          {onglet === "AFFAIRE" && mode === "HEURES" && (
+          {modeEffectif === "JOURS" && (
+            <div style={{ flex: "0 1 170px" }}>
+              <label htmlFor="nbj" style={page.etiquette}>Nombre de jours</label>
+              <input id="nbj" type="text" inputMode="decimal" value={nbJours} onChange={(e) => { setNbJours(e.target.value); setManuel(null); }} style={{ ...page.entrees, textAlign: "right" }} />
+            </div>
+          )}
+
+          {modeEffectif === "NB_HEURES" && (
+            <div style={{ flex: "0 1 170px" }}>
+              <label htmlFor="nbh" style={page.etiquette}>Heures (par personne)</label>
+              <input id="nbh" type="text" inputMode="decimal" value={nbHeures} onChange={(e) => { setNbHeures(e.target.value); setManuel(null); }} style={{ ...page.entrees, textAlign: "right" }} />
+            </div>
+          )}
+
+          {modeEffectif === "PERIODE" && (
             <div style={{ flex: "0 1 170px" }}>
               <label htmlFor="tot" style={page.etiquette}>Heures (par personne)</label>
               <input id="tot" type="text" inputMode="decimal" value={total} onChange={(e) => { setTotal(e.target.value); setManuel(null); }} style={{ ...page.entrees, textAlign: "right" }} />
+            </div>
+          )}
+
+          {(modeEffectif === "DATE" || modeEffectif === "JOURS" || modeEffectif === "NB_HEURES") && (
+            <div style={{ flex: "0 1 170px" }}>
+              <label htmlFor="pct" style={page.etiquette}>% de leur temps</label>
+              <input id="pct" type="text" inputMode="numeric" value={pourcent} onChange={(e) => { setPourcent(e.target.value); setManuel(null); }} style={{ ...page.entrees, textAlign: "right" }} />
             </div>
           )}
         </div>
@@ -565,25 +675,38 @@ export default function AffectationDialog({
         <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 14, background: "#fafbfc" }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Aperçu</div>
           {erreurCap && <div style={{ color: C.rougeTexte, fontSize: 14 }}>{erreurCap}</div>}
-          {chargementCap && <div style={{ color: C.gris, fontSize: 14 }}>Calcul des disponibilités…</div>}
-          {!chargementCap && !periodeValide && <div style={{ color: C.gris, fontSize: 14 }}>Renseignez les dates.</div>}
-          {!chargementCap && periodeValide && ressources.length === 0 && (
-            <div style={{ color: C.gris, fontSize: 14 }}>Choisissez au moins une ressource.</div>
+          {!manuel && !pret && !erreurCap && (
+            <div style={{ color: C.gris, fontSize: 14 }}>
+              {chargementCap ? "Calcul des disponibilités…" : "Renseignez les dates et la quantité."}
+            </div>
           )}
-          {!chargementCap &&
-            periodeValide &&
+          {(manuel || pret) &&
+            ressources.length === 0 && <div style={{ color: C.gris, fontSize: 14 }}>Choisissez au moins une ressource.</div>}
+          {(manuel || pret) &&
             ressources.map((id) => {
               const c = annuaire.find((x) => x.id === id);
-              const jours = manuel ? joursPourEnregistrer(id) : repartitions.get(id)?.jours ?? [];
+              const rep = repartitions.get(id);
+              const jours = manuel ? joursPourEnregistrer(id) : rep?.jours ?? [];
               const somme = arrondi2(jours.reduce((t, j) => t + j.heures, 0));
+              const finReelle = jours.length ? jours[jours.length - 1].jour : null;
+              const repoussee = !manuel && rep?.finDemandee && finReelle && finReelle > rep.finDemandee && (modeEffectif === "DATE");
 
               return (
                 <div key={id} style={{ fontSize: 14, padding: "3px 0" }}>
-                  <strong>{nomCollab(c)}</strong> — {jours.length === 0 ? (
+                  <strong>{nomCollab(c)}</strong> —{" "}
+                  {jours.length === 0 ? (
                     <span style={{ color: C.rougeTexte }}>aucun jour disponible (week-ends, fériés, absences validées)</span>
                   ) : (
                     <>
-                      {formatHeures(somme)} sur {jours.length} jour(s), du {formatDate(jours[0].jour)} au {formatDate(jours[jours.length - 1].jour)}
+                      {formatHeures(somme)} sur {jours.length} jour(s), du {formatDate(jours[0].jour)} au {formatDate(finReelle)}
+                      {repoussee && (
+                        <strong style={{ color: C.orangeTexte }}>
+                          {" "}— fin repoussée au {formatDate(finReelle)} (date demandée : {formatDate(rep!.finDemandee)}), à cause de congés ou de jours fériés
+                        </strong>
+                      )}
+                      {!manuel && rep && !rep.epuise && (
+                        <strong style={{ color: C.rougeTexte }}> — la quantité dépasse un an de planning : réduisez-la</strong>
+                      )}
                     </>
                   )}
                 </div>
@@ -632,8 +755,13 @@ export default function AffectationDialog({
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <button type="button" style={page.btnSecondaire} onClick={onClose}>Annuler</button>
-            <button type="button" style={{ ...page.btnPrimaire, opacity: enCours ? 0.6 : 1 }} disabled={enCours} onClick={enregistrer}>
-              {enCours ? "Enregistrement…" : "Enregistrer"}
+            <button
+              type="button"
+              style={{ ...page.btnPrimaire, opacity: enCours || (!manuel && !pret) ? 0.6 : 1 }}
+              disabled={enCours || (!manuel && !pret)}
+              onClick={enregistrer}
+            >
+              {enCours ? "Enregistrement…" : !manuel && !pret ? "Calcul en cours…" : "Enregistrer"}
             </button>
           </div>
         </div>

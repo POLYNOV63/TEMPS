@@ -6,7 +6,6 @@ import { useParams, useRouter } from "next/navigation";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
-import AffectationDialog from "@/components/pilotage/AffectationDialog";
 import { BadgeType, C, Message, Modal, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import {
@@ -15,7 +14,6 @@ import {
   chargerAffectationsAffaire,
   chargerAnnuaire,
   chargerCharges,
-  chargerCodesDivers,
   chargerImputations,
   chargerMoi,
   chargerRealise,
@@ -87,8 +85,6 @@ function FicheContenu() {
   const [moi, setMoi] = useState<Moi | null>(null);
   const [affectations, setAffectations] = useState<Affectation[]>([]);
   const [joursAff, setJoursAff] = useState<JourRow[]>([]);
-  const [codesDivers, setCodesDivers] = useState<{ code: string; libelle: string }[]>([]);
-  const [dialogue, setDialogue] = useState<null | { edition?: { affectation: Affectation; jours: JourRow[] } }>(null);
 
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
@@ -102,7 +98,6 @@ function FicheContenu() {
   const [fDesignation, setFDesignation] = useState("");
   const [fImputation, setFImputation] = useState("");
   const [fResponsable, setFResponsable] = useState("");
-  const [fPriorite, setFPriorite] = useState("");
   const [fStatut, setFStatut] = useState<StatutAffaire>("EN_COURS");
   const [fLivraison, setFLivraison] = useState("");
   const [fDate, setFDate] = useState("");
@@ -112,7 +107,7 @@ function FicheContenu() {
 
   const charger = useCallback(async () => {
     try {
-      const [af, ch, re, an, im, ref, m, hist, affs, cd] = await Promise.all([
+      const [af, ch, re, an, im, ref, m, hist, affs] = await Promise.all([
         chargerAffaires(),
         chargerCharges(),
         chargerRealise(),
@@ -126,7 +121,6 @@ function FicheContenu() {
           .eq("affaire_id", id)
           .order("modifie_le", { ascending: false }),
         chargerAffectationsAffaire(id),
-        chargerCodesDivers(),
       ]);
 
       if (hist.error) throw new Error(hist.error.message);
@@ -141,7 +135,6 @@ function FicheContenu() {
       setHistorique((hist.data ?? []) as Historique[]);
       setAffectations(affs.affectations);
       setJoursAff(affs.jours);
-      setCodesDivers(cd);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : "Impossible de charger l’affaire.");
     } finally {
@@ -181,7 +174,6 @@ function FicheContenu() {
       affectations
         .map((a) => ({
           affectation: a,
-          jours: joursAff.filter((j) => j.affectation_id === a.id),
           heures: joursAff.filter((j) => j.affectation_id === a.id).reduce((t, j) => t + num(j.heures), 0),
         }))
         .sort((a, b) => a.affectation.date_debut.localeCompare(b.affectation.date_debut)),
@@ -210,7 +202,6 @@ function FicheContenu() {
       setFDesignation(affaire.designation);
       setFImputation(affaire.imputation ?? "");
       setFResponsable(affaire.responsable_id);
-      setFPriorite(affaire.priorite ? String(affaire.priorite) : "");
       setFStatut(affaire.statut);
       setFLivraison(affaire.date_livraison ?? "");
     }
@@ -256,7 +247,6 @@ function FicheContenu() {
         designation: fDesignation.trim(),
         imputation: fImputation || null,
         responsable_id: fResponsable,
-        priorite: fPriorite ? Number(fPriorite) : null,
         statut: fStatut,
         date_livraison: fStatut === "LIVREE" ? fLivraison || null : null,
       })
@@ -374,12 +364,6 @@ function FicheContenu() {
 
   /* ------------------------------------ rendu ------------------------------------ */
 
-  const codesActivite = (activiteId: string) =>
-    (referentiel?.liens ?? [])
-      .filter((l) => l.activite_id === activiteId)
-      .map((l) => ({ code: l.code, libelle: referentiel?.libellesCodes.get(l.code) ?? "" }))
-      .sort((a, b) => a.code.localeCompare(b.code, "fr"));
-
   const peutModifier = Boolean(moi?.peutModifier);
   const libelleImputation = (code: string | null) =>
     code ? imputations.find((i) => i.code === code)?.libelle ?? code : "—";
@@ -449,11 +433,6 @@ function FicheContenu() {
               <span>
                 Statut : <strong>{libelleStatut(affaire.statut)}</strong>
               </span>
-              {affaire.priorite && (
-                <span>
-                  Priorité : <strong>{affaire.priorite}</strong>
-                </span>
-              )}
               {origine && (
                 <span>
                   Origine :{" "}
@@ -473,9 +452,9 @@ function FicheContenu() {
               <button type="button" style={page.btnSecondaire} onClick={() => ouvrir("charges")}>
                 Modifier la charge
               </button>
-              <button type="button" style={page.btnPrimaire} onClick={() => setDialogue({})}>
-                + Ajouter une affectation
-              </button>
+              <Link href="/pilotage/affaires" style={page.btnPrimaire}>
+                Affecter dans le planning
+              </Link>
             </div>
           )}
         </div>
@@ -682,7 +661,7 @@ function FicheContenu() {
                   </tr>
                 </thead>
                 <tbody>
-                  {affectationsAffichees.map(({ affectation, jours, heures }) => (
+                  {affectationsAffichees.map(({ affectation, heures }) => (
                     <tr key={affectation.id}>
                       <td style={page.td}>
                         <strong>{nomCollab(collabs.get(affectation.collaborateur_id))}</strong>
@@ -698,9 +677,9 @@ function FicheContenu() {
                       <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(heures)}</td>
                       <td style={{ ...page.td, textAlign: "right" }}>
                         {peutModifier && (
-                          <button type="button" style={page.btnSecondaire} onClick={() => setDialogue({ edition: { affectation, jours } })}>
-                            Modifier
-                          </button>
+                          <Link href="/pilotage/affaires" style={{ fontWeight: 700, color: C.rougeFonce }}>
+                            Modifier dans le planning
+                          </Link>
                         )}
                       </td>
                     </tr>
@@ -791,24 +770,6 @@ function FicheContenu() {
 
       {/* ---------------------------- Fenêtres ---------------------------- */}
 
-      {dialogue && referentiel && (
-        <AffectationDialog
-          onClose={() => setDialogue(null)}
-          onSaved={async (message) => {
-            setDialogue(null);
-            setInfo(message);
-            await charger();
-          }}
-          affaires={toutes}
-          annuaire={annuaire}
-          referentiel={referentiel}
-          imputations={imputations}
-          codesDivers={codesDivers}
-          prefill={{ onglet: "AFFAIRE", affaireId: affaire.id }}
-          edition={dialogue.edition}
-        />
-      )}
-
       {modal === "infos" && (
         <Modal titre="Modifier l’affaire" onClose={() => setModal("")}>
           {erreurModal && <Message genre="erreur">{erreurModal}</Message>}
@@ -846,15 +807,6 @@ function FicheContenu() {
                   {STATUTS.map((s) => (
                     <option key={s.valeur} value={s.valeur}>{s.libelle}</option>
                   ))}
-                </select>
-              </div>
-              <div style={{ flex: "0 1 140px" }}>
-                <label htmlFor="m-pri" style={page.etiquette}>Priorité</label>
-                <select id="m-pri" value={fPriorite} onChange={(e) => setFPriorite(e.target.value)} style={page.entrees}>
-                  <option value="">—</option>
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
                 </select>
               </div>
               {fStatut === "LIVREE" && (
@@ -913,7 +865,7 @@ function FicheContenu() {
         <Modal titre="Modifier la charge" onClose={() => setModal("")} largeur={820}>
           {erreurModal && <Message genre="erreur">{erreurModal}</Message>}
           <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
-            Activité, code facultatif et heures chiffrées. « Déjà réalisé » sert aux heures faites avant le suivi dans
+            Activité et heures chiffrées. « Déjà réalisé » sert aux heures faites avant le suivi dans
             l’application (elles s’ajoutent au réalisé).
           </p>
           {fLignes.map((l) => (
@@ -932,21 +884,6 @@ function FicheContenu() {
                     .map((a) => (
                       <option key={a.id} value={a.id}>{a.nom}</option>
                     ))}
-                </select>
-              </div>
-              <div style={{ flex: "3 1 200px", minWidth: 0 }}>
-                <label htmlFor={`c-c-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>Code (facultatif)</label>
-                <select
-                  id={`c-c-${l.cle}`}
-                  value={l.code}
-                  disabled={!l.activite_id}
-                  onChange={(e) => setFLignes((x) => x.map((y) => (y.cle === l.cle ? { ...y, code: e.target.value } : y)))}
-                  style={page.entrees}
-                >
-                  <option value="">Toute l’activité</option>
-                  {codesActivite(l.activite_id).map((c) => (
-                    <option key={c.code} value={c.code}>{c.code} — {c.libelle}</option>
-                  ))}
                 </select>
               </div>
               <div style={{ flex: "1 1 110px", minWidth: 0 }}>

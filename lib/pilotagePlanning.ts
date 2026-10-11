@@ -324,6 +324,120 @@ export function genererJours(options: {
 }
 
 /* ---------------------------------------------------------------
+   PRESTATIONS (PE / PI) : REMPLISSAGE JUSQU'A UNE FIN
+   La personne est affectée à l'affaire, au même code, jour après jour :
+     - jusqu'à une date donnée,
+     - pour un nombre de jours donné,
+     - ou pour un nombre d'heures donné.
+   Les jours fériés et les absences (congés...) ne sont pas travaillés :
+   la date de fin est repoussée d'autant.
+--------------------------------------------------------------- */
+
+export type ResultatRemplissage = ResultatRepartition & {
+  fin: JourISO | null; // dernier jour affecté
+  epuise: boolean; // toute la quantité a pu être placée avant l'horizon
+};
+
+/* Heures à placer pour « jusqu'à une date » : ce que la personne ferait entre les deux dates
+   si elle n'avait aucune absence (les jours fériés ne comptent pas). */
+export function quantiteJusquaDate(options: {
+  debut: JourISO;
+  fin: JourISO;
+  capaciteHorsAbsence: (jour: JourISO) => number; // horaire du profil, 0 un jour férié
+  pourcent?: number;
+}): number {
+  if (!options.debut || !options.fin || options.fin < options.debut) return 0;
+
+  const p = Math.min(100, Math.max(1, options.pourcent ?? 100)) / 100;
+
+  return arrondi2(
+    listeJours(options.debut, options.fin).reduce((t, j) => {
+      const cap = options.capaciteHorsAbsence(j);
+      return cap > 0 ? t + Math.max(0.25, arrondi025(cap * p)) : t;
+    }, 0)
+  );
+}
+
+/* Place `quantiteHeures` jour après jour à partir du début, en sautant les jours sans capacité. */
+export function remplirHeures(options: {
+  debut: JourISO;
+  quantiteHeures: number;
+  capaciteJour: (jour: JourISO) => number; // capacité nette (absences déduites)
+  pourcent?: number;
+  horizon: JourISO; // dernier jour examiné
+}): ResultatRemplissage {
+  const p = Math.min(100, Math.max(1, options.pourcent ?? 100)) / 100;
+  const jours: JourHeures[] = [];
+  let reste = Math.max(0, arrondi025(options.quantiteHeures));
+  let disponibles = 0;
+
+  if (!options.debut || reste <= 0) return { jours, total: 0, joursDisponibles: 0, fin: null, epuise: reste <= 0 };
+
+  for (let j = options.debut, n = 0; j <= options.horizon && n < 800; j = ajouterJours(j, 1), n++) {
+    const cap = options.capaciteJour(j);
+    if (cap <= 0) continue;
+
+    disponibles += 1;
+    const heures = Math.min(reste, Math.max(0.25, arrondi025(cap * p)));
+
+    jours.push({ jour: j, heures });
+    reste = arrondi2(reste - heures);
+
+    if (reste <= 0.001) break;
+  }
+
+  return {
+    jours,
+    total: arrondi2(jours.reduce((t, x) => t + x.heures, 0)),
+    joursDisponibles: disponibles,
+    fin: jours.length ? jours[jours.length - 1].jour : null,
+    epuise: reste <= 0.001,
+  };
+}
+
+/* Place `nbJours` journées de travail : une demi-journée d'absence ne compte que pour une demi-journée. */
+export function remplirJours(options: {
+  debut: JourISO;
+  nbJours: number;
+  capaciteJour: (jour: JourISO) => number; // capacité nette
+  theoriqueJour: (jour: JourISO) => number; // horaire du profil ce jour-là (0 un jour férié)
+  pourcent?: number;
+  horizon: JourISO;
+}): ResultatRemplissage {
+  const p = Math.min(100, Math.max(1, options.pourcent ?? 100)) / 100;
+  const jours: JourHeures[] = [];
+  let reste = Math.max(0, options.nbJours);
+  let disponibles = 0;
+
+  if (!options.debut || reste <= 0) return { jours, total: 0, joursDisponibles: 0, fin: null, epuise: reste <= 0 };
+
+  for (let j = options.debut, n = 0; j <= options.horizon && n < 800; j = ajouterJours(j, 1), n++) {
+    const cap = options.capaciteJour(j);
+    const theo = options.theoriqueJour(j);
+    if (cap <= 0 || theo <= 0) continue;
+
+    disponibles += 1;
+
+    const fraction = (cap / theo) * p; // part de journée réellement travaillée
+    const utilise = Math.min(reste, fraction);
+    const heures = Math.max(0.25, arrondi025(theo * utilise));
+
+    jours.push({ jour: j, heures });
+    reste = arrondi2(reste - utilise);
+
+    if (reste <= 0.001) break;
+  }
+
+  return {
+    jours,
+    total: arrondi2(jours.reduce((t, x) => t + x.heures, 0)),
+    joursDisponibles: disponibles,
+    fin: jours.length ? jours[jours.length - 1].jour : null,
+    epuise: reste <= 0.001,
+  };
+}
+
+/* ---------------------------------------------------------------
    CHARGE PAR SEMAINE
 --------------------------------------------------------------- */
 
@@ -476,4 +590,132 @@ export function deplacerHeures(options: {
     .sort((a, b) => a.jour.localeCompare(b.jour));
 
   return { jours, deplace: rep.total };
+}
+
+/* ---------------------------------------------------------------
+   PLANNING PAR AFFAIRE : BLOCS A GLISSER ET ETIRER
+--------------------------------------------------------------- */
+
+/* Jours du lundi au vendredi entre deux dates (colonnes de la frise). */
+export function joursOuvres(debut: JourISO, fin: JourISO): JourISO[] {
+  return listeJours(debut, fin).filter((j) => !estWeekend(j));
+}
+
+/* Part de temps de la personne sur un bloc : heures affectées ÷ capacité nette des mêmes jours.
+   1 = toute sa disponibilité ; 0,25 = un quart de son temps. */
+export function ratioDuBloc(jours: JourHeures[], capaciteJour: (jour: JourISO) => number): number {
+  const cap = jours.reduce((t, j) => t + Math.max(0, capaciteJour(j.jour)), 0);
+  const heures = jours.reduce((t, j) => t + j.heures, 0);
+
+  if (cap <= 0 || heures <= 0) return 1;
+
+  return Math.min(1, Math.max(0.05, heures / cap));
+}
+
+/* Recalcule un bloc entre deux dates (incluses) en gardant la même part de temps. */
+export function recalculerBloc(options: {
+  debut: JourISO;
+  fin: JourISO;
+  capaciteJour: (jour: JourISO) => number;
+  ratio: number;
+}): ResultatRepartition {
+  return genererJours({
+    mode: "PLAGE",
+    debut: options.debut,
+    fin: options.fin,
+    capaciteJour: options.capaciteJour,
+    pourcent: Math.round(options.ratio * 100),
+  });
+}
+
+/* Jours d'une période où la personne ne peut pas travailler alors qu'elle devrait : congé ou jour férié. */
+export type JourManquant = { jour: JourISO; motif: "ferie" | "absence" };
+
+export function joursSansCapacite(
+  debut: JourISO,
+  fin: JourISO,
+  capacites: Map<JourISO, JourCapacite> | undefined
+): JourManquant[] {
+  const resultat: JourManquant[] = [];
+
+  for (const j of joursOuvres(debut, fin)) {
+    const c = capacites?.get(j);
+    if (!c) continue;
+
+    if (c.ferie && c.theorique > 0) resultat.push({ jour: j, motif: "ferie" });
+    else if (c.theorique > 0 && c.net < c.theorique * 0.5) resultat.push({ jour: j, motif: "absence" });
+  }
+
+  return resultat;
+}
+
+/* « Me contenir » : plus grande date de fin ≤ fin telle que le bloc ne dépasse pas `heuresMax`. */
+export function finMaxPourHeures(options: {
+  debut: JourISO;
+  fin: JourISO;
+  capaciteJour: (jour: JourISO) => number;
+  ratio: number;
+  heuresMax: number;
+}): JourISO {
+  const p = Math.min(1, Math.max(0.05, options.ratio));
+  let cumul = 0;
+  let derniere = options.debut;
+
+  for (const j of listeJours(options.debut, options.fin)) {
+    const cap = options.capaciteJour(j);
+    if (cap <= 0) continue;
+
+    const h = Math.max(0.25, arrondi025(cap * p));
+    if (cumul + h > options.heuresMax + 0.001) break;
+
+    cumul += h;
+    derniere = j;
+  }
+
+  return derniere;
+}
+
+/* Jours où une personne est chez le client (affectée à une prestation externe) : non affectable ailleurs. */
+export function joursChezLeClient(
+  affectations: Pick<Affectation, "id" | "affaire_id" | "collaborateur_id">[],
+  jours: JourRow[],
+  estPrestationExterne: (affaireId: string) => boolean
+): Map<string, Set<JourISO>> {
+  const concernees = new Map<string, string>();
+
+  for (const a of affectations) {
+    if (a.affaire_id && estPrestationExterne(a.affaire_id)) concernees.set(a.id, a.collaborateur_id);
+  }
+
+  const resultat = new Map<string, Set<JourISO>>();
+
+  for (const j of jours) {
+    const c = concernees.get(j.affectation_id);
+    if (!c) continue;
+    if (!resultat.has(c)) resultat.set(c, new Set());
+    resultat.get(c)!.add(j.jour);
+  }
+
+  return resultat;
+}
+
+/* Taux de service de l'équipe : heures affectées ÷ capacité nette, sur les semaines données. */
+export function tauxServiceEquipe(
+  capacites: Capacites,
+  jours: JourAffecte[],
+  collaborateurs: string[],
+  semaines: JourISO[]
+): { taux: number; net: number; affecte: number } {
+  let net = 0;
+  let affecte = 0;
+
+  for (const id of collaborateurs) {
+    for (const lundi of semaines) {
+      const s = chargeParSemaine(capacites, jours, id, lundi);
+      net += s.net;
+      affecte += s.affecte;
+    }
+  }
+
+  return { taux: net > 0 ? (affecte / net) * 100 : 0, net: arrondi2(net), affecte: arrondi2(affecte) };
 }

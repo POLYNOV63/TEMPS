@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
+import { usePrestation, type ModeFin } from "@/components/pilotage/usePrestation";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import {
@@ -13,9 +14,12 @@ import {
   chargerAnnuaire,
   chargerImputations,
   chargerMoi,
+  chargerPlanifie,
   type ReferentielActivites,
 } from "@/lib/pilotageDonnees";
+import { aISO, estWeekend, ajouterJours, joursChezLeClient, type Affectation, type JourRow } from "@/lib/pilotagePlanning";
 import {
+  formatDate,
   formatHeures,
   nomCollab,
   num,
@@ -29,39 +33,57 @@ import {
 /* ===============================================================
    PILOTAGE BE - DECLARER UNE AFFAIRE
 
-   Informations demandées : numéro, descriptif (jamais de nom de
-   client), imputation, responsable d'affaire et heures chiffrées par
-   activité (le code est facultatif, comme dans les feuilles d'heures).
+   On commence par l'IMPUTATION, qui décide du reste :
+     - prestation (PE, PI : imputation « sans heures chiffrées ») :
+       une personne, une date de début, puis une date de fin, un nombre
+       d'heures ou un nombre de jours. On peut affecter tout de suite ;
+     - autres imputations (BE, Scan, Négoce, IG) : heures chiffrées par
+       activité et date de livraison souhaitée. Elles apparaissent dans le
+       planning, où l'on affecte les ressources ;
+     - DBE : date de remise de l'offre (code DT).
+   Jamais de nom de client dans le descriptif.
 ================================================================ */
 
-type LigneCharge = {
-  cle: number;
-  activite_id: string;
-  code: string;
-  heures: string;
-};
+type LigneCharge = { cle: number; activite_id: string; heures: string };
 
 let compteur = 1;
-const nouvelleLigne = (): LigneCharge => ({ cle: compteur++, activite_id: "", code: "", heures: "" });
+const nouvelleLigne = (): LigneCharge => ({ cle: compteur++, activite_id: "", heures: "" });
+
+function prochainJourOuvre(depuis: string): string {
+  let j = depuis;
+  while (estWeekend(j)) j = ajouterJours(j, 1);
+  return j;
+}
 
 function NouvelleAffaireContenu() {
   const router = useRouter();
+  const aujourdhui = aISO(new Date());
 
+  const [imputation, setImputation] = useState("");
   const [type, setType] = useState<TypeAffaire>("CBE");
   const [numero, setNumero] = useState("");
   const [designation, setDesignation] = useState("");
-  const [imputation, setImputation] = useState("");
   const [responsable, setResponsable] = useState("");
   const [echeance, setEcheance] = useState("");
-  const [priorite, setPriorite] = useState("");
   const [origine, setOrigine] = useState("");
   const [lignes, setLignes] = useState<LigneCharge[]>([nouvelleLigne()]);
   const [heuresDbe, setHeuresDbe] = useState("");
+
+  // prestation
+  const [personne, setPersonne] = useState("");
+  const [debut, setDebut] = useState(prochainJourOuvre(aujourdhui));
+  const [modeFin, setModeFin] = useState<ModeFin>("DATE");
+  const [finDate, setFinDate] = useState("");
+  const [quantite, setQuantite] = useState("");
+  const [pourcent, setPourcent] = useState("100");
+  const [activitePrestation, setActivitePrestation] = useState("");
 
   const [annuaire, setAnnuaire] = useState<Collab[]>([]);
   const [imputations, setImputations] = useState<Imputation[]>([]);
   const [referentiel, setReferentiel] = useState<ReferentielActivites | null>(null);
   const [affaires, setAffaires] = useState<Affaire[]>([]);
+  const [affectations, setAffectations] = useState<Affectation[]>([]);
+  const [joursRows, setJoursRows] = useState<JourRow[]>([]);
 
   const [chargement, setChargement] = useState(true);
   const [enregistrement, setEnregistrement] = useState(false);
@@ -72,12 +94,13 @@ function NouvelleAffaireContenu() {
 
     async function charger() {
       try {
-        const [an, im, ref, af, moi] = await Promise.all([
+        const [an, im, ref, af, moi, pl] = await Promise.all([
           chargerAnnuaire(),
           chargerImputations(),
           chargerActivites(),
           chargerAffaires(),
           chargerMoi(),
+          chargerPlanifie(aujourdhui),
         ]);
 
         if (!actif) return;
@@ -86,6 +109,8 @@ function NouvelleAffaireContenu() {
         setImputations(im.filter((i) => i.actif));
         setReferentiel(ref);
         setAffaires(af);
+        setAffectations(pl.affectations);
+        setJoursRows(pl.jours);
 
         const params = new URLSearchParams(window.location.search);
         const typeUrl = params.get("type");
@@ -95,7 +120,6 @@ function NouvelleAffaireContenu() {
         if (typeUrl === "DBE" || typeUrl === "CBE") setType(typeUrl);
 
         if (dbe) {
-          // Création d'un CBE à partir d'un DBE : on reprend ses informations
           setType("CBE");
           setOrigine(dbe.id);
           setDesignation(dbe.designation);
@@ -116,107 +140,78 @@ function NouvelleAffaireContenu() {
     return () => {
       actif = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const activitesActives = useMemo(
-    () => (referentiel?.activites ?? []).filter((a) => a.actif),
-    [referentiel]
-  );
-
-  function codesDeLActivite(activiteId: string) {
-    if (!referentiel || !activiteId) return [];
-
-    return referentiel.liens
-      .filter((l) => l.activite_id === activiteId)
-      .map((l) => ({ code: l.code, libelle: referentiel.libellesCodes.get(l.code) ?? "" }))
-      .sort((a, b) => a.code.localeCompare(b.code, "fr"));
-  }
-
-  function modifierLigne(cle: number, champs: Partial<LigneCharge>) {
-    setLignes((l) => l.map((x) => (x.cle === cle ? { ...x, ...champs } : x)));
-  }
-
-  const total = lignes.reduce((t, l) => t + Math.max(0, num(l.heures.replace(",", "."))), 0);
-  const dbeDisponibles = affaires.filter((a) => a.type === "DBE");
-
   const imputationChoisie = imputations.find((i) => i.code === imputation);
-  // Heures chiffrées obligatoires pour un CBE, sauf imputation « à date de fin » (ex. PE) ; jamais pour un DBE
-  const chargeObligatoire = type === "CBE" && (imputationChoisie ? imputationChoisie.charge_obligatoire !== false : true);
+  const prestation = type === "CBE" && imputationChoisie?.charge_obligatoire === false;
+  const dbeDisponibles = affaires.filter((a) => a.type === "DBE");
   const dtActivite = referentiel?.liens.find((l) => l.code === "DT")?.activite_id ?? "";
+  const activitesActives = (referentiel?.activites ?? []).filter((a) => a.actif);
+  const total = lignes.reduce((t, l) => t + Math.max(0, num(l.heures.replace(",", "."))), 0);
+
+  const calcul = usePrestation({ collab: prestation ? personne : "", debut, mode: modeFin, fin: finDate, quantite, pourcent });
+
+  // Personne en PE chez un client : non affectable sur les mêmes jours
+  const chezLeClient = useMemo(
+    () => joursChezLeClient(affectations, joursRows, (id) => affaires.find((a) => a.id === id)?.imputation === "PE"),
+    [affectations, joursRows, affaires]
+  );
+  const conflit = useMemo(() => {
+    if (!prestation || !personne || !calcul.resultat) return null;
+    const client = chezLeClient.get(personne);
+    return client ? calcul.resultat.jours.find((j) => client.has(j.jour))?.jour ?? null : null;
+  }, [prestation, personne, calcul.resultat, chezLeClient]);
 
   async function enregistrer() {
     setErreur("");
 
     const numeroNettoye = numero.trim();
 
-    if (!/^[0-9]{1,8}$/.test(numeroNettoye)) {
-      setErreur("Le numéro d’affaire ne contient que des chiffres (sans CBE ni DBE).");
-      return;
-    }
-
-    if (!designation.trim()) {
-      setErreur("Le descriptif est obligatoire (sans nom de client).");
-      return;
-    }
-
-    if (!imputation) {
-      setErreur("Choisissez l’imputation de l’affaire.");
-      return;
-    }
-
-    if (!responsable) {
-      setErreur("Choisissez le responsable d’affaire.");
-      return;
-    }
-
-    if (type === "DBE" && !echeance) {
-      setErreur("La date de remise de l’offre est obligatoire pour un DBE : c’est le jalon du planning.");
-      return;
-    }
+    if (!imputation) return setErreur("Choisissez d’abord l’imputation de l’affaire.");
+    if (!/^[0-9]{1,8}$/.test(numeroNettoye)) return setErreur("Le numéro d’affaire ne contient que des chiffres (sans CBE ni DBE).");
+    if (!designation.trim()) return setErreur("Le descriptif est obligatoire (sans nom de client).");
+    if (!responsable) return setErreur("Choisissez le responsable d’affaire.");
+    if (type === "DBE" && !echeance) return setErreur("La date de remise de l’offre est obligatoire pour un DBE : c’est le jalon du planning.");
 
     let charges: { activite_id: string; code: string | null; heures: number }[] = [];
+    let echeanceFinale: string | null = echeance || null;
+    let affectation: { jours: { jour: string; heures: number }[] } | null = null;
 
     if (type === "DBE") {
-      // Un DBE s'impute toujours sur le code DT ; ses heures sont facultatives
       const h = num(heuresDbe.replace(",", "."));
 
       if (h > 0) {
-        if (!dtActivite) {
-          setErreur("Le code DT n’est rattaché à aucune activité : rattachez-le dans Gestion des activités.");
-          return;
-        }
-
+        if (!dtActivite) return setErreur("Le code DT n’est rattaché à aucune activité : rattachez-le dans Gestion des activités.");
         charges = [{ activite_id: dtActivite, code: "DT", heures: h }];
+      }
+    } else if (prestation) {
+      if (personne) {
+        if (!debut) return setErreur("Indiquez la date de début.");
+        if (modeFin === "DATE" && (!finDate || finDate < debut)) return setErreur("Indiquez une date de fin qui ne précède pas le début.");
+        if (modeFin !== "DATE" && num(quantite.replace(",", ".")) <= 0) return setErreur(modeFin === "HEURES" ? "Indiquez le nombre d’heures." : "Indiquez le nombre de jours.");
+        if (!calcul.pret || !calcul.resultat) return setErreur("Les disponibilités sont en cours de calcul : réessayez dans un instant.");
+        if (calcul.resultat.jours.length === 0) return setErreur("Aucun jour disponible à partir de cette date.");
+        if (!calcul.resultat.epuise) return setErreur("La durée dépasse un an de planning : réduisez-la.");
+        if (conflit) return setErreur(`Cette personne est déjà chez un client (prestation externe) le ${formatDate(conflit)} : elle n’est pas affectable ailleurs.`);
+
+        echeanceFinale = calcul.resultat.fin;
+        affectation = { jours: calcul.resultat.jours };
+      } else if (modeFin === "DATE" && finDate) {
+        echeanceFinale = finDate;
       }
     } else {
       charges = lignes
-        .map((l) => ({
-          activite_id: l.activite_id,
-          code: l.code || null,
-          heures: num(l.heures.replace(",", ".")),
-        }))
+        .map((l) => ({ activite_id: l.activite_id, code: null, heures: num(l.heures.replace(",", ".")) }))
         .filter((l) => l.activite_id || l.heures > 0);
 
-      if (chargeObligatoire && (charges.length === 0 || charges.some((c) => !c.activite_id || c.heures <= 0))) {
-        setErreur("Indiquez au moins une activité avec ses heures chiffrées (chaque ligne : activité et heures).");
-        return;
+      if (charges.length === 0 || charges.some((c) => !c.activite_id || c.heures <= 0)) {
+        return setErreur("Indiquez au moins une activité avec ses heures chiffrées (chaque ligne : activité et heures).");
       }
 
-      if (!chargeObligatoire && charges.some((c) => !c.activite_id || c.heures <= 0)) {
-        setErreur("Chaque ligne de charge doit avoir une activité et des heures (ou retirez la ligne).");
-        return;
+      if (new Set(charges.map((c) => c.activite_id)).size !== charges.length) {
+        return setErreur("La même activité est saisie deux fois : regroupez ses heures sur une seule ligne.");
       }
-    }
-
-    const doublons = new Set<string>();
-
-    for (const c of charges) {
-      const k = `${c.activite_id}|${c.code ?? ""}`;
-      if (doublons.has(k)) {
-        setErreur("La même activité (avec le même code) est saisie deux fois.");
-        return;
-      }
-      doublons.add(k);
     }
 
     setEnregistrement(true);
@@ -226,401 +221,359 @@ function NouvelleAffaireContenu() {
       p_numero: numeroNettoye,
       p_designation: designation.trim(),
       p_responsable_id: responsable,
-      p_echeance: echeance || null,
-      p_priorite: priorite ? Number(priorite) : null,
+      p_echeance: echeanceFinale,
+      p_priorite: null,
       p_dbe_origine_id: type === "CBE" && origine ? origine : null,
       p_charges: charges,
       p_imputation: imputation,
     });
 
-    setEnregistrement(false);
-
     if (error) {
-      setErreur(traduireErreur(error.message));
-      return;
+      setEnregistrement(false);
+      return setErreur(traduireErreur(error.message));
     }
 
-    router.push(`/pilotage/affaire/${data as string}`);
+    const id = data as string;
+
+    if (affectation && personne) {
+      const jours = affectation.jours;
+
+      const { error: erreurAff } = await supabase.rpc("pilotage_enregistrer_affectation", {
+        p_id: null,
+        p_affaire_id: id,
+        p_activite_id: activitePrestation || null,
+        p_code: null,
+        p_libelle: null,
+        p_collaborateur_id: personne,
+        p_date_debut: jours[0].jour,
+        p_date_fin: jours[jours.length - 1].jour,
+        p_commentaire: null,
+        p_jours: jours,
+        p_groupe_id: null,
+      });
+
+      if (erreurAff) {
+        setEnregistrement(false);
+        setErreur(`L’affaire est créée, mais l’affectation a échoué : ${traduireErreur(erreurAff.message)} Ouvrez le planning pour affecter la personne.`);
+        return;
+      }
+    }
+
+    setEnregistrement(false);
+    router.push(`/pilotage/affaires?ouvrir=${id}`);
   }
 
-  const bouton = (actif: boolean): CSSProperties => ({
+  const segment = (actif: boolean): CSSProperties => ({
     background: actif ? C.rouge : "#ffffff",
     color: actif ? "#ffffff" : "#3b4046",
     border: `1.5px solid ${actif ? C.rouge : "#b9bec5"}`,
     minHeight: 44,
-    padding: "0 26px",
+    padding: "0 20px",
     fontWeight: 800,
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "inherit",
     borderRadius: 8,
     cursor: "pointer",
   });
 
   const etoile = <span aria-hidden="true" style={{ color: C.rougeFonce }}> *</span>;
+  const titreEtape = (n: number, texte: string) => (
+    <h2 style={{ margin: "0 0 12px", fontSize: 20, display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: "50%", background: C.rouge, color: "#ffffff", fontSize: 15 }}>{n}</span>
+      {texte}
+    </h2>
+  );
+
+  const libelleCourt = (i: Imputation) => i.libelle.replace(/^[^—-]+[—-]\s*/, "");
 
   return (
     <main style={page.fond}>
       <EnTetePage section="Pilotage BE" />
       <OngletsPilotage actif="portefeuille" />
 
-      <div style={page.contenu}>
+      <div style={{ ...page.contenu, maxWidth: 980 }}>
         <div style={{ marginBottom: 20 }}>
           <h1 style={page.titre}>Déclarer une nouvelle affaire</h1>
-          <p style={page.sousTitre}>
-            Un numéro, un descriptif (sans nom de client), l’imputation, un responsable et les heures chiffrées par
-            activité.
-          </p>
+          <p style={page.sousTitre}>On commence par l’imputation : elle décide de ce qu’il faut renseigner ensuite. Jamais de nom de client.</p>
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {chargement && !erreur && <Message genre="info">Chargement…</Message>}
 
         {!chargement && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-start" }}>
-            <section style={{ ...page.carte, padding: 24, flex: "999 1 620px", minWidth: 0 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
-                  <div>
-                    <div style={page.etiquette}>Type d’affaire{etoile}</div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {(["DBE", "CBE"] as TypeAffaire[]).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          aria-pressed={type === t}
-                          style={bouton(type === t)}
-                          onClick={() => setType(t)}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* 1. imputation */}
+            <section style={{ ...page.carte, padding: 22 }}>
+              {titreEtape(1, "Imputation")}
+              <div role="radiogroup" aria-label="Imputation" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+                {imputations.map((i) => {
+                  const actif = imputation === i.code;
 
+                  return (
+                    <button
+                      key={i.code}
+                      type="button"
+                      role="radio"
+                      aria-checked={actif}
+                      onClick={() => setImputation(i.code)}
+                      style={{
+                        textAlign: "left",
+                        minHeight: 64,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: `2px solid ${actif ? C.rouge : "#c9cdd2"}`,
+                        background: actif ? "#fff4f4" : "#ffffff",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        color: C.encre,
+                      }}
+                    >
+                      <div style={{ fontSize: 18, fontWeight: 800 }}>{actif ? "✓ " : ""}{i.code}</div>
+                      <div style={{ fontSize: 13, color: "#3b4046" }}>{libelleCourt(i)}</div>
+                      <div style={{ fontSize: 12, color: C.gris, marginTop: 2 }}>
+                        {i.charge_obligatoire === false ? "une personne, des dates" : "heures par activité"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <div style={page.etiquette}>Type</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {(["CBE", "DBE"] as TypeAffaire[]).map((t) => (
+                    <button key={t} type="button" aria-pressed={type === t} style={segment(type === t)} onClick={() => setType(t)}>
+                      {t === "CBE" ? "CBE — affaire" : "DBE — offre"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* 2. l'affaire */}
+            <section style={{ ...page.carte, padding: 22 }}>
+              {titreEtape(2, "L’affaire")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                   <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-                    <label htmlFor="numero" style={page.etiquette}>
-                      Numéro d’affaire{etoile}
-                    </label>
+                    <label htmlFor="numero" style={page.etiquette}>Numéro d’affaire{etoile}</label>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontWeight: 800, color: C.rougeFonce }}>{type}</span>
-                      <input
-                        id="numero"
-                        type="text"
-                        inputMode="numeric"
-                        value={numero}
-                        onChange={(e) => setNumero(e.target.value)}
-                        placeholder="ex. 1741"
-                        style={page.entrees}
-                      />
+                      <input id="numero" type="text" inputMode="numeric" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex. 1741" style={page.entrees} />
                     </div>
                     <div style={page.aide}>Le même numéro que dans les feuilles d’heures.</div>
+                  </div>
+                  <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+                    <label htmlFor="responsable" style={page.etiquette}>Responsable d’affaire{etoile}</label>
+                    <select id="responsable" value={responsable} onChange={(e) => setResponsable(e.target.value)} style={page.entrees}>
+                      <option value="">— Choisir —</option>
+                      {annuaire.map((c) => (
+                        <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
                 <div>
-                  <label htmlFor="designation" style={page.etiquette}>
-                    Descriptif{etoile}
-                  </label>
-                  <input
-                    id="designation"
-                    type="text"
-                    value={designation}
-                    onChange={(e) => setDesignation(e.target.value)}
-                    style={page.entrees}
-                  />
+                  <label htmlFor="designation" style={page.etiquette}>Descriptif{etoile}</label>
+                  <input id="designation" type="text" value={designation} onChange={(e) => setDesignation(e.target.value)} style={page.entrees} />
                   <div style={page.aide}>Sans nom de client : un descriptif court suffit.</div>
-                </div>
-
-                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                  <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-                    <label htmlFor="imputation" style={page.etiquette}>
-                      Imputation{etoile}
-                    </label>
-                    <select
-                      id="imputation"
-                      value={imputation}
-                      onChange={(e) => setImputation(e.target.value)}
-                      style={page.entrees}
-                    >
-                      <option value="">— Choisir —</option>
-                      {imputations.map((i) => (
-                        <option key={i.code} value={i.code}>
-                          {i.libelle}
-                        </option>
-                      ))}
-                    </select>
-                    <div style={page.aide}>La liste est gérée par l’administrateur.</div>
-                  </div>
-
-                  <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-                    <label htmlFor="responsable" style={page.etiquette}>
-                      Responsable d’affaire{etoile}
-                    </label>
-                    <select
-                      id="responsable"
-                      value={responsable}
-                      onChange={(e) => setResponsable(e.target.value)}
-                      style={page.entrees}
-                    >
-                      <option value="">— Choisir —</option>
-                      {annuaire.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                  <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-                    <label htmlFor="echeance" style={page.etiquette}>
-                      {type === "DBE" ? <>Date de remise{etoile}</> : "Date objectif"}
-                    </label>
-                    <input
-                      id="echeance"
-                      type="date"
-                      value={echeance}
-                      onChange={(e) => setEcheance(e.target.value)}
-                      style={page.entrees}
-                    />
-                    <div style={page.aide}>
-                      {type === "DBE"
-                        ? "Obligatoire : c’est le jalon qui apparaît dans le planning."
-                        : "Facultative : à préciser plus tard si besoin."}
-                    </div>
-                  </div>
-
-                  <div style={{ flex: "0 1 140px", minWidth: 0 }}>
-                    <label htmlFor="priorite" style={page.etiquette}>
-                      Priorité
-                    </label>
-                    <select
-                      id="priorite"
-                      value={priorite}
-                      onChange={(e) => setPriorite(e.target.value)}
-                      style={page.entrees}
-                    >
-                      <option value="">—</option>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                    </select>
-                    <div style={page.aide}>Facultative.</div>
-                  </div>
                 </div>
 
                 {type === "CBE" && (
                   <div>
-                    <label htmlFor="origine" style={page.etiquette}>
-                      DBE d’origine
-                    </label>
-                    <select
-                      id="origine"
-                      value={origine}
-                      onChange={(e) => setOrigine(e.target.value)}
-                      style={page.entrees}
-                    >
+                    <label htmlFor="origine" style={page.etiquette}>DBE d’origine</label>
+                    <select id="origine" value={origine} onChange={(e) => setOrigine(e.target.value)} style={page.entrees}>
                       <option value="">Aucun</option>
                       {dbeDisponibles.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          DBE {a.numero} — {a.designation}
-                        </option>
+                        <option key={a.id} value={a.id}>DBE {a.numero} — {a.designation}</option>
                       ))}
                     </select>
                     <div style={page.aide}>Facultatif. Le DBE reste consultable : le CBE est créé à côté.</div>
                   </div>
                 )}
-
-                <hr style={{ border: 0, borderTop: `1px solid ${C.ligne}`, width: "100%", margin: "4px 0" }} />
-
-                {type === "DBE" ? (
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>
-                      Heures de rédaction de l’offre{" "}
-                      <span style={{ fontWeight: 600, fontSize: 14, color: C.gris }}>(facultatives)</span>
-                    </div>
-                    <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
-                      Un DBE est surtout une date de remise dans le planning. Pour réserver du temps de rédaction,
-                      indiquez des heures : elles s’imputent toujours sur le code <strong>DT</strong> (devis technique).
-                    </p>
-                    <div style={{ maxWidth: 240 }}>
-                      <label htmlFor="h-dbe" style={page.etiquette}>
-                        Heures (code DT)
-                      </label>
-                      <input
-                        id="h-dbe"
-                        type="text"
-                        inputMode="decimal"
-                        value={heuresDbe}
-                        onChange={(e) => setHeuresDbe(e.target.value)}
-                        style={{ ...page.entrees, textAlign: "right" }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>
-                    Charge chiffrée par activité
-                    {chargeObligatoire ? (
-                      etoile
-                    ) : (
-                      <span style={{ fontWeight: 600, fontSize: 14, color: C.gris }}> (facultative pour cette imputation)</span>
-                    )}
-                  </div>
-                  <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
-                    On choisit l’activité, puis, si on le souhaite, le code : comme dans les feuilles d’heures.
-                  </p>
-
-                  {lignes.map((l) => {
-                    const codes = codesDeLActivite(l.activite_id);
-
-                    return (
-                      <div
-                        key={l.cle}
-                        style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}
-                      >
-                        <div style={{ flex: "2 1 200px", minWidth: 0 }}>
-                          <label htmlFor={`act-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>
-                            Activité
-                          </label>
-                          <select
-                            id={`act-${l.cle}`}
-                            value={l.activite_id}
-                            onChange={(e) => modifierLigne(l.cle, { activite_id: e.target.value, code: "" })}
-                            style={page.entrees}
-                          >
-                            <option value="">— Choisir —</option>
-                            {activitesActives.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.nom}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div style={{ flex: "3 1 240px", minWidth: 0 }}>
-                          <label htmlFor={`code-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>
-                            Code (facultatif)
-                          </label>
-                          <select
-                            id={`code-${l.cle}`}
-                            value={l.code}
-                            disabled={!l.activite_id}
-                            onChange={(e) => modifierLigne(l.cle, { code: e.target.value })}
-                            style={page.entrees}
-                          >
-                            <option value="">Toute l’activité</option>
-                            {codes.map((c) => (
-                              <option key={c.code} value={c.code}>
-                                {c.code} — {c.libelle}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div style={{ flex: "1 1 130px", minWidth: 0 }}>
-                          <label htmlFor={`h-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>
-                            Heures chiffrées
-                          </label>
-                          <input
-                            id={`h-${l.cle}`}
-                            type="text"
-                            inputMode="decimal"
-                            value={l.heures}
-                            onChange={(e) => modifierLigne(l.cle, { heures: e.target.value })}
-                            style={{ ...page.entrees, textAlign: "right" }}
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          aria-label="Retirer cette ligne"
-                          disabled={lignes.length === 1}
-                          onClick={() => setLignes((x) => x.filter((y) => y.cle !== l.cle))}
-                          style={{
-                            minWidth: 44,
-                            minHeight: 44,
-                            border: "1.5px solid #b9bec5",
-                            background: "#ffffff",
-                            borderRadius: 8,
-                            fontSize: 20,
-                            fontWeight: 700,
-                            color: "#3b4046",
-                            cursor: lignes.length === 1 ? "default" : "pointer",
-                            opacity: lignes.length === 1 ? 0.4 : 1,
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      gap: 12,
-                      marginTop: 14,
-                      paddingTop: 14,
-                      borderTop: `1px solid ${C.ligne}`,
-                    }}
-                  >
-                    <button type="button" style={page.btnSecondaire} onClick={() => setLignes((x) => [...x, nouvelleLigne()])}>
-                      + Ajouter une activité
-                    </button>
-                    <div style={{ fontSize: 18 }}>
-                      Total chiffré : <strong style={{ fontSize: 24 }}>{formatHeures(total)}</strong>
-                    </div>
-                  </div>
-                </div>
-                )}
-
-                <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", flexWrap: "wrap", paddingTop: 8 }}>
-                  <button type="button" style={page.btnSecondaire} onClick={() => router.push("/pilotage")}>
-                    Annuler
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...page.btnPrimaire, opacity: enregistrement ? 0.6 : 1 }}
-                    disabled={enregistrement}
-                    onClick={enregistrer}
-                  >
-                    {enregistrement ? "Enregistrement…" : "Déclarer l’affaire"}
-                  </button>
-                </div>
               </div>
             </section>
 
-            <aside style={{ ...page.carte, flex: "1 1 300px", maxWidth: 360, minWidth: 260 }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Ce qu’il faut renseigner</h2>
-              <ul style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 8 }}>
-                <li>
-                  Un numéro et un <strong>descriptif</strong>, sans nom de client.
-                </li>
-                <li>
-                  L’<strong>imputation</strong> (BE, PE, PI…).
-                </li>
-                <li>
-                  Un <strong>responsable d’affaire</strong>.
-                </li>
-                <li>
-                  Les <strong>heures chiffrées par activité</strong>, avec le code si on veut détailler (facultatives
-                  pour une prestation planifiée par date de fin, comme PE).
-                </li>
-                <li>
-                  Pour un <strong>DBE</strong> : la date de remise de l’offre (code DT, heures facultatives).
-                </li>
-              </ul>
-              <h2 style={{ margin: "20px 0 10px", fontSize: 18 }}>Ce qui vient ensuite</h2>
-              <p style={{ margin: 0, color: "#3b4046" }}>
-                Les heures réellement passées arrivent seules depuis les feuilles d’heures : la fiche de l’affaire
-                les compare au chiffré, activité par activité.
-              </p>
-            </aside>
+            {/* 3. selon l'imputation */}
+            {imputation && type === "DBE" && (
+              <section style={{ ...page.carte, padding: 22 }}>
+                {titreEtape(3, "Remise de l’offre")}
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 200px" }}>
+                    <label htmlFor="remise" style={page.etiquette}>Date de remise{etoile}</label>
+                    <input id="remise" type="date" value={echeance} onChange={(e) => setEcheance(e.target.value)} style={page.entrees} />
+                    <div style={page.aide}>Obligatoire : c’est le jalon qui apparaît dans le planning.</div>
+                  </div>
+                  <div style={{ flex: "0 1 220px" }}>
+                    <label htmlFor="h-dbe" style={page.etiquette}>Heures de rédaction (code DT)</label>
+                    <input id="h-dbe" type="text" inputMode="decimal" value={heuresDbe} onChange={(e) => setHeuresDbe(e.target.value)} style={{ ...page.entrees, textAlign: "right" }} />
+                    <div style={page.aide}>Facultatives : pour réserver du temps de rédaction.</div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {imputation && type === "CBE" && prestation && (
+              <section style={{ ...page.carte, padding: 22 }}>
+                {titreEtape(3, `Prestation ${imputation}`)}
+                <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
+                  Une personne, une date de début, puis une date de fin, un nombre d’heures ou un nombre de jours. Congés et jours fériés repoussent la fin.
+                  Vous pouvez affecter tout de suite, ou le faire plus tard dans le planning.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ flex: "1 1 240px" }}>
+                      <label htmlFor="pers" style={page.etiquette}>Personne</label>
+                      <select id="pers" value={personne} onChange={(e) => setPersonne(e.target.value)} style={page.entrees}>
+                        <option value="">— Affecter plus tard —</option>
+                        {annuaire.map((c) => (
+                          <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}{!c.inclus_statistiques ? " (encadrement)" : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ flex: "1 1 170px" }}>
+                      <label htmlFor="debut" style={page.etiquette}>À partir du</label>
+                      <input id="debut" type="date" value={debut} onChange={(e) => setDebut(e.target.value)} style={page.entrees} />
+                    </div>
+                    <div style={{ flex: "1 1 220px" }}>
+                      <label htmlFor="act" style={page.etiquette}>Activité (facultative)</label>
+                      <select id="act" value={activitePrestation} onChange={(e) => setActivitePrestation(e.target.value)} style={page.entrees}>
+                        <option value="">—</option>
+                        {activitesActives.map((a) => (
+                          <option key={a.id} value={a.id}>{a.nom}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={page.etiquette}>La fin se définit par</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+                      {([["DATE", "Une date de fin"], ["HEURES", "Un nombre d’heures"], ["JOURS", "Un nombre de jours"]] as [ModeFin, string][]).map(([m, l]) => (
+                        <button key={m} type="button" aria-pressed={modeFin === m} style={{ ...segment(modeFin === m), padding: "0 16px", fontSize: 14 }} onClick={() => setModeFin(m)}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    {modeFin === "DATE" ? (
+                      <div style={{ flex: "1 1 200px" }}>
+                        <label htmlFor="fin" style={page.etiquette}>Date de fin</label>
+                        <input id="fin" type="date" value={finDate} onChange={(e) => setFinDate(e.target.value)} style={page.entrees} />
+                      </div>
+                    ) : (
+                      <div style={{ flex: "0 1 200px" }}>
+                        <label htmlFor="qte" style={page.etiquette}>{modeFin === "HEURES" ? "Nombre d’heures" : "Nombre de jours"}</label>
+                        <input id="qte" type="text" inputMode="decimal" value={quantite} onChange={(e) => setQuantite(e.target.value)} style={{ ...page.entrees, textAlign: "right" }} />
+                        <div style={page.aide}>{modeFin === "JOURS" ? "Les demi-journées sont acceptées (2,5)." : ""}</div>
+                      </div>
+                    )}
+                    <div style={{ flex: "0 1 140px" }}>
+                      <label htmlFor="pc" style={page.etiquette}>% du temps</label>
+                      <input id="pc" type="text" inputMode="numeric" value={pourcent} onChange={(e) => setPourcent(e.target.value)} style={{ ...page.entrees, textAlign: "right" }} />
+                    </div>
+                  </div>
+
+                  {personne && (
+                    <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 14, background: "#fafbfc", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontWeight: 800 }}>Résultat</div>
+                      {calcul.erreur && <div style={{ color: C.rougeTexte, fontSize: 14 }}>{calcul.erreur}</div>}
+                      {!calcul.pret && !calcul.erreur && (
+                        <div style={{ color: C.gris, fontSize: 14 }}>{calcul.chargement ? "Calcul des disponibilités…" : "Renseignez la fin (date, heures ou jours)."}</div>
+                      )}
+                      {calcul.resultat && (
+                        <>
+                          <div style={{ fontSize: 15 }}>
+                            {calcul.resultat.jours.length === 0 ? (
+                              <span style={{ color: C.rougeTexte }}>Aucun jour disponible à partir de cette date.</span>
+                            ) : (
+                              <>
+                                {formatHeures(calcul.resultat.total)} sur {calcul.resultat.jours.length} jour(s), du {formatDate(calcul.resultat.jours[0].jour)} au{" "}
+                                <strong>{formatDate(calcul.resultat.fin)}</strong>
+                                {modeFin === "DATE" && finDate && calcul.resultat.fin && calcul.resultat.fin > finDate && (
+                                  <strong style={{ color: C.orangeTexte }}> — fin repoussée (date demandée : {formatDate(finDate)})</strong>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          {calcul.manquants.length > 0 && (
+                            <div role="status" style={{ background: "#fdebd0", color: "#5c2f00", border: "1px solid #e9b877", borderRadius: 10, padding: "10px 14px", fontSize: 14 }}>
+                              <strong>▲ Pas disponible tous les jours.</strong>{" "}
+                              {calcul.manquants.map((m) => `${m.motif === "ferie" ? "Jour férié" : "Congé validé"} le ${formatDate(m.jour)}`).join(" · ")}. La fin est repoussée d’autant.
+                            </div>
+                          )}
+                          {conflit && (
+                            <div role="status" style={{ background: "#fde1e1", color: "#5c0a0a", border: "1px solid #e5a3a3", borderRadius: 10, padding: "10px 14px", fontSize: 14 }}>
+                              <strong>Chez le client.</strong> Cette personne est déjà en prestation externe le {formatDate(conflit)} : elle n’est pas affectable ailleurs.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {imputation && type === "CBE" && !prestation && (
+              <section style={{ ...page.carte, padding: 22 }}>
+                {titreEtape(3, "Heures chiffrées et livraison")}
+                <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
+                  Les heures par activité apparaissent ensuite dans le planning, où vous affectez les ressources. Le détail se fera dans les feuilles d’heures, au bilan.
+                </p>
+
+                {lignes.map((l) => (
+                  <div key={l.cle} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 10 }}>
+                    <div style={{ flex: "3 1 260px", minWidth: 0 }}>
+                      <label htmlFor={`act-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>Activité</label>
+                      <select id={`act-${l.cle}`} value={l.activite_id} onChange={(e) => setLignes((x) => x.map((y) => (y.cle === l.cle ? { ...y, activite_id: e.target.value } : y)))} style={page.entrees}>
+                        <option value="">— Choisir —</option>
+                        {activitesActives.map((a) => (
+                          <option key={a.id} value={a.id}>{a.nom}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ flex: "1 1 140px", minWidth: 0 }}>
+                      <label htmlFor={`h-${l.cle}`} style={{ ...page.aide, fontWeight: 700, marginTop: 0 }}>Heures chiffrées</label>
+                      <input id={`h-${l.cle}`} type="text" inputMode="decimal" value={l.heures} onChange={(e) => setLignes((x) => x.map((y) => (y.cle === l.cle ? { ...y, heures: e.target.value } : y)))} style={{ ...page.entrees, textAlign: "right" }} />
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Retirer cette ligne"
+                      disabled={lignes.length === 1}
+                      onClick={() => setLignes((x) => x.filter((y) => y.cle !== l.cle))}
+                      style={{ minWidth: 44, minHeight: 44, border: "1.5px solid #b9bec5", background: "#ffffff", borderRadius: 8, fontSize: 20, fontWeight: 700, color: "#3b4046", cursor: lignes.length === 1 ? "default" : "pointer", opacity: lignes.length === 1 ? 0.4 : 1 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                  <button type="button" style={page.btnSecondaire} onClick={() => setLignes((x) => [...x, nouvelleLigne()])}>+ Ajouter une activité</button>
+                  <div style={{ fontSize: 18 }}>Total chiffré : <strong style={{ fontSize: 24 }}>{formatHeures(total)}</strong></div>
+                </div>
+
+                <div style={{ marginTop: 18, maxWidth: 260 }}>
+                  <label htmlFor="livraison" style={page.etiquette}>Date de livraison souhaitée</label>
+                  <input id="livraison" type="date" value={echeance} onChange={(e) => setEcheance(e.target.value)} style={page.entrees} />
+                  <div style={page.aide}>Facultative : à préciser plus tard si besoin.</div>
+                </div>
+              </section>
+            )}
+
+            {!imputation && (
+              <p style={{ color: C.gris, margin: "4px 4px 0" }}>Choisissez une imputation pour continuer.</p>
+            )}
+
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button type="button" style={page.btnSecondaire} onClick={() => router.push("/pilotage")}>Annuler</button>
+              <button type="button" style={{ ...page.btnPrimaire, opacity: enregistrement || !imputation ? 0.6 : 1 }} disabled={enregistrement || !imputation} onClick={enregistrer}>
+                {enregistrement ? "Enregistrement…" : prestation && personne ? "Déclarer et affecter" : "Déclarer l’affaire"}
+              </button>
+            </div>
           </div>
         )}
       </div>
