@@ -875,19 +875,6 @@ if (!collaborateur) {
             }
           />
 
-          {accesFeuilles && role !== "ADMIN" && (
-            <Carte
-              icone="📋"
-              titre="Suivi des feuilles"
-              description="Consulter les feuilles de temps de tous les collaborateurs"
-              onClick={() =>
-                router.push(
-                  "/admin/feuilles"
-                )
-              }
-            />
-          )}
-
           <Carte
             icone="📊"
             titre="Bilan affaire"
@@ -895,17 +882,6 @@ if (!collaborateur) {
             onClick={() =>
               router.push(
                 "/affaires/bilan"
-              )
-            }
-          />
-
-          <Carte
-            icone="📈"
-            titre="Mon bilan"
-            description="Ma répartition du temps : vendu, devis, production, formation"
-            onClick={() =>
-              router.push(
-                "/mon-bilan"
               )
             }
           />
@@ -921,32 +897,6 @@ if (!collaborateur) {
             }
           />
 
-          {accesExportExcel &&
-            role !== "ADMIN" && (
-              <Carte
-                icone="📊"
-                titre="Export Excel"
-                description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
-                onClick={() =>
-                  router.push(
-                    "/admin/export-excel"
-                  )
-                }
-              />
-            )}
-
-          {accesBilanRH && role !== "ADMIN" && (
-            <Carte
-              icone="🧑‍💼"
-              titre="Bilan RH mensuel"
-              description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
-              onClick={() =>
-                router.push(
-                  "/admin/bilan-rh"
-                )
-              }
-            />
-          )}
         </div>
 
         {/* =====================================================
@@ -1221,13 +1171,135 @@ if (!collaborateur) {
               )}
             </div>
 
+          </>
+        )}
+
+        {/* =====================================================
+            ADMINISTRATEURS ET RESPONSABLES
+        ===================================================== */}
+
+        {(role === "ADMIN" || peut(role, "piloterBE")) && (
+          <>
+            <SectionTitre
+              titre="Pilotage BE"
+              description="Affaires DBE / CBE et planning du bureau d'études"
+            />
+
+            <div
+              style={
+                styles.cardGrid
+              }
+            >
+              <Carte
+                icone="🗂️"
+                titre="Portefeuille des affaires"
+                description="Suivre les DBE et les CBE : chiffré, réalisé, dépassements"
+                onClick={() =>
+                  router.push(
+                    "/pilotage"
+                  )
+                }
+              />
+
+              <Carte
+                icone="📅"
+                titre="Planning"
+                description="Frise par ressource : affectations, absences, jalons de remise des DBE"
+                onClick={() =>
+                  router.push(
+                    "/pilotage/planning"
+                  )
+                }
+              />
+
+              <Carte
+                icone="⚖️"
+                titre="Charge par ressource"
+                description="Capacité, affecté et surcharge de chaque personne, semaine par semaine"
+                onClick={() =>
+                  router.push(
+                    "/pilotage/ressources"
+                  )
+                }
+              />
+
+              <Carte
+                icone="＋"
+                titre="Nouvelle affaire"
+                description="Déclarer un DBE ou un CBE : descriptif, imputation, responsable et heures par activité"
+                onClick={() =>
+                  router.push(
+                    "/pilotage/nouvelle"
+                  )
+                }
+              />
+            </div>
+
+            <SectionTitre
+              titre="Suivi des équipes"
+              description="Feuilles de temps, bilan RH mensuel et export Excel"
+            />
+
+            <div
+              style={
+                styles.cardGrid
+              }
+            >
+              {accesFeuilles && (
+                <Carte
+                  icone="📋"
+                  titre="Feuilles collaborateurs"
+                  description="Consulter les feuilles de temps de tous les collaborateurs"
+                  onClick={() =>
+                    router.push(
+                      "/admin/feuilles"
+                    )
+                  }
+                />
+              )}
+
+              {accesBilanRH && (
+                <Carte
+                  icone="🧑‍💼"
+                  titre="Bilan RH mensuel"
+                  description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
+                  onClick={() =>
+                    router.push(
+                      "/admin/bilan-rh"
+                    )
+                  }
+                />
+              )}
+
+              {accesExportExcel && (
+                <Carte
+                  icone="📊"
+                  titre="Export Excel"
+                  description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
+                  onClick={() =>
+                    router.push(
+                      "/admin/export-excel"
+                    )
+                  }
+                />
+              )}
+            </div>
+          </>
+        )}
+
+        {/* =====================================================
+            ADMINISTRATEURS SEULEMENT
+        ===================================================== */}
+
+        {role === "ADMIN" && (
+          <>
             {/* =================================================
-                GESTION
+                ADMINISTRATION
             ================================================= */}
 
             <SectionTitre
-              titre="Gestion"
-              description="Paramétrer les collaborateurs et suivre les feuilles"
+              titre="Administration"
+              description="Référentiels et paramétrage, réservés aux administrateurs"
             />
 
             <div
@@ -1248,44 +1320,11 @@ if (!collaborateur) {
 
               <Carte
                 icone="⏰"
-                titre="Profils horaires"
+                titre="Rythmes horaires"
                 description="Gérer les profils, rythmes et bases horaires"
                 onClick={() =>
                   router.push(
                     "/admin/profils-horaires"
-                  )
-                }
-              />
-
-              <Carte
-                icone="📄"
-                titre="Feuilles collaborateurs"
-                description="Consulter les feuilles de temps de tous les collaborateurs"
-                onClick={() =>
-                  router.push(
-                    "/admin/feuilles"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🧑‍💼"
-                titre="Bilan RH mensuel"
-                description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
-                onClick={() =>
-                  router.push(
-                    "/admin/bilan-rh"
-                  )
-                }
-              />
-
-              <Carte
-                icone="📊"
-                titre="Export Excel"
-                description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
-                onClick={() =>
-                  router.push(
-                    "/admin/export-excel"
                   )
                 }
               />
@@ -1302,6 +1341,17 @@ if (!collaborateur) {
               />
 
               <Carte
+                icone="🏷️"
+                titre="Imputations des affaires"
+                description="Gérer la liste BE, PE, PI, Scan, Négoce, IG… proposée dans le Pilotage BE"
+                onClick={() =>
+                  router.push(
+                    "/admin/imputations-pilotage"
+                  )
+                }
+              />
+
+              <Carte
                 icone="🧩"
                 titre="Gestion des activités"
                 description="Créer les activités du BE et associer les codes d'imputation à chaque activité"
@@ -1311,17 +1361,6 @@ if (!collaborateur) {
                   )
                 }
               />
-
-              <Carte
-  icone="🧠"
-  titre="Export IA"
-  description="Générer un contexte complet du projet (code, base, architecture, droits, fonctions SQL)."
-  onClick={() =>
-    router.push(
-      "/admin/Export-IA"
-    )
-  }
-/>
 
               <Carte
                 icone="🧑‍💼"
@@ -1341,7 +1380,7 @@ if (!collaborateur) {
 
             <SectionTitre
               titre="Analyse"
-              description="Analyser la charge, l'activité et les imputations"
+              description="Analyser la charge, l'activité et les imputations (administrateurs)"
             />
 
             <div
@@ -1370,6 +1409,17 @@ if (!collaborateur) {
                   )
                 }
               />
+
+              <Carte
+  icone="🧠"
+  titre="Export IA"
+  description="Générer un contexte complet du projet (code, base, architecture, droits, fonctions SQL)."
+  onClick={() =>
+    router.push(
+      "/admin/Export-IA"
+    )
+  }
+/>
             </div>
 
             {/* =================================================
@@ -1378,7 +1428,7 @@ if (!collaborateur) {
 
             <SectionTitre
               titre="Données"
-              description="Importer et alimenter les données historiques"
+              description="Importer et alimenter les données historiques (administrateurs)"
             />
 
             <div

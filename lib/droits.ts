@@ -33,6 +33,7 @@ export const DROITS = {
   bilanRH: 1,
   exporterExcel: 1,
   administrerFeuilles: 2,
+  piloterBE: 1, // Pilotage BE : déclarer et modifier les affaires, charges, affectations
   administration: 2, // codes, activités, profils, bilans, imports, export IA...
 } as const;
 

@@ -773,7 +773,7 @@ function MonBilanContenu() {
 
 export default function MonBilanPage() {
   return (
-    <GardeAcces droit={null}>
+    <GardeAcces droit="administration">
       <MonBilanContenu />
     </GardeAcces>
   );

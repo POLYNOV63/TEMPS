@@ -1,0 +1,513 @@
+/* ===============================================================
+   PILOTAGE BE - LECTURE DU "SUIVI D'AFFAIRE BE"
+
+   Fichier sans dépendance (ni React, ni Supabase) : la logique est
+   testable seule.
+
+   CONFIDENTIALITE
+   Seules les colonnes de la liste COLONNES_LUES sont lues, repérées
+   par leur TITRE (et non par leur position). Toute autre colonne -
+   clients, adresses, contacts, montants, commentaires... - n'est
+   jamais lue, ni transmise, ni stockée.
+
+   Le fichier fonctionne aussi bien avec le fichier d'origine qu'avec
+   un fichier INDEX qui ne contient que ces colonnes.
+
+   REGLES DE REGROUPEMENT
+   - Une ligne du fichier = un couple devis (DBE) / affaire (CBE).
+   - CBE1530, CBE1530R1, CBE1530R2 (avenants / révisions) et
+     CBE1544LOT1 (lots) forment UNE affaire : numéro de base 1530 ;
+     leurs heures s'additionnent, sauf pour un avenant perdu ou annulé.
+   - CBE1535ECH1 (échéance de paiement) est ignoré.
+   - Un DBE devient une affaire de type DBE ; chaque CBE de base est lié
+     à son DBE d'origine.
+================================================================ */
+
+export const ACTIVITES_EXCEL = [
+  { cle: "MECA", libelle: "Méca", entete: "heuresmeca" },
+  { cle: "CALCUL", libelle: "Calcul", entete: "heurescalcul" },
+  { cle: "ELEC", libelle: "Élec", entete: "heureselec" },
+  { cle: "PNEU", libelle: "Pneu", entete: "heurespneu" },
+  { cle: "SCAN", libelle: "Scan", entete: "heuresscan" },
+  { cle: "AUTRE", libelle: "Autre", entete: "heuresautre" },
+] as const;
+
+export type CleActivite = (typeof ACTIVITES_EXCEL)[number]["cle"];
+
+/* Liste blanche : titre normalisé -> champ. C'est la seule porte d'entrée. */
+export const COLONNES_LUES = [
+  { champ: "devis", entete: "ndevis", libelle: "N° de devis (DBE)" },
+  { champ: "affaire", entete: "naffaire", libelle: "N° d’affaire (CBE)" },
+  { champ: "designation", entete: "designation", libelle: "Désignation" },
+  { champ: "statut", entete: "statut", libelle: "Statut" },
+  { champ: "nature", entete: "imputation", libelle: "Nature (BE, PI, PE, Scan, Négoce, IG)" },
+  { champ: "redacteur", entete: "redacteurdevis", libelle: "Rédacteur du devis" },
+  ...ACTIVITES_EXCEL.map((a) => ({
+    champ: `h_${a.cle}`,
+    entete: a.entete,
+    libelle: `Heures ${a.libelle.toLowerCase()}`,
+  })),
+  { champ: "total", entete: "totalheures", libelle: "Total des heures" },
+  { champ: "ouverture", entete: "dateouverturedevis", libelle: "Date d’ouverture du devis" },
+  { champ: "envoi", entete: "dateenvoidevis", libelle: "Date d’envoi du devis" },
+  { champ: "commande", entete: "datereceptioncommande", libelle: "Date de réception de la commande" },
+  { champ: "livraisonEstimee", entete: "datedelivraisonestimee", libelle: "Date de livraison estimée" },
+  { champ: "livraison", entete: "datedelivraison", libelle: "Date de livraison" },
+] as const;
+
+export const COLONNES_JAMAIS_LUES = [
+  "Client, société, adresse, contacts, téléphones, mails",
+  "Tous les montants (devis, achats, négoce, échéances)",
+  "Les commentaires libres",
+  "Les numéros comptables et les options",
+  "Toute colonne absente de la liste des colonnes lues",
+];
+
+export const NATURES = [
+  { valeur: "BE", libelle: "BE (affaire sur cahier des charges)" },
+  { valeur: "PI", libelle: "PI (prestation interne)" },
+  { valeur: "PE", libelle: "PE (prestation externe)" },
+  { valeur: "SCAN", libelle: "Scan" },
+  { valeur: "NEGOCE", libelle: "Négoce" },
+  { valeur: "IG", libelle: "IG (inter-groupe)" },
+] as const;
+
+export type Nature = (typeof NATURES)[number]["valeur"];
+export type StatutAffaire = "EN_ATTENTE" | "EN_COURS" | "LIVREE" | "ABANDONNEE";
+
+/* ---------------------------------------------------------------
+   OUTILS
+--------------------------------------------------------------- */
+
+export function norm(valeur: unknown): string {
+  return String(valeur ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function texte(valeur: unknown): string {
+  return String(valeur ?? "").replace(/\s+/g, " ").trim();
+}
+
+export function nombreFR(valeur: unknown): number {
+  if (typeof valeur === "number") return Number.isFinite(valeur) ? valeur : 0;
+
+  const s = String(valeur ?? "")
+    .replace(/[\u00a0\s]/g, "")
+    .replace(",", ".");
+
+  if (!s) return 0;
+
+  const n = Number(s);
+
+  return Number.isFinite(n) ? n : 0;
+}
+
+function iso(annee: number, mois: number, jour: number): string | null {
+  if (annee < 2000 || annee > 2100 || mois < 1 || mois > 12 || jour < 1 || jour > 31) return null;
+
+  return `${annee}-${String(mois).padStart(2, "0")}-${String(jour).padStart(2, "0")}`;
+}
+
+/* Accepte : vraie date, numéro de série Excel, texte jj/mm/aaaa, texte aaaa-mm-jj. */
+export function dateISO(valeur: unknown): string | null {
+  if (valeur === null || valeur === undefined || valeur === "") return null;
+
+  if (valeur instanceof Date) {
+    if (Number.isNaN(valeur.getTime())) return null;
+    return iso(valeur.getFullYear(), valeur.getMonth() + 1, valeur.getDate());
+  }
+
+  if (typeof valeur === "number") {
+    if (valeur < 36526 || valeur > 73050) return null;
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(valeur) * 86400000);
+    return iso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  }
+
+  const s = String(valeur).trim();
+
+  const fr = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/.exec(s);
+  if (fr) return iso(Number(fr[3]), Number(fr[2]), Number(fr[1]));
+
+  const en = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (en) return iso(Number(en[1]), Number(en[2]), Number(en[3]));
+
+  return null;
+}
+
+export function statutBrutNorm(valeur: unknown): string {
+  return norm(valeur);
+}
+
+export function natureDepuisTexte(valeur: unknown): Nature | null {
+  switch (norm(valeur)) {
+    case "be":
+      return "BE";
+    case "pi":
+      return "PI";
+    case "pe":
+      return "PE";
+    case "scan":
+      return "SCAN";
+    case "negoce":
+      return "NEGOCE";
+    case "ig":
+      return "IG";
+    default:
+      return null;
+  }
+}
+
+/* ---------------------------------------------------------------
+   LECTURE
+--------------------------------------------------------------- */
+
+export type LigneSuivi = {
+  ligne: number; // numéro de ligne dans le fichier (1 = première)
+  devis: string; // "2571"
+  cbeBase: string | null; // "1530"
+  suffixe: "BASE" | "AVENANT" | "LOT" | "ECHEANCE" | "AUTRE" | null;
+  designation: string;
+  statut: string; // statut normalisé (ex. "livree")
+  nature: Nature | null;
+  natureBrute: string;
+  redacteur: string;
+  heures: Record<CleActivite, number>;
+  total: number;
+  ouverture: string | null;
+  envoi: string | null;
+  commande: string | null;
+  livraisonEstimee: string | null;
+  livraison: string | null;
+};
+
+export type Diagnostic = {
+  colonnesTrouvees: string[]; // libellés des colonnes lues
+  colonnesManquantes: string[]; // colonnes utiles introuvables
+  lignesLues: number;
+  lignesIgnorees: number; // sans numéro de devis reconnu
+  echeancesIgnorees: number;
+  avenantsRegroupes: number;
+  lotsRegroupes: number;
+  heuresSansDetail: number; // lignes dont le total n'est pas détaillé par activité
+  naturesInconnues: number;
+  statutsInconnus: string[];
+};
+
+const OBLIGATOIRES = ["devis", "affaire", "statut", "nature"];
+
+export function lireSuivi(rows: unknown[][]): { lignes: LigneSuivi[]; diagnostic: Diagnostic } {
+  const diagnostic: Diagnostic = {
+    colonnesTrouvees: [],
+    colonnesManquantes: [],
+    lignesLues: 0,
+    lignesIgnorees: 0,
+    echeancesIgnorees: 0,
+    avenantsRegroupes: 0,
+    lotsRegroupes: 0,
+    heuresSansDetail: 0,
+    naturesInconnues: 0,
+    statutsInconnus: [],
+  };
+
+  // Ligne d'en-têtes : celle qui contient "N° Devis" et "N°Affaire"
+  let ligneEntete = -1;
+  const limite = Math.min(rows.length, 15);
+
+  for (let r = 0; r < limite; r++) {
+    const titres = (rows[r] ?? []).map(norm);
+    if (titres.includes("ndevis") && titres.includes("naffaire")) {
+      ligneEntete = r;
+      break;
+    }
+  }
+
+  if (ligneEntete < 0) {
+    diagnostic.colonnesManquantes = ["N° Devis", "N°Affaire"];
+    return { lignes: [], diagnostic };
+  }
+
+  // Position de chaque colonne autorisée (première occurrence du titre)
+  const titres = (rows[ligneEntete] ?? []).map(norm);
+  const position: Record<string, number> = {};
+
+  for (const colonne of COLONNES_LUES) {
+    const index = titres.indexOf(colonne.entete);
+
+    if (index >= 0) {
+      position[colonne.champ] = index;
+      diagnostic.colonnesTrouvees.push(colonne.libelle);
+    } else {
+      diagnostic.colonnesManquantes.push(colonne.libelle);
+    }
+  }
+
+  if (OBLIGATOIRES.some((champ) => position[champ] === undefined)) {
+    return { lignes: [], diagnostic };
+  }
+
+  const lire = (ligne: unknown[], champ: string): unknown =>
+    position[champ] === undefined ? "" : ligne[position[champ]];
+
+  const statutsInconnus = new Set<string>();
+  const lignes: LigneSuivi[] = [];
+  const STATUTS_CONNUS = new Set([
+    "devisouvert",
+    "devisenvoye",
+    "intentiondecommande",
+    "commanderecue",
+    "livree",
+    "devisperdu",
+    "commandeannulee",
+  ]);
+
+  for (let r = ligneEntete + 1; r < rows.length; r++) {
+    const ligne = rows[r];
+    if (!ligne) continue;
+
+    const devisBrut = texte(lire(ligne, "devis"));
+    const affaireBrute = texte(lire(ligne, "affaire"));
+
+    if (!devisBrut && !affaireBrute) continue;
+
+    diagnostic.lignesLues++;
+
+    const devis = /^DBE\s*[-:]?\s*(\d+)/i.exec(devisBrut);
+
+    if (!devis) {
+      diagnostic.lignesIgnorees++;
+      continue;
+    }
+
+    let cbeBase: string | null = null;
+    let suffixe: LigneSuivi["suffixe"] = null;
+
+    if (affaireBrute) {
+      const cbe = /^CBE\s*[-:]?\s*(\d+)\s*([A-Za-z].*)?$/i.exec(affaireBrute);
+
+      if (cbe) {
+        cbeBase = cbe[1];
+        const reste = (cbe[2] ?? "").toUpperCase().replace(/\s+/g, "");
+
+        if (!reste) suffixe = "BASE";
+        else if (/^R\d*$/.test(reste)) suffixe = "AVENANT";
+        else if (/^LOT\d*$/.test(reste)) suffixe = "LOT";
+        else if (/^ECH\d*$/.test(reste)) suffixe = "ECHEANCE";
+        else suffixe = "AUTRE";
+      }
+    }
+
+    if (suffixe === "ECHEANCE") {
+      diagnostic.echeancesIgnorees++;
+      continue;
+    }
+
+    const statut = norm(lire(ligne, "statut"));
+
+    if (statut && !STATUTS_CONNUS.has(statut)) statutsInconnus.add(texte(lire(ligne, "statut")));
+
+    const natureBrute = texte(lire(ligne, "nature"));
+    const nature = natureDepuisTexte(natureBrute);
+
+    if (natureBrute && !nature) diagnostic.naturesInconnues++;
+
+    const heures = {} as Record<CleActivite, number>;
+    let somme = 0;
+
+    for (const activite of ACTIVITES_EXCEL) {
+      const h = Math.max(0, nombreFR(lire(ligne, `h_${activite.cle}`)));
+      heures[activite.cle] = h;
+      somme += h;
+    }
+
+    const total = Math.max(0, nombreFR(lire(ligne, "total")));
+
+    // Total sans détail par activité : le reliquat est rangé en "Autre"
+    if (total > somme + 0.01) {
+      heures.AUTRE += total - somme;
+      diagnostic.heuresSansDetail++;
+    }
+
+    lignes.push({
+      ligne: r + 1,
+      devis: devis[1],
+      cbeBase,
+      suffixe,
+      designation: texte(lire(ligne, "designation")),
+      statut,
+      nature,
+      natureBrute,
+      redacteur: texte(lire(ligne, "redacteur")),
+      heures,
+      total: Math.max(total, somme),
+      ouverture: dateISO(lire(ligne, "ouverture")),
+      envoi: dateISO(lire(ligne, "envoi")),
+      commande: dateISO(lire(ligne, "commande")),
+      livraisonEstimee: dateISO(lire(ligne, "livraisonEstimee")),
+      livraison: dateISO(lire(ligne, "livraison")),
+    });
+  }
+
+  diagnostic.statutsInconnus = Array.from(statutsInconnus);
+
+  return { lignes, diagnostic };
+}
+
+/* ---------------------------------------------------------------
+   REGROUPEMENT
+--------------------------------------------------------------- */
+
+export type AffaireImport = {
+  type: "DBE" | "CBE";
+  numero: string;
+  designation: string;
+  nature: Nature | null;
+  statut: StatutAffaire;
+  redacteur: string;
+  dateOuverture: string | null;
+  dateEnvoiDevis: string | null;
+  dateCommande: string | null;
+  echeance: string | null;
+  dateLivraison: string | null;
+  dbeOrigine: string | null; // numéro du DBE (pour un CBE)
+  charges: Record<CleActivite, number>; // CBE seulement
+  nbLignes: number;
+};
+
+function statutDbe(statut: string): StatutAffaire {
+  switch (statut) {
+    case "devisouvert":
+      return "EN_COURS";
+    case "devisenvoye":
+    case "intentiondecommande":
+      return "EN_ATTENTE";
+    case "devisperdu":
+    case "commandeannulee":
+      return "ABANDONNEE";
+    case "commanderecue":
+    case "livree":
+      return "LIVREE";
+    default:
+      return "EN_COURS";
+  }
+}
+
+function statutCbe(statut: string): StatutAffaire {
+  switch (statut) {
+    case "commanderecue":
+      return "EN_COURS";
+    case "livree":
+      return "LIVREE";
+    case "commandeannulee":
+    case "devisperdu":
+      return "ABANDONNEE";
+    default:
+      return "EN_ATTENTE";
+  }
+}
+
+const PRIORITE_STATUT = ["livree", "commanderecue", "intentiondecommande", "devisenvoye", "devisouvert", "commandeannulee", "devisperdu"];
+
+function meilleurStatut(lignes: LigneSuivi[]): string {
+  for (const s of PRIORITE_STATUT) {
+    if (lignes.some((l) => l.statut === s)) return s;
+  }
+  return lignes[0]?.statut ?? "";
+}
+
+function premier<T>(valeurs: (T | null | undefined | "")[]): T | null {
+  for (const v of valeurs) if (v !== null && v !== undefined && v !== "") return v as T;
+  return null;
+}
+
+const min = (v: (string | null)[]) => v.filter((x): x is string => !!x).sort()[0] ?? null;
+const max = (v: (string | null)[]) => v.filter((x): x is string => !!x).sort().slice(-1)[0] ?? null;
+
+export function fusionner(lignes: LigneSuivi[], diagnostic?: Diagnostic): AffaireImport[] {
+  const parDevis = new Map<string, LigneSuivi[]>();
+  const parCbe = new Map<string, LigneSuivi[]>();
+
+  for (const l of lignes) {
+    if (!parDevis.has(l.devis)) parDevis.set(l.devis, []);
+    parDevis.get(l.devis)!.push(l);
+
+    if (l.cbeBase) {
+      if (!parCbe.has(l.cbeBase)) parCbe.set(l.cbeBase, []);
+      parCbe.get(l.cbeBase)!.push(l);
+    }
+  }
+
+  const affaires: AffaireImport[] = [];
+  const vide = () => ({ MECA: 0, CALCUL: 0, ELEC: 0, PNEU: 0, SCAN: 0, AUTRE: 0 }) as Record<CleActivite, number>;
+
+  // --- DBE
+  for (const [numero, groupe] of parDevis) {
+    const ref = groupe.find((l) => l.suffixe === null || l.suffixe === "BASE") ?? groupe[0];
+    const avecCommande = groupe.some(
+      (l) => l.cbeBase && ["commanderecue", "livree", "commandeannulee"].includes(l.statut)
+    );
+    const envoi = min(groupe.map((l) => l.envoi));
+
+    affaires.push({
+      type: "DBE",
+      numero,
+      designation: ref.designation || `DBE ${numero}`,
+      nature: premier(groupe.map((l) => l.nature)),
+      statut: avecCommande ? "LIVREE" : statutDbe(ref.statut),
+      redacteur: premier(groupe.map((l) => l.redacteur)) ?? "",
+      dateOuverture: min(groupe.map((l) => l.ouverture)),
+      dateEnvoiDevis: envoi,
+      dateCommande: null,
+      echeance: envoi,
+      dateLivraison: null,
+      dbeOrigine: null,
+      charges: vide(),
+      nbLignes: groupe.length,
+    });
+  }
+
+  // --- CBE
+  for (const [base, groupe] of parCbe) {
+    const ligneBase = groupe.find((l) => l.suffixe === "BASE") ?? groupe[0];
+    const retenues = groupe.filter((l) => !["devisperdu", "commandeannulee"].includes(l.statut));
+    const pourHeures = retenues.length > 0 ? retenues : groupe;
+    const charges = vide();
+
+    for (const l of pourHeures) {
+      for (const a of ACTIVITES_EXCEL) charges[a.cle] += l.heures[a.cle];
+    }
+
+    if (diagnostic) {
+      diagnostic.avenantsRegroupes += groupe.filter((l) => l.suffixe === "AVENANT").length;
+      diagnostic.lotsRegroupes += groupe.filter((l) => l.suffixe === "LOT").length;
+    }
+
+    const statutRef = groupe.some((l) => l.suffixe === "BASE") ? ligneBase.statut : meilleurStatut(groupe);
+    const dbe = parDevis.get(ligneBase.devis)?.[0];
+
+    affaires.push({
+      type: "CBE",
+      numero: base,
+      designation: ligneBase.designation || dbe?.designation || `CBE ${base}`,
+      nature: ligneBase.nature ?? premier(groupe.map((l) => l.nature)),
+      statut: statutCbe(statutRef),
+      redacteur: ligneBase.redacteur || premier(groupe.map((l) => l.redacteur)) || "",
+      dateOuverture: min(groupe.map((l) => l.ouverture)),
+      dateEnvoiDevis: min(groupe.map((l) => l.envoi)),
+      dateCommande: ligneBase.commande ?? min(groupe.map((l) => l.commande)),
+      echeance: ligneBase.livraisonEstimee ?? max(groupe.map((l) => l.livraisonEstimee)),
+      dateLivraison: ligneBase.livraison ?? max(groupe.map((l) => l.livraison)),
+      dbeOrigine: ligneBase.devis,
+      charges,
+      nbLignes: groupe.length,
+    });
+  }
+
+  return affaires;
+}
+
+export function totalCharges(charges: Record<CleActivite, number>): number {
+  return ACTIVITES_EXCEL.reduce((t, a) => t + charges[a.cle], 0);
+}
