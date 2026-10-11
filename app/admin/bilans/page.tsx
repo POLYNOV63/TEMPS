@@ -227,8 +227,13 @@ const CODES_ABSENCE_LEGACY = [
 ];
 
 const CODES_HORS_BILAN_LEGACY = [
-  "FE", "CP", "AC", "AP",
+  "FE", "CP", "AC", "AP", "EC",
 ];
+
+// CP (congés payés) et EC (alternant à l'école) : déduits de la capacité, mais
+// jamais présentés comme des absences à analyser, quelle que soit la catégorie
+// qui leur est donnée dans Gestion des codes.
+const CODES_EXCLUS_ANALYSE = ["CP", "EC"];
 
 const COULEURS = {
   rouge: "#c00000",
@@ -402,6 +407,9 @@ function classerCode(
   codesMap: Map<string, CodeImputation>
 ): Categorie | null {
   const c = normaliserTexte(code);
+
+  if (CODES_EXCLUS_ANALYSE.includes(c)) return "IGNORE";
+
   const categorie = categorieCode(c, codesMap);
 
   if (categorie === "NI") return "NI";
@@ -909,7 +917,7 @@ function BilansPageContenu() {
       >();
 
       // Les collaborateurs "hors statistiques" (encadrement) n'entrent pas dans
-      // la consolidation de l'équipe : voir le bloc « Encadrement ».
+      // la consolidation de l'équipe.
       collaborateurs
         .filter((c) => c.inclus_statistiques !== false)
         .forEach((c) => map.set(c.id, c));
@@ -2472,125 +2480,6 @@ feuilles.forEach((f) => {
       .sort((a, b) => b.heures - a.heures);
   }, [historique, imputations, jours, feuilles, idsExclus, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
 
-  /* =====================================================
-     ENCADREMENT (hors statistiques de productivité)
-  ===================================================== */
-
-  type LigneEncadrement = {
-    id: string;
-    trigramme: string;
-    nom: string;
-    cbe: number;
-    dbe: number;
-    cn: number;
-    ni: number;
-    formation: number;
-    production: number;
-    autres: number;
-  };
-
-  const encadrement = useMemo(() => {
-    const exclus = collaborateurs.filter(
-      (c) => c.inclus_statistiques === false
-    );
-
-    if (exclus.length === 0) return [] as LigneEncadrement[];
-
-    const lignes = new Map<string, LigneEncadrement>();
-
-    exclus.forEach((c) =>
-      lignes.set(c.id, {
-        id: c.id,
-        trigramme: c.trigramme ?? "",
-        nom: `${c.prenom ?? ""} ${c.nom ?? ""}`.trim(),
-        cbe: 0,
-        dbe: 0,
-        cn: 0,
-        ni: 0,
-        formation: 0,
-        production: 0,
-        autres: 0,
-      })
-    );
-
-    const ajouter = (
-      id: string,
-      classification: Categorie | null,
-      h: number
-    ) => {
-      const ligne = lignes.get(id);
-      if (!ligne || h <= 0) return;
-
-      switch (classification) {
-        case "CBE":
-          ligne.cbe += h;
-          break;
-        case "DBE":
-          ligne.dbe += h;
-          break;
-        case "CN":
-          ligne.cn += h;
-          break;
-        case "NI":
-          ligne.ni += h;
-          break;
-        case "FORMATION":
-          ligne.formation += h;
-          break;
-        case "AFFAIRES_SANS_TYPE":
-          ligne.production += h;
-          break;
-        case "DIVERS_ABSENCES":
-        case "IGNORE":
-          break;
-        default:
-          ligne.autres += h;
-      }
-    };
-
-    const feuillesNouvelles = new Set(
-      feuilles.map((f) => {
-        const w = isoSemaine(new Date(`${f.semaine_debut}T00:00:00`));
-        return `${f.collaborateur_id}-${w.annee}-${w.semaine}`;
-      })
-    );
-
-    historique.forEach((l) => {
-      if (!idsExclus.has(l.collaborateur_id)) return;
-      if (!semaineDansPeriode(l.annee, l.semaine)) return;
-      if (feuillesNouvelles.has(`${l.collaborateur_id}-${l.annee}-${l.semaine}`)) return;
-
-      ajouter(l.collaborateur_id, classifierHistorique(l, codesMap), nombre(l.heures));
-    });
-
-    const feuillesMap = new Map(feuilles.map((f) => [f.id, f]));
-    const joursMap = new Map(jours.map((j) => [j.id, j]));
-
-    imputations.forEach((imp) => {
-      const jour = joursMap.get(imp.jour_id);
-      const feuille = jour ? feuillesMap.get(jour.feuille_id) : undefined;
-      if (!feuille || !idsExclus.has(feuille.collaborateur_id)) return;
-
-      const w = isoSemaine(new Date(`${feuille.semaine_debut}T00:00:00`));
-      if (!semaineDansPeriode(w.annee, w.semaine)) return;
-
-      const type = normaliserTexte(imp.type_affaire);
-      const numero = String(imp.numero_affaire ?? "").trim();
-      const code = normaliserTexte(imp.code);
-
-      let classification: Categorie | null;
-
-      if (type === "CBE" || /^CBE/i.test(numero)) classification = "CBE";
-      else if (type === "DBE" || /^DBE/i.test(numero)) classification = "DBE";
-      else if (type === "DIVERS") classification = classerCode(code, codesMap) ?? "AFFAIRES_SANS_TYPE";
-      else classification = classerCode(code, codesMap) ?? "AUTRES";
-
-      ajouter(feuille.collaborateur_id, classification, nombre(imp.heures));
-    });
-
-    return Array.from(lignes.values()).sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
-  }, [collaborateurs, idsExclus, historique, imputations, jours, feuilles, codesMap, periodeActive, modePeriode, annee, mois, dateDebutLibre, dateFinLibre]);
-
   // Heures de formation d'un code donné (FI = interne, FO = externe).
   const heuresFormationCode = (code: string) =>
     detailCodes
@@ -3433,68 +3322,6 @@ feuilles.forEach((f) => {
             }
           />
         </section>
-
-        {encadrement.length > 0 && (
-          <section style={{ ...styles.detailBox, marginTop: 14 }}>
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>
-              Encadrement — hors statistiques de productivité
-            </div>
-
-            <div
-              style={{
-                color: COULEURS.texteSecondaire,
-                fontSize: 12,
-                marginBottom: 10,
-                lineHeight: 1.45,
-              }}
-            >
-              Ces personnes ne comptent ni dans la capacité ni dans les taux de
-              l'équipe. Leurs heures sont présentées à part : le « NI » de
-              l'encadrement est du temps d'encadrement, pas un manque de charge.
-            </div>
-
-            <div style={styles.tableWrap}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={{ textAlign: "right" }}>
-                    <th style={{ textAlign: "left" }}>Collaborateur</th>
-                    <th>CBE</th>
-                    <th>DBE</th>
-                    <th>CN</th>
-                    <th>NI</th>
-                    <th>Formation</th>
-                    <th>Div. production</th>
-                    <th>Autres</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {encadrement.map((ligne) => (
-                    <tr key={ligne.id} style={{ textAlign: "right" }}>
-                      <td style={{ textAlign: "left" }}>
-                        <strong>{ligne.trigramme}</strong> {ligne.nom}
-                      </td>
-                      <td>{heures(ligne.cbe)}</td>
-                      <td>{heures(ligne.dbe)}</td>
-                      <td>{heures(ligne.cn)}</td>
-                      <td>{heures(ligne.ni)}</td>
-                      <td>{heures(ligne.formation)}</td>
-                      <td>{heures(ligne.production)}</td>
-                      <td>{heures(ligne.autres)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 13 }}>
-              <strong>Chiffrage total (équipe + encadrement) :</strong>{" "}
-              {heures(global.dbe + encadrement.reduce((total, ligne) => total + ligne.dbe, 0))}{" "}
-              dont {heures(encadrement.reduce((total, ligne) => total + ligne.dbe, 0))} pour
-              l'encadrement.
-            </div>
-          </section>
-        )}
 
         {codeDetailFiltre && (
           <section style={{ ...styles.detailBox, marginTop: 14 }}>

@@ -132,6 +132,10 @@ export function categorieDuCode(
   codes: Map<string, CodeRef>
 ): CategorieBilan | null {
   const c = normaliserTexte(code);
+
+  // CP et EC : déduits de la capacité, jamais analysés comme des absences
+  if (c === "CP" || c === "EC") return "IGNORE";
+
   const reference = codes.get(c);
   const categorie = reference?.categorie ? normaliserTexte(reference.categorie) : null;
 

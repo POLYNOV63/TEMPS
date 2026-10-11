@@ -144,10 +144,15 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
 - **Capacité nette** (même base pour l'historique et le nouveau système) : 35 h moins fériés,
   congés, récupérations et absences. Les taux (CBE, DBE, CN, Divers de production, NI...) sont
   calculés sur cette capacité.
+- **La capacité est de 35 h pour tout le monde** (l'historique comme le nouveau système). Les heures en plus (collègues en PE à
+  37,5 h, heures supplémentaires) sont du travail réellement imputé sur des affaires : on les mesure, sans correction. Les
+  pourcentages peuvent donc dépasser 100 % au total, et c'est normal (décision de l'administrateur : pas de tuile de
+  réconciliation).
+- **CP et EC sortis de l'analyse** : déduits de la capacité mais jamais comptés dans « Divers d'absences »,
+  quelle que soit leur catégorie dans Gestion des codes (`CODES_EXCLUS_ANALYSE`, aussi dans Mon bilan).
 - **Encadrement** : les collaborateurs décochés « Inclus dans les statistiques de productivité »
   (colonne `collaborateurs.inclus_statistiques` : AMA, PLG) ne comptent ni dans la capacité ni dans les
-  taux. Leurs heures sont affichées à part ; le NI de l'encadrement est du temps d'encadrement, pas un
-  manque de charge. Le chiffrage total additionne les DBE de l'équipe et de l'encadrement.
+  taux ; leur bloc d'affichage a été retiré de la page Bilans.
 - Le détail par code indique les heures, le nombre de personnes et le nombre de semaines (ex. ML).
 
 ## Organisation du tableau de bord
