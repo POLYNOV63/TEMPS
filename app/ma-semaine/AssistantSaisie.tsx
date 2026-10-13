@@ -55,6 +55,8 @@ export function BandeauSemaine({
   congesIgnores,
   compact = false,
   jourSelectionne,
+  collant = true,
+  sansPuces = false,
 }: {
   jours: JourBandeau[];
   resume: string;
@@ -70,10 +72,13 @@ export function BandeauSemaine({
   /* Téléphone : bandeau réduit à une ligne de jours défilante */
   compact?: boolean;
   jourSelectionne?: string;
+  /* Mode grille : bandeau non collant, sans les pastilles de jours (la grille a ses cartes) */
+  collant?: boolean;
+  sansPuces?: boolean;
 }) {
   return (
-    <div style={styles.bandeau}>
-      <div style={styles.ligne}>
+    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: "static" as const }) }}>
+      <div style={{ ...styles.ligne, ...(sansPuces ? { display: "none" as const } : {}) }}>
         <div style={compact ? styles.pucesCompact : styles.puces}>
           {jours.map((jour) => (
             <a

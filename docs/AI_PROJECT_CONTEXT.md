@@ -138,6 +138,49 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   du classeur décide (affaires = production, administratif = « Autres »).
 - **NI** = temps non imputable : la personne n'a pas de charge. **EC** = alternant à l'école
   (importé, catégorie ABSENCE).
+- **L'import Excel est prioritaire** (décision de l'administrateur) : à la fin d'un import, la page propose de
+  supprimer les feuilles saisies avec le nouveau système pour les semaines présentes dans l'import (aperçu par
+  semaine, confirmation, puis fonction SQL `purger_feuilles_semaines_importees`, script 15). Les feuilles supprimées
+  sont archivées dans `archive_feuilles_purgees`. Ne touche ni aux demandes de congés, ni aux droits RH, ni aux heures
+  supplémentaires. Sans cette suppression, une feuille du nouveau système (même vide) masque l'Excel pour la personne
+  et la semaine concernées dans les Bilans.
+
+## Ma semaine : saisie en grille
+
+- **Principe** : une AFFAIRE par ligne, un JOUR par colonne. Dans chaque case : une ou plusieurs imputations, chacune avec son
+  ACTIVITÉ, son CODE (liste filtrée par l'activité) et ses HEURES, comme sur la feuille classique. Le modèle de données ne
+  change pas : une imputation = une ligne (type, n°, activité, code, heures) rattachée à un jour ; la grille regroupe par
+  affaire pour l'affichage (`lib/grilleSemaine.ts`). Plusieurs codes le même jour = « + ligne ».
+- **Lisibilité** : une case vide au repos n'affiche qu'un petit champ d'heures (l'activité et le code, pré-remplis, sont masqués
+  et apparaissent quand on clique dans la case) ; seules les cases déjà imputées montrent activité, code et heures. Les lignes
+  remplies sont allégées (menu d'activité compact, séparateurs pointillés).
+- **Gain de temps** : une nouvelle ligne reprend l'activité de la ligne précédente sur la même affaire (et, pour une affaire
+  ajoutée depuis la semaine précédente, l'activité qu'elle avait) ; le code est choisi d'office quand l'activité n'en autorise
+  qu'un (DBE : activité rattachée à DT + code DT). Une case vide est pré-remplie : l'imputation n'est créée que lorsqu'on saisit.
+- **Activité** : obligatoire en CBE et DBE (comparaison réalisé / chiffré par activité) ; Divers : codes Divers, sans activité ni
+  numéro.
+- **Alertes de données manquantes** (mêmes règles que la validation de la feuille) : elles ne s'affichent PAS pendant la
+  saisie. Elles apparaissent quand on tente d'enregistrer (bouton Enregistrer) ou de valider la semaine — compteur
+  `verificationDemandee`, incrémenté par `enregistrerBrouillon` et `demanderValidationFinale` —, et seulement s'il y a quelque
+  chose à corriger : encadré « À compléter avant d'enregistrer » (affaire, message, jours), menus d'activité / de code et cases
+  d'heures entourés en rouge, numéro d'affaire à 4 chiffres signalé sur l'en-tête. Elles disparaissent d'elles-mêmes quand tout
+  est corrigé et ne reviennent pas à chaque nouvelle saisie ; l'enregistrement automatique n'en déclenche pas. Le code reste
+  grisé tant que l'activité n'est pas choisie.
+- **Cartes « Objectif »** par jour, collées en haut, vertes quand l'objectif est atteint ou dépassé, orange sinon (« Manque
+  x h », sans bouton de complément), grisées pour un jour férié ou une absence sur la journée. Présence en menu déroulant avec le
+  code couleur de l'export Excel : Présentiel vert, Télétravail jaune, Absent orange. Absence en menu par jour, détail empilé
+  dessous (RE, RTT, CP, VM/AI/AA).
+- **Ligne d'affaire** : description modifiable directement, croix pour retirer l'affaire (confirmation s'il y a des heures),
+  croix par ligne d'imputation ; le « + » de la colonne Affaire propose d'abord les affaires de la semaine précédente.
+- **Téléphone (< 760 px)** : un jour à la fois (barre du bas de la page), mêmes lignes en pleine largeur.
+- **Fichiers** : `lib/grilleSemaine.ts` (logique pure testée), `app/ma-semaine/GrilleSemaine.tsx` (composant, sans accès aux
+  données), `app/ma-semaine/grille-demo/page.tsx` (essai avec fausses données, `/ma-semaine/grille-demo`).
+- **Branchement (version 5)** : `scripts/patch-ma-semaine-grille.mjs` (tout ou rien, sauvegardes `*.bak-grille`, repart des
+  fichiers d'origine si une version précédente est installée) insère dans `MaSemaineContent.tsx` un adaptateur et un compteur de tentatives d'enregistrement / validation (marqueur
+  `GRILLE_SEMAINE_V5`) branché sur les fonctions existantes (`modifierJour`, `modifierImputation`, `changerAbsence`,
+  `changerDureeRTT`…) et affiche la grille ; l'ancien tableau est masqué (code conservé, inutilisé). Il ajoute au bandeau de
+  `AssistantSaisie.tsx` les options `collant` et `sansPuces`. Calcul, enregistrement, validation et heures supplémentaires ne
+  sont pas modifiés. Le presse-papiers de blocs de l'ancien affichage n'est pas repris.
 
 ## Statistiques de productivité (Bilans)
 

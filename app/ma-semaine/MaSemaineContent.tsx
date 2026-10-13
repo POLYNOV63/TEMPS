@@ -22,6 +22,17 @@ import {
   type JourBandeau,
 } from "./AssistantSaisie";
 import { BarreActionsMobile } from "./SaisieMobile";
+
+import GrilleSemaine, {
+  type AffaireRecenteGrille,
+  type GrilleSemaineProps,
+} from "./GrilleSemaine";
+import {
+  etatDuJour,
+  type CodeGrille,
+  type GroupeActiviteGrille,
+  type JourGrille,
+} from "@/lib/grilleSemaine";
 export const dynamic = "force-dynamic";
 
 /* ============================================================
@@ -997,6 +1008,9 @@ export default function MaSemainePage() {
     aideOuverte,
     setAideOuverte,
   ] = useState(false);
+
+    /* GRILLE_SEMAINE_V5 - alertes de la grille : affichées seulement quand on tente d'enregistrer ou de valider */
+    const [verifGrille, setVerifGrille] = useState(0);
 
   const [
     message,
@@ -4322,6 +4336,8 @@ export default function MaSemainePage() {
   }
 
   function demanderValidationFinale() {
+    setVerifGrille((n) => n + 1);
+
     if (enregistrement) return;
 
     const valide = verifierSemaine(true);
@@ -4347,6 +4363,8 @@ export default function MaSemainePage() {
   }
 
   async function enregistrerBrouillon() {
+    setVerifGrille((n) => n + 1);
+
     await sauvegarderSemaine(false);
   }
 
@@ -4432,6 +4450,358 @@ export default function MaSemainePage() {
   /* ============================================================
      CHARGEMENT
   ============================================================ */
+
+  /* ============================================================
+     GRILLE_SEMAINE_V5 - ADAPTATEUR POUR L'AFFICHAGE EN GRILLE
+
+     La grille (GrilleSemaine.tsx) ne connaît ni Supabase ni les règles
+     métier : ce bloc lui donne les données de la feuille et branche ses
+     actions sur les fonctions EXISTANTES de la page (modifierJour,
+     modifierImputation, changerAbsence...). L'enregistrement, la
+     validation et les contrôles restent ceux de la feuille classique.
+  ============================================================ */
+
+  const jourParDate = (date: string) => semaine.find((jour) => jour.date === date);
+
+  const joursGrille: JourGrille[] = semaine
+    .filter((jour) => !jour.estWeekend || weekendOuvert)
+    .map((jour) => {
+      const fige = imputationsInterdites(jour, codesImputation);
+      const objectif = cibleTravailJour(jour, codesImputation);
+      const saisi = totalImputations(jour);
+
+      return {
+        date: jour.date,
+        libelle: `${jour.jour.slice(0, 3)} ${jour.date.slice(8)}`,
+        libelleLong: `${jour.jour} ${dateAffichage(jour.date)}`,
+        estWeekend: jour.estWeekend,
+        estFerie: jour.estFerie,
+        fige,
+        objectif,
+        saisi,
+        etat: etatDuJour(objectif, saisi, fige, jour.estFerie),
+        note: jour.estFerie
+          ? "Férié"
+          : jour.absence
+            ? libelleAbsence(jour.absence, codesImputation)
+            : jour.estWeekend
+              ? "Week-end"
+              : "",
+        absence: jour.absence,
+        presence: jour.presence,
+        presenceModifiable: jour.presence !== "ABSENT",
+        ticket: jour.ticketRestaurant,
+        ticketModifiable: jour.presence !== "ABSENT",
+        imputations: jour.imputations,
+      };
+    });
+
+  // Activités et codes proposés en cases à cocher : mêmes règles que la feuille classique.
+  const versCodesGrille = (codes: CodeImputation[]): CodeGrille[] =>
+    codes.map((code) => ({ code: code.code, libelle: code.libelle }));
+
+  const groupesGrillePourType = (typeAffaire: string): GroupeActiviteGrille[] => {
+    const autorise = (code: CodeImputation) =>
+      code.actif === true && code.historique_uniquement !== true;
+
+    if (typeAffaire === "Divers") {
+      return [{ activiteId: null, nom: "Divers", codes: versCodesGrille(codesDivers) }];
+    }
+
+    // DBE : le code est toujours DT ; l'activité est celle rattachée à DT dans Gestion des
+    // activités (toutes les activités si aucune n'est rattachée).
+    if (typeAffaire === "DBE") {
+      const dt = codesImputation.filter(
+        (code) => autorise(code) && normaliserCode(code.code) === "DT"
+      );
+      const rattachees = activitesActives.filter((activite) =>
+        codesParActivite.get(activite.id)?.has("DT")
+      );
+
+      return (rattachees.length > 0 ? rattachees : activitesActives).map((activite) => ({
+        activiteId: activite.id,
+        nom: activite.nom,
+        codes: versCodesGrille(dt),
+      }));
+    }
+
+    return activitesActives
+      .map((activite) => ({
+        activiteId: activite.id,
+        nom: activite.nom,
+        codes: versCodesGrille(
+          codesImputation.filter(
+            (code) =>
+              autorise(code) &&
+              code.autorise_affaire === true &&
+              codesParActivite.get(activite.id)?.has(normaliserCode(code.code))
+          )
+        ),
+      }))
+      .filter((groupe) => groupe.codes.length > 0);
+  };
+
+  // Affaires proposées par le « + » : celles de la semaine précédente de la personne, avec
+  // l'activité utilisée en dernier (elle sera proposée d'office). S'il n'y en a pas (semaine de
+  // congés...), les plus récentes.
+  const affairesRecentesGrille = (() => {
+    const debutPrecedente = ajouterJoursISO(debutSemaineAssistant, -7);
+
+    const dedoublonner = (liste: AffaireRecente[]): AffaireRecenteGrille[] => {
+      const vues = new Set<string>();
+
+      return liste
+        .filter((affaire) => {
+          const cle = `${affaire.typeAffaire}|${affaire.numeroAffaire}`;
+          if (vues.has(cle)) return false;
+          vues.add(cle);
+          return true;
+        })
+        .map((affaire) => ({
+          typeAffaire: affaire.typeAffaire,
+          numeroAffaire: affaire.numeroAffaire,
+          description: affaire.description,
+          activiteId: affaire.activiteId,
+        }));
+    };
+
+    const semainePrecedenteGrille = dedoublonner(
+      affairesRecentes.filter(
+        (affaire) =>
+          affaire.dernierJour >= debutPrecedente &&
+          affaire.dernierJour < debutSemaineAssistant
+      )
+    );
+
+    return semainePrecedenteGrille.length > 0
+      ? semainePrecedenteGrille
+      : dedoublonner(affairesRecentes).slice(0, 6);
+  })();
+
+  // Champs complémentaires d'une absence (mêmes règles que la feuille classique),
+  // empilés pour rester dans la largeur d'une colonne de jour.
+  const detailAbsenceGrille = (date: string) => {
+    const jour = jourParDate(date);
+
+    if (!jour || !jour.absence || jour.estFerie) return null;
+
+    const boite = (base: CSSProperties): CSSProperties => ({
+      ...base,
+      marginTop: 6,
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: 6,
+      minWidth: 0,
+      boxSizing: "border-box",
+      overflowWrap: "anywhere",
+    });
+
+    const champEtiquete: CSSProperties = {
+      display: "flex",
+      flexDirection: "column",
+      gap: 4,
+      fontWeight: 700,
+      minWidth: 0,
+    };
+
+    const saisieHeures = (champ: "heuresRE" | "heuresAbsence", placeholder: string) => (
+      <input
+        value={jour[champ]}
+        inputMode="decimal"
+        placeholder={placeholder}
+        onChange={(e) =>
+          modifierJour(jour.date, {
+            [champ]: e.target.value.replace(/[^0-9.,]/g, ""),
+          })
+        }
+        style={{ ...styles.input, width: "100%" }}
+      />
+    );
+
+    const dureeSelect = (valeur: string, changer: (valeur: string) => void) => (
+      <select value={valeur} onChange={(e) => changer(e.target.value)} style={{ ...styles.input, width: "100%" }}>
+        <option value="JOURNEE">Journée</option>
+        <option value="DEMI_JOURNEE">1/2 journée</option>
+      </select>
+    );
+
+    if (jour.absence === CODE_RE) {
+      return (
+        <div style={boite(styles.reBox)}>
+          <label style={champEtiquete}>
+            Récupération (h à débiter du compteur)
+            {saisieHeures("heuresRE", "ex. 2,0")}
+          </label>
+        </div>
+      );
+    }
+
+    if (jour.absence === CODE_RT) {
+      return (
+        <div style={boite(styles.rttBox)}>
+          <strong>RTT</strong>
+          {dureeSelect(jour.dureeRTT, (valeur) => changerDureeRTT(jour, valeur as DureeRTT))}
+
+          {jour.dureeRTT === "DEMI_JOURNEE" ? (
+            <>
+              <label style={champEtiquete}>
+                Heures de RTT
+                {saisieHeures("heuresAbsence", "ex. 4")}
+              </label>
+              <span style={styles.cpRemaining}>
+                {jour.heuresAbsence
+                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                  : "Renseignez les heures de RTT."}
+              </span>
+            </>
+          ) : (
+            <span>Journée non travaillée.</span>
+          )}
+        </div>
+      );
+    }
+
+    if (jour.absence === CODE_CP) {
+      return (
+        <div style={boite(styles.rttBox)}>
+          <strong>Congés payés</strong>
+
+          {dureeSelect(jour.dureeCP, (valeur) => {
+            const duree = valeur as DureeCP;
+
+            modifierJour(jour.date, {
+              dureeCP: duree,
+              presence: duree === "JOURNEE" ? "ABSENT" : "PRESENTIEL",
+              ticketRestaurant: duree === "DEMI_JOURNEE" && !jour.estWeekend,
+              heuresAbsence: duree === "JOURNEE" ? "" : jour.heuresAbsence,
+              imputations: duree === "JOURNEE" ? [] : jour.imputations,
+            });
+          })}
+
+          {jour.dureeCP === "DEMI_JOURNEE" ? (
+            <>
+              <label style={champEtiquete}>
+                Heures de CP
+                {saisieHeures("heuresAbsence", "ex. 4")}
+              </label>
+              <span style={styles.cpRemaining}>
+                {jour.heuresAbsence
+                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                  : "Renseignez les heures de CP."}
+              </span>
+            </>
+          ) : (
+            <span>Journée non travaillée.</span>
+          )}
+        </div>
+      );
+    }
+
+    if (absenceNecessiteHeures(jour.absence)) {
+      return (
+        <div style={boite(styles.reBox)}>
+          <label style={champEtiquete}>
+            {libelleAbsence(jour.absence, codesImputation)} (h d'absence)
+            {saisieHeures("heuresAbsence", "ex. 2,0")}
+          </label>
+        </div>
+      );
+    }
+
+    return (
+      <div style={boite(styles.absenceInfo)}>
+        <strong>{libelleAbsence(jour.absence, codesImputation)}</strong>
+        <span>Aucune imputation d'heures sur cette journée.</span>
+      </div>
+    );
+  };
+
+  const propsGrille: GrilleSemaineProps = {
+    jours: joursGrille,
+    cleSemaine: debutSemaineAssistant,
+    verificationDemandee: verifGrille,
+    lectureSeule: feuilleNonModifiable,
+    forcerMobile: estMobile,
+    typesAffaire: [
+      { valeur: "CBE", libelle: "CBE", numeroRequis: true },
+      { valeur: "DBE", libelle: "DBE", numeroRequis: true },
+      { valeur: "Divers", libelle: "Divers", numeroRequis: false },
+    ],
+    affairesRecentes: affairesRecentesGrille,
+    codesAbsence: codesAbsence
+      .filter((code) => normaliserCode(code.code) !== CODE_FE)
+      .map((code) => ({ code: code.code, libelle: code.libelle })),
+    activitesEtCodes: groupesGrillePourType,
+    renderDetailAbsence: detailAbsenceGrille,
+    jourSelectionne: jourAffiche,
+    onSelectionnerJour: setJourMobile,
+    masquerNavigationJour: true,
+
+    onModifierLigne: (date, ligneId, modification) => {
+      const jour = jourParDate(date);
+      if (jour) modifierImputation(jour, ligneId, modification);
+    },
+
+    onAjouterLigne: (date, ligne) => {
+      const jour = jourParDate(date);
+
+      if (!jour || imputationsInterdites(jour, codesImputation)) return;
+
+      modifierJour(date, {
+        imputations: [
+          ...jour.imputations,
+          { ...ligne, typeAffaire: ligne.typeAffaire as TypeAffaire },
+        ],
+      });
+    },
+
+    onSupprimerLigne: (date, ligneId) => {
+      const jour = jourParDate(date);
+      if (jour) supprimerImputation(jour, ligneId);
+    },
+
+    onChangerDescription: (affaire, description) => {
+      setSemaine((ancienne) =>
+        ancienne.map((jour) => ({
+          ...jour,
+          imputations: jour.imputations.map((ligne) =>
+            ligne.typeAffaire === affaire.typeAffaire &&
+            ligne.numeroAffaire === affaire.numeroAffaire
+              ? { ...ligne, description }
+              : ligne
+          ),
+        }))
+      );
+
+      marquerSemaineModifiee();
+    },
+
+    onRetirerAffaire: (affaire) => {
+      setSemaine((ancienne) =>
+        ancienne.map((jour) => ({
+          ...jour,
+          imputations: jour.imputations.filter(
+            (ligne) =>
+              !(
+                ligne.typeAffaire === affaire.typeAffaire &&
+                ligne.numeroAffaire === affaire.numeroAffaire
+              )
+          ),
+        }))
+      );
+
+      marquerSemaineModifiee();
+    },
+
+    onChangerPresence: (date, presence) => changerPresence(date, presence),
+
+    onChangerTicket: (date, ticket) => modifierJour(date, { ticketRestaurant: ticket }),
+
+    onChangerAbsence: (date, code) => {
+      const jour = jourParDate(date);
+      if (jour) changerAbsence(jour, code);
+    },
+  };
 
   if (chargement || !codesCharges || !activitesCharges) {
     return (
@@ -4654,11 +5024,13 @@ export default function MaSemainePage() {
         <BandeauSemaine
           jours={joursBandeau}
           resume={`${formatHeures(totalHeuresSemaine)} h saisies sur ${formatHeures(totalHeuresTheoriques)} h prévues`}
-          premierIncomplet={premierJourIncomplet}
+          premierIncomplet={estMobile ? premierJourIncomplet : null}
           onAllerA={allerAuJour}
           aideOuverte={aideOuverte}
           onBasculerAide={() => setAideOuverte((valeur) => !valeur)}
           compact={estMobile}
+          collant={estMobile}
+          sansPuces={!estMobile}
           jourSelectionne={estMobile ? jourAffiche : undefined}
           desactive={feuilleNonModifiable}
           repriseEnCours={repriseEnCours}
@@ -4670,6 +5042,28 @@ export default function MaSemainePage() {
           }
           congesIgnores={propositionsConges.ignorees}
         />
+
+        {/* GRILLE_SEMAINE_V5 : la saisie se fait en grille ; seul le week-end est à afficher à la demande */}
+        <div style={{ display: "flex", justifyContent: "flex-end", margin: "0 0 10px" }}>
+          <button
+            type="button"
+            onClick={() => setWeekendOuvert((valeur) => !valeur)}
+            style={{
+              minHeight: 40,
+              padding: "0 14px",
+              borderRadius: 7,
+              border: "1.5px solid #cfcfcf",
+              background: "#ffffff",
+              color: "#333333",
+              fontWeight: 700,
+              fontSize: 13,
+              fontFamily: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            {weekendOuvert ? "Masquer le week-end" : "Afficher le week-end"}
+          </button>
+        </div>
 
         <fieldset
           disabled={
@@ -4908,7 +5302,21 @@ export default function MaSemainePage() {
           desactive={feuilleNonModifiable}
         />
 
-        <div style={styles.table}>
+        <div
+          id="grille-semaine"
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e3e3e3",
+            borderRadius: 11,
+            boxShadow: "0 2px 8px rgba(0,0,0,.06)",
+            padding: estMobile ? 10 : 14,
+            marginBottom: 16,
+          }}
+        >
+          <GrilleSemaine {...propsGrille} />
+        </div>
+
+        <div style={{ ...styles.table, display: "none" }}>
           <div
             style={styles.tableHeader}
           >
