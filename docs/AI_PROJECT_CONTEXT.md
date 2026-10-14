@@ -194,6 +194,23 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   `AssistantSaisie.tsx` les options `collant` et `sansPuces`. Calcul, enregistrement, validation et heures supplémentaires ne
   sont pas modifiés. Le presse-papiers de blocs de l'ancien affichage n'est pas repris.
 
+## Compteur de récupération
+
+- **Chaîne de feuille en feuille** : le compteur avant d'une feuille = compteur après de la dernière feuille validée précédente
+  (statut `A_TRAITER`) ; compteur après = compteur avant - heures de récupération (RE) prises + part des heures supplémentaires
+  affectée au compteur **à la clôture mensuelle seulement**. Les heures supplémentaires de la période s'accumulent sans toucher le
+  compteur jusqu'à la décision de fin de mois (compteur ou heures payées). Le compteur reste entre -30 h et +30 h.
+- **Point de départ** : « Compteur récupération initial » des Droits RH (page Collaborateurs, par exercice, l'exercice commence en
+  novembre), utilisé **uniquement** pour la première feuille d'une personne ; à défaut l'ancienne valeur de la fiche collaborateur.
+  Modifier ce champ après coup ne change donc rien aux feuilles déjà créées.
+- **Affichage** : l'espace RH montre le compteur après de la dernière feuille (un brouillon reprend le compteur de départ).
+- **Ajustement forcé** (script SQL 17, page `/admin/compteurs`, ADMIN) : un administrateur ajoute ou retire des heures avec un
+  **motif obligatoire** ; l'ajustement s'ajoute à la dernière feuille validée (colonne `feuilles_heures.compteur_regularisation`),
+  décale les brouillons postérieurs, ou modifie le compteur initial des Droits RH s'il n'existe aucune feuille validée. Tracé dans
+  `rh_compteur_regularisations` (date, avant, après, motif, auteur). Fonction `rh_regulariser_compteur`.
+- **Protection du recalcul** : `scripts/patch-compteur-regularisation.mjs` fait conserver cet ajustement par « Ma semaine » quand la
+  feuille est corrigée par un administrateur ou quand les feuilles suivantes sont recalculées.
+
 ## Statistiques de productivité (Bilans)
 
 - **Capacité nette** (même base pour l'historique et le nouveau système) : 35 h moins fériés,
@@ -212,14 +229,26 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
 
 ## Organisation du tableau de bord
 
-- **Mon espace (tous)** : Ma semaine, Mes feuilles, Bilan affaire (pour tout le monde), RH.
-- **ADMIN et RESPONSABLE** : Pilotage BE (portefeuille, nouvelle affaire, planning des affaires, charge par ressource) et
-  Suivi des équipes (feuilles collaborateurs, bilan RH mensuel, export Excel).
-- **ADMIN seulement** : suivi rapide et à traiter ; Administration (collaborateurs, rythmes horaires, codes, imputations
-  des affaires, activités, validation RH) ; Analyse (analyse de charge, bilan activités, export IA) ; Données (import
-  historique).
-- « Mon bilan » n'est plus proposé aux collaborateurs (un NI élevé peut stresser) : la page est réservée aux ADMIN en
-  attendant une décision.
+Cartes compactes, rangées par priorité d'usage (une page ADMIN tient sur un écran d'environ 900 px sans défiler). Installé par
+`scripts/patch-dashboard-priorites.mjs` (version 2, marqueur `MA_DASHBOARD_PRIORITES_V2`, sauvegarde `page.tsx.bak-dashboard`, met à
+jour la version 1) ; il ne touche pas au chargement des données, seulement à l'affichage, et retire les `alert()` et `console.log` de
+mise au point.
+
+- **ADMIN, de haut en bas** : 1. **Pilotage BE** : planning des affaires, nouvelle affaire, **bilan affaire** (Portefeuille et Charge par
+  ressource ne sont plus sur le tableau de bord : onglets en haut du planning) ; 2. **Validations RH** : validation RH (avec le nombre
+  de demandes en attente), compteurs de récupération, feuilles à relancer ; 3. **Mon espace** : Ma semaine (avec son état), Mes
+  feuilles, RH ; 4. **Analyse** : analyse de charge, bilan activités, bilan RH mensuel, export Excel, feuilles collaborateurs ;
+  5. **Paramétrage de l'application**, replié par défaut (toute la ligne est cliquable, bouton sombre « Afficher les 7 réglages »),
+  choix mémorisé dans le navigateur : codes, activités, collaborateurs, rythmes horaires, imputations des affaires, export IA, import.
+- **Cloche** (ADMIN) dans l'en-tête, à côté du rôle : badge avec le nombre de demandes RH en attente (`rh_demandes`, statut
+  `EN_ATTENTE`) ; un clic liste les 5 plus proches (`rh_demandes_admin`) avec un bouton vers Validation RH. Actualisée chaque minute et
+  au retour sur l'onglet.
+- Le « suivi rapide » est une ligne de pastilles à côté du bonjour ; « À traiter » est devenu la carte « Feuilles à relancer »
+  (feuilles de la semaine dernière non validées, nombre exact).
+- **RESPONSABLE** : Mon espace, Pilotage BE (avec Bilan affaire), Suivi des équipes. **COLLABORATEUR** : Mon espace seulement (avec
+  Bilan affaire).
+- « Mon bilan » n'est plus proposé aux collaborateurs (un NI élevé peut stresser) : la page est réservée aux ADMIN en attente d'une
+  décision.
 
 ## Mon bilan (page personnelle, réservée aux ADMIN pour le moment)
 
@@ -288,6 +317,23 @@ sans les copier. Maquettes : canevas « Pilotage BE — maquettes des écrans »
 - **Ancien planning par ressource** : remplacé (`/pilotage/planning` redirige) ; `AffectationDialog.tsx` n'est plus utilisé.
 - **A venir** : détournement d'une PI avec fin décalée ou non, bilans par imputation (% PE / PI / BE par personne),
   « Ma feuille de route ».
+
+## Envoi des e-mails RH (Microsoft 365)
+
+- **Trois fonctions Edge Supabase** (`supabase/functions/`) envoient les e-mails de la rubrique RH, par **Microsoft Graph** (`sendMail`),
+  sans service externe : `notifier-demande-rh` (prévient AMA et PLG d'une nouvelle demande), `notifier-reponse-rh` (informe le
+  collaborateur d'une validation ou d'un refus), `envoyer-demande-rh` (transmet au service RH, avec le collaborateur et l'autre
+  approbateur en copie). Elles renvoient `{ ok: false, error }` avec le vrai motif, affiché par la page Validation RH.
+- **Secrets Supabase** (Edge Functions > Secrets) : `M365_TENANT_ID` (ID de l'annuaire), `M365_CLIENT_ID` (ID de l'application),
+  `M365_CLIENT_SECRET` (valeur du secret client, **expire au plus tard au bout de 24 mois : à renouveler**), `M365_EXPEDITEUR`
+  (adresse de la boîte d'envoi). L'ancien service Resend (`RESEND_API_KEY`, `RH_EMAIL_FROM`) n'est plus utilisé.
+- **Côté Microsoft 365** : une **boîte aux lettres partagée** sert d'expéditeur (sans licence) ; une application Entra
+  (« POLYNOV Mailer ») s'authentifie avec un secret client ; son droit d'envoyer est **limité à cette seule boîte** par
+  *Exchange Online RBAC for Applications* (rôle `Application Mail.Send` + étendue de gestion sur l'adresse), et **aucune permission
+  Graph n'est accordée dans Entra** (elle serait valable pour toutes les boîtes). Changement de droits : 30 min à 2 h avant effet.
+- En cas d'échec, la vraie cause est écrite dans les **logs de la fonction** (Supabase > Edge Functions > fonction > Logs), ligne
+  « nom-de-la-fonction : message » ; la page n'affiche qu'un message général aux collaborateurs.
+- La demande n'est marquée « transmise au RH » qu'après un envoi réussi. Le texte des e-mails est protégé contre l'injection de HTML.
 
 ## Conventions de code
 

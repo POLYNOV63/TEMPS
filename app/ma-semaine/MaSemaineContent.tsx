@@ -3857,7 +3857,7 @@ export default function MaSemainePage() {
         error: erreurRecherche,
       } = await supabase
         .from("feuilles_heures")
-        .select("id, statut, verrouillee, mode_heures_supplementaires")
+        .select("id, statut, verrouillee, mode_heures_supplementaires, compteur_regularisation")
         .eq("collaborateur_id", collaborateur.id)
         .eq("semaine_debut", semaineDebut)
         .maybeSingle();
@@ -3908,9 +3908,12 @@ export default function MaSemainePage() {
           feuilleExistante?.mode_heures_supplementaires ?? "PAYE",
         total_re: totalRE,
         compteur_avant: compteurAvantEnregistrement,
-        compteur_apres: validationFinale
-          ? compteurApresEnregistrement
-          : compteurAvantEnregistrement,
+        // Un ajustement forcé du compteur (Administration > Compteurs de récupération) est conservé
+        compteur_apres:
+          (validationFinale
+            ? compteurApresEnregistrement
+            : compteurAvantEnregistrement) +
+          Number(feuilleExistante?.compteur_regularisation ?? 0),
         cloture_mensuelle: validationFinale && semaineEstClotureMensuelle,
         heures_supplementaires_a_repartir:
           validationFinale && semaineEstClotureMensuelle
@@ -4136,7 +4139,7 @@ export default function MaSemainePage() {
         } = await supabase
           .from("feuilles_heures")
           .select(
-            "id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re, cloture_mensuelle, heures_supplementaires_compteur"
+            "id, semaine_debut, heures_supplementaires, mode_heures_supplementaires, total_re, cloture_mensuelle, heures_supplementaires_compteur, compteur_regularisation"
           )
           .eq("collaborateur_id", collaborateur.id)
           .eq("statut", "A_TRAITER")
@@ -4147,7 +4150,9 @@ export default function MaSemainePage() {
           throw erreurSuivantes;
         }
 
-        let compteurCourant = compteurApresEnregistrement;
+        let compteurCourant =
+          compteurApresEnregistrement +
+          Number(feuilleExistante?.compteur_regularisation ?? 0);
 
         for (const suivante of feuillesSuivantes ?? []) {
           const hsCompteur = Boolean(suivante.cloture_mensuelle)
@@ -4160,7 +4165,11 @@ export default function MaSemainePage() {
               );
 
           const re = Number(suivante.total_re ?? 0);
-          const apres = compteurCourant + hsCompteur - re;
+          const apres =
+            compteurCourant +
+            hsCompteur -
+            re +
+            Number(suivante.compteur_regularisation ?? 0);
 
           if (apres < -30 || apres > 30) {
             throw new Error(

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
@@ -81,6 +81,78 @@ export default function DashboardPage() {
   const [monCollaborateurId, setMonCollaborateurId] =
     useState<string | null>(null);
 
+  // Groupe « Paramétrage de l'application » : replié par défaut, choix mémorisé dans le navigateur
+  const [parametrageOuvert, setParametrageOuvert] = useState(false);
+
+  useEffect(() => {
+    try {
+      setParametrageOuvert(window.localStorage.getItem("polynov_dashboard_parametrage") === "1");
+    } catch {
+      /* navigateur sans stockage : on garde la valeur par défaut */
+    }
+  }, []);
+
+  function basculerParametrage() {
+    setParametrageOuvert((valeur) => {
+      const suivant = !valeur;
+
+      try {
+        window.localStorage.setItem("polynov_dashboard_parametrage", suivant ? "1" : "0");
+      } catch {
+        /* sans stockage : le choix ne sera pas mémorisé */
+      }
+
+      return suivant;
+    });
+  }
+
+  // Cloche : demandes RH en attente de validation (ADMIN), actualisées chaque minute et au retour sur l'onglet
+  const [demandesCloche, setDemandesCloche] = useState<DemandeCloche[]>([]);
+
+  useEffect(() => {
+    if (role !== "ADMIN") return;
+
+    let actif = true;
+
+    async function rafraichir() {
+      try {
+        const { count } = await supabase
+          .from("rh_demandes")
+          .select("id", { count: "exact", head: true })
+          .eq("statut", "EN_ATTENTE");
+
+        const { data } = await supabase
+          .from("rh_demandes_admin")
+          .select("id, prenom, nom, trigramme, type_demande, date_debut, date_fin")
+          .eq("statut", "EN_ATTENTE")
+          .order("date_debut", { ascending: true })
+          .limit(5);
+
+        if (!actif) return;
+
+        if (typeof count === "number") setNombreDemandesRH(count);
+        setDemandesCloche((data ?? []) as DemandeCloche[]);
+      } catch {
+        /* la cloche garde sa dernière valeur : on réessaiera à la prochaine actualisation */
+      }
+    }
+
+    void rafraichir();
+
+    const minuteur = window.setInterval(rafraichir, 60000);
+    const auRetour = () => {
+      if (document.visibilityState === "visible") void rafraichir();
+    };
+
+    document.addEventListener("visibilitychange", auRetour);
+
+    return () => {
+      actif = false;
+      window.clearInterval(minuteur);
+      document.removeEventListener("visibilitychange", auRetour);
+    };
+  }, [role]);
+
   /* =============================================================
      CHARGEMENT
   ============================================================= */
@@ -98,15 +170,12 @@ export default function DashboardPage() {
           error: erreurUtilisateur,
         } = await supabase.auth.getUser();
 
-        console.log("USER DASHBOARD", user);
-console.log("ERREUR DASHBOARD", erreurUtilisateur);
 
         if (erreurUtilisateur) {
           throw erreurUtilisateur;
         }
 
         if (!user) {
-          alert("Dashboard : utilisateur non connecté");
           router.push("/login");
           return;
         }
@@ -126,18 +195,12 @@ console.log("ERREUR DASHBOARD", erreurUtilisateur);
           .eq("auth_user_id", user.id)
           .maybeSingle();
 
-          console.log("USER ID", user.id);
-console.log("COLLABORATEUR", collaborateur);
 
         if (erreurCollaborateur) {
           throw erreurCollaborateur;
         }
 
 if (!collaborateur) {
-  alert(
-    "Collaborateur introuvable pour : " +
-    user.id
-  );
 
   throw new Error(
     "Aucun collaborateur associé à votre compte."
@@ -460,8 +523,7 @@ if (!collaborateur) {
 
           return { collaborateur, feuille, etat: "incomplete" };
         })
-        .filter((ligne): ligne is LigneSurveillance => ligne !== null)
-        .slice(0, 8);
+        .filter((ligne): ligne is LigneSurveillance => ligne !== null);
     }, [role, collaborateurs, feuillesPrecedentes]);
 
   /* =============================================================
@@ -654,799 +716,96 @@ if (!collaborateur) {
             </div>
           </div>
 
-          {role && (
-            <div
-              style={
-                styles.headerRole
-              }
-            >
-              {role}
-            </div>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {role === "ADMIN" && (
+              <ClocheDemandesRH nombre={nombreDemandesRH} demandes={demandesCloche} onAller={(url) => router.push(url)} />
+            )}
+
+            {role && <div style={styles.headerRole}>{role}</div>}
+          </div>
         </div>
       </header>
 
-      {/* =======================================================
-          CONTENU
-      ======================================================= */}
-
-      <div
-        style={
-          styles.container
-        }
-      >
-        {/* -------------------------------------------------------
-            BIENVENUE
-        ------------------------------------------------------- */}
-
-        <div
-          style={
-            styles.welcome
-          }
-        >
+      {/* MA_DASHBOARD_PRIORITES_V2 : cartes par priorité et plus petites (ADMIN : Pilotage BE, Validations RH, Mon espace, Analyse, Paramétrage replié) */}
+      <div style={{ ...styles.container, padding: "14px 30px 32px 30px" }}>
+        <div style={stylesV2.accueil}>
           <div>
-            <h1
-              style={
-                styles.welcomeTitle
-              }
-            >
-              Bonjour{" "}
-              {prenom || ""}
+            <h1 style={stylesV2.bonjour}>
+              Bonjour {prenom || ""}
               {" 👋"}
             </h1>
 
-            <p
-              style={
-                styles.welcomeText
-              }
-            >
-              Voici votre espace
-              de travail POLYNOV.
-            </p>
-          </div>
-
-          <div
-            style={
-              styles.weekBadge
-            }
-          >
-            <span
-              style={
-                styles.weekBadgeLabel
-              }
-            >
-              SEMAINE EN COURS
-            </span>
-
-            <strong>
+            <div style={stylesV2.semaine}>
               {semaineCourante
-                ? `S${numeroSemaine(
-                    semaineCourante
-                  )}-${new Date(
-                    `${semaineCourante}T00:00:00`
-                  ).getFullYear()}`
+                ? `Semaine S${numeroSemaine(semaineCourante)} · ${formaterSemaine(semaineCourante)}`
                 : "—"}
-            </strong>
-
-            <span
-              style={{
-                color: "#888",
-                fontSize: 12,
-              }}
-            >
-              {formaterSemaine(
-                semaineCourante
-              )}
-            </span>
-          </div>
-        </div>
-
-        {/* =====================================================
-            MON ESPACE
-        ===================================================== */}
-
-        <SectionTitre
-          titre="Mon espace"
-          description="Accéder rapidement à vos feuilles, affaires et demandes RH"
-        />
-
-        {/* -------------------------------------------------------
-            MA SEMAINE
-            UNIQUE POINT D'ACCÈS
-        ------------------------------------------------------- */}
-
-        <div
-          style={
-            styles.personalStatus
-          }
-        >
-          <div
-            style={
-              styles.personalStatusLeft
-            }
-          >
-            <div
-              style={
-                styles.personalIcon
-              }
-            >
-              📅
-            </div>
-
-            <div>
-              <div
-                style={
-                  styles.personalTitle
-                }
-              >
-                Ma semaine
-              </div>
-
-              <div
-                style={
-                  styles.personalDescription
-                }
-              >
-                {maFeuille
-                  ? `Semaine du ${formaterDateLongue(
-                      semaineCourante
-                    )}`
-                  : "Votre feuille de temps de la semaine courante"}
-              </div>
             </div>
           </div>
 
-          <div
-            style={
-              styles.personalStatusRight
-            }
-          >
-            {maFeuille ? (
-              <>
-                {estFeuilleComplete(
-                  maFeuille
-                ) ? (
-                  <span
-                    style={{
-                      ...styles.statusBadge,
-                      ...styles.statusComplete,
-                    }}
-                  >
-                    ✓ Complète
-                  </span>
-                ) : (
-                  <span
-                    style={{
-                      ...styles.statusBadge,
-                      ...styles.statusIncomplete,
-                    }}
-                  >
-                    ⚠ À compléter
-                  </span>
-                )}
-
-              </>
-            ) : (
-              <span
-                style={
-                  styles.statusMissing
-                }
-              >
-                ⚠ Non saisie
-              </span>
-            )}
-
-            <button
-              type="button"
-              style={
-                styles.smallPrimaryButton
-              }
-              onClick={() =>
-                router.push(
-                  "/ma-semaine"
-                )
-              }
-            >
-              Ouvrir →
-            </button>
-          </div>
-        </div>
-
-        {/* -------------------------------------------------------
-            AUTRES ACCÈS PERSONNELS
-
-            IMPORTANT :
-            "Ma semaine" n'est volontairement PAS remis ici.
-        ------------------------------------------------------- */}
-
-        <div
-          style={
-            styles.cardGrid
-          }
-        >
-          <Carte
-            icone="📄"
-            titre="Mes feuilles"
-            description="Consulter mes feuilles de temps enregistrées"
-            onClick={() =>
-              router.push(
-                "/mes-feuilles"
-              )
-            }
-          />
-
-          <Carte
-            icone="📊"
-            titre="Bilan affaire"
-            description="Consulter mes imputations et mes bilans d’affaires"
-            onClick={() =>
-              router.push(
-                "/affaires/bilan"
-              )
-            }
-          />
-
-          <Carte
-            icone="🧑‍💼"
-            titre="RH"
-            description="Gérer mes demandes de congés, RTT et récupération"
-            onClick={() =>
-              router.push(
-                "/RH"
-              )
-            }
-          />
-
-        </div>
-
-        {/* =====================================================
-            ESPACE ADMIN
-        ===================================================== */}
-
-        {role === "ADMIN" && (
-          <>
-            {/* =================================================
-                SUIVI RAPIDE
-            ================================================= */}
-
-            <SectionTitre
-              titre="Suivi rapide"
-              description={`Situation des feuilles de temps pour la semaine du ${formaterDateLongue(
-                semaineCourante
-              )}`}
-            />
-
-            <div
-              style={
-                styles.kpiGrid
-              }
-            >
-              <Kpi
-                icone="👥"
-                valeur={
-                  statistiques.collaborateurs
-                }
-                label="Collaborateurs actifs"
-                accent="red"
-              />
-
-              <Kpi
+          {role === "ADMIN" && (
+            <div style={stylesV2.chips} title={`Feuilles de la semaine du ${formaterDateLongue(semaineCourante)}`}>
+              <ChipSuivi icone="👥" valeur={String(statistiques.collaborateurs)} label="actifs" />
+              <ChipSuivi
                 icone="✓"
                 valeur={`${statistiques.feuillesCompletes} / ${statistiques.feuillesTotal}`}
-                label="Feuilles complètes"
-                accent="green"
+                label="feuilles complètes"
+                ton={statistiques.feuillesCompletes >= statistiques.feuillesTotal ? "ok" : "neutre"}
               />
-
-              <Kpi
-                icone="⏱️"
-                valeur={`${formatHeures(
-                  statistiques.heures
-                )} h`}
-                label="Heures saisies"
-                accent="red"
-              />
-
-              <Kpi
-                icone="＋"
-                valeur={`${formatHeures(
-                  statistiques.heuresSupplementaires
-                )} h`}
-                label="Heures supplémentaires"
-                accent="orange"
-              />
+              <ChipSuivi icone="⏱️" valeur={`${formatHeures(statistiques.heures)} h`} label="saisies" />
+              <ChipSuivi icone="＋" valeur={`${formatHeures(statistiques.heuresSupplementaires)} h`} label="heures sup" ton="alerte" />
             </div>
+          )}
+        </div>
 
-            {/* =================================================
-                SURVEILLANCE
-            ================================================= */}
-
-            <div
-              style={
-                styles.monitorCard
-              }
-            >
-              <div
-                style={
-                  styles.monitorHeader
-                }
-              >
-                <div>
-                  <div
-                    style={
-                      styles.monitorTitle
-                    }
-                  >
-                    À traiter
-                  </div>
-
-                  <div
-                    style={
-                      styles.monitorSubtitle
-                    }
-                  >
-                    Feuilles de la semaine dernière non validées et demandes RH en attente
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    ...styles.monitorCount,
-                    ...(surveillance.length ===
-                    0
-                      ? styles.monitorCountGreen
-                      : styles.monitorCountOrange),
-                  }}
-                >
-                  {surveillance.length}
-                </div>
-              </div>
-
-              {nombreDemandesRH > 0 && (
-                <div style={styles.monitorRow}>
-                  <div
-                    style={{
-                      ...styles.monitorStatus,
-                      ...styles.monitorStatusIncomplete,
-                    }}
-                  >
-                    ✉
-                  </div>
-
-                  <div style={styles.monitorPerson}>
-                    <strong>
-                      {nombreDemandesRH} demande
-                      {nombreDemandesRH > 1 ? "s" : ""} RH en attente
-                    </strong>
-
-                    <span style={{ color: "#888", fontSize: 12 }}>
-                      À valider dans l'espace de validation RH
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    style={styles.monitorButton}
-                    onClick={() => router.push("/admin/Valid_RH")}
-                  >
-                    Valider →
-                  </button>
-                </div>
-              )}
-
-              {surveillance.length ===
-              0 ? (
-                <div
-                  style={
-                    styles.noAlert
-                  }
-                >
-                  <div
-                    style={
-                      styles.noAlertIcon
-                    }
-                  >
-                    ✓
-                  </div>
-
-                  <span>
-                    Rien à relancer : toutes les feuilles de la semaine dernière sont validées.
-                  </span>
-                </div>
-              ) : (
-                <>
-                  {surveillance.map(
-                    (
-                      ligne
-                    ) => {
-                      const nom =
-                        [
-                          ligne
-                            .collaborateur
-                            .prenom,
-                          ligne
-                            .collaborateur
-                            .nom,
-                        ]
-                          .filter(Boolean)
-                          .join(" ");
-
-                      const trigramme =
-                        nom ||
-                        "Collaborateur";
-
-                      return (
-                        <div
-                          key={
-                            ligne
-                              .collaborateur
-                              .id
-                          }
-                          style={
-                            styles.monitorRow
-                          }
-                        >
-                          <div
-                            style={{
-                              ...styles.monitorStatus,
-                              ...(ligne.etat ===
-                              "manquante"
-                                ? styles.monitorStatusMissing
-                                : styles.monitorStatusIncomplete),
-                            }}
-                          >
-                            {ligne.etat ===
-                            "manquante"
-                              ? "!"
-                              : "⚠"}
-                          </div>
-
-                          <div
-                            style={
-                              styles.monitorPerson
-                            }
-                          >
-                            <strong>
-                              {trigramme}
-                            </strong>
-
-                            <span
-                              style={{
-                                color:
-                                  "#888",
-                                fontSize:
-                                  12,
-                              }}
-                            >
-                              {ligne.etat ===
-                              "manquante"
-                                ? "Feuille non saisie"
-                                : `Brouillon non validé — ${formatHeures(
-                                    ligne
-                                      .feuille
-                                      ?.total_heures
-                                  )} / ${formatHeures(
-                                    ligne
-                                      .feuille
-                                      ?.total_theorique
-                                  )} h`}
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            style={
-                              styles.monitorButton
-                            }
-                            onClick={() =>
-                              router.push(
-                                "/admin/feuilles"
-                              )
-                            }
-                          >
-                            Voir →
-                          </button>
-                        </div>
-                      );
-                    }
-                  )}
-
-                  {surveillance.length >
-                    0 && (
-                    <button
-                      type="button"
-                      style={
-                        styles.seeAllButton
-                      }
-                      onClick={() =>
-                        router.push(
-                          "/admin/feuilles"
-                        )
-                      }
-                    >
-                      Voir toutes les
-                      feuilles →
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-
-          </>
-        )}
-
-        {/* =====================================================
-            ADMINISTRATEURS ET RESPONSABLES
-        ===================================================== */}
-
-        {(role === "ADMIN" || peut(role, "piloterBE")) && (
+        {role === "ADMIN" ? (
           <>
-            <SectionTitre
-              titre="Pilotage BE"
-              description="Affaires DBE / CBE et planning du bureau d'études"
+            <BlocPilotage aller={(url) => router.push(url)} />
+
+            <BlocValidationsRH
+              aller={(url) => router.push(url)}
+              nombreDemandesRH={nombreDemandesRH}
+              aRelancer={surveillance}
             />
 
-            <div
-              style={
-                styles.cardGrid
-              }
-            >
-              <Carte
-                icone="🗂️"
-                titre="Portefeuille des affaires"
-                description="Suivre les DBE et les CBE : chiffré, réalisé, dépassements"
-                onClick={() =>
-                  router.push(
-                    "/pilotage"
-                  )
-                }
-              />
-
-              <Carte
-                icone="📅"
-                titre="Planning des affaires"
-                description="Affecter des ressources aux affaires en glissant et en étirant : comparaison immédiate au chiffré"
-                onClick={() =>
-                  router.push(
-                    "/pilotage/affaires"
-                  )
-                }
-              />
-
-              <Carte
-                icone="⚖️"
-                titre="Charge par ressource"
-                description="Charge de chaque personne, taux de service de l'équipe et répartition du travail entre les personnes"
-                onClick={() =>
-                  router.push(
-                    "/pilotage/ressources"
-                  )
-                }
-              />
-
-              <Carte
-                icone="＋"
-                titre="Nouvelle affaire"
-                description="Déclarer un DBE ou un CBE : descriptif, imputation, responsable et heures par activité"
-                onClick={() =>
-                  router.push(
-                    "/pilotage/nouvelle"
-                  )
-                }
-              />
-            </div>
-
-            <SectionTitre
-              titre="Suivi des équipes"
-              description="Feuilles de temps, bilan RH mensuel et export Excel"
+            <BlocMonEspace
+              aller={(url) => router.push(url)}
+              statut={maFeuille ? (estFeuilleComplete(maFeuille) ? "complete" : "incomplete") : "absente"}
+              libelle={maFeuille ? `Semaine du ${formaterDateLongue(semaineCourante)}` : "Ma feuille de la semaine courante"}
+              avecBilanAffaire={false}
             />
 
-            <div
-              style={
-                styles.cardGrid
-              }
-            >
-              {accesFeuilles && (
-                <Carte
-                  icone="📋"
-                  titre="Feuilles collaborateurs"
-                  description="Consulter les feuilles de temps de tous les collaborateurs"
-                  onClick={() =>
-                    router.push(
-                      "/admin/feuilles"
-                    )
-                  }
-                />
-              )}
+            <BlocAnalyse
+              aller={(url) => router.push(url)}
+              admin
+              accesFeuilles={accesFeuilles}
+              accesBilanRH={accesBilanRH}
+              accesExportExcel={accesExportExcel}
+            />
 
-              {accesBilanRH && (
-                <Carte
-                  icone="🧑‍💼"
-                  titre="Bilan RH mensuel"
-                  description="Synthèse mensuelle des TR, télétravail, heures supplémentaires et compteur"
-                  onClick={() =>
-                    router.push(
-                      "/admin/bilan-rh"
-                    )
-                  }
-                />
-              )}
-
-              {accesExportExcel && (
-                <Carte
-                  icone="📊"
-                  titre="Export Excel"
-                  description="Générer le fichier Excel hebdomadaire compatible avec l'ancien système"
-                  onClick={() =>
-                    router.push(
-                      "/admin/export-excel"
-                    )
-                  }
-                />
-              )}
-            </div>
+            <BlocParametrage
+              aller={(url) => router.push(url)}
+              ouvert={parametrageOuvert}
+              onBasculer={basculerParametrage}
+            />
           </>
-        )}
-
-        {/* =====================================================
-            ADMINISTRATEURS SEULEMENT
-        ===================================================== */}
-
-        {role === "ADMIN" && (
+        ) : (
           <>
-            {/* =================================================
-                ADMINISTRATION
-            ================================================= */}
-
-            <SectionTitre
-              titre="Administration"
-              description="Référentiels et paramétrage, réservés aux administrateurs"
+            <BlocMonEspace
+              aller={(url) => router.push(url)}
+              statut={maFeuille ? (estFeuilleComplete(maFeuille) ? "complete" : "incomplete") : "absente"}
+              libelle={maFeuille ? `Semaine du ${formaterDateLongue(semaineCourante)}` : "Ma feuille de la semaine courante"}
+              avecBilanAffaire={!peut(role, "piloterBE")}
             />
 
-            <div
-              style={
-                styles.cardGrid
-              }
-            >
-              <Carte
-                icone="👥"
-                titre="Collaborateurs"
-                description="Créer, modifier et gérer les collaborateurs"
-                onClick={() =>
-                  router.push(
-                    "/admin/collaborateurs"
-                  )
-                }
-              />
+            {peut(role, "piloterBE") && <BlocPilotage aller={(url) => router.push(url)} />}
 
-              <Carte
-                icone="⏰"
-                titre="Rythmes horaires"
-                description="Gérer les profils, rythmes et bases horaires"
-                onClick={() =>
-                  router.push(
-                    "/admin/profils-horaires"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🏷️"
-                titre="Gestion des codes"
-                description="Gérer les codes, leurs contextes d'utilisation et leur classement dans les bilans"
-                onClick={() =>
-                  router.push(
-                    "/admin/Gestion-codes"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🏷️"
-                titre="Imputations des affaires"
-                description="Gérer la liste BE, PE, PI, Scan, Négoce, IG… proposée dans le Pilotage BE"
-                onClick={() =>
-                  router.push(
-                    "/admin/imputations-pilotage"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🧩"
-                titre="Gestion des activités"
-                description="Créer les activités du BE et associer les codes d'imputation à chaque activité"
-                onClick={() =>
-                  router.push(
-                    "/admin/Gestion-activites"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🧑‍💼"
-                titre="Validation RH"
-                description="Valider les demandes RH nécessitant la double validation PLG / AMA"
-                onClick={() =>
-                  router.push(
-                    "/admin/Valid_RH"
-                  )
-                }
-              />
-            </div>
-
-            {/* =================================================
-                ANALYSE
-            ================================================= */}
-
-            <SectionTitre
-              titre="Analyse"
-              description="Analyser la charge, l'activité et les imputations (administrateurs)"
+            <BlocAnalyse
+              aller={(url) => router.push(url)}
+              admin={false}
+              accesFeuilles={accesFeuilles}
+              accesBilanRH={accesBilanRH}
+              accesExportExcel={accesExportExcel}
             />
-
-            <div
-              style={
-                styles.cardGrid
-              }
-            >
-              <Carte
-                icone="📈"
-                titre="Analyse de charge"
-                description="Analyser la charge, les heures, l'activité et le taux d'occupation de chaque collaborateur"
-                onClick={() =>
-                  router.push(
-                    "/admin/bilans"
-                  )
-                }
-              />
-
-              <Carte
-                icone="🧩"
-                titre="Bilan activités"
-                description="Voir les heures CBE / DBE réparties par activité dans le nouveau système"
-                onClick={() =>
-                  router.push(
-                    "/admin/bilan-activites"
-                  )
-                }
-              />
-
-              <Carte
-  icone="🧠"
-  titre="Export IA"
-  description="Générer un contexte complet du projet (code, base, architecture, droits, fonctions SQL)."
-  onClick={() =>
-    router.push(
-      "/admin/Export-IA"
-    )
-  }
-/>
-            </div>
-
-            {/* =================================================
-                DONNÉES
-            ================================================= */}
-
-            <SectionTitre
-              titre="Données"
-              description="Importer et alimenter les données historiques (administrateurs)"
-            />
-
-            <div
-              style={
-                styles.cardGrid
-              }
-            >
-              <Carte
-                icone="📥"
-                titre="Import historique"
-                description="Importer les anciennes imputations depuis un fichier"
-                onClick={() =>
-                  router.push(
-                    "/import-historique-v2"
-                  )
-                }
-              />
-            </div>
           </>
         )}
       </div>
@@ -1474,218 +833,462 @@ if (!collaborateur) {
 }
 
 /* ===============================================================
-   SECTION TITRE
+   COMPOSANTS DU TABLEAU DE BORD (cartes compactes, par priorité)
 ================================================================ */
 
-function SectionTitre({
-  titre,
-  description,
+type Ton = "neutre" | "alerte" | "ok";
+
+function Pastille({ texte, ton = "neutre" }: { texte: string; ton?: Ton }) {
+  return <span style={{ ...stylesV2.pastille, ...stylesV2[`pastille_${ton}`] }}>{texte}</span>;
+}
+
+function ChipSuivi({
+  icone,
+  valeur,
+  label,
+  ton = "neutre",
 }: {
-  titre: string;
-  description: string;
+  icone: string;
+  valeur: string;
+  label: string;
+  ton?: Ton;
 }) {
   return (
-    <div
-      style={
-        styles.sectionHeader
-      }
-    >
-      <h2
-        style={
-          styles.sectionTitle
-        }
-      >
-        {titre}
-      </h2>
-
-      <p
-        style={
-          styles.sectionDescription
-        }
-      >
-        {description}
-      </p>
+    <div style={stylesV2.chip}>
+      <span aria-hidden="true">{icone}</span>
+      <strong style={{ color: ton === "ok" ? "#26712b" : ton === "alerte" ? "#c76500" : "#222222" }}>{valeur}</strong>
+      <span style={{ color: "#777777" }}>{label}</span>
     </div>
   );
 }
 
-/* ===============================================================
-   CARTE
-================================================================ */
+function Groupe({
+  titre,
+  description,
+  children,
+  droite,
+  surClic,
+  deplie,
+}: {
+  titre: string;
+  description?: string;
+  children?: ReactNode;
+  droite?: ReactNode;
+  /* groupe repliable : toute la ligne de titre est cliquable */
+  surClic?: () => void;
+  deplie?: boolean;
+}) {
+  const cliquable = Boolean(surClic);
 
-function Carte({
+  return (
+    <section style={stylesV2.groupe} aria-label={titre}>
+      <div
+        style={{ ...stylesV2.groupeEntete, ...(cliquable ? stylesV2.groupeEnteteCliquable : {}) }}
+        {...(cliquable
+          ? {
+              role: "button",
+              tabIndex: 0,
+              "aria-expanded": deplie,
+              onClick: surClic,
+              onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  surClic?.();
+                }
+              },
+            }
+          : {})}
+      >
+        <h2 style={stylesV2.groupeTitre}>{titre}</h2>
+        {description && <span style={stylesV2.groupeDescription}>{description}</span>}
+        {droite}
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function CarteCompacte({
   icone,
   titre,
   description,
   onClick,
+  badge,
+  ton = "neutre",
+  principale = false,
 }: {
   icone: string;
   titre: string;
   description: string;
   onClick: () => void;
+  badge?: string | null;
+  ton?: Ton;
+  principale?: boolean;
 }) {
-  const [survol, setSurvol] =
-    useState(false);
+  const [survol, setSurvol] = useState(false);
 
   return (
     <div
       role="button"
       tabIndex={0}
+      aria-label={titre}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (
-          e.key === "Enter" ||
-          e.key === " "
-        ) {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onClick();
         }
       }}
-      onMouseEnter={() =>
-        setSurvol(true)
-      }
-      onMouseLeave={() =>
-        setSurvol(false)
-      }
+      onMouseEnter={() => setSurvol(true)}
+      onMouseLeave={() => setSurvol(false)}
       style={{
-        ...styles.card,
-        border:
-          survol
-            ? "1px solid #c00000"
-            : "1px solid #eeeeee",
-
-        boxShadow:
-          survol
-            ? "0 8px 20px rgba(0,0,0,0.12)"
-            : "0 2px 8px rgba(0,0,0,0.07)",
-
-        transform:
-          survol
-            ? "translateY(-2px)"
-            : "translateY(0)",
+        ...stylesV2.carte,
+        ...(principale ? stylesV2.cartePrincipale : {}),
+        boxShadow: survol ? "0 6px 16px rgba(0,0,0,0.14)" : "0 1px 5px rgba(0,0,0,0.08)",
+        transform: survol ? "translateY(-1px)" : "translateY(0)",
       }}
     >
-      <div>
-        <div
-          style={
-            styles.cardIcon
-          }
-        >
-          {icone}
+      <div style={{ ...stylesV2.carteIcone, ...(principale ? stylesV2.carteIconePrincipale : {}) }}>{icone}</div>
+
+      <div style={stylesV2.carteTexte}>
+        <div style={stylesV2.carteTitreLigne}>
+          <h3 style={stylesV2.carteTitre}>{titre}</h3>
+          {badge && <Pastille texte={badge} ton={ton} />}
         </div>
 
-        <h3
-          style={
-            styles.cardTitle
-          }
-        >
-          {titre}
-        </h3>
-
-        <p
-          style={
-            styles.cardDescription
-          }
-        >
-          {description}
-        </p>
-      </div>
-
-      <div
-        style={{
-          ...styles.cardLink,
-          opacity: survol
-            ? 1
-            : 0.8,
-        }}
-      >
-        Ouvrir →
+        <p style={stylesV2.carteDescription}>{description}</p>
       </div>
     </div>
   );
 }
 
-/* ===============================================================
-   KPI
-================================================================ */
+type DemandeCloche = {
+  id: string;
+  prenom: string | null;
+  nom: string | null;
+  trigramme: string | null;
+  type_demande: string | null;
+  date_debut: string | null;
+  date_fin: string | null;
+};
 
-function Kpi({
-  icone,
-  valeur,
-  label,
-  accent = "red",
+const LIBELLES_DEMANDE: Record<string, string> = {
+  RE: "Récupération",
+  CP: "Congés payés",
+  RTT: "RTT",
+};
+
+function ClocheDemandesRH({
+  nombre,
+  demandes,
+  onAller,
 }: {
-  icone: string;
-  valeur: string | number;
-  label: string;
-  accent?:
-    | "red"
-    | "green"
-    | "orange";
+  nombre: number;
+  demandes: DemandeCloche[];
+  onAller: (url: string) => void;
 }) {
-  const accentStyles = {
-    red: {
-      border: "#c00000",
-      background: "#fdf0f0",
-      value: "#c00000",
-    },
+  const [ouverte, setOuverte] = useState(false);
 
-    green: {
-      border: "#2e7d32",
-      background: "#edf7ee",
-      value: "#2e7d32",
-    },
+  useEffect(() => {
+    if (!ouverte) return;
 
-    orange: {
-      border: "#e67e22",
-      background: "#fff5e9",
-      value: "#d96b00",
-    },
-  };
+    const fermerClavier = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOuverte(false);
+    };
+    const fermerClic = (e: MouseEvent) => {
+      const cible = e.target as HTMLElement | null;
+      if (!cible?.closest("[data-cloche]")) setOuverte(false);
+    };
 
-  const couleur =
-    accentStyles[accent];
+    document.addEventListener("keydown", fermerClavier);
+    document.addEventListener("mousedown", fermerClic);
+
+    return () => {
+      document.removeEventListener("keydown", fermerClavier);
+      document.removeEventListener("mousedown", fermerClic);
+    };
+  }, [ouverte]);
+
+  const dateFR = (valeur: string | null) => (valeur ? new Date(`${valeur}T00:00:00`).toLocaleDateString("fr-FR") : "");
 
   return (
-    <div
-      style={{
-        ...styles.kpi,
-        borderTop: `4px solid ${couleur.border}`,
-      }}
-    >
-      <div
-        style={
-          styles.kpiTop
+    <div data-cloche style={stylesV2.clocheZone}>
+      <button
+        type="button"
+        onClick={() => setOuverte((v) => !v)}
+        aria-expanded={ouverte}
+        aria-label={
+          nombre > 0
+            ? `Notifications : ${nombre} demande${nombre > 1 ? "s" : ""} RH à valider`
+            : "Notifications : aucune demande RH à valider"
         }
+        title={nombre > 0 ? `${nombre} demande${nombre > 1 ? "s" : ""} RH à valider` : "Aucune demande RH à valider"}
+        style={stylesV2.cloche}
       >
-        <div
-          style={{
-            ...styles.kpiIcon,
-            background:
-              couleur.background,
-          }}
-        >
-          {icone}
+        <span aria-hidden="true" style={{ fontSize: 20 }}>🔔</span>
+        {nombre > 0 && <span style={stylesV2.clocheBadge}>{nombre > 99 ? "99+" : nombre}</span>}
+      </button>
+
+      {ouverte && (
+        <div role="dialog" aria-label="Demandes RH à valider" style={stylesV2.clochePanneau}>
+          <div style={stylesV2.clocheTitre}>
+            {nombre > 0 ? `Demandes RH à valider (${nombre})` : "Aucune demande RH en attente ✓"}
+          </div>
+
+          {demandes.map((d) => (
+            <div key={d.id} style={stylesV2.clocheLigne}>
+              <strong>{[d.prenom, d.nom].filter(Boolean).join(" ") || d.trigramme || "—"}</strong>
+              <span style={{ color: "#666666", fontSize: 12.5 }}>
+                {LIBELLES_DEMANDE[String(d.type_demande ?? "")] ?? d.type_demande ?? "Demande"}
+                {d.date_debut ? ` · ${dateFR(d.date_debut)}` : ""}
+                {d.date_fin && d.date_fin !== d.date_debut ? ` → ${dateFR(d.date_fin)}` : ""}
+              </span>
+            </div>
+          ))}
+
+          {nombre > demandes.length && demandes.length > 0 && (
+            <div style={{ color: "#666666", fontSize: 12.5, padding: "6px 14px" }}>… et {nombre - demandes.length} autre(s)</div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setOuverte(false);
+              onAller("/admin/Valid_RH");
+            }}
+            style={stylesV2.clocheBouton}
+          >
+            Ouvrir la validation RH →
+          </button>
         </div>
-      </div>
-
-      <div
-        style={{
-          ...styles.kpiValue,
-          color: couleur.value,
-        }}
-      >
-        {valeur}
-      </div>
-
-      <div
-        style={
-          styles.kpiLabel
-        }
-      >
-        {label}
-      </div>
+      )}
     </div>
+  );
+}
+
+function BlocPilotage({ aller }: { aller: (url: string) => void }) {
+  return (
+    <Groupe titre="Pilotage BE" description="Portefeuille et charge : onglets en haut du planning">
+      <div style={stylesV2.grille}>
+        <CarteCompacte
+          principale
+          icone="📅"
+          titre="Planning des affaires"
+          description="Affecter les ressources en glissant et en étirant, comparer au chiffré"
+          onClick={() => aller("/pilotage/affaires")}
+        />
+        <CarteCompacte
+          principale
+          icone="＋"
+          titre="Nouvelle affaire"
+          description="Déclarer un DBE, un CBE, une PE ou une PI"
+          onClick={() => aller("/pilotage/nouvelle")}
+        />
+        <CarteCompacte
+          icone="📊"
+          titre="Bilan affaire"
+          description="Heures imputées par affaire et bilans d'affaires"
+          onClick={() => aller("/affaires/bilan")}
+        />
+      </div>
+    </Groupe>
+  );
+}
+
+function BlocValidationsRH({
+  aller,
+  nombreDemandesRH,
+  aRelancer,
+}: {
+  aller: (url: string) => void;
+  nombreDemandesRH: number;
+  aRelancer: LigneSurveillance[];
+}) {
+  const noms = aRelancer.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
+
+  return (
+    <Groupe titre="Validations RH" description="Demandes, compteurs et feuilles à relancer">
+      <div style={stylesV2.grille}>
+        <CarteCompacte
+          icone="🧑‍💼"
+          titre="Validation RH"
+          description="Valider les demandes nécessitant la double validation PLG / AMA"
+          badge={nombreDemandesRH > 0 ? `${nombreDemandesRH} en attente` : null}
+          ton="alerte"
+          onClick={() => aller("/admin/Valid_RH")}
+        />
+        <CarteCompacte
+          icone="⏱️"
+          titre="Compteurs de récupération"
+          description="Ajuster un compteur, avec motif et historique"
+          onClick={() => aller("/admin/compteurs")}
+        />
+        <CarteCompacte
+          icone="📋"
+          titre="Feuilles à relancer"
+          description={
+            aRelancer.length === 0
+              ? "Toutes les feuilles de la semaine dernière sont validées"
+              : `${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""} : feuille non validée`
+          }
+          badge={aRelancer.length === 0 ? "✓" : String(aRelancer.length)}
+          ton={aRelancer.length === 0 ? "ok" : "alerte"}
+          onClick={() => aller("/admin/feuilles")}
+        />
+      </div>
+    </Groupe>
+  );
+}
+
+function BlocMonEspace({
+  aller,
+  statut,
+  libelle,
+  avecBilanAffaire,
+}: {
+  aller: (url: string) => void;
+  statut: "complete" | "incomplete" | "absente";
+  libelle: string;
+  avecBilanAffaire: boolean;
+}) {
+  return (
+    <Groupe titre="Mon espace" description="Mes feuilles, mes affaires et mes demandes RH">
+      <div style={stylesV2.grille}>
+        <CarteCompacte
+          icone="📅"
+          titre="Ma semaine"
+          description={libelle}
+          badge={statut === "complete" ? "✓ Complète" : statut === "incomplete" ? "⚠ À compléter" : "⚠ Non saisie"}
+          ton={statut === "complete" ? "ok" : "alerte"}
+          onClick={() => aller("/ma-semaine")}
+        />
+        <CarteCompacte
+          icone="📄"
+          titre="Mes feuilles"
+          description="Mes feuilles de temps enregistrées"
+          onClick={() => aller("/mes-feuilles")}
+        />
+        {avecBilanAffaire && (
+          <CarteCompacte
+            icone="📊"
+            titre="Bilan affaire"
+            description="Mes imputations et mes bilans d'affaires"
+            onClick={() => aller("/affaires/bilan")}
+          />
+        )}
+        <CarteCompacte
+          icone="🧑‍💼"
+          titre="RH"
+          description="Mes demandes de congés, RTT et récupération"
+          onClick={() => aller("/RH")}
+        />
+      </div>
+    </Groupe>
+  );
+}
+
+function BlocAnalyse({
+  aller,
+  admin,
+  accesFeuilles,
+  accesBilanRH,
+  accesExportExcel,
+}: {
+  aller: (url: string) => void;
+  admin: boolean;
+  accesFeuilles: boolean;
+  accesBilanRH: boolean;
+  accesExportExcel: boolean;
+}) {
+  if (!admin && !accesFeuilles && !accesBilanRH && !accesExportExcel) return null;
+
+  return (
+    <Groupe
+      titre={admin ? "Analyse" : "Suivi des équipes"}
+      description={
+        admin
+          ? "Charge, activités, bilan RH mensuel, exports et feuilles des collaborateurs"
+          : "Feuilles de temps, bilan RH mensuel et export Excel"
+      }
+    >
+      <div style={stylesV2.grille}>
+        {admin && (
+          <CarteCompacte
+            icone="📈"
+            titre="Analyse de charge"
+            description="Heures, activité et taux d'occupation de chaque collaborateur"
+            onClick={() => aller("/admin/bilans")}
+          />
+        )}
+        {admin && (
+          <CarteCompacte
+            icone="🧩"
+            titre="Bilan activités"
+            description="Heures CBE / DBE réparties par activité"
+            onClick={() => aller("/admin/bilan-activites")}
+          />
+        )}
+        {accesBilanRH && (
+          <CarteCompacte
+            icone="🧑‍💼"
+            titre="Bilan RH mensuel"
+            description="TR, télétravail, heures supplémentaires et compteur"
+            onClick={() => aller("/admin/bilan-rh")}
+          />
+        )}
+        {accesExportExcel && (
+          <CarteCompacte
+            icone="📊"
+            titre="Export Excel"
+            description="Fichier hebdomadaire compatible avec l'ancien système"
+            onClick={() => aller("/admin/export-excel")}
+          />
+        )}
+        {accesFeuilles && (
+          <CarteCompacte
+            icone="📋"
+            titre="Feuilles collaborateurs"
+            description="Consulter les feuilles de temps de tous les collaborateurs"
+            onClick={() => aller("/admin/feuilles")}
+          />
+        )}
+      </div>
+    </Groupe>
+  );
+}
+
+function BlocParametrage({
+  aller,
+  ouvert,
+  onBasculer,
+}: {
+  aller: (url: string) => void;
+  ouvert: boolean;
+  onBasculer: () => void;
+}) {
+  return (
+    <Groupe
+      titre="⚙️ Paramétrage de l'application"
+      description="Codes, activités, collaborateurs, rythmes, imputations, export IA, import"
+      surClic={onBasculer}
+      deplie={ouvert}
+      droite={
+        <span style={stylesV2.boutonGroupe}>{ouvert ? "Replier ▴" : "Afficher les 7 réglages ▾"}</span>
+      }
+    >
+      {ouvert && (
+        <div style={stylesV2.grille}>
+          <CarteCompacte icone="🏷️" titre="Gestion des codes" description="Codes, contextes d'utilisation et classement dans les bilans" onClick={() => aller("/admin/Gestion-codes")} />
+          <CarteCompacte icone="🧩" titre="Gestion des activités" description="Activités du BE et codes d'imputation associés" onClick={() => aller("/admin/Gestion-activites")} />
+          <CarteCompacte icone="👥" titre="Collaborateurs" description="Créer, modifier et gérer les collaborateurs" onClick={() => aller("/admin/collaborateurs")} />
+          <CarteCompacte icone="⏰" titre="Rythmes horaires" description="Profils, rythmes et bases horaires" onClick={() => aller("/admin/profils-horaires")} />
+          <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
+          <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
+          <CarteCompacte icone="📥" titre="Import historique" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
+        </div>
+      )}
+    </Groupe>
   );
 }
 
@@ -2426,4 +2029,42 @@ const styles: Record<
     fontWeight: 700,
     cursor: "pointer",
   },
+};
+
+/* ===============================================================
+   STYLES DES CARTES COMPACTES
+================================================================ */
+
+const stylesV2: Record<string, CSSProperties> = {
+  accueil: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", margin: "0 0 10px" },
+  bonjour: { margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: "-0.3px", color: "#222222" },
+  semaine: { color: "#777777", fontSize: 13, marginTop: 2 },
+  chips: { display: "flex", gap: 8, flexWrap: "wrap" },
+  chip: { background: "#ffffff", border: "1px solid #e5e5e5", borderRadius: 10, padding: "6px 12px", display: "flex", alignItems: "center", gap: 7, fontSize: 13, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" },
+  groupe: { marginBottom: 12 },
+  groupeEntete: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 },
+  groupeEnteteCliquable: { cursor: "pointer", background: "#ffffff", border: "1px solid #dddddd", borderRadius: 10, padding: "8px 12px", boxShadow: "0 1px 5px rgba(0,0,0,0.08)" },
+  groupeTitre: { margin: 0, fontSize: 18, fontWeight: 800, color: "#222222" },
+  groupeDescription: { color: "#777777", fontSize: 13 },
+  boutonGroupe: { marginLeft: "auto", background: "#333333", color: "#ffffff", borderRadius: 8, padding: "8px 16px", fontWeight: 800, fontSize: 14, whiteSpace: "nowrap" },
+  clocheZone: { position: "relative" },
+  cloche: { position: "relative", width: 44, height: 44, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.15)", color: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" },
+  clocheBadge: { position: "absolute", top: -4, right: -4, minWidth: 22, height: 22, borderRadius: 999, background: "#ffffff", color: "#c00000", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", border: "2px solid #c00000", boxSizing: "border-box" },
+  clochePanneau: { position: "absolute", top: 54, right: 0, width: 340, maxWidth: "90vw", background: "#ffffff", color: "#222222", borderRadius: 12, boxShadow: "0 10px 30px rgba(0,0,0,0.25)", zIndex: 60, overflow: "hidden", textAlign: "left" },
+  clocheTitre: { padding: "12px 14px", fontWeight: 800, fontSize: 15, borderBottom: "1px solid #eeeeee" },
+  clocheLigne: { display: "flex", flexDirection: "column", gap: 1, padding: "9px 14px", borderBottom: "1px solid #f3f3f3", fontSize: 14 },
+  clocheBouton: { width: "100%", border: "none", background: "#c00000", color: "#ffffff", padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
+  grille: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12 },
+  carte: { background: "#ffffff", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderLeft: "4px solid #c00000", minHeight: 62, transition: "all 0.15s ease", outline: "none" },
+  cartePrincipale: { background: "#fff6f6" },
+  carteIcone: { width: 38, height: 38, borderRadius: 9, background: "#f8e8e8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 },
+  carteIconePrincipale: { background: "#c00000", color: "#ffffff" },
+  carteTexte: { flex: 1, minWidth: 0 },
+  carteTitreLigne: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  carteTitre: { margin: 0, fontSize: 16, fontWeight: 800, color: "#222222" },
+  carteDescription: { margin: "2px 0 0", color: "#666666", fontSize: 12.5, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  pastille: { borderRadius: 999, padding: "2px 9px", fontSize: 11.5, fontWeight: 800, whiteSpace: "nowrap" },
+  pastille_neutre: { background: "#f0f0f0", color: "#555555" },
+  pastille_alerte: { background: "#fff1df", color: "#c76500" },
+  pastille_ok: { background: "#e9f6eb", color: "#26712b" },
 };
