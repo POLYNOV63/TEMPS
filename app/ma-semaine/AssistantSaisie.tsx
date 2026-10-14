@@ -57,6 +57,7 @@ export function BandeauSemaine({
   jourSelectionne,
   collant = true,
   sansPuces = false,
+  integre = false,
 }: {
   jours: JourBandeau[];
   resume: string;
@@ -75,9 +76,11 @@ export function BandeauSemaine({
   /* Mode grille : bandeau non collant, sans les pastilles de jours (la grille a ses cartes) */
   collant?: boolean;
   sansPuces?: boolean;
+  /* Dans l'en-tête compact : sans cadre propre (il est déjà dans la carte) */
+  integre?: boolean;
 }) {
   return (
-    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: "static" as const }) }}>
+    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: "static" as const }), ...(integre ? styles.bandeauIntegre : {}) }}>
       <div style={{ ...styles.ligne, ...(sansPuces ? { display: "none" as const } : {}) }}>
         <div style={compact ? styles.pucesCompact : styles.puces}>
           {jours.map((jour) => (
@@ -291,6 +294,16 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "Calibri, Arial, sans-serif",
     fontSize: 13,
     color: "#333",
+  },
+
+  bandeauIntegre: {
+    position: "static",
+    background: "transparent",
+    border: "none",
+    boxShadow: "none",
+    borderRadius: 0,
+    padding: 0,
+    margin: 0,
   },
 
   ligne: {

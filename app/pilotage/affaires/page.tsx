@@ -6,6 +6,8 @@ import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import AffecterDialog from "@/components/pilotage/AffecterDialog";
+import FicheAffaireDialog from "@/components/pilotage/FicheAffaireDialog";
+import FicheRessourceDialog from "@/components/pilotage/FicheRessourceDialog";
 import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import {
@@ -14,6 +16,7 @@ import {
   chargerAnnuaire,
   chargerCapacitesAbsences,
   chargerCharges,
+  chargerImputations,
   chargerPlanifie,
   type ReferentielActivites,
 } from "@/lib/pilotageDonnees";
@@ -30,9 +33,12 @@ import {
   joursOuvres,
   joursSansCapacite,
   lundiDe,
+  positionPiste,
   numeroSemaine,
   ratioDuBloc,
   recalculerBloc,
+  bornesApresGlisse as bornesGlisse,
+  depasseBornes,
   type Affectation,
   type JourAffecte,
   type JourHeures,
@@ -48,6 +54,7 @@ import {
   type Charge,
   type Collab,
   type Genre,
+  type Imputation,
 } from "@/lib/pilotageCalculs";
 import { chargerMoi } from "@/lib/pilotageDonnees";
 
@@ -84,6 +91,18 @@ type Bloc = {
 
 type DragEtat = { id: string; mode: "move" | "debut" | "fin"; delta: number };
 
+/* Barre de l'affaire (bornes théoriques d'une prestation PE / PI) */
+type PisteAffaire = {
+  debut: string;
+  fin: string;
+  debutIdx: number;
+  finIdx: number;
+  coupeGauche: boolean;
+  coupeDroite: boolean;
+};
+
+const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
+
 function PlanningAffairesContenu() {
   const [lundi, setLundi] = useState(() => lundiDe(aISO(new Date())));
   const [nbSemaines, setNbSemaines] = useState(4);
@@ -106,6 +125,14 @@ function PlanningAffairesContenu() {
   const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("TOUS");
   const [limiter, setLimiter] = useState(false);
   const [drag, setDrag] = useState<DragEtat | null>(null);
+  const [dragAffaire, setDragAffaire] = useState<DragEtat | null>(null);
+  const [imputations, setImputations] = useState<Imputation[]>([]);
+  const [ficheRessource, setFicheRessource] = useState<null | {
+    affaire: Affaire;
+    edition?: { affectation: Affectation; jours: JourRow[] };
+    prefill?: { collaborateurId?: string; debut?: string; fin?: string };
+  }>(null);
+  const [ficheAffaire, setFicheAffaire] = useState<Affaire | null>(null);
   const [dialogue, setDialogue] = useState<null | {
     affaire: Affaire;
     prefill?: { collaborateurId?: string; debut?: string };
@@ -153,16 +180,18 @@ function PlanningAffairesContenu() {
       chargerCharges(),
       chargerAnnuaire(),
       chargerActivites(),
+      chargerImputations(),
       chargerMoi(),
       chargerPlanifie(debutDonnees),
       chargerCapacitesAbsences(lundi, fin),
     ])
-      .then(([af, ch, an, ref, moi, pl, cap]) => {
+      .then(([af, ch, an, ref, im, moi, pl, cap]) => {
         if (!actif) return;
         setAffaires(af);
         setCharges(ch);
         setAnnuaire(an);
         setReferentiel(ref);
+        setImputations(im);
         setPeutAgir(Boolean(moi?.peutModifier));
         setAffectations(pl.affectations);
         setJoursRows(pl.jours);
@@ -190,6 +219,39 @@ function PlanningAffairesContenu() {
 
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
   const estPE = useCallback((id: string) => affairesParId.get(id)?.imputation === "PE", [affairesParId]);
+
+  /* Prestation (PE, PI) : imputation sans heures chiffrées obligatoires */
+  const estPrestation = useCallback(
+    (a: Affaire) => {
+      const imputation = imputations.find((i) => i.code === a.imputation);
+      return imputation ? imputation.charge_obligatoire === false : a.imputation === "PE" || a.imputation === "PI";
+    },
+    [imputations]
+  );
+
+  /* Bornes théoriques de chaque affaire : celles de l'affaire si elles sont définies,
+     sinon l'étendue de ses ressources. */
+  const bornesParAffaire = useMemo(() => {
+    const m = new Map<string, { debut: string | null; fin: string | null }>();
+    const parAffaire = new Map<string, Affectation[]>();
+
+    for (const a of affectations) {
+      if (!a.affaire_id) continue;
+      const l = parAffaire.get(a.affaire_id) ?? [];
+      l.push(a);
+      parAffaire.set(a.affaire_id, l);
+    }
+
+    for (const af of affaires) {
+      const l = parAffaire.get(af.id) ?? [];
+      const debutEffectif = l.length ? l.map((x) => x.date_debut).sort()[0] : null;
+      const finEffective = l.length ? l.map((x) => x.date_fin).sort().slice(-1)[0] : null;
+
+      m.set(af.id, { debut: af.date_debut ?? debutEffectif, fin: af.echeance ?? finEffective });
+    }
+
+    return m;
+  }, [affaires, affectations]);
 
   const chiffreParAffaire = useMemo(() => {
     const m = new Map<string, number>();
@@ -344,6 +406,24 @@ function PlanningAffairesContenu() {
 
   /* ------------------------------ glisser / étirer ------------------------------ */
 
+  const pistesAffaires = useMemo(() => {
+    const m = new Map<string, PisteAffaire>();
+
+    for (const a of affaires) {
+      if (!estPrestation(a)) continue;
+
+      const b = bornesParAffaire.get(a.id);
+      if (!b?.debut || !b.fin) continue;
+
+      const position = positionPiste(b.debut, b.fin, colonnes);
+      if (!position) continue;
+
+      m.set(a.id, { debut: b.debut, fin: b.fin, ...position });
+    }
+
+    return m;
+  }, [affaires, estPrestation, bornesParAffaire, colonnes]);
+
   const ref = useRef({
     colonnes,
     blocs: new Map<string, Bloc>(),
@@ -354,6 +434,9 @@ function PlanningAffairesContenu() {
     chezLeClient,
     limiter,
     joursParAffectation,
+    pistes: new Map<string, PisteAffaire>(),
+    estPrestation: (_a: Affaire) => false as boolean,
+    clientHorsAffectation: (_id: string, _collab: string) => undefined as Set<string> | undefined,
   });
 
   const tousLesBlocs = useMemo(() => {
@@ -362,27 +445,29 @@ function PlanningAffairesContenu() {
     return m;
   }, [blocsParAffaire]);
 
-  ref.current = { colonnes, blocs: tousLesBlocs, capacites, affairesParId, chiffreParAffaire, affecteParAffaire, chezLeClient, limiter, joursParAffectation };
+  ref.current = {
+    colonnes,
+    blocs: tousLesBlocs,
+    capacites,
+    affairesParId,
+    chiffreParAffaire,
+    affecteParAffaire,
+    chezLeClient,
+    limiter,
+    joursParAffectation,
+    pistes: pistesAffaires,
+    estPrestation,
+    // jours où la personne est chez un client, sans compter la barre qu'on modifie
+    clientHorsAffectation: (id: string, collabId: string) =>
+      joursChezLeClient(affectations.filter((x) => x.id !== id), joursRows, estPE).get(collabId),
+  };
 
   const dragRef = useRef<{ id: string; mode: DragEtat["mode"]; x0: number; pxCol: number; delta: number } | null>(null);
 
-  const calculerNouvellesBornes = useCallback((b: Bloc, mode: DragEtat["mode"], delta: number) => {
-    const cols = ref.current.colonnes.length;
-    let i = b.debutIdx;
-    let f = b.finIdx;
-
-    if (mode === "move") {
-      const d = Math.min(Math.max(delta, -b.debutIdx), cols - 1 - b.finIdx);
-      i += d;
-      f += d;
-    } else if (mode === "debut") {
-      i = Math.min(Math.max(0, b.debutIdx + delta), b.finIdx);
-    } else {
-      f = Math.max(Math.min(cols - 1, b.finIdx + delta), b.debutIdx);
-    }
-
-    return { i, f };
-  }, []);
+  const calculerNouvellesBornes = useCallback(
+    (b: Bloc, mode: DragEtat["mode"], delta: number) => bornesGlisse(b, mode, delta, ref.current.colonnes.length),
+    []
+  );
 
   const appliquer = useCallback(
     async (id: string, mode: DragEtat["mode"], delta: number) => {
@@ -418,9 +503,9 @@ function PlanningAffairesContenu() {
         return;
       }
 
-      const client = r.chezLeClient.get(a.collaborateur_id);
-      if (!estPE(affaire.id) && client && resultat.jours.some((j) => client.has(j.jour))) {
-        setErreur("Cette personne est chez le client (prestation externe) à ces dates : elle n’est pas affectable ailleurs.");
+      const client = r.clientHorsAffectation(a.id, a.collaborateur_id);
+      if (client && resultat.jours.some((j) => client.has(j.jour))) {
+        setErreur("Cette personne est déjà chez un client (prestation externe) à ces dates : elle n’est pas affectable ailleurs.");
         return;
       }
 
@@ -451,11 +536,11 @@ function PlanningAffairesContenu() {
       );
       setRechargement((n) => n + 1);
     },
-    [calculerNouvellesBornes, estPE]
+    [calculerNouvellesBornes]
   );
 
   function demarrerDrag(e: PointerReact<HTMLElement>, b: Bloc, mode: DragEtat["mode"]) {
-    if (!peutAgir || estPE(b.affectation.affaire_id ?? "")) return;
+    if (!peutAgir) return;
     if ((mode === "move" && (b.coupeGauche || b.coupeDroite)) || (mode === "debut" && b.coupeGauche) || (mode === "fin" && b.coupeDroite)) return;
 
     const ligne = (e.currentTarget as HTMLElement).closest("[data-ligne]") as HTMLElement | null;
@@ -493,13 +578,111 @@ function PlanningAffairesContenu() {
         const bloc = ref.current.blocs.get(courant.id);
         const affaire = bloc?.affectation.affaire_id ? ref.current.affairesParId.get(bloc.affectation.affaire_id) : undefined;
 
-        if (bloc && affaire && !estPE(affaire.id)) {
-          setDialogue({ affaire, edition: { affectation: bloc.affectation, jours: joursRows.filter((j) => j.affectation_id === bloc.affectation.id) } });
+        if (bloc && affaire) {
+          const edition = { affectation: bloc.affectation, jours: joursRows.filter((j) => j.affectation_id === bloc.affectation.id) };
+
+          if (ref.current.estPrestation(affaire)) setFicheRessource({ affaire, edition });
+          else setDialogue({ affaire, edition });
         }
         return;
       }
 
       void appliquer(courant.id, courant.mode, courant.delta);
+    };
+
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", relacher, { once: true });
+  }
+
+  /* ------------------------------ barre de l'affaire (bornes d'une prestation) ------------------------------ */
+
+  const dragAffaireRef = useRef<{ id: string; mode: DragEtat["mode"]; x0: number; pxCol: number; delta: number } | null>(null);
+
+  const bornesApresGlisse = useCallback(
+    (p: PisteAffaire, mode: DragEtat["mode"], delta: number) => bornesGlisse(p, mode, delta, ref.current.colonnes.length),
+    []
+  );
+
+  async function enregistrerBornes(affaire: Affaire, debutPrestation: string, finPrestation: string) {
+    const { error } = await supabase.rpc("pilotage_modifier_prestation", {
+      p_affaire_id: affaire.id,
+      p_date_debut: debutPrestation,
+      p_date_fin: finPrestation,
+      p_quantite: affaire.prestation_quantite !== null && affaire.prestation_quantite !== undefined ? num(affaire.prestation_quantite) : null,
+      p_unite: affaire.prestation_unite,
+      p_comprend_conges: Boolean(affaire.prestation_comprend_conges),
+    });
+
+    if (error) throw new Error(traduireErreur(error.message));
+  }
+
+  const appliquerAffaire = useCallback(
+    async (id: string, mode: DragEtat["mode"], delta: number) => {
+      const r = ref.current;
+      const piste = r.pistes.get(id);
+      const affaire = r.affairesParId.get(id);
+      if (!piste || !affaire) return;
+
+      const { i, f } = bornesApresGlisse(piste, mode, delta);
+      const debutPrestation = mode === "fin" ? piste.debut : r.colonnes[i];
+      const finPrestation = mode === "debut" ? piste.fin : r.colonnes[f];
+
+      try {
+        await enregistrerBornes(affaire, debutPrestation, finPrestation);
+        setInfo(`Prestation du ${formatDate(debutPrestation)} au ${formatDate(finPrestation)}.`);
+        setRechargement((n) => n + 1);
+      } catch (e) {
+        setErreur(e instanceof Error ? e.message : "Impossible de modifier la prestation.");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bornesApresGlisse]
+  );
+
+  function demarrerDragAffaire(e: PointerReact<HTMLElement>, affaire: Affaire, mode: DragEtat["mode"]) {
+    if (!peutAgir) return;
+
+    const piste = ref.current.pistes.get(affaire.id);
+    if (!piste) return;
+    if ((mode === "move" && (piste.coupeGauche || piste.coupeDroite)) || (mode === "debut" && piste.coupeGauche) || (mode === "fin" && piste.coupeDroite)) return;
+
+    const ligne = (e.currentTarget as HTMLElement).closest("[data-ligne]") as HTMLElement | null;
+    if (!ligne) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const largeur = ligne.getBoundingClientRect().width - LARGEUR_NOM - LARGEUR_STATUT;
+    const etat = { id: affaire.id, mode, x0: e.clientX, pxCol: Math.max(4, largeur / ref.current.colonnes.length), delta: 0 };
+
+    dragAffaireRef.current = etat;
+    setDragAffaire({ id: etat.id, mode, delta: 0 });
+
+    const bouger = (ev: PointerEvent) => {
+      const courant = dragAffaireRef.current;
+      if (!courant) return;
+      const delta = Math.round((ev.clientX - courant.x0) / courant.pxCol);
+
+      if (delta !== courant.delta) {
+        courant.delta = delta;
+        setDragAffaire({ id: courant.id, mode: courant.mode, delta });
+      }
+    };
+
+    const relacher = () => {
+      window.removeEventListener("pointermove", bouger);
+      const courant = dragAffaireRef.current;
+      dragAffaireRef.current = null;
+      setDragAffaire(null);
+
+      if (!courant) return;
+
+      if (courant.delta === 0) {
+        setFicheAffaire(affaire);
+        return;
+      }
+
+      void appliquerAffaire(courant.id, courant.mode, courant.delta);
     };
 
     window.addEventListener("pointermove", bouger);
@@ -517,6 +700,12 @@ function PlanningAffairesContenu() {
     const largeur = ligne.getBoundingClientRect().width - LARGEUR_NOM - LARGEUR_STATUT;
     const x = e.clientX - ligne.getBoundingClientRect().left - LARGEUR_NOM;
     const idx = Math.min(colonnes.length - 1, Math.max(0, Math.floor((x / Math.max(1, largeur)) * colonnes.length)));
+
+    if (estPrestation(affaire)) {
+      const b = bornesParAffaire.get(affaire.id);
+      setFicheRessource({ affaire, prefill: { collaborateurId, debut: colonnes[idx], fin: b?.fin && b.fin >= colonnes[idx] ? b.fin : undefined } });
+      return;
+    }
 
     setDialogue({ affaire, prefill: { collaborateurId, debut: colonnes[idx] } });
   }
@@ -563,12 +752,27 @@ function PlanningAffairesContenu() {
     const bornes = enDrag ? calculerNouvellesBornes(b, enDrag.mode, enDrag.delta) : { i: b.debutIdx, f: b.finIdx };
     const c = annuaire.find((x) => x.id === b.affectation.collaborateur_id);
     const pe = estPE(affaire.id);
-    const verrouille = pe || !peutAgir;
+    const pi = affaire.imputation === "PI";
+    const prestation = estPrestation(affaire);
+    const verrouille = !peutAgir;
     const cap = capacites.get(b.affectation.collaborateur_id);
     const manquants = joursSansCapacite(colonnes[bornes.i], colonnes[bornes.f], cap);
     const nb = bornes.f - bornes.i + 1;
-    const fond = pe ? "#6f8fb3" : affaire.type === "DBE" ? "#f2bfd0" : C.rouge;
-    const encre = affaire.type === "DBE" && !pe ? "#4a0f28" : "#ffffff";
+    const fond = pe ? "#6f8fb3" : pi ? "#6b58a8" : affaire.type === "DBE" ? "#f2bfd0" : C.rouge;
+    const encre = affaire.type === "DBE" && !pe && !pi ? "#4a0f28" : "#ffffff";
+    const net = (j: string) => cap?.get(j)?.net ?? 0;
+    const part = Math.round(ratioDuBloc(b.jours, net) * 100);
+
+    // la ressource dépasse les bornes de la prestation : jours concernés
+    const borneAffaire = prestation ? bornesParAffaire.get(affaire.id) : undefined;
+    const horsBornes: number[] = [];
+
+    if (borneAffaire) {
+      for (let k = bornes.i; k <= bornes.f; k++) {
+        const j = colonnes[k];
+        if ((borneAffaire.debut && j < borneAffaire.debut) || (borneAffaire.fin && j > borneAffaire.fin)) horsBornes.push(k);
+      }
+    }
 
     const poignee = (cote: "debut" | "fin", coupe: boolean): CSSProperties => ({
       position: "absolute",
@@ -597,7 +801,7 @@ function PlanningAffairesContenu() {
             borderRadius: 5,
             background: fond,
             color: encre,
-            border: enDrag ? "2px dashed #1f2328" : `1.5px solid ${pe ? "#34506b" : affaire.type === "DBE" ? "#d98aa6" : C.rouge}`,
+            border: enDrag ? "2px dashed #1f2328" : `1.5px solid ${pe ? "#34506b" : pi ? "#4a3a85" : affaire.type === "DBE" ? "#d98aa6" : C.rouge}`,
             boxSizing: "border-box",
             display: "flex",
             alignItems: "center",
@@ -613,7 +817,13 @@ function PlanningAffairesContenu() {
         >
           <span aria-hidden="true" style={poignee("debut", b.coupeGauche)} onPointerDown={(e) => demarrerDrag(e, b, "debut")} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            {nb >= 3 ? `${nomCollab(c)} · ${formatHeures(b.heures)}` : nomCollab(c)}
+            {prestation
+              ? nb >= 3 && part < 100
+                ? `${nomCollab(c)} · ${part} %`
+                : nomCollab(c)
+              : nb >= 3
+                ? `${nomCollab(c)} · ${formatHeures(b.heures)}`
+                : nomCollab(c)}
           </span>
           <span aria-hidden="true" style={poignee("fin", b.coupeDroite)} onPointerDown={(e) => demarrerDrag(e, b, "fin")} />
         </div>
@@ -627,6 +837,98 @@ function PlanningAffairesContenu() {
             />
           );
         })}
+        {horsBornes.map((k) => (
+          <div
+            key={`h-${b.affectation.id}-${k}`}
+            title="Dépasse les bornes de la prestation"
+            style={{ gridColumn: col(k), gridRow: 1, alignSelf: "center", height: 28, margin: "0 1px", borderRadius: 4, background: ROUGE_HACHURE, border: "1.5px solid #b3261e", boxSizing: "border-box", zIndex: 4, pointerEvents: "none" }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  /* Barre pointillée de l'affaire : début et fin théoriques de la prestation (PE, PI).
+     Indépendante des barres de ses ressources. */
+  function rendrePisteAffaire(affaire: Affaire) {
+    const piste = pistesAffaires.get(affaire.id);
+    const borne = bornesParAffaire.get(affaire.id);
+
+    if (!piste) {
+      // pas de bornes, ou bornes hors de la période affichée
+      if (borne?.debut && borne.fin) return null;
+
+      return peutAgir ? (
+        <button
+          type="button"
+          onClick={() => setFicheAffaire(affaire)}
+          style={{ gridColumn: `2 / ${colonnes.length + 2}`, gridRow: 1, alignSelf: "center", justifySelf: "start", margin: "0 8px", minHeight: 34, padding: "0 14px", border: "1.5px dashed #6f8fb3", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: "#34506b", cursor: "pointer", fontFamily: "inherit" }}
+        >
+          Définir le début et la fin de la prestation
+        </button>
+      ) : null;
+    }
+
+    const enDrag = dragAffaire && dragAffaire.id === affaire.id ? dragAffaire : null;
+    const bornes = enDrag ? bornesApresGlisse(piste, enDrag.mode, enDrag.delta) : { i: piste.debutIdx, f: piste.finIdx };
+    const pi = affaire.imputation === "PI";
+    const verrouille = !peutAgir;
+    const nouveauDebut = enDrag ? (enDrag.mode === "fin" ? piste.debut : colonnes[bornes.i]) : piste.debut;
+    const nouvelleFin = enDrag ? (enDrag.mode === "debut" ? piste.fin : colonnes[bornes.f]) : piste.fin;
+
+    const poignee = (cote: "debut" | "fin", coupe: boolean): CSSProperties => ({
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      [cote === "debut" ? "left" : "right"]: 0,
+      width: 9,
+      background: coupe || verrouille ? "transparent" : "rgba(0,0,0,.28)",
+      cursor: coupe || verrouille ? "default" : "ew-resize",
+      borderRadius: cote === "debut" ? "4px 0 0 4px" : "0 4px 4px 0",
+      touchAction: "none",
+    });
+
+    return (
+      <div style={{ display: "contents" }}>
+        <div
+          title={`Prestation du ${formatDate(piste.debut)} au ${formatDate(piste.fin)} — glisser pour décaler, étirer un bord pour changer le début ou la fin, cliquer pour modifier`}
+          onPointerDown={(e) => demarrerDragAffaire(e, affaire, "move")}
+          style={{
+            gridColumn: `${col(bornes.i)} / ${col(bornes.f) + 1}`,
+            gridRow: 1,
+            alignSelf: "center",
+            position: "relative",
+            height: 28,
+            margin: "0 1px",
+            borderRadius: 5,
+            background: pi ? "#e8e3f5" : "#dbe7f7",
+            color: "#1f2328",
+            border: `2px ${enDrag ? "solid" : "dashed"} ${enDrag ? C.rouge : pi ? "#6b58a8" : "#34506b"}`,
+            boxSizing: "border-box",
+            display: "flex",
+            alignItems: "center",
+            padding: "0 11px",
+            fontWeight: 800,
+            fontSize: 12,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            cursor: verrouille ? "default" : enDrag?.mode === "move" ? "grabbing" : "grab",
+            touchAction: "none",
+            zIndex: enDrag ? 3 : 1,
+          }}
+        >
+          <span aria-hidden="true" style={poignee("debut", piste.coupeGauche)} onPointerDown={(e) => demarrerDragAffaire(e, affaire, "debut")} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>Prestation · {formatDate(nouveauDebut)} → {formatDate(nouvelleFin)}</span>
+          <span aria-hidden="true" style={poignee("fin", piste.coupeDroite)} onPointerDown={(e) => demarrerDragAffaire(e, affaire, "fin")} />
+        </div>
+        {enDrag && (
+          <div
+            role="status"
+            style={{ gridColumn: `${col(bornes.i)} / ${Math.min(col(bornes.i) + 6, colonnes.length + 2)}`, gridRow: 1, alignSelf: "start", marginTop: -22, zIndex: 6, background: "#ffffff", border: `2px solid ${C.rouge}`, borderRadius: 8, padding: "3px 10px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap", justifySelf: "start", pointerEvents: "none" }}
+          >
+            {formatDate(nouveauDebut)} → {formatDate(nouvelleFin)} · {joursOuvres(nouveauDebut, nouvelleFin).length} jours ouvrés
+          </div>
+        )}
       </div>
     );
   }
@@ -655,7 +957,8 @@ function PlanningAffairesContenu() {
         <div style={{ marginBottom: 14 }}>
           <h1 style={page.titre}>Planning des affaires</h1>
           <p style={page.sousTitre}>
-            On pilote les affaires : on déplie une affaire, on y glisse des personnes depuis le panneau de droite, puis on étire ou on déplace leur bloc.
+            On pilote les affaires : on y glisse des personnes depuis le panneau de droite, puis on étire ou on déplace leur bloc.
+            Une prestation (PE, PI) montre sa barre pointillée (début et fin théoriques) et une barre par ressource, indépendantes.
             Les heures se calculent et sont comparées au chiffré. La charge des ressources en découle.
           </p>
         </div>
@@ -761,6 +1064,15 @@ function PlanningAffairesContenu() {
                   return colonnes.indexOf(j);
                 })();
                 const pe = affaire.imputation === "PE";
+                const prestation = estPrestation(affaire);
+                const borne = bornesParAffaire.get(affaire.id);
+                const afficherLignes = ouverte || prestation;
+                const depasse = (b: Bloc) => {
+                  if (!borne) return false;
+                  const d = depasseBornes(b.jours[0].jour, b.jours[b.jours.length - 1].jour, borne);
+                  return d.avant || d.apres;
+                };
+                const nbDepassent = prestation ? blocs.filter(depasse).length : 0;
 
                 const besoins = [...(besoinsParAffaire.get(affaire.id)?.entries() ?? [])];
                 const sansActivite = Math.max(0, affecteReel - besoins.reduce((t, [, e]) => t + e.affecte, 0));
@@ -775,6 +1087,9 @@ function PlanningAffairesContenu() {
                     <div style={{ borderTop: `2px solid ${C.ligne}` }} />
                     <div data-ligne style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "46px", background: "#f8f9fa", position: "relative" }}>
                       <div style={{ gridColumn: 1, display: "flex", alignItems: "center", gap: 6, padding: "0 4px", minWidth: 0 }}>
+                        {prestation ? (
+                          <span aria-hidden="true" style={{ minWidth: 34 }} />
+                        ) : (
                         <button
                           type="button"
                           aria-expanded={ouverte}
@@ -784,6 +1099,7 @@ function PlanningAffairesContenu() {
                         >
                           {ouverte ? "▾" : "▸"}
                         </button>
+                        )}
                         <div style={{ minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <BadgeType type={affaire.type} />
@@ -796,8 +1112,11 @@ function PlanningAffairesContenu() {
 
                       {fonds()}
 
+                      {/* prestation : barre pointillée = bornes de l'affaire */}
+                      {prestation && rendrePisteAffaire(affaire)}
+
                       {/* aperçu replié : étendue des affectations */}
-                      {!ouverte && blocs.length > 0 && (
+                      {!ouverte && !prestation && blocs.length > 0 && (
                         <div
                           style={{
                             gridColumn: `${col(Math.min(...blocs.map((b) => b.debutIdx)))} / ${col(Math.max(...blocs.map((b) => b.finIdx))) + 1}`,
@@ -814,7 +1133,7 @@ function PlanningAffairesContenu() {
                       )}
 
                       {/* jalon : livraison souhaitée / remise */}
-                      {idxLivraison >= 0 && (
+                      {!prestation && idxLivraison >= 0 && (
                         <div
                           title={`${affaire.type === "DBE" ? "Remise de l’offre" : "Livraison souhaitée"} : ${formatDate(affaire.echeance)}`}
                           style={{ gridColumn: col(idxLivraison), gridRow: 1, alignSelf: "center", justifySelf: "end", fontSize: 16, fontWeight: 800, color: affaire.type === "DBE" ? "#8a3a5d" : C.rougeFonce, zIndex: 2 }}
@@ -824,16 +1143,33 @@ function PlanningAffairesContenu() {
                       )}
 
                       <div style={{ gridColumn: colonnes.length + 2, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "0 8px" }}>
-                        <div style={{ fontSize: 12, fontWeight: 800 }}>
-                          {chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—"}
-                        </div>
-                        <Pastille genre={etat.genre}>{etat.texte}</Pastille>
+                        {prestation ? (
+                          <>
+                            <div style={{ fontSize: 12, fontWeight: 800 }}>
+                              {borne?.debut && borne.fin ? `${formatDate(borne.debut)} → ${formatDate(borne.fin)}` : "Dates à définir"}
+                            </div>
+                            <Pastille genre={nbDepassent > 0 ? "warn" : blocs.length === 0 ? "info" : "ok"}>
+                              {nbDepassent > 0
+                                ? `▲ ${nbDepassent} dépasse${nbDepassent > 1 ? "nt" : ""} la prestation`
+                                : blocs.length === 0
+                                  ? "Sans ressource"
+                                  : `${blocs.length} ressource${blocs.length > 1 ? "s" : ""}`}
+                            </Pastille>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 12, fontWeight: 800 }}>
+                              {chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—"}
+                            </div>
+                            <Pastille genre={etat.genre}>{etat.texte}</Pastille>
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    {ouverte && (
+                    {afficherLignes && (
                       <>
-                        {besoins.length > 0 && (
+                        {!prestation && besoins.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "6px 10px 6px 42px", background: "#fcfcfd", borderTop: `1px dashed ${C.ligne}` }}>
                             <span style={{ fontSize: 12, fontWeight: 800, color: C.gris, alignSelf: "center" }}>Besoins :</span>
                             {besoins.map(([id, e]) => {
@@ -854,13 +1190,20 @@ function PlanningAffairesContenu() {
                             <div style={{ gridColumn: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 6px 0 38px", lineHeight: 1.2 }}>
                               <strong style={{ fontSize: 14 }}>{nomCollab(annuaire.find((c) => c.id === b.affectation.collaborateur_id))}</strong>
                               <span style={{ fontSize: 12, color: C.gris }}>
-                                {pe ? "chez le client" : formatHeures(b.heures)}
+                                {pe ? `${formatHeures(b.heures)} · chez le client` : formatHeures(b.heures)}
                                 {b.affectation.activite_id ? ` · ${referentiel?.activites.find((x) => x.id === b.affectation.activite_id)?.nom ?? ""}` : ""}
                               </span>
                             </div>
                             {fonds()}
                             {rendreBloc(b, affaire)}
-                            <div style={{ gridColumn: colonnes.length + 2 }} />
+                            <div style={{ gridColumn: colonnes.length + 2, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 8px", fontSize: 12, lineHeight: 1.3 }}>
+                              {prestation && (
+                                <>
+                                  <span style={{ fontWeight: 700 }}>{formatDate(b.jours[0].jour)} → {formatDate(b.jours[b.jours.length - 1].jour)}</span>
+                                  {depasse(b) && <span style={{ color: "#8f1010", fontWeight: 800 }}>▲ dépasse la prestation</span>}
+                                </>
+                              )}
+                            </div>
                           </div>
                         ))}
 
@@ -873,14 +1216,14 @@ function PlanningAffairesContenu() {
                         >
                           <div style={{ gridColumn: 1, display: "flex", alignItems: "center", padding: "0 6px 0 38px" }}>
                             {peutAgir && (
-                              <button type="button" style={{ minHeight: 34, padding: "0 12px", border: "1.5px dashed #b9bec5", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit" }} onClick={() => setDialogue({ affaire })}>
+                              <button type="button" style={{ minHeight: 34, padding: "0 12px", border: "1.5px dashed #b9bec5", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit" }} onClick={() => (prestation ? setFicheRessource({ affaire, prefill: { debut: borne?.debut ?? undefined, fin: borne?.fin ?? undefined } }) : setDialogue({ affaire }))}>
                                 + Affecter
                               </button>
                             )}
                           </div>
                           {fonds()}
                           <div style={{ gridColumn: `2 / ${colonnes.length + 2}`, gridRow: 1, alignSelf: "center", textAlign: "center", fontSize: 12, color: C.gris, pointerEvents: "none" }}>
-                            ou glissez une personne du panneau de droite sur cette ligne, à la date de début voulue
+                            {prestation ? "ou glissez une personne du panneau de droite sur cette ligne : une barre par ressource" : "ou glissez une personne du panneau de droite sur cette ligne, à la date de début voulue"}
                           </div>
                         </div>
                       </>
@@ -891,10 +1234,13 @@ function PlanningAffairesContenu() {
             </div>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", fontSize: 12, color: "#3b4046", marginTop: 12 }}>
-              <span><strong>Glisser</strong> un bloc pour le déplacer · <strong>étirer</strong> ses bords pour le raccourcir ou l’allonger · un simple clic le modifie</span>
+              <span><strong>Glisser</strong> un bloc pour le déplacer · <strong>étirer</strong> ses bords pour le raccourcir ou l’allonger · un simple clic le modifie (dates, personne, % de temps)</span>
               <span>▸ replié · ⚑ livraison souhaitée · ◆ remise d’un DBE</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6b58a8", border: "1px solid #4a3a85" }} />PI</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#dbe7f7", border: "2px dashed #34506b", boxSizing: "border-box" }} />bornes d’une prestation (indépendantes de ses ressources)</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: ROUGE_HACHURE, border: "1px solid #b3261e" }} />la ressource dépasse la prestation</span>
             </div>
           </section>
 
@@ -937,6 +1283,42 @@ function PlanningAffairesContenu() {
           </aside>
         </div>
       </div>
+
+      {ficheRessource && (
+        <FicheRessourceDialog
+          onClose={() => setFicheRessource(null)}
+          onSaved={(message) => {
+            setFicheRessource(null);
+            setInfo(message);
+            setRechargement((n) => n + 1);
+          }}
+          affaire={ficheRessource.affaire}
+          annuaire={annuaire}
+          affectations={affectations}
+          joursRows={joursRows}
+          estPE={estPE}
+          bornes={bornesParAffaire.get(ficheRessource.affaire.id) ?? { debut: null, fin: null }}
+          edition={ficheRessource.edition}
+          prefill={ficheRessource.prefill}
+          onEtirerAffaire={async (debutPrestation, finPrestation) => {
+            await enregistrerBornes(ficheRessource.affaire, debutPrestation, finPrestation);
+            setRechargement((n) => n + 1);
+          }}
+        />
+      )}
+
+      {ficheAffaire && (
+        <FicheAffaireDialog
+          onClose={() => setFicheAffaire(null)}
+          onSaved={(message) => {
+            setFicheAffaire(null);
+            setInfo(message);
+            setRechargement((n) => n + 1);
+          }}
+          affaire={ficheAffaire}
+          bornes={bornesParAffaire.get(ficheAffaire.id) ?? { debut: null, fin: null }}
+        />
+      )}
 
       {dialogue && (
         <AffecterDialog

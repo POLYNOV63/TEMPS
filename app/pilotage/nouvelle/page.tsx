@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
-import { usePrestation, type ModeFin } from "@/components/pilotage/usePrestation";
+import { usePrestation, type ModeFin, type PersonnePrestation } from "@/components/pilotage/usePrestation";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import {
@@ -70,12 +70,12 @@ function NouvelleAffaireContenu() {
   const [heuresDbe, setHeuresDbe] = useState("");
 
   // prestation
-  const [personne, setPersonne] = useState("");
+  const [personnes, setPersonnes] = useState<PersonnePrestation[]>([]);
+  const [comprendConges, setComprendConges] = useState(false);
   const [debut, setDebut] = useState(prochainJourOuvre(aujourdhui));
   const [modeFin, setModeFin] = useState<ModeFin>("DATE");
   const [finDate, setFinDate] = useState("");
   const [quantite, setQuantite] = useState("");
-  const [pourcent, setPourcent] = useState("100");
   const [activitePrestation, setActivitePrestation] = useState("");
 
   const [annuaire, setAnnuaire] = useState<Collab[]>([]);
@@ -150,18 +150,33 @@ function NouvelleAffaireContenu() {
   const activitesActives = (referentiel?.activites ?? []).filter((a) => a.actif);
   const total = lignes.reduce((t, l) => t + Math.max(0, num(l.heures.replace(",", "."))), 0);
 
-  const calcul = usePrestation({ collab: prestation ? personne : "", debut, mode: modeFin, fin: finDate, quantite, pourcent });
+  // Personnes choisies (une seule fois chacune)
+  const personnesValides = useMemo(
+    () => personnes.filter((p, i) => p.id && personnes.findIndex((x) => x.id === p.id) === i),
+    [personnes]
+  );
+
+  const calcul = usePrestation({ personnes: prestation ? personnesValides : [], debut, mode: modeFin, fin: finDate, quantite, comprendConges });
 
   // Personne en PE chez un client : non affectable sur les mêmes jours
   const chezLeClient = useMemo(
     () => joursChezLeClient(affectations, joursRows, (id) => affaires.find((a) => a.id === id)?.imputation === "PE"),
     [affectations, joursRows, affaires]
   );
-  const conflit = useMemo(() => {
-    if (!prestation || !personne || !calcul.resultat) return null;
-    const client = chezLeClient.get(personne);
-    return client ? calcul.resultat.jours.find((j) => client.has(j.jour))?.jour ?? null : null;
-  }, [prestation, personne, calcul.resultat, chezLeClient]);
+  const conflits = useMemo(() => {
+    const m = new Map<string, string>();
+
+    if (!prestation) return m;
+
+    for (const p of personnesValides) {
+      const client = chezLeClient.get(p.id);
+      const jour = client ? calcul.resultats.get(p.id)?.jours.find((j) => client.has(j.jour))?.jour : undefined;
+
+      if (jour) m.set(p.id, jour);
+    }
+
+    return m;
+  }, [prestation, personnesValides, calcul.resultats, chezLeClient]);
 
   async function enregistrer() {
     setErreur("");
@@ -176,7 +191,7 @@ function NouvelleAffaireContenu() {
 
     let charges: { activite_id: string; code: string | null; heures: number }[] = [];
     let echeanceFinale: string | null = echeance || null;
-    let affectation: { jours: { jour: string; heures: number }[] } | null = null;
+    let affectationsACreer: { collaborateur: string; jours: { jour: string; heures: number }[] }[] = [];
 
     if (type === "DBE") {
       const h = num(heuresDbe.replace(",", "."));
@@ -186,20 +201,28 @@ function NouvelleAffaireContenu() {
         charges = [{ activite_id: dtActivite, code: "DT", heures: h }];
       }
     } else if (prestation) {
-      if (personne) {
-        if (!debut) return setErreur("Indiquez la date de début.");
-        if (modeFin === "DATE" && (!finDate || finDate < debut)) return setErreur("Indiquez une date de fin qui ne précède pas le début.");
-        if (modeFin !== "DATE" && num(quantite.replace(",", ".")) <= 0) return setErreur(modeFin === "HEURES" ? "Indiquez le nombre d’heures." : "Indiquez le nombre de jours.");
-        if (!calcul.pret || !calcul.resultat) return setErreur("Les disponibilités sont en cours de calcul : réessayez dans un instant.");
-        if (calcul.resultat.jours.length === 0) return setErreur("Aucun jour disponible à partir de cette date.");
-        if (!calcul.resultat.epuise) return setErreur("La durée dépasse un an de planning : réduisez-la.");
-        if (conflit) return setErreur(`Cette personne est déjà chez un client (prestation externe) le ${formatDate(conflit)} : elle n’est pas affectable ailleurs.`);
+      if (debut && modeFin === "DATE" && finDate && finDate < debut) return setErreur("Indiquez une date de fin qui ne précède pas le début.");
 
-        echeanceFinale = calcul.resultat.fin;
-        affectation = { jours: calcul.resultat.jours };
-      } else if (modeFin === "DATE" && finDate) {
-        echeanceFinale = finDate;
+      if (personnesValides.length > 0) {
+        if (!debut) return setErreur("Indiquez la date de début.");
+        if (modeFin === "DATE" && !finDate) return setErreur("Indiquez la date de fin.");
+        if (modeFin !== "DATE" && num(quantite.replace(",", ".")) <= 0) return setErreur(modeFin === "HEURES" ? "Indiquez le nombre d’heures." : "Indiquez le nombre de jours.");
+        if (!calcul.pret) return setErreur("Les disponibilités sont en cours de calcul : réessayez dans un instant.");
+
+        for (const p of personnesValides) {
+          const r = calcul.resultats.get(p.id);
+          const nom = nomCollab(annuaire.find((c) => c.id === p.id));
+          const conflit = conflits.get(p.id);
+
+          if (!r || r.jours.length === 0) return setErreur(`${nom} : aucun jour disponible à partir de cette date.`);
+          if (!r.epuise) return setErreur(`${nom} : la durée dépasse un an de planning, réduisez-la.`);
+          if (conflit) return setErreur(`${nom} est déjà chez un client (prestation externe) le ${formatDate(conflit)} : elle n’est pas affectable ailleurs.`);
+
+          affectationsACreer.push({ collaborateur: p.id, jours: r.jours });
+        }
       }
+
+      echeanceFinale = calcul.finTheorique;
     } else {
       charges = lignes
         .map((l) => ({ activite_id: l.activite_id, code: null, heures: num(l.heures.replace(",", ".")) }))
@@ -226,6 +249,10 @@ function NouvelleAffaireContenu() {
       p_dbe_origine_id: type === "CBE" && origine ? origine : null,
       p_charges: charges,
       p_imputation: imputation,
+      p_date_debut: prestation ? debut || null : null,
+      p_quantite: prestation && modeFin !== "DATE" ? num(quantite.replace(",", ".")) || null : null,
+      p_unite: prestation && modeFin !== "DATE" ? (modeFin === "HEURES" ? "HEURES" : "JOURS") : null,
+      p_comprend_conges: prestation ? comprendConges : false,
     });
 
     if (error) {
@@ -235,8 +262,8 @@ function NouvelleAffaireContenu() {
 
     const id = data as string;
 
-    if (affectation && personne) {
-      const jours = affectation.jours;
+    for (const a of affectationsACreer) {
+      const jours = a.jours;
 
       const { error: erreurAff } = await supabase.rpc("pilotage_enregistrer_affectation", {
         p_id: null,
@@ -244,7 +271,7 @@ function NouvelleAffaireContenu() {
         p_activite_id: activitePrestation || null,
         p_code: null,
         p_libelle: null,
-        p_collaborateur_id: personne,
+        p_collaborateur_id: a.collaborateur,
         p_date_debut: jours[0].jour,
         p_date_fin: jours[jours.length - 1].jour,
         p_commentaire: null,
@@ -254,7 +281,7 @@ function NouvelleAffaireContenu() {
 
       if (erreurAff) {
         setEnregistrement(false);
-        setErreur(`L’affaire est créée, mais l’affectation a échoué : ${traduireErreur(erreurAff.message)} Ouvrez le planning pour affecter la personne.`);
+        setErreur(`L’affaire est créée, mais l’affectation de ${nomCollab(annuaire.find((c) => c.id === a.collaborateur))} a échoué : ${traduireErreur(erreurAff.message)} Ouvrez le planning pour l’affecter.`);
         return;
       }
     }
@@ -417,19 +444,48 @@ function NouvelleAffaireContenu() {
               <section style={{ ...page.carte, padding: 22 }}>
                 {titreEtape(3, `Prestation ${imputation}`)}
                 <p style={{ margin: "0 0 14px", color: C.gris, fontSize: 14 }}>
-                  Une personne, une date de début, puis une date de fin, un nombre d’heures ou un nombre de jours. Congés et jours fériés repoussent la fin.
+                  Une ou plusieurs personnes, une date de début, puis une date de fin, un nombre d’heures ou un nombre de jours.
                   Vous pouvez affecter tout de suite, ou le faire plus tard dans le planning.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                    <div style={{ flex: "1 1 240px" }}>
-                      <label htmlFor="pers" style={page.etiquette}>Personne</label>
-                      <select id="pers" value={personne} onChange={(e) => setPersonne(e.target.value)} style={page.entrees}>
-                        <option value="">— Affecter plus tard —</option>
-                        {annuaire.map((c) => (
-                          <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}{!c.inclus_statistiques ? " (encadrement)" : ""}</option>
-                        ))}
-                      </select>
+                    <div style={{ flex: "1 1 100%" }}>
+                      <div style={page.etiquette}>Personnes</div>
+
+                      {personnes.length === 0 && <div style={{ ...page.aide, marginTop: 0, marginBottom: 8 }}>Aucune pour l’instant : vous pourrez affecter plus tard, dans le planning.</div>}
+
+                      {personnes.map((p, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                          <select
+                            aria-label={`Personne ${i + 1}`}
+                            value={p.id}
+                            onChange={(e) => setPersonnes((l) => l.map((x, k) => (k === i ? { ...x, id: e.target.value } : x)))}
+                            style={{ ...page.entrees, flex: "1 1 240px", width: "auto" }}
+                          >
+                            <option value="">— Choisir —</option>
+                            {annuaire.map((c) => (
+                              <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}{!c.inclus_statistiques ? " (encadrement)" : ""}</option>
+                            ))}
+                          </select>
+                          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                            % du temps
+                            <input
+                              aria-label={`Part du temps, personne ${i + 1}`}
+                              type="text"
+                              inputMode="numeric"
+                              value={p.pourcent}
+                              onChange={(e) => setPersonnes((l) => l.map((x, k) => (k === i ? { ...x, pourcent: e.target.value } : x)))}
+                              style={{ ...page.entrees, width: 90, textAlign: "right" }}
+                            />
+                          </label>
+                          <button type="button" aria-label="Retirer cette personne" onClick={() => setPersonnes((l) => l.filter((_, k) => k !== i))} style={{ minWidth: 44, minHeight: 44, border: "1.5px solid #b9bec5", background: "#ffffff", borderRadius: 8, fontSize: 20, cursor: "pointer" }}>×</button>
+                        </div>
+                      ))}
+
+                      <button type="button" style={page.btnSecondaire} onClick={() => setPersonnes((l) => [...l, { id: "", pourcent: "100" }])}>
+                        + une personne
+                      </button>
+                      <div style={page.aide}>Une seule pour la plupart des PE ; plusieurs pour les PI (une barre chacune dans le planning).</div>
                     </div>
                     <div style={{ flex: "1 1 170px" }}>
                       <label htmlFor="debut" style={page.etiquette}>À partir du</label>
@@ -470,47 +526,71 @@ function NouvelleAffaireContenu() {
                         <div style={page.aide}>{modeFin === "JOURS" ? "Les demi-journées sont acceptées (2,5)." : ""}</div>
                       </div>
                     )}
-                    <div style={{ flex: "0 1 140px" }}>
-                      <label htmlFor="pc" style={page.etiquette}>% du temps</label>
-                      <input id="pc" type="text" inputMode="numeric" value={pourcent} onChange={(e) => setPourcent(e.target.value)} style={{ ...page.entrees, textAlign: "right" }} />
-                    </div>
                   </div>
 
-                  {personne && (
-                    <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 14, background: "#fafbfc", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, minHeight: 44, padding: "10px 12px", border: "1.5px solid #6f8fb3", background: "#f3f8fd", borderRadius: 10, cursor: "pointer" }}>
+                    <input type="checkbox" checked={comprendConges} onChange={(e) => setComprendConges(e.target.checked)} style={{ width: 22, height: 22, margin: "2px 0 0", flex: "none" }} />
+                    <span>
+                      <strong>Cette durée comprend déjà les congés et jours fériés</strong>
+                      <span style={{ display: "block", fontSize: 13, color: "#3b4046", marginTop: 2 }}>
+                        {comprendConges
+                          ? "Cochée : ils sont comptés dans la durée, la fin ne bouge pas."
+                          : "Décochée : ils ne sont pas travaillés, la fin est repoussée d’autant."}
+                      </span>
+                    </span>
+                  </label>
+
+                  {personnesValides.length > 0 && (
+                    <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 14, background: "#fafbfc", display: "flex", flexDirection: "column", gap: 10 }}>
                       <div style={{ fontWeight: 800 }}>Résultat</div>
                       {calcul.erreur && <div style={{ color: C.rougeTexte, fontSize: 14 }}>{calcul.erreur}</div>}
                       {!calcul.pret && !calcul.erreur && (
                         <div style={{ color: C.gris, fontSize: 14 }}>{calcul.chargement ? "Calcul des disponibilités…" : "Renseignez la fin (date, heures ou jours)."}</div>
                       )}
-                      {calcul.resultat && (
-                        <>
-                          <div style={{ fontSize: 15 }}>
-                            {calcul.resultat.jours.length === 0 ? (
-                              <span style={{ color: C.rougeTexte }}>Aucun jour disponible à partir de cette date.</span>
-                            ) : (
-                              <>
-                                {formatHeures(calcul.resultat.total)} sur {calcul.resultat.jours.length} jour(s), du {formatDate(calcul.resultat.jours[0].jour)} au{" "}
-                                <strong>{formatDate(calcul.resultat.fin)}</strong>
-                                {modeFin === "DATE" && finDate && calcul.resultat.fin && calcul.resultat.fin > finDate && (
-                                  <strong style={{ color: C.orangeTexte }}> — fin repoussée (date demandée : {formatDate(finDate)})</strong>
-                                )}
-                              </>
+
+                      {calcul.pret && calcul.finTheorique && (
+                        <div style={{ fontSize: 15 }}>
+                          Prestation du <strong>{formatDate(debut)}</strong> au <strong>{formatDate(calcul.finTheorique)}</strong> (début et fin théoriques de l’affaire).
+                        </div>
+                      )}
+
+                      {personnesValides.map((p) => {
+                        const r = calcul.resultats.get(p.id);
+                        const nom = nomCollab(annuaire.find((c) => c.id === p.id));
+                        const conflit = conflits.get(p.id);
+
+                        if (!r) return null;
+
+                        return (
+                          <div key={p.id} style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: `1px solid ${C.ligne}` }}>
+                            <div style={{ fontSize: 15 }}>
+                              <strong>{nom}</strong> :{" "}
+                              {r.jours.length === 0 ? (
+                                <span style={{ color: C.rougeTexte }}>aucun jour disponible à partir de cette date.</span>
+                              ) : (
+                                <>
+                                  {formatHeures(r.total)} sur {r.jours.length} jour(s), du {formatDate(r.jours[0].jour)} au <strong>{formatDate(r.fin)}</strong>
+                                  {!comprendConges && modeFin === "DATE" && finDate && r.fin && r.fin > finDate && (
+                                    <strong style={{ color: C.orangeTexte }}> — fin repoussée (date demandée : {formatDate(finDate)})</strong>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            {r.manquants.length > 0 && (
+                              <div role="status" style={{ background: "#fdebd0", color: "#5c2f00", border: "1px solid #e9b877", borderRadius: 10, padding: "8px 12px", fontSize: 14 }}>
+                                <strong>▲ Pas disponible tous les jours.</strong>{" "}
+                                {r.manquants.map((m) => `${m.motif === "ferie" ? "Jour férié" : "Congé validé"} le ${formatDate(m.jour)}`).join(" · ")}.{" "}
+                                {comprendConges ? "Ces jours sont comptés dans la durée : la fin ne bouge pas." : "La fin est repoussée d’autant."}
+                              </div>
+                            )}
+                            {conflit && (
+                              <div role="status" style={{ background: "#fde1e1", color: "#5c0a0a", border: "1px solid #e5a3a3", borderRadius: 10, padding: "8px 12px", fontSize: 14 }}>
+                                <strong>Chez le client.</strong> {nom} est déjà en prestation externe le {formatDate(conflit)} : elle n’est pas affectable ailleurs.
+                              </div>
                             )}
                           </div>
-                          {calcul.manquants.length > 0 && (
-                            <div role="status" style={{ background: "#fdebd0", color: "#5c2f00", border: "1px solid #e9b877", borderRadius: 10, padding: "10px 14px", fontSize: 14 }}>
-                              <strong>▲ Pas disponible tous les jours.</strong>{" "}
-                              {calcul.manquants.map((m) => `${m.motif === "ferie" ? "Jour férié" : "Congé validé"} le ${formatDate(m.jour)}`).join(" · ")}. La fin est repoussée d’autant.
-                            </div>
-                          )}
-                          {conflit && (
-                            <div role="status" style={{ background: "#fde1e1", color: "#5c0a0a", border: "1px solid #e5a3a3", borderRadius: 10, padding: "10px 14px", fontSize: 14 }}>
-                              <strong>Chez le client.</strong> Cette personne est déjà en prestation externe le {formatDate(conflit)} : elle n’est pas affectable ailleurs.
-                            </div>
-                          )}
-                        </>
-                      )}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -571,7 +651,7 @@ function NouvelleAffaireContenu() {
             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button type="button" style={page.btnSecondaire} onClick={() => router.push("/pilotage")}>Annuler</button>
               <button type="button" style={{ ...page.btnPrimaire, opacity: enregistrement || !imputation ? 0.6 : 1 }} disabled={enregistrement || !imputation} onClick={enregistrer}>
-                {enregistrement ? "Enregistrement…" : prestation && personne ? "Déclarer et affecter" : "Déclarer l’affaire"}
+                {enregistrement ? "Enregistrement…" : prestation && personnesValides.length > 0 ? "Déclarer et affecter" : "Déclarer l’affaire"}
               </button>
             </div>
           </div>

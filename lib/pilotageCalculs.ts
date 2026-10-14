@@ -29,6 +29,11 @@ export type Affaire = {
   date_livraison: string | null;
   imputation: string | null;
   created_at: string;
+  /* prestation (PE, PI) : début théorique (la fin théorique est « echeance ») et quantité vendue */
+  date_debut: string | null;
+  prestation_quantite: number | string | null;
+  prestation_unite: "JOURS" | "HEURES" | null;
+  prestation_comprend_conges: boolean | null;
 };
 
 export type Charge = {

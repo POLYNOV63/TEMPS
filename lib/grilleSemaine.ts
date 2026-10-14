@@ -247,6 +247,23 @@ export function alertesSemaine(
   return [...regroupees.values()];
 }
 
+/* Numéro de semaine ISO (S42) d'une date AAAA-MM-JJ */
+export function numeroSemaineISO(dateISO: string): number {
+  const d = new Date(`${dateISO}T00:00:00Z`);
+  const jour = d.getUTCDay() || 7; // lundi = 1 … dimanche = 7
+  d.setUTCDate(d.getUTCDate() + 4 - jour); // jeudi de la même semaine
+  const debutAnnee = Date.UTC(d.getUTCFullYear(), 0, 1);
+
+  return Math.ceil(((d.getTime() - debutAnnee) / 86400000 + 1) / 7);
+}
+
+/* « 12/10 → 18/10 » */
+export function periodeCourte(debutISO: string, finISO: string): string {
+  const jm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
+  return `${jm(debutISO)} → ${jm(finISO)}`;
+}
+
 /* Jour complet quand l'objectif est atteint ou dépassé (heures en plus = heures supplémentaires). */
 export function etatDuJour(objectif: number, saisi: number, fige: boolean, ferie: boolean): EtatJour {
   if (ferie) return "FERIE";

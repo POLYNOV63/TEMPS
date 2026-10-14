@@ -22,6 +22,7 @@ import {
   type JourBandeau,
 } from "./AssistantSaisie";
 import { BarreActionsMobile } from "./SaisieMobile";
+import EnteteSemaineCompact from "./EnteteSemaineCompact";
 
 import GrilleSemaine, {
   type AffaireRecenteGrille,
@@ -4861,6 +4862,8 @@ export default function MaSemainePage() {
       </EnTetePage>
 
       <div style={styles.container}>
+        {estMobile && (
+          <>
         {/* ====================================================
             INTRODUCTION
         ==================================================== */}
@@ -5017,32 +5020,81 @@ export default function MaSemainePage() {
           </button>
         </div>
 
+          </>
+        )}
+
         {/* ====================================================
             COMPTEURS
         ==================================================== */}
 
-        <BandeauSemaine
-          jours={joursBandeau}
-          resume={`${formatHeures(totalHeuresSemaine)} h saisies sur ${formatHeures(totalHeuresTheoriques)} h prévues`}
-          premierIncomplet={estMobile ? premierJourIncomplet : null}
-          onAllerA={allerAuJour}
-          aideOuverte={aideOuverte}
-          onBasculerAide={() => setAideOuverte((valeur) => !valeur)}
-          compact={estMobile}
-          collant={estMobile}
-          sansPuces={!estMobile}
-          jourSelectionne={estMobile ? jourAffiche : undefined}
-          desactive={feuilleNonModifiable}
-          repriseEnCours={repriseEnCours}
-          onReprendre={reprendreSemainePrecedente}
-          propositionConges={
-            propositionsConges.propositions.length > 0
-              ? { libelle: libelleCongesProposes, onAppliquer: appliquerCongesValides }
-              : null
+        {/* MA_SEMAINE_COMPACT_V2 : en-tête compact sur ordinateur (totaux, week-end, « Reprendre / Aide » dans une seule carte ; détail des totaux dans les « i ») ; le téléphone garde l'affichage d'origine */}
+        <EnteteSemaineCompact
+          actif={!estMobile}
+          debut={semaine[0].date}
+          fin={semaine[6].date}
+          saisies={formatHeures(totalHeuresSemaine)}
+          prevues={formatHeures(totalHeuresTheoriques)}
+          heuresSup={formatHeures(heuresSupplementaires)}
+          heuresSupPositives={heuresSupplementaires > 0.01}
+          supMensuelles={totalHeuresSupMensuelles > 0.01 ? formatHeures(totalHeuresSupMensuelles) : null}
+          cloture={Boolean(semaineEstClotureMensuelle)}
+          libellePeriode={String(libellePeriodeMensuelle ?? "")}
+          repartitionCompteur={repartitionCompteurMensuelle !== null ? formatHeures(repartitionCompteurMensuelle) : null}
+          repartitionPayee={formatHeures(repartitionPayeeMensuelle ?? 0)}
+          compteur={formatHeures(totalCompteurChoisi)}
+          compteurAlerte={totalCompteurChoisi > 30.01 || totalCompteurChoisi < -30}
+          compteurBase={formatHeures(compteurBaseSemaine)}
+          recuperation={totalRE > 0.01 ? formatHeures(totalRE) : null}
+          tickets={Number(totalTickets)}
+          statutTexte={
+            semaineModifiee
+              ? "● Modifications non enregistrées"
+              : semaineValidee
+                ? "✓ Semaine validée — transmise"
+                : semaineEnregistree
+                  ? "✓ Brouillon enregistré"
+                  : "○ Semaine non enregistrée"
           }
-          congesIgnores={propositionsConges.ignorees}
-        />
+          statutStyle={
+            semaineModifiee
+              ? styles.unsavedStatus
+              : semaineValidee
+                ? styles.validatedStatus
+                : semaineEnregistree
+                  ? styles.savedStatus
+                  : styles.notSavedStatus
+          }
+          weekendOuvert={weekendOuvert}
+          onBasculerWeekend={() => setWeekendOuvert((valeur) => !valeur)}
+          onPrecedente={semainePrecedente}
+          onSuivante={semaineSuivante}
+        >
+          <BandeauSemaine
+            jours={joursBandeau}
+            resume={`${formatHeures(totalHeuresSemaine)} h saisies sur ${formatHeures(totalHeuresTheoriques)} h prévues`}
+            premierIncomplet={estMobile ? premierJourIncomplet : null}
+            onAllerA={allerAuJour}
+            aideOuverte={aideOuverte}
+            onBasculerAide={() => setAideOuverte((valeur) => !valeur)}
+            compact={estMobile}
+            collant={estMobile}
+            sansPuces={!estMobile}
+            jourSelectionne={estMobile ? jourAffiche : undefined}
+            desactive={feuilleNonModifiable}
+            repriseEnCours={repriseEnCours}
+            onReprendre={reprendreSemainePrecedente}
+            propositionConges={
+              propositionsConges.propositions.length > 0
+                ? { libelle: libelleCongesProposes, onAppliquer: appliquerCongesValides }
+                : null
+            }
+            congesIgnores={propositionsConges.ignorees}
+            integre={!estMobile}
+          />
+        </EnteteSemaineCompact>
 
+        {estMobile && (
+          <>
         {/* GRILLE_SEMAINE_V5 : la saisie se fait en grille ; seul le week-end est à afficher à la demande */}
         <div style={{ display: "flex", justifyContent: "flex-end", margin: "0 0 10px" }}>
           <button
@@ -5064,6 +5116,8 @@ export default function MaSemainePage() {
             {weekendOuvert ? "Masquer le week-end" : "Afficher le week-end"}
           </button>
         </div>
+          </>
+        )}
 
         <fieldset
           disabled={
@@ -5078,7 +5132,7 @@ export default function MaSemainePage() {
             minWidth: 0,
           }}
         >
-        <div style={styles.cards}>
+        <div style={estMobile ? styles.cards : { ...styles.cards, display: "block", marginBottom: 0 }}>
           {modeConsultationGestionnaire && (
             <div
               style={{
@@ -5115,6 +5169,8 @@ export default function MaSemainePage() {
             </div>
           )}
 
+          {estMobile && (
+            <>
           {/* HEURES SAISIES */}
 
           <div style={styles.card}>
@@ -5271,6 +5327,8 @@ export default function MaSemainePage() {
               prévus pour la semaine.
             </div>
           </div>
+            </>
+          )}
         </div>
 
         {/* ====================================================

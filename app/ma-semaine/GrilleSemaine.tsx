@@ -10,6 +10,8 @@ import {
   estDiversType,
   formaterHeures,
   normaliserCodeGrille,
+  numeroSemaineISO,
+  periodeCourte,
   problemesLigne,
   regrouperParAffaire,
   valeursParDefaut,
@@ -806,13 +808,28 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
   const rangeeStyle = (extra?: CSSProperties): CSSProperties => ({ display: "grid", gridTemplateColumns: gabarit, ...extra });
 
   return (
-    <section aria-label="Saisie de la semaine en grille" style={{ overflowX: ecranEtroit ? "auto" : "visible" }}>
+    <section
+      aria-label="Saisie de la semaine en grille"
+      // Fenêtre étroite : la grille défile dans son cadre, dans les deux sens, pour que la ligne des jours reste fixe
+      style={ecranEtroit ? { overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 16px)" } : { overflowX: "visible" }}
+    >
       {encadreAlertes}
 
       <div style={{ minWidth: largeurRequise }}>
-        {/* cartes objectif, collées en haut */}
-        <div style={rangeeStyle({ position: "sticky", top: 0, zIndex: 5, background: "#ffffff", borderBottom: `1px solid ${C.ligne}` })}>
-          <div style={{ display: "flex", alignItems: "flex-end", padding: "0 8px 8px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>Affaire</div>
+        {/* ligne des jours et cartes objectif : reste FIXE en haut quand on fait défiler */}
+        <div
+          data-ligne-jours
+          style={rangeeStyle({ position: "sticky", top: 0, zIndex: 5, background: "#ffffff", borderBottom: `1px solid ${C.ligne}`, boxShadow: "0 4px 6px -4px rgba(0,0,0,.28)" })}
+        >
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 2, padding: "0 8px 8px" }}>
+            {jours.length > 0 && (
+              <div title="Semaine affichée" style={{ lineHeight: 1.15 }}>
+                <strong style={{ fontSize: 24, color: C.rouge }}>S{String(numeroSemaineISO(jours[0].date)).padStart(2, "0")}</strong>{" "}
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#3b4046" }}>{periodeCourte(jours[0].date, jours[jours.length - 1].date)}</span>
+              </div>
+            )}
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>Affaire</div>
+          </div>
           {jours.map((j, i) => (
             <div key={j.date} style={{ padding: "6px 6px 8px", ...bordJour(i) }}>
               <div style={{ textAlign: "center", fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{j.libelle}</div>

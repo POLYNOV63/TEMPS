@@ -77,7 +77,7 @@ export async function chargerAffaires(): Promise<Affaire[]> {
     supabase
       .from("pilotage_affaires")
       .select(
-        "id,type,numero,designation,responsable_id,priorite,statut,echeance,echeance_initiale,dbe_origine_id,date_livraison,imputation,created_at"
+        "id,type,numero,designation,responsable_id,priorite,statut,echeance,echeance_initiale,dbe_origine_id,date_livraison,imputation,created_at,date_debut,prestation_quantite,prestation_unite,prestation_comprend_conges"
       )
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })

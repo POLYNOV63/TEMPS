@@ -170,6 +170,18 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   x h », sans bouton de complément), grisées pour un jour férié ou une absence sur la journée. Présence en menu déroulant avec le
   code couleur de l'export Excel : Présentiel vert, Télétravail jaune, Absent orange. Absence en menu par jour, détail empilé
   dessous (RE, RTT, CP, VM/AI/AA).
+- **Ligne des jours fixe** : la ligne des jours et les cartes « Objectif » restent collées en haut de l'écran quand on fait
+  défiler (`position: sticky`), avec un rappel « S42 · 12/10 → 16/10 » dans sa première case. Dans une fenêtre étroite (moins de
+  1164 px, ou 1504 px avec le week-end affiché) la grille défile dans son cadre, dans les deux sens, pour que la ligne reste fixe.
+- **En-tête compact (ordinateur)** : `app/ma-semaine/EnteteSemaineCompact.tsx` réunit, sur ordinateur seulement, le titre, la carte de
+  la semaine, la ligne du week-end, les quatre grandes cartes de totaux ET la barre « Reprendre les affaires / Aide » dans UNE
+  carte : navigation, semaine S42, totaux saisies / heures sup / récupération / tickets, statut d'enregistrement, bouton du
+  week-end, puis « Reprendre / Aide » (et la proposition de congés) juste dessous. Les explications (cumul mensuel, clôture,
+  début de semaine) sont dans des pastilles « i » (éléments `details`). La zone de saisie démarre vers 320 px du haut au lieu de
+  700 px. Le téléphone garde l'affichage d'origine (`actif={false}` : le composant ne dessine que ses enfants).
+  Installé par `scripts/patch-ma-semaine-compact.mjs` (version 2) : modifie `MaSemaineContent.tsx` (marqueur
+  `MA_SEMAINE_COMPACT_V2`) et `AssistantSaisie.tsx` (option `integre` du bandeau : sans cadre propre), sauvegardes `*.bak-compact`,
+  tout ou rien, met à jour la version 1. A relancer après tout nouveau passage du script de la grille.
 - **Ligne d'affaire** : description modifiable directement, croix pour retirer l'affaire (confirmation s'il y a des heures),
   croix par ligne d'imputation ; le « + » de la colonne Affaire propose d'abord les affaires de la semaine précédente.
 - **Téléphone (< 760 px)** : un jour à la fois (barre du bas de la page), mêmes lignes en pleine largeur.
@@ -228,150 +240,54 @@ sans les copier. Maquettes : canevas « Pilotage BE — maquettes des écrans »
   `polynov_peut_voir_pilotage()`). Suppression d'une affaire et gestion des imputations : ADMIN seulement.
 - **1. Déclarer une affaire** (`/pilotage/nouvelle`) : on commence par l'**imputation** (BE / PE / PI / Scan / Négoce / IG, liste
   gérée dans Administration > Imputations des affaires), qui décide du reste. Descriptif sans nom de client ; numéro en chiffres.
-  - **Prestation (PE, PI : imputation « heures chiffrées non obligatoires »)** : une personne (ou « plus tard »), une date de
-    début, puis **date de fin, nombre d'heures ou nombre de jours** ; congés et fériés repoussent la fin ; on peut **affecter
-    tout de suite** (déclaration + affectation). L'échéance de l'affaire = fin calculée.
+  - **Prestation (PE, PI : imputation « heures chiffrées non obligatoires »)** : **une ou plusieurs personnes** (ou « plus
+    tard »), chacune avec son % de temps ; une date de début ; puis **date de fin, nombre d'heures ou nombre de jours**. La case
+    **« Cette durée comprend déjà les congés et jours fériés »** (décochée par défaut) choisit : décochée = congés et fériés ne
+    sont pas travaillés et **repoussent la fin** ; cochée = ils sont **comptés dans la durée**, la fin ne bouge pas (fonction
+    `remplirCalendrier`). Le résultat s'affiche par personne avant de valider ; on peut **affecter tout de suite**.
+    L'affaire mémorise ses **bornes théoriques** : `date_debut`, fin théorique = `echeance` (la plus tardive des personnes), et la
+    quantité vendue (`prestation_quantite`, `prestation_unite`, `prestation_comprend_conges`).
   - **Autres imputations** : heures chiffrées par activité (sans code) + date de livraison souhaitée ; elles apparaissent dans le
     planning (« Besoins » par activité) pour affecter les ressources.
   - **DBE** : date de remise obligatoire, code DT, heures de rédaction facultatives.
   - La notion de priorité a été supprimée des écrans.
 - **2. Planning des affaires** (`/pilotage/affaires`) : vue sur 2, 4, 8, 12 ou 26 semaines ; **PE en haut, PI ensuite, le reste dessous** ;
-  une ligne par affaire (en cours / en attente), dépliable, avec ses « Besoins » par activité (heures affectées / chiffrées) ; on y
-  affecte des personnes en les glissant depuis le panneau « Ressources » (classées par disponibilité) ou avec
-  « + Affecter » : date de début + durée en **jours, demi-journées ou heures** (+ % du temps). Un bloc se déplace (glisser)
-  et se redimensionne (étirer les bords) ; un clic le modifie (changer la date de début replace les mêmes heures à partir de là). Les heures se calculent (horaire du profil moins
-  congés validés et jours fériés ; la fin est repoussée d'autant) et sont comparées au chiffré : alerte, ou bloc limité
-  au chiffré si « me contenir » est activé (réglage mémorisé dans le navigateur). Congé / férié dans un bloc : signalés.
-- **PE** : la personne est chez le client : **non affectable ailleurs** (grisée dans le panneau, refus au glisser).
-  Une PE s'affecte comme les autres mais son bloc n'est pas déplaçable ici. L'affectation peut préciser une activité
-  (facultative), avec alerte si l'activité dépasse son chiffré.
+  une ligne par affaire. Les affaires non prestations se déplient et montrent leurs « Besoins » par activité (heures affectées /
+  chiffrées) ; on y affecte des personnes en les glissant depuis le panneau « Ressources » (classées par disponibilité) ou avec
+  « + Affecter » : date de début + durée en **jours, demi-journées ou heures** (+ % du temps). Un bloc se déplace (glisser) et se
+  redimensionne (étirer les bords) ; un clic le modifie. Les heures se calculent (horaire du profil moins congés validés et jours
+  fériés ; la fin est repoussée d'autant) et sont comparées au chiffré : alerte, ou bloc limité au chiffré si « me contenir » est
+  activé (réglage mémorisé dans le navigateur). Congé / férié dans un bloc : signalés.
+- **Prestations (PE, PI) dans le planning** : toujours dépliées, avec **une barre pointillée pour l'affaire** (début et fin
+  théoriques, ses « bornes ») et **une barre pleine par ressource**. Les barres sont **indépendantes** (étirer l'affaire ne déplace pas
+  les ressources, et inversement) ; chacune se **glisse** (décaler) et s'**étire** (début ou fin), un **clic** ouvre sa fiche. Pas
+  d'historique des décalages. Congés et fériés apparaissent en hachuré sur la barre d'une ressource et sont sautés. Une ressource qui
+  dépasse les bornes est hachurée en rouge, signalée dans la ligne (« dépasse la prestation ») et la fiche propose d'**étirer l'affaire**.
+  - **Fiche d'une ressource** (`FicheRessourceDialog`) : début, fin, **personne** (changer = la barre passe à une autre personne),
+    % de son temps, note ; ajout d'une ressource (« + Affecter » ou glisser une personne) ; retrait.
+  - **Fiche de l'affaire** (`FicheAffaireDialog`) : début, fin, quantité vendue, unité, case « comprend déjà les congés et jours
+    fériés », calcul d'une fin théorique (jours fériés seulement). Écriture par `pilotage_modifier_prestation` (sans motif).
+  - Une affaire sans bornes propose « Définir le début et la fin de la prestation » ; les anciennes prestations prennent
+    l'étendue de leurs ressources.
+- **PE** : la personne est chez le client : **non affectable ailleurs** (grisée dans le panneau ; un chevauchement avec une autre PE
+  de la même personne est refusé), mais sa barre se modifie librement. Une PE est le plus souvent une seule ressource ; une PI en a
+  souvent plusieurs.
 - **3. Charge par ressource** (`/pilotage/ressources`) : charge de chaque personne sur 12 semaines avec, en bas du tableau, le
   **taux de charge de l'équipe (hors encadrement)** par semaine = heures affectées ÷ capacité ; détail d'une semaine avec
-  déplacement d'heures. (La fonction SQL 13 « affaires par personne » n'est plus utilisée par l'écran.) Le détail précis par activité se fait au bilan,
-  avec les feuilles d'heures.
+  déplacement d'heures. Le détail précis par activité se fait au bilan, avec les feuilles d'heures.
 - **Définitions** : Chiffré = heures chiffrées ; Réalisé = heures imputées sur le numéro (feuilles + historique) ;
   Affecté = heures planifiées ; Capacité = horaire du profil - fériés - absences validées (rh_demandes VALIDEE) ;
   Taux de charge = affecté ÷ capacité de l'équipe.
-- **Tables** (SQL 08 à 13) : `pilotage_affaires`, `pilotage_charges`, `pilotage_affectations` (+ `_jours`, une ligne par
-  jour), `pilotage_echeances_historique` (motif obligatoire), `pilotage_imputations` (colonne `charge_obligatoire`).
-- **Code** : `lib/pilotageCalculs.ts`, `lib/pilotagePlanning.ts` (moteur testé : fériés, capacités, répartition,
-  blocs, PE chez le client, taux de service), `lib/pilotageDonnees.ts`, `components/pilotage/*`.
+- **Tables** (SQL 08 à 16) : `pilotage_affaires` (+ bornes de prestation, script 16), `pilotage_charges`, `pilotage_affectations`
+  (+ `_jours`, une ligne par jour), `pilotage_echeances_historique` (motif obligatoire pour une échéance ordinaire),
+  `pilotage_imputations` (colonne `charge_obligatoire`).
+- **Code** : `lib/pilotageCalculs.ts`, `lib/pilotagePlanning.ts` (moteur testé : fériés, capacités, répartition, durée qui comprend
+  ou exclut les congés, fin théorique, blocs, position et glisser des barres, dépassement des bornes, PE chez le client, taux de
+  charge), `lib/pilotageDonnees.ts`, `components/pilotage/*` (`usePrestation` : plusieurs personnes, `FicheRessourceDialog`,
+  `FicheAffaireDialog`, `AffecterDialog` pour les autres affaires).
 - **Ancien planning par ressource** : remplacé (`/pilotage/planning` redirige) ; `AffectationDialog.tsx` n'est plus utilisé.
 - **A venir** : détournement d'une PI avec fin décalée ou non, bilans par imputation (% PE / PI / BE par personne),
   « Ma feuille de route ».
-
-## Organisation du tableau de bord
-
-- **Mon espace (tous)** : Ma semaine, Mes feuilles, Bilan affaire (pour tout le monde), RH.
-- **ADMIN et RESPONSABLE** : Pilotage BE (portefeuille, nouvelle affaire, planning des affaires, charge par ressource) et
-  Suivi des équipes (feuilles collaborateurs, bilan RH mensuel, export Excel).
-- **ADMIN seulement** : suivi rapide et à traiter ; Administration (collaborateurs, rythmes horaires, codes, imputations
-  des affaires, activités, validation RH) ; Analyse (analyse de charge, bilan activités, export IA) ; Données (import
-  historique).
-- « Mon bilan » n'est plus proposé aux collaborateurs (un NI élevé peut stresser) : la page est réservée aux ADMIN en
-  attendant une décision.
-
-## Mon bilan (page personnelle, réservée aux ADMIN pour le moment)
-
-- Page `/mon-bilan` : ma répartition du temps (CBE vendus, DBE, CN, Divers de production, NI, Formation FI / FO,
-  non expliqué) sur la période choisie (mois, exercice, année, 12 derniers mois), mes affaires, l'évolution mois
-  par mois. Seules les données de la personne connectée sont lues.
-- Mêmes définitions que Bilans : classement dans `lib/categoriesBilan.ts` (la page Bilans conserve sa propre copie
-  de ces règles ; toute évolution des définitions doit être faite aux deux endroits, ou unifiée).
-- Ne reprend pas : saisie et compteur (Ma semaine), liste des feuilles (Mes feuilles), congés et RTT (RH).
-- Une personne exclue des statistiques (encadrement) voit ses heures sans capacité ni taux.
-
-## Pilotage BE (module en construction)
-
-Planning prévisionnel et suivi des DBE (offres) et des CBE (réalisation), exploitant les données existantes sans les
-copier. Maquettes validées : canevas « Pilotage BE — maquettes des écrans ».
-
-- **Accès** : réservé aux ADMIN et aux RESPONSABLE, qui voient et modifient (droit `piloterBE`, fonction SQL
-  `polynov_peut_piloter()` ; la lecture passe par `polynov_peut_voir_pilotage()`, script 11). Suppression d'une affaire et
-  gestion des imputations : ADMIN seulement.
-- **Saisie** : les affaires sont déclarées dans l'application (`/pilotage/nouvelle`) : numéro (chiffres seuls, comme dans
-  les feuilles d'heures), descriptif sans nom de client, **imputation** (menu BE / PE / PI / Scan / Négoce / IG, liste
-  gérée dans Administration > Imputations des affaires), responsable, heures chiffrées par activité (code facultatif).
-  L'import depuis le fichier Excel « Suivi d'affaire BE » est mis de côté (voir `docs/futur/`).
-- **Règles métier** :
-  - un **DBE** se déclare toujours sur le **code DT** ; il a une **date de remise obligatoire** (c'est un jalon dans le
-    planning, affiché dans la bande « Échéances ») ; ses heures de rédaction sont facultatives ;
-  - une imputation peut être **à charge non chiffrée** (réglage « Heures chiffrées obligatoires » de l'imputation ; PE par
-    défaut) : l'affaire se déclare sans heures. Une **prestation (PE)** = une personne affectée au même code, jour après
-    jour, **jusqu'à une date, pour un nombre de jours ou pour un nombre d'heures** ; les congés (absences validées RH),
-    jours fériés et week-ends ne sont pas travaillés : **la date de fin est repoussée** d'autant (fonctions
-    `remplirHeures` / `remplirJours` / `quantiteJusquaDate`). Environ 60 % de l'activité. Les PI suivent le même schéma
-    (d'autres affaires peuvent s'ajouter par-dessus : voir la règle de décalage à confirmer) ;
-  - les **petites affaires multi-ressources** (environ 40 %) se planifient en heures réparties sur une période ;
-  - **événement libre** (salon, déplacement...) : intitulé + code d'imputation (code utilisable en « Divers »), il occupe
-    de la capacité et ses heures remontent dans ce code ;
-  - le planning **calcule et avertit, il ne bloque jamais** (une affectation au-delà de la capacité est acceptée).
-- **Tables** (scripts SQL 08 à 12) : `pilotage_affaires`, `pilotage_charges`, `pilotage_affectations` +
-  `pilotage_affectations_jours` (une ligne par jour), `pilotage_echeances_historique` (motif obligatoire),
-  `pilotage_imputations` (référentiel, colonne `charge_obligatoire`).
-- **Réutilisé sans copie** : activités et codes (Gestion des codes), collaborateurs, profils horaires, absences validées
-  (`rh_demandes`, statut VALIDEE, motif jamais exposé), jours fériés (calculés), heures réelles (feuilles d'heures +
-  historique importé, via `pilotage_realise()` : « 1530R1 » compte dans l'affaire 1530).
-- **Définitions** : Chiffré = heures chiffrées ; Réalisé = heures imputées sur le numéro (+ heures déjà réalisées au
-  départ) ; Reste = chiffré - réalisé ; Dépassement = réalisé - chiffré (aussi sur une affaire livrée) ;
-  Planifié = heures affectées à partir d'aujourd'hui ; Non affecté = reste - planifié ; Capacité = horaire du profil -
-  jours fériés - absences validées ; Disponible = capacité - affecté. L'encadrement n'entre pas dans la capacité de l'équipe.
-- **Pages** : portefeuille (`/pilotage`), déclaration (`/pilotage/nouvelle`), fiche (`/pilotage/affaire/[id]` : charge par
-  activité, affectations, échéance avec motif, historique), planning visuel (`/pilotage/planning` : frise 2 / 4 / 8
-  semaines, jalons, absences, fériés, surcharges), charge par ressource (`/pilotage/ressources` : tableau d'une semaine,
-  déplacement d'heures), imputations (`/admin/imputations-pilotage`).
-- **Code** : `lib/pilotageCalculs.ts` (budgets, états), `lib/pilotagePlanning.ts` (fériés, capacités, répartition,
-  charge par semaine, frise, déplacement), `lib/pilotageDonnees.ts` (chargement), `components/pilotage/*`.
-- **A venir** : bilans par imputation (% PE / PI / BE par personne), alertes de planning plus fines, puis
-  « Ma feuille de route » (vue du planning filtrée sur la personne).
-
-## Organisation du tableau de bord
-
-- **Mon espace (tous)** : Ma semaine, Mes feuilles, Bilan affaire (pour tout le monde), RH.
-- **ADMIN et RESPONSABLE** : Pilotage BE (portefeuille, nouvelle affaire, planning des affaires, charge par ressource) et
-  Suivi des équipes (feuilles collaborateurs, bilan RH mensuel, export Excel).
-- **ADMIN seulement** : suivi rapide et à traiter ; Administration (collaborateurs, rythmes horaires, codes, imputations
-  des affaires, activités, validation RH) ; Analyse (analyse de charge, bilan activités, export IA) ; Données (import
-  historique).
-- « Mon bilan » n'est plus proposé aux collaborateurs (un NI élevé peut stresser) : la page est réservée aux ADMIN en
-  attendant une décision.
-
-## Mon bilan (page personnelle, réservée aux ADMIN pour le moment)
-
-- Page `/mon-bilan` : ma répartition du temps (CBE vendus, DBE, CN, Divers de production, NI, Formation FI / FO,
-  non expliqué) sur la période choisie (mois, exercice, année, 12 derniers mois), mes affaires, l'évolution mois
-  par mois. Seules les données de la personne connectée sont lues.
-- Mêmes définitions que Bilans : classement dans `lib/categoriesBilan.ts` (la page Bilans conserve sa propre copie
-  de ces règles ; toute évolution des définitions doit être faite aux deux endroits, ou unifiée).
-- Ne reprend pas : saisie et compteur (Ma semaine), liste des feuilles (Mes feuilles), congés et RTT (RH).
-- Une personne exclue des statistiques (encadrement) voit ses heures sans capacité ni taux.
-
-## Pilotage BE (module en construction)
-
-Planning prévisionnel et suivi des DBE (offres) et des CBE (réalisation), exploitant les données existantes sans les
-copier. Maquettes validées : canevas « Pilotage BE — maquettes des écrans ».
-
-- **Accès** : réservé aux ADMIN et aux RESPONSABLE, qui voient et modifient (droit `piloterBE`, fonction SQL
-  `polynov_peut_piloter()` ; la lecture passe par `polynov_peut_voir_pilotage()`, script 11). Les collaborateurs n'y ont
-  accès ni par les pages ni par les données. Suppression d'une affaire et gestion des imputations : ADMIN seulement.
-- **Saisie** : les affaires sont déclarées dans l'application (`/pilotage/nouvelle`) : numéro (chiffres seuls, comme dans
-  les feuilles d'heures), descriptif sans nom de client, **imputation** (menu BE / PE / PI / Scan / Négoce / IG, liste
-  gérée dans Administration > Imputations des affaires), responsable, heures chiffrées par activité (code facultatif).
-  L'import depuis le fichier Excel « Suivi d'affaire BE » est mis de côté (voir `docs/futur/`).
-- **Tables** (scripts SQL 08, 09, 10) : `pilotage_affaires`, `pilotage_charges`, `pilotage_affectations` +
-  `pilotage_affectations_jours` (événements libres avec intitulé et code d'imputation), `pilotage_echeances_historique`
-  (motif obligatoire), `pilotage_imputations` (référentiel des imputations d'affaire).
-- **Réutilisé sans copie** : activités et codes (Gestion des codes), collaborateurs, profils horaires, absences validées
-  (`rh_demandes`), heures réelles (feuilles d'heures + historique importé, via `pilotage_realise()` : « 1530R1 » compte
-  dans l'affaire 1530).
-- **Définitions** : Chiffré = somme des heures chiffrées ; Réalisé = heures imputées sur le numéro (+ heures déjà
-  réalisées au départ) ; Reste = chiffré - réalisé ; Dépassement = réalisé - chiffré (aussi sur une affaire livrée).
-- **Pages réalisées** : portefeuille (`/pilotage`), déclaration, fiche (`/pilotage/affaire/[id]` : charge par activité,
-  échéance avec motif, historique), imputations (`/admin/imputations-pilotage`). Calculs dans `lib/pilotageCalculs.ts`.
-- **Règles** : le logiciel calcule et alerte, il ne bloque jamais ; « Disponible » = capacité - affecté ;
-  l'encadrement (hors statistiques) n'entre pas dans la capacité de l'équipe.
-- **A venir** : affectations, charge par ressource, planning visuel, alertes de planning, bilans par imputation
-  (% PE / PI / BE par personne, dans « Mon bilan » et Bilans), puis « Ma feuille de route ».
 
 ## Conventions de code
 

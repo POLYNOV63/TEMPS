@@ -336,6 +336,7 @@ export function genererJours(options: {
 export type ResultatRemplissage = ResultatRepartition & {
   fin: JourISO | null; // dernier jour affecté
   epuise: boolean; // toute la quantité a pu être placée avant l'horizon
+  finCalendrier?: JourISO | null; // durée COMPRISE : dernier jour de la durée, même s'il est chômé
 };
 
 /* Heures à placer pour « jusqu'à une date » : ce que la personne ferait entre les deux dates
@@ -590,6 +591,150 @@ export function deplacerHeures(options: {
     .sort((a, b) => a.jour.localeCompare(b.jour));
 
   return { jours, deplace: rep.total };
+}
+
+/* Durée COMPRISE : les congés et jours fériés comptent dans la durée (« 30 jours » = 30 jours ouvrés du
+   calendrier, chômés ou non). La fin ne bouge donc pas ; les heures ne sont placées que sur les jours travaillés. */
+export function remplirCalendrier(options: {
+  debut: JourISO;
+  nbJours: number;
+  capaciteJour: (jour: JourISO) => number; // capacité nette (absences déduites)
+  pourcent?: number;
+  horizon: JourISO;
+}): ResultatRemplissage {
+  const p = Math.min(100, Math.max(1, options.pourcent ?? 100)) / 100;
+  const jours: JourHeures[] = [];
+  let reste = Math.max(0, options.nbJours);
+  let disponibles = 0;
+  let finCalendrier: JourISO | null = null;
+
+  if (!options.debut || reste <= 0) {
+    return { jours, total: 0, joursDisponibles: 0, fin: null, epuise: reste <= 0, finCalendrier: null };
+  }
+
+  for (let j = options.debut, n = 0; j <= options.horizon && n < 800; j = ajouterJours(j, 1), n++) {
+    if (estWeekend(j)) continue;
+
+    const part = Math.min(1, reste);
+    const cap = options.capaciteJour(j);
+
+    if (cap > 0) {
+      disponibles += 1;
+      jours.push({ jour: j, heures: Math.max(0.25, arrondi025(cap * p * part)) });
+    }
+
+    finCalendrier = j;
+    reste = arrondi2(reste - part);
+
+    if (reste <= 0.001) break;
+  }
+
+  return {
+    jours,
+    total: arrondi2(jours.reduce((t, x) => t + x.heures, 0)),
+    joursDisponibles: disponibles,
+    fin: jours.length ? jours[jours.length - 1].jour : null,
+    epuise: reste <= 0.001,
+    finCalendrier,
+  };
+}
+
+/* Fin THEORIQUE d'une prestation, sans personne (jours fériés seulement) :
+   - durée qui exclut les congés et fériés : les fériés ne comptent pas ;
+   - durée qui les comprend : tous les jours ouvrés comptent.
+   Une quantité en heures est convertie en jours (7,5 h par jour par défaut). */
+export function finTheoriquePrestation(options: {
+  debut: JourISO;
+  quantite: number;
+  unite: "JOURS" | "HEURES";
+  comprendConges: boolean;
+  heuresParJour?: number;
+}): JourISO | null {
+  const parJour = options.heuresParJour && options.heuresParJour > 0 ? options.heuresParJour : 7.5;
+  let reste = options.unite === "HEURES" ? options.quantite / parJour : options.quantite;
+
+  if (!options.debut || !(reste > 0)) return null;
+
+  let fin: JourISO | null = null;
+
+  for (let j = options.debut, n = 0; n < 800; j = ajouterJours(j, 1), n++) {
+    if (estWeekend(j)) continue;
+    if (!options.comprendConges && estFerie(j)) continue;
+
+    fin = j;
+    reste = arrondi2(reste - Math.min(1, reste));
+
+    if (reste <= 0.001) break;
+  }
+
+  return fin;
+}
+
+/* Barre dans la grille des jours ouvrés (une colonne = un jour ouvré) */
+export type ModeGlisse = "move" | "debut" | "fin";
+
+export type PositionPiste = {
+  debutIdx: number;
+  finIdx: number;
+  coupeGauche: boolean; // commence avant la période affichée
+  coupeDroite: boolean; // finit après la période affichée
+};
+
+/* Place des bornes (dates) sur les colonnes affichées. Un début de week-end tombe sur le lundi
+   suivant, une fin de week-end sur le vendredi précédent. Hors période : null. */
+export function positionPiste(debut: JourISO, fin: JourISO, colonnes: JourISO[]): PositionPiste | null {
+  if (!debut || !fin || fin < debut || colonnes.length === 0) return null;
+  if (fin < colonnes[0] || debut > colonnes[colonnes.length - 1]) return null;
+
+  const debutIdx = colonnes.findIndex((j) => j >= debut);
+  let finIdx = -1;
+
+  for (let i = colonnes.length - 1; i >= 0; i--) {
+    if (colonnes[i] <= fin) {
+      finIdx = i;
+      break;
+    }
+  }
+
+  if (debutIdx < 0 || finIdx < 0 || finIdx < debutIdx) return null;
+
+  return { debutIdx, finIdx, coupeGauche: debut < colonnes[0], coupeDroite: fin > colonnes[colonnes.length - 1] };
+}
+
+/* Nouvelles colonnes après un glisser de `delta` colonnes : déplacer, changer le début ou la fin.
+   Une barre ne sort pas de la grille et son début ne dépasse pas sa fin. */
+export function bornesApresGlisse(
+  p: { debutIdx: number; finIdx: number },
+  mode: ModeGlisse,
+  delta: number,
+  nbColonnes: number
+): { i: number; f: number } {
+  let i = p.debutIdx;
+  let f = p.finIdx;
+
+  if (mode === "move") {
+    const d = Math.min(Math.max(delta, -p.debutIdx), nbColonnes - 1 - p.finIdx);
+    i += d;
+    f += d;
+  } else if (mode === "debut") {
+    i = Math.min(Math.max(0, p.debutIdx + delta), p.finIdx);
+  } else {
+    f = Math.max(Math.min(nbColonnes - 1, p.finIdx + delta), p.debutIdx);
+  }
+
+  return { i, f };
+}
+
+/* Une ressource dépasse-t-elle les bornes de la prestation ? */
+export function depasseBornes(
+  premierJour: JourISO,
+  dernierJour: JourISO,
+  bornes: { debut: JourISO | null; fin: JourISO | null }
+): { avant: boolean; apres: boolean } {
+  return {
+    avant: Boolean(bornes.debut && premierJour < bornes.debut),
+    apres: Boolean(bornes.fin && dernierJour > bornes.fin),
+  };
 }
 
 /* ---------------------------------------------------------------
