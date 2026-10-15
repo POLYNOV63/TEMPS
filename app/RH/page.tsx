@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 
@@ -415,6 +415,226 @@ function BarreCompteur({
   );
 }
 
+/* RH_ANNULATION_V2 : justificatif soigné et annulation d'une demande */
+
+const TAILLE_MAX_JUSTIFICATIF = 10 * 1024 * 1024;
+
+function tailleLisible(octets: number) {
+  if (octets < 1024) return `${octets} o`;
+  if (octets < 1024 * 1024) return `${Math.round(octets / 1024)} Ko`;
+  return `${(octets / (1024 * 1024)).toFixed(1).replace(".", ",")} Mo`;
+}
+
+function ChampJustificatif({
+  fichier,
+  onChoisir,
+}: {
+  fichier: File | null;
+  onChoisir: (fichier: File | null) => void;
+}) {
+  const entree = useRef<HTMLInputElement | null>(null);
+  const [survol, setSurvol] = useState(false);
+  const [probleme, setProbleme] = useState("");
+
+  function accepter(f: File | null | undefined) {
+    if (!f) return;
+
+    if (f.size === 0) {
+      setProbleme("Ce fichier est vide.");
+      return;
+    }
+
+    if (f.size > TAILLE_MAX_JUSTIFICATIF) {
+      setProbleme(`Ce fichier fait ${tailleLisible(f.size)} : la taille maximale est de 10 Mo.`);
+      return;
+    }
+
+    setProbleme("");
+    onChoisir(f);
+  }
+
+  return (
+    <div style={styles.field}>
+      <span>Justificatif</span>
+
+      <input
+        ref={entree}
+        type="file"
+        aria-label="Choisir un justificatif"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          accepter(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+
+      {fichier ? (
+        <div style={stylesAnnulation.fichierChoisi}>
+          <span aria-hidden="true" style={{ fontSize: 22 }}>📄</span>
+
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={stylesAnnulation.fichierNom} title={fichier.name}>{fichier.name}</div>
+            <div style={stylesAnnulation.fichierTaille}>{tailleLisible(fichier.size)} · prêt à être envoyé</div>
+          </div>
+
+          <button type="button" style={stylesAnnulation.boutonDiscret} onClick={() => entree.current?.click()}>
+            Remplacer
+          </button>
+
+          <button
+            type="button"
+            aria-label="Retirer le justificatif"
+            title="Retirer le justificatif"
+            style={stylesAnnulation.boutonRetirer}
+            onClick={() => {
+              setProbleme("");
+              onChoisir(null);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{ ...stylesAnnulation.zoneDepot, ...(survol ? stylesAnnulation.zoneDepotActive : {}) }}
+          onDragOver={(e: React.DragEvent) => {
+            e.preventDefault();
+            setSurvol(true);
+          }}
+          onDragLeave={() => setSurvol(false)}
+          onDrop={(e: React.DragEvent) => {
+            e.preventDefault();
+            setSurvol(false);
+            accepter(e.dataTransfer?.files?.[0]);
+          }}
+        >
+          <button type="button" style={stylesAnnulation.boutonJoindre} onClick={() => entree.current?.click()}>
+            <span aria-hidden="true">📎</span> Joindre un justificatif
+          </button>
+
+          <span style={stylesAnnulation.aideDepot}>ou glissez le fichier ici</span>
+          <span style={stylesAnnulation.aideDepot}>PDF, image, Word ou Excel · 10 Mo maximum</span>
+        </div>
+      )}
+
+      {probleme && (
+        <span role="alert" style={stylesAnnulation.problemeFichier}>{probleme}</span>
+      )}
+    </div>
+  );
+}
+
+function FenetreAnnulation({
+  demande,
+  motif,
+  onMotif,
+  enCours,
+  erreur,
+  onConfirmer,
+  onFermer,
+}: {
+  demande: Demande;
+  motif: string;
+  onMotif: (valeur: string) => void;
+  enCours: boolean;
+  erreur: string;
+  onConfirmer: () => void;
+  onFermer: () => void;
+}) {
+  useEffect(() => {
+    const surTouche = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !enCours) onFermer();
+    };
+
+    window.addEventListener("keydown", surTouche);
+    return () => window.removeEventListener("keydown", surTouche);
+  }, [enCours, onFermer]);
+
+  const periode =
+    demande.date_debut === demande.date_fin
+      ? dateFR(demande.date_debut)
+      : `${dateFR(demande.date_debut)} → ${dateFR(demande.date_fin)}`;
+
+  const duree =
+    demande.type_demande === "RE"
+      ? `${fmt(demande.heures_re || 0)} h`
+      : `${fmt(demande.duree_jours)} jour${Number(demande.duree_jours) > 1 ? "s" : ""}`;
+
+  const dejaTransmise = Boolean(demande.rh_transmise);
+  const refusee = demande.statut === "REFUSEE";
+  const validee = demande.statut === "VALIDEE" || demande.statut === "ENVOYEE_RH";
+
+  return (
+    <div style={stylesAnnulation.voile} role="presentation" onClick={() => !enCours && onFermer()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Annuler la demande"
+        style={stylesAnnulation.fenetre}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 style={{ margin: "0 0 4px", fontSize: 22 }}>{refusee ? "Annuler cette demande refusée ?" : "Annuler cette demande ?"}</h2>
+        <div style={{ color: "#6d737a", marginBottom: 14 }}>
+          {libelleType(demande.type_demande)} · {periode} · {duree}
+        </div>
+
+        {erreur && <div role="alert" style={styles.alert}>{erreur}</div>}
+
+        <div style={stylesAnnulation.consequences}>
+          {refusee ? (
+            <>
+              <strong>Cette demande a déjà été refusée.</strong>
+              <div style={{ marginTop: 6, lineHeight: 1.5 }}>
+                L'annuler la retire de votre liste active et la garde dans l'historique avec le statut « Annulée ».
+                Personne n'est prévenu par e-mail.
+              </div>
+            </>
+          ) : (
+            <>
+              <strong>Ce qui va se passer :</strong>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.5 }}>
+                <li>
+                  AMA et PLG seront prévenus par e-mail
+                  {dejaTransmise ? ", ainsi que le service RH (la demande lui avait été transmise)" : ""}.
+                </li>
+                <li>La demande n'est plus comptée dans vos soldes ni dans le planning.</li>
+                {validee && <li>Les jours d'absence sont retirés de vos feuilles d'heures non validées.</li>}
+                <li>Elle reste visible ici avec le statut « Annulée ».</li>
+              </ul>
+            </>
+          )}
+        </div>
+
+        <label style={{ ...styles.field, marginTop: 14 }}>
+          <span>Motif (facultatif)</span>
+          <textarea
+            style={{ ...styles.input, minHeight: 64 }}
+            value={motif}
+            onChange={(e) => onMotif(e.target.value)}
+            placeholder="ex. Changement de planning"
+            autoFocus
+          />
+        </label>
+
+        <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 18 }}>
+          <button type="button" style={styles.secondary} onClick={onFermer} disabled={enCours}>
+            Garder la demande
+          </button>
+
+          <button
+            type="button"
+            style={{ ...styles.button, opacity: enCours ? 0.65 : 1 }}
+            onClick={onConfirmer}
+            disabled={enCours}
+          >
+            {enCours ? "Annulation…" : "Annuler la demande"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RHPage() {
   const [collab, setCollab] =
     useState<Collaborateur | null>(null);
@@ -472,6 +692,11 @@ export default function RHPage() {
 
   const [envoi, setEnvoi] =
     useState(false);
+
+  const [aAnnuler, setAAnnuler] = useState<Demande | null>(null);
+  const [motifAnnulation, setMotifAnnulation] = useState("");
+  const [annulationEnCours, setAnnulationEnCours] = useState(false);
+  const [erreurAnnulation, setErreurAnnulation] = useState("");
 
   const exercice = exerciceActuel();
 
@@ -862,6 +1087,7 @@ export default function RHPage() {
 
   function reinitialiserDatesPourType(nouveauType: string) {
     setType(nouveauType);
+    if (nouveauType !== "CP_EXCEPTIONNEL_AVEC_JUSTIFICATIF") setFichier(null);
     setDemiJourneeDebut(false);
     setDemiJourneeFin(false);
     if (dateDebut) {
@@ -892,6 +1118,71 @@ export default function RHPage() {
 
     setMessage("Demande supprimée.");
     await charger();
+  }
+
+  // Une demande peut être annulée quel que soit son statut (en attente, validée, refusée).
+  // Un congé validé dont la période est terminée doit être annulé par un administrateur.
+  function peutAnnuler(d: Demande) {
+    if (d.statut === "EN_ATTENTE" || d.statut === "REFUSEE") return true;
+
+    return ["VALIDEE", "ENVOYEE_RH"].includes(d.statut) && d.date_fin >= dateISO(new Date());
+  }
+
+  function ouvrirAnnulation(d: Demande) {
+    setAAnnuler(d);
+    setMotifAnnulation("");
+    setErreurAnnulation("");
+  }
+
+  async function confirmerAnnulation() {
+    if (!aAnnuler) return;
+
+    // Décidé avant l'appel à la base : une demande déjà refusée est simplement archivée (aucun e-mail)
+    const dejaRefusee = aAnnuler.statut === "REFUSEE";
+
+    setAnnulationEnCours(true);
+    setErreurAnnulation("");
+    setErreur("");
+    setMessage("");
+
+    try {
+      const { data, error } = await supabase.rpc("rh_annuler_demande", {
+        p_demande_id: aAnnuler.id,
+        p_motif: motifAnnulation.trim() || null,
+      });
+
+      if (error) throw error;
+
+      const resultat = Array.isArray(data) ? data[0] : data;
+
+      const notification = dejaRefusee
+        ? { error: null }
+        : await supabase.functions.invoke("notifier-annulation-rh", {
+            body: { demande_id: aAnnuler.id },
+          });
+
+      setAAnnuler(null);
+      setMotifAnnulation("");
+
+      let texte = dejaRefusee
+        ? "Demande annulée. Elle était déjà refusée : personne n’a été prévenu par e-mail."
+        : notification.error
+        ? "Demande annulée, mais l’e-mail d’information n’a pas pu être envoyé : prévenez AMA et PLG."
+        : resultat?.rh_deja_transmise
+          ? "Demande annulée. AMA, PLG et le service RH ont été prévenus par e-mail."
+          : "Demande annulée. AMA et PLG ont été prévenus par e-mail.";
+
+      if (!dejaRefusee && resultat?.feuilles_a_corriger) {
+        texte += ` Attention : les feuilles déjà validées des semaines du ${resultat.feuilles_a_corriger} contiennent encore cette absence : un administrateur doit les corriger.`;
+      }
+
+      setMessage(texte);
+      await charger();
+    } catch (e: any) {
+      setErreurAnnulation(e?.message || "Impossible d'annuler la demande.");
+    } finally {
+      setAnnulationEnCours(false);
+    }
   }
 
   async function envoyerDemande(
@@ -1639,20 +1930,8 @@ export default function RHPage() {
               </Field>
             )}
 
-            {type ===
-              "CP_EXCEPTIONNEL_AVEC_JUSTIFICATIF" && (
-              <Field label="Justificatif">
-                <input
-                  type="file"
-                  style={styles.input}
-                  onChange={(e) =>
-                    setFichier(
-                      e.target.files?.[0] ||
-                        null
-                    )
-                  }
-                />
-              </Field>
+            {type === "CP_EXCEPTIONNEL_AVEC_JUSTIFICATIF" && (
+              <ChampJustificatif fichier={fichier} onChoisir={setFichier} />
             )}
 
             <Field label="Commentaire (facultatif)">
@@ -1808,20 +2087,22 @@ export default function RHPage() {
                     </td>
 
                     <td>
-                      {(d.statut === "EN_ATTENTE" || d.statut === "REFUSEE") ? (
+                      {peutAnnuler(d) ? (
                         <button
-                          style={
-                            styles.deleteButton
-                          }
-                          onClick={() =>
-                            supprimerDemande(
-                              d
-                            )
-                          }
-                          title="Supprimer"
+                          type="button"
+                          style={stylesAnnulation.boutonAnnuler}
+                          onClick={() => ouvrirAnnulation(d)}
+                          title="Annuler cette demande"
                         >
-                          ×
+                          Annuler
                         </button>
+                      ) : d.statut === "VALIDEE" || d.statut === "ENVOYEE_RH" ? (
+                        <span
+                          title="La période est terminée : demandez l'annulation à un administrateur"
+                          style={{ color: "#999", fontSize: 12 }}
+                        >
+                          Période passée
+                        </span>
                       ) : (
                         "—"
                       )}
@@ -1833,6 +2114,18 @@ export default function RHPage() {
           </div>
         )}
       </section>
+
+      {aAnnuler && (
+        <FenetreAnnulation
+          demande={aAnnuler}
+          motif={motifAnnulation}
+          onMotif={setMotifAnnulation}
+          enCours={annulationEnCours}
+          erreur={erreurAnnulation}
+          onConfirmer={confirmerAnnulation}
+          onFermer={() => setAAnnuler(null)}
+        />
+      )}
     </main>
   );
 }
@@ -2134,4 +2427,21 @@ const styles: Record<
     fontWeight: 700,
     cursor: "pointer",
   },
+};
+
+const stylesAnnulation: Record<string, React.CSSProperties> = {
+  zoneDepot: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, border: "2px dashed #c9ced4", borderRadius: 10, background: "#fafbfc", padding: "12px 14px" },
+  zoneDepotActive: { borderColor: rouge, background: "#fff5f5" },
+  boutonJoindre: { display: "inline-flex", alignItems: "center", gap: 8, minHeight: 42, padding: "0 16px", border: `2px solid ${rouge}`, background: "#ffffff", color: rouge, borderRadius: 9, fontWeight: 800, fontSize: 14, fontFamily: "inherit", cursor: "pointer" },
+  aideDepot: { fontSize: 12, fontWeight: 400, color: "#6d737a" },
+  fichierChoisi: { display: "flex", alignItems: "center", gap: 10, border: "1.5px solid #9fd4a7", background: "#f2faf3", borderRadius: 10, padding: "9px 12px" },
+  fichierNom: { fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  fichierTaille: { fontWeight: 400, fontSize: 12, color: "#4f6b53" },
+  boutonDiscret: { border: "1px solid #c9ced4", background: "#ffffff", color: "#252525", borderRadius: 8, padding: "6px 10px", fontWeight: 700, fontSize: 12, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" },
+  boutonRetirer: { width: 32, height: 32, border: "1px solid #e1bcbc", background: "#ffffff", color: rouge, borderRadius: 8, fontSize: 20, fontWeight: 800, lineHeight: 1, cursor: "pointer", padding: 0 },
+  problemeFichier: { color: "#a51d1d", fontSize: 12, fontWeight: 700 },
+  boutonAnnuler: { border: `1.5px solid ${rouge}`, background: "#ffffff", color: rouge, borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 13, fontFamily: "inherit", cursor: "pointer" },
+  voile: { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 100 },
+  fenetre: { width: "100%", maxWidth: 560, background: "#ffffff", borderRadius: 14, padding: 22, boxShadow: "0 14px 44px rgba(0,0,0,.3)", maxHeight: "92vh", overflow: "auto" },
+  consequences: { background: "#fff8e1", border: "1px solid #ecd58a", borderRadius: 10, padding: "10px 14px", fontSize: 14 },
 };
