@@ -107,6 +107,22 @@ function formatDecimal(heures: number) {
   });
 }
 
+/* PROFILS_HORAIRES_V2 : cause réelle d'une erreur de la base, en français */
+function messageErreur(erreur: unknown, defaut: string) {
+  const e = erreur as { message?: string; code?: string; details?: string; hint?: string } | null;
+  const texte = [e?.message, e?.details, e?.hint].filter(Boolean).join(" — ");
+
+  if (!texte) return defaut;
+
+  if (e?.code === "23505") return `${defaut} Cette valeur existe déjà dans la base : ${texte}`;
+  if (e?.code === "23514") return `${defaut} Une règle de la base refuse ces valeurs : ${texte}`;
+  if (e?.code === "23502") return `${defaut} Une colonne obligatoire n'est pas renseignée : ${texte}`;
+  if (e?.code === "22003") return `${defaut} Une valeur est trop grande ou trop précise pour sa colonne : ${texte}`;
+  if (e?.code === "42501") return `${defaut} Droits insuffisants : ${texte}`;
+
+  return `${defaut} Cause : ${texte}`;
+}
+
 /* ===============================================================
    PAGE
 ================================================================ */
@@ -198,9 +214,7 @@ function ProfilsHorairesPageContenu() {
     } catch (error) {
       console.error(error);
 
-      setErreur(
-        "Impossible de charger les profils horaires."
-      );
+      setErreur(messageErreur(error, "Impossible de charger les profils horaires."));
     } finally {
       setChargement(false);
     }
@@ -250,7 +264,6 @@ function ProfilsHorairesPageContenu() {
           mercredi: Number(profil.mercredi),
           jeudi: Number(profil.jeudi),
           vendredi: Number(profil.vendredi),
-          total_hebdomadaire: total,
           actif: profil.actif,
         })
         .eq("id", profil.id);
@@ -282,9 +295,7 @@ function ProfilsHorairesPageContenu() {
     } catch (error) {
       console.error(error);
 
-      setErreur(
-        "Impossible d'enregistrer le profil horaire."
-      );
+      setErreur(messageErreur(error, "Impossible d'enregistrer le profil horaire."));
     } finally {
       setEnregistrement(null);
     }
@@ -335,6 +346,11 @@ function ProfilsHorairesPageContenu() {
         return;
       }
 
+      if (profils.some((p) => p.nom.trim().toLowerCase() === nom.toLowerCase())) {
+        setErreur(`Un profil « ${nom} » existe déjà (actif ou inactif). Choisissez un autre nom.`);
+        return;
+      }
+
       setEnregistrement("nouveau");
 
       const { data, error } = await supabase
@@ -350,7 +366,9 @@ function ProfilsHorairesPageContenu() {
           vendredi: Number(
             heuresNouveau.vendredi
           ),
-          total_hebdomadaire: totalNouveau,
+          samedi: 0,
+          dimanche: 0,
+          forfait: false,
           actif: true,
         })
         .select(
@@ -426,9 +444,7 @@ function ProfilsHorairesPageContenu() {
     } catch (error) {
       console.error(error);
 
-      setErreur(
-        "Impossible de créer le profil horaire."
-      );
+      setErreur(messageErreur(error, "Impossible de créer le profil horaire."));
     } finally {
       setEnregistrement(null);
     }
@@ -494,9 +510,7 @@ function ProfilsHorairesPageContenu() {
     } catch (error) {
       console.error(error);
 
-      setErreur(
-        "Impossible de modifier le statut du profil."
-      );
+      setErreur(messageErreur(error, "Impossible de modifier le statut du profil."));
     } finally {
       setEnregistrement(null);
     }
@@ -695,7 +709,7 @@ function ProfilsHorairesPageContenu() {
                       type="number"
                       min="0"
                       max="24"
-                      step="0.5"
+                      step="0.25"
                       value={
                         heuresNouveau[
                           jour.code
@@ -918,7 +932,7 @@ function ProfilsHorairesPageContenu() {
                                   type="number"
                                   min="0"
                                   max="24"
-                                  step="0.5"
+                                  step="0.25"
                                   value={
                                     profil[
                                       jour
@@ -1193,7 +1207,7 @@ function ProfilsHorairesPageContenu() {
                                 type="number"
                                 min="0"
                                 max="24"
-                                step="0.5"
+                                step="0.25"
                                 value={
                                   profil[
                                     jour

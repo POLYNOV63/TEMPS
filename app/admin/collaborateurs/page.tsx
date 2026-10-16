@@ -314,6 +314,10 @@ const { data: profil, error: erreurProfil } = await supabase
     mercredi: Number(mercredi),
     jeudi: Number(jeudi),
     vendredi: Number(vendredi),
+    // PROFILS_HORAIRES_V2 : colonnes obligatoires explicites
+    samedi: 0,
+    dimanche: 0,
+    forfait: false,
     actif: true,
   })
   .select()
@@ -321,7 +325,11 @@ const { data: profil, error: erreurProfil } = await supabase
 
     if (erreurProfil || !profil) {
       console.error(erreurProfil);
-      setErreur("Impossible de créer le profil horaire.");
+      setErreur(
+        erreurProfil?.message
+          ? `Impossible de créer le profil horaire. Cause : ${erreurProfil.message}`
+          : "Impossible de créer le profil horaire."
+      );
       return;
     }
 
