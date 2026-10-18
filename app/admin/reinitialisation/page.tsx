@@ -139,7 +139,11 @@ function ReinitialisationContenu() {
           <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Confirmer</h2>
           <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
             <input type="checkbox" checked={sauvegarde} onChange={(e) => setSauvegarde(e.target.checked)} style={{ width: 22, height: 22 }} />
-            J’ai fait une sauvegarde de la base (Supabase &gt; Database &gt; Backups), ou je n’ai rien à garder.
+            J’ai téléchargé une sauvegarde juste avant (
+            <Link href="/admin/sauvegarde" style={{ color: C.rougeFonce, fontWeight: 700 }}>
+              Paramétrage &gt; Sauvegarde
+            </Link>
+            ), ou je n’ai rien à garder.
           </label>
           <label style={{ display: "block", fontWeight: 700, marginBottom: 12 }}>
             Tapez <code>REINITIALISER</code> pour confirmer
