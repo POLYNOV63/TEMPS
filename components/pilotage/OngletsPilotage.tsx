@@ -1,25 +1,47 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { C } from "@/components/pilotage/ui";
+import { peut, type Droit } from "@/lib/droits";
+import { chargerMoi } from "@/lib/pilotageDonnees";
 
-/* Navigation du module Pilotage BE. */
+/* Navigation du module Pilotage BE (bandeau fixe en haut de l'écran).
+   Chaque onglet n'apparaît qu'aux rôles qui y ont accès. */
 
-const ONGLETS = [
-  { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage" },
-  { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires" },
-  { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources" },
-] as const;
+const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Droit }[] = [
+  { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage", droit: "piloterBE" },
+  { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
+  { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
+  { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
+  { cle: "indicateurs", libelle: "Indicateurs", href: "/pilotage/indicateurs", droit: "indicateurs" },
+];
 
 export default function OngletsPilotage({
   actif,
 }: {
-  actif: (typeof ONGLETS)[number]["cle"];
+  actif: "portefeuille" | "affaires" | "ressources" | "prestations" | "indicateurs";
 }) {
+  const [role, setRole] = useState<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    chargerMoi()
+      .then((m) => setRole(m?.role ?? null))
+      .catch(() => setRole(null));
+  }, []);
+
+  // Tant que le rôle n'est pas connu, seul l'onglet courant est affiché
+  const visibles = ONGLETS.filter((o) => (role === undefined ? o.cle === actif : peut(role, o.droit)));
+
   return (
     <nav
       aria-label="Pilotage BE"
       style={{
+        // reste collé en haut de l'écran quand on fait défiler la page
+        position: "sticky",
+        top: 0,
+        zIndex: 40,
+        boxShadow: "0 1px 4px rgba(0,0,0,.06)",
         background: "#ffffff",
         borderBottom: `1px solid ${C.ligne}`,
         padding: "0 28px",
@@ -29,7 +51,7 @@ export default function OngletsPilotage({
         fontFamily: "Calibri, Arial, sans-serif",
       }}
     >
-      {ONGLETS.map((o) => {
+      {visibles.map((o) => {
         const a = o.cle === actif;
 
         return (

@@ -7,10 +7,14 @@
    (rh_est_admin, polynov_est_exporteur...).
 
    Niveaux :
-     0 - COLLABORATEUR : ses propres feuilles, ses demandes RH
+     0 - COLLABORATEUR : ses propres feuilles, ses demandes RH, le planning
+                         des affaires (lecture)
      1 - RESPONSABLE   : niveau 0 + Suivi des feuilles (consultation),
-                         Bilan RH mensuel, Export Excel
-     2 - ADMIN         : tout (administration, gestion des référentiels)
+                         Bilan RH mensuel, Export Excel, portefeuille et
+                         planning des affaires au forfait (modification)
+     2 - ADMIN         : tout (administration, référentiels, relevé des
+                         prestations PE / PI, charge par ressource,
+                         indicateurs et finances)
 ================================================================ */
 
 export type Role = "COLLABORATEUR" | "RESPONSABLE" | "ADMIN";
@@ -33,7 +37,11 @@ export const DROITS = {
   bilanRH: 1,
   exporterExcel: 1,
   administrerFeuilles: 2,
-  piloterBE: 1, // Pilotage BE : déclarer et modifier les affaires, charges, affectations
+  voirPlanning: 0, // Planning des affaires : lecture pour tous
+  piloterBE: 1, // Pilotage BE : portefeuille, déclarer et modifier les affaires au forfait, affecter
+  relevePrestations: 2, // relevé PE / PI (taux, heures facturées) : il alimente le planning des PE / PI
+  chargeRessources: 2, // charge par ressource
+  indicateurs: 2, // indicateurs et finances
   administration: 2, // codes, activités, profils, bilans, imports, export IA...
 } as const;
 

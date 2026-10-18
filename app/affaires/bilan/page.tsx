@@ -1,1690 +1,788 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
+import { supabase } from "@/lib/supabase";
+import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 
-/* =========================================================
-   TYPES
-========================================================= */
+/* ===============================================================
+   BILAN AFFAIRE
 
-type LigneHistorique = {
+   Pour une affaire (CBE ou DBE) :
+   - CHIFFRÉ : heures du Suivi d'affaire BE (Excel), commande de base +
+     avenants retenus, réparties par activité (correspondance Méca → …).
+     À défaut de ligne Excel : les besoins saisis dans le Pilotage BE.
+   - RÉALISÉ : feuilles d'heures saisies dans l'application + historique
+     importé (fonction SQL bilan_affaire_imputations, sans double compte).
+   - Comparaison par activité, ligne par ligne (base, avenants, lots,
+     échéances), par personne et mois par mois.
+
+   Le détail nominatif n'est donné qu'aux ADMIN / RESPONSABLE (chacun voit
+   ses propres heures). Aucun montant sur cette page.
+================================================================ */
+
+type TypeAffaire = "CBE" | "DBE";
+
+type Imputation = {
+  source: "FEUILLE" | "HISTORIQUE";
   annee: number;
   semaine: number;
-  collaborateur_id: string;
-  affaire_code: string;
-  code_imputation: string;
+  jour: string | null;
+  collaborateur_id: string | null;
+  trigramme: string | null;
+  numero_complet: string;
+  code: string;
+  activite_id: string | null;
   heures: number;
-  trigramme: string;
 };
 
-type LigneTableau = {
-  semaine: number;
-  annee: number;
-  trigramme: string;
-  codes: Record<string, number>;
-  total: number;
+type LigneExcel = {
+  cle: string;
+  genre: "DEVIS" | "BASE" | "AVENANT" | "LOT" | "ECHEANCE";
+  numero_affaire: string | null;
+  numero_devis: string | null;
+  statut: string | null;
+  imputation: string | null;
+  designation: string | null;
+  client_id: string | null;
+  redacteur: string | null;
+  date_ouverture: string | null;
+  date_reception_commande: string | null;
+  delai: string | null;
+  date_livraison_estimee: string | null;
+  date_livraison: string | null;
+  heures_meca: number;
+  heures_calcul: number;
+  heures_elec: number;
+  heures_pneu: number;
+  heures_scan: number;
+  heures_autre: number;
+  heures_total: number;
+  disparue: boolean;
 };
 
-type Collaborateur = {
+type AffairePilotage = {
   id: string;
-  trigramme: string;
+  statut: string;
+  echeance: string | null;
+  responsable_id: string;
+  au_planning: boolean | null;
 };
 
-/* =========================================================
-   COULEURS DES CODES
-========================================================= */
-
-const couleursCodes = [
-  "#c00000",
-  "#e67e22",
-  "#2e7d32",
-  "#1565c0",
-  "#7b1fa2",
-  "#00838f",
-  "#6d4c41",
-  "#546e7a",
-  "#8e24aa",
-  "#43a047",
-  "#fb8c00",
-  "#3949ab",
+const COLONNES_EXCEL: { colonne: string; champ: keyof LigneExcel }[] = [
+  { colonne: "Méca", champ: "heures_meca" },
+  { colonne: "Calcul", champ: "heures_calcul" },
+  { colonne: "Elec", champ: "heures_elec" },
+  { colonne: "Pneu", champ: "heures_pneu" },
+  { colonne: "Scan", champ: "heures_scan" },
+  { colonne: "Autre", champ: "heures_autre" },
 ];
 
-function couleurCode(code: string, index: number) {
-  return couleursCodes[index % couleursCodes.length];
+const INACTIFS = ["Devis perdu", "Commande annulée"];
+const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const SANS_ACTIVITE = "__sans__";
+
+/* Lundi de la semaine ISO (année ISO, n° de semaine) */
+function lundiIso(annee: number, semaine: number): string {
+  const simple = new Date(Date.UTC(annee, 0, 4));
+  const jour = simple.getUTCDay() || 7;
+  simple.setUTCDate(simple.getUTCDate() - jour + 1 + (semaine - 1) * 7);
+  return simple.toISOString().slice(0, 10);
 }
 
-/* =========================================================
-   GRAPHIQUE EVOLUTION
-========================================================= */
+/* Suffixe d'une imputation : « R2 », « LOT1 », « ECH1 », « R1ECH2 »… ou "" pour la commande de base */
+function suffixe(numeroComplet: string): string {
+  const m = numeroComplet.replace(/\s/g, "").match(/^(?:CBE|DBE|CAS)?[-:]?\d+(.*)$/i);
+  return (m?.[1] ?? "").toUpperCase();
+}
 
-function EvolutionCodes({
-  tableau,
-  codes,
-}: {
-  tableau: LigneTableau[];
-  codes: string[];
-}) {
-  /*
-   * On regroupe les lignes par semaine.
-   *
-   * Exemple :
-   *
-   * S12
-   *   AMZ -> 12 h
-   *   MMO -> 8 h
-   *   KID -> 15 h
-   *
-   * S13
-   *   AMZ -> 18 h
-   *
-   * Chaque collaborateur possède donc SA propre barre.
-   */
+function lireAffaireDansUrl(): { type: TypeAffaire; numero: string } | null {
+  const brut = new URLSearchParams(window.location.search).get("affaire");
+  if (!brut) return null;
+  const m = brut.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
+  if (!m) return null;
+  return { type: (m[1] as TypeAffaire) || "CBE", numero: m[2] };
+}
 
-  const groupesSemaines = useMemo(() => {
-    const groupes = new Map<string, LigneTableau[]>();
-
-    for (const ligne of tableau) {
-      const cle = `${ligne.annee}-${String(ligne.semaine).padStart(2, "0")}`;
-
-      if (!groupes.has(cle)) {
-        groupes.set(cle, []);
-      }
-
-      groupes.get(cle)!.push(ligne);
-    }
-
-    return Array.from(groupes.entries())
-      .sort(([a], [b]) => {
-        const [anneeA, semaineA] = a.split("-").map(Number);
-        const [anneeB, semaineB] = b.split("-").map(Number);
-
-        if (anneeA !== anneeB) {
-          return anneeA - anneeB;
-        }
-
-        return semaineA - semaineB;
-      })
-      .map(([cle, lignes]) => ({
-        cle,
-        annee: lignes[0].annee,
-        semaine: lignes[0].semaine,
-        lignes: lignes.sort((a, b) =>
-          a.trigramme.localeCompare(b.trigramme)
-        ),
-      }));
-  }, [tableau]);
-
-  const maxHeures = useMemo(() => {
-    if (tableau.length === 0) {
-      return 0;
-    }
-
-    return Math.max(...tableau.map((ligne) => ligne.total));
-  }, [tableau]);
-
-  const hauteurGraphique = 240;
-
-  if (tableau.length === 0) {
-    return (
-      <div
-        style={{
-          background: "#fff",
-          border: "1px solid #e5e5e5",
-          borderRadius: 12,
-          padding: 30,
-          textAlign: "center",
-          color: "#777",
-        }}
-      >
-        Aucune donnée à afficher avec les filtres sélectionnés.
-      </div>
-    );
-  }
-
+function Barre({ part, depasse }: { part: number; depasse: boolean }) {
   return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e5e5e5",
-        borderRadius: 12,
-        padding: 20,
-        marginBottom: 24,
-      }}
-    >
-      {/* =====================================================
-          TITRE
-      ===================================================== */}
-
-      <div
+    <span style={{ display: "inline-block", width: 120, height: 10, background: "#eef0f3", borderRadius: 5, position: "relative", verticalAlign: "middle" }}>
+      <span
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 20,
-          marginBottom: 6,
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: `${Math.min(100, Math.max(0, part * 100))}%`,
+          background: depasse ? "#b3261e" : part >= 0.85 ? "#c76500" : "#2e7d32",
+          borderRadius: 5,
         }}
-      >
-        <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 20,
-              fontWeight: 700,
-              color: "#222",
-            }}
-          >
-            Évolution des heures par semaine
-          </h2>
-
-          <div
-            style={{
-              marginTop: 6,
-              fontSize: 13,
-              color: "#777",
-            }}
-          >
-            Chaque barre représente un collaborateur. La hauteur représente
-            le nombre total d'heures imputées.
-          </div>
-        </div>
-      </div>
-
-      {/* =====================================================
-          GRAPHIQUE
-      ===================================================== */}
-
-      <div
-        style={{
-          overflowX: "auto",
-          overflowY: "hidden",
-          marginTop: 20,
-          paddingBottom: 10,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 14,
-            minWidth: "max-content",
-            padding: "10px 10px 0 10px",
-          }}
-        >
-          {groupesSemaines.map((groupe) => {
-            /*
-             * Largeur du groupe selon le nombre de collaborateurs.
-             *
-             * 1 personne  -> groupe suffisamment large pour centrer la barre
-             * 3 personnes -> trois barres côte à côte
-             */
-
-            const largeurGroupe = Math.max(
-              120,
-              groupe.lignes.length * 76 + 24
-            );
-
-            return (
-              <div
-                key={groupe.cle}
-                style={{
-                  width: largeurGroupe,
-                  minWidth: largeurGroupe,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                }}
-              >
-                {/* =========================================
-                    ZONE DES BARRES
-                ========================================= */}
-
-                <div
-                  style={{
-                    width: "100%",
-                    height: hauteurGraphique + 65,
-                    display: "flex",
-                    alignItems: "flex-end",
-                    justifyContent: "center",
-                    gap: 8,
-                    borderBottom: "1px solid #ddd",
-                  }}
-                >
-                  {groupe.lignes.map((ligne) => {
-                    const hauteurBarre =
-                      maxHeures > 0
-                        ? (ligne.total / maxHeures) * hauteurGraphique
-                        : 0;
-
-                    return (
-                      <div
-                        key={`${groupe.annee}-${groupe.semaine}-${ligne.trigramme}`}
-                        style={{
-                          width: 62,
-                          height: hauteurGraphique + 55,
-                          display: "flex",
-                          flexDirection: "column",
-                          justifyContent: "flex-end",
-                          alignItems: "center",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {/* ================================
-                            TOTAL AU-DESSUS DE LA BARRE
-                        ================================= */}
-
-                        <div
-                          style={{
-                            height: 22,
-                            fontSize: 12,
-                            fontWeight: 700,
-                            color: "#333",
-                            whiteSpace: "nowrap",
-                            display: "flex",
-                            alignItems: "center",
-                          }}
-                        >
-                          {ligne.total.toFixed(1)} h
-                        </div>
-
-                        {/* ================================
-                            BARRE EMPILEE
-                        ================================= */}
-
-                        <div
-                          style={{
-                            width: 58,
-                            height: Math.max(2, hauteurBarre),
-                            display: "flex",
-                            flexDirection: "column-reverse",
-                            borderRadius: "5px 5px 0 0",
-                            overflow: "hidden",
-                            background: "#f0f0f0",
-                            boxShadow:
-                              "0 1px 4px rgba(0,0,0,0.12)",
-                          }}
-                          title={`${ligne.trigramme} — ${ligne.total.toFixed(
-                            1
-                          )} h`}
-                        >
-                          {codes.map((code, index) => {
-                            const heures = ligne.codes[code] || 0;
-
-                            if (heures <= 0) {
-                              return null;
-                            }
-
-                            const hauteurSegment =
-                              ligne.total > 0
-                                ? (heures / ligne.total) * hauteurBarre
-                                : 0;
-
-                            return (
-                              <div
-                                key={code}
-                                title={`${code} : ${heures.toFixed(1)} h`}
-                                style={{
-                                  width: "100%",
-                                  height: hauteurSegment,
-                                  minHeight:
-                                    hauteurSegment > 0 ? 1 : 0,
-                                  backgroundColor: couleurCode(
-                                    code,
-                                    index
-                                  ),
-                                  transition:
-                                    "height 0.2s ease",
-                                }}
-                              />
-                            );
-                          })}
-                        </div>
-
-                        {/* ================================
-                            TRIGRAMME SOUS LA BARRE
-                        ================================= */}
-
-                        <div
-                          style={{
-                            height: 32,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 12,
-                            fontWeight: 800,
-                            color: "#c00000",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {ligne.trigramme}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* =========================================
-                    NUMERO DE SEMAINE
-                ========================================= */}
-
-                <div
-                  style={{
-                    marginTop: 8,
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: "#444",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  S{String(groupe.semaine).padStart(2, "0")}-
-                  {groupe.annee}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* =====================================================
-          LEGENDE
-      ===================================================== */}
-
-      <div
-        style={{
-          marginTop: 22,
-          paddingTop: 16,
-          borderTop: "1px solid #eee",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 16,
-        }}
-      >
-        {codes.map((code, index) => {
-          const totalCode = tableau.reduce(
-            (somme, ligne) => somme + (ligne.codes[code] || 0),
-            0
-          );
-
-          if (totalCode <= 0) {
-            return null;
-          }
-
-          const totalGeneral = tableau.reduce(
-            (somme, ligne) => somme + ligne.total,
-            0
-          );
-
-          const pourcentage =
-            totalGeneral > 0
-              ? (totalCode / totalGeneral) * 100
-              : 0;
-
-          return (
-            <div
-              key={code}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                fontSize: 12,
-                color: "#555",
-              }}
-            >
-              <div
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: 3,
-                  backgroundColor: couleurCode(code, index),
-                  flexShrink: 0,
-                }}
-              />
-
-              <strong>{code}</strong>
-
-              <span>
-                {totalCode.toFixed(1)} h
-              </span>
-
-              <span style={{ color: "#999" }}>
-                ({pourcentage.toFixed(0)} %)
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+      />
+    </span>
   );
 }
 
-/* =========================================================
-   PAGE PRINCIPALE
-========================================================= */
+function BilanContenu() {
+  const [type, setType] = useState<TypeAffaire>("CBE");
+  const [saisie, setSaisie] = useState("");
+  const [affaire, setAffaire] = useState<{ type: TypeAffaire; numero: string } | null>(null);
 
-function BilanAffairePageContenu() {
-  const [typeAffaire, setTypeAffaire] = useState("CBE");
-  const [numero, setNumero] = useState("");
+  const [chargement, setChargement] = useState(false);
+  const [erreur, setErreur] = useState("");
+  const [imputations, setImputations] = useState<Imputation[]>([]);
+  const [lignesExcel, setLignesExcel] = useState<LigneExcel[]>([]);
+  const [client, setClient] = useState<string | null>(null);
+  const [pilotage, setPilotage] = useState<AffairePilotage | null>(null);
+  const [chiffrePilotage, setChiffrePilotage] = useState<{ activite_id: string; heures: number }[]>([]);
+  const [activites, setActivites] = useState<Map<string, { nom: string; ordre: number }>>(new Map());
+  const [correspondance, setCorrespondance] = useState<Map<string, string>>(new Map());
+  const [noms, setNoms] = useState<Map<string, string>>(new Map());
+  const [suggestions, setSuggestions] = useState<{ cle: string; libelle: string }[]>([]);
+  const [voirDetail, setVoirDetail] = useState(false);
+  const [filtrePersonne, setFiltrePersonne] = useState("");
 
-  const [lignes, setLignes] = useState<LigneHistorique[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [rechercheFaite, setRechercheFaite] = useState(false);
+  /* Référentiels + liste des affaires pour la saisie assistée */
+  useEffect(() => {
+    (async () => {
+      const [act, cor, sug, col] = await Promise.all([
+        supabase.from("activites").select("id,nom,ordre_affichage"),
+        supabase.from("suivi_correspondance_activites").select("colonne_excel,activite_id"),
+        supabase.from("suivi_lignes").select("numero_affaire,designation").eq("genre", "BASE").order("numero_affaire", { ascending: false }).limit(1000),
+        supabase.from("collaborateurs").select("id,prenom,nom"),
+      ]);
+      setActivites(
+        new Map(((act.data ?? []) as { id: string; nom: string; ordre_affichage: number }[]).map((a) => [a.id, { nom: a.nom, ordre: a.ordre_affichage }]))
+      );
+      setCorrespondance(
+        new Map(
+          ((cor.data ?? []) as { colonne_excel: string; activite_id: string | null }[])
+            .filter((c) => c.activite_id)
+            .map((c) => [c.colonne_excel, c.activite_id as string])
+        )
+      );
+      setSuggestions(
+        ((sug.data ?? []) as { numero_affaire: string | null; designation: string | null }[])
+          .filter((s) => s.numero_affaire)
+          .map((s) => ({ cle: s.numero_affaire as string, libelle: s.designation ?? "" }))
+      );
+      setNoms(
+        new Map(((col.data ?? []) as { id: string; prenom: string | null; nom: string | null }[]).map((c) => [c.id, `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()]))
+      );
+    })();
 
-  const [collaborateurs, setCollaborateurs] = useState<
-    Collaborateur[]
-  >([]);
-
-  const [collaborateurFiltre, setCollaborateurFiltre] =
-    useState("");
-
-  const [semaineFiltre, setSemaineFiltre] = useState("");
-
-  const [triColonne, setTriColonne] = useState<
-    "semaine" | "trigramme" | "total"
-  >("semaine");
-
-  const [triDirection, setTriDirection] = useState<
-    "asc" | "desc"
-  >("asc");
-
-  /* =========================================================
-     RECHERCHE
-  ========================================================= */
-
-  async function rechercher() {
-    const numeroPropre = numero.trim();
-
-    if (!numeroPropre) {
-      return;
+    const depuisUrl = lireAffaireDansUrl();
+    if (depuisUrl) {
+      setType(depuisUrl.type);
+      setSaisie(depuisUrl.numero);
+      setAffaire(depuisUrl);
     }
+  }, []);
 
-    setLoading(true);
-    setRechercheFaite(true);
+  /* Chargement d'une affaire */
+  const charger = useCallback(async (cible: { type: TypeAffaire; numero: string }) => {
+    setChargement(true);
+    setErreur("");
+    setFiltrePersonne("");
 
     try {
-      const { data, error } = await supabase
-        .from("historique_imputations")
-        .select(
-          `
-            annee,
-            semaine,
-            collaborateur_id,
-            affaire_code,
-            code_imputation,
-            heures
-          `
-        )
-        .ilike(
-          "affaire_code",
-          `${typeAffaire} ${numeroPropre}%`
-        );
+      const num = cible.numero.replace(/^0+/, "");
 
-      if (error) {
-        console.error(
-          "Erreur chargement historique :",
-          error
-        );
+      const [imp, excel, pil] = await Promise.all([
+        supabase.rpc("bilan_affaire_imputations", { p_type: cible.type, p_numero: num }),
+        supabase
+          .from("suivi_lignes")
+          .select(
+            "cle,genre,numero_affaire,numero_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
+          )
+          .eq(cible.type === "CBE" ? "base_affaire" : "base_devis", num),
+        supabase.from("pilotage_affaires").select("id,statut,echeance,responsable_id,au_planning,numero").eq("type", cible.type),
+      ]);
 
-        setLignes([]);
-        setCollaborateurs([]);
-        return;
-      }
+      if (imp.error) throw new Error(imp.error.message);
 
-      const historique: LigneHistorique[] = (data || []).map(
-        (ligne: any) => ({
-          annee: Number(ligne.annee),
-          semaine: Number(ligne.semaine),
-          collaborateur_id: ligne.collaborateur_id,
-          affaire_code: ligne.affaire_code,
-          code_imputation: ligne.code_imputation,
-          heures: Number(ligne.heures) || 0,
-          trigramme: "",
-        })
+      setImputations(
+        ((imp.data ?? []) as Imputation[]).map((r) => ({ ...r, heures: Number(r.heures) || 0 }))
       );
 
-      /* =====================================================
-         RECUPERATION DES COLLABORATEURS
-      ===================================================== */
+      const lignes = ((excel.data ?? []) as LigneExcel[])
+        .filter((l) => (cible.type === "CBE" ? true : l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT"))
+        .map((l) => ({
+          ...l,
+          heures_meca: Number(l.heures_meca) || 0,
+          heures_calcul: Number(l.heures_calcul) || 0,
+          heures_elec: Number(l.heures_elec) || 0,
+          heures_pneu: Number(l.heures_pneu) || 0,
+          heures_scan: Number(l.heures_scan) || 0,
+          heures_autre: Number(l.heures_autre) || 0,
+          heures_total: Number(l.heures_total) || 0,
+        }));
+      const ordre = { BASE: 0, DEVIS: 0, AVENANT: 1, LOT: 2, ECHEANCE: 3 } as const;
+      lignes.sort((a, b) => ordre[a.genre] - ordre[b.genre] || a.cle.localeCompare(b.cle, "fr", { numeric: true }));
+      setLignesExcel(lignes);
 
-      const ids = Array.from(
-        new Set(
-          historique
-            .map((ligne) => ligne.collaborateur_id)
-            .filter(Boolean)
-        )
-      );
-
-      let collaborateursData: Collaborateur[] = [];
-
-      if (ids.length > 0) {
-        const { data: collabs, error: collabError } =
-          await supabase
-            .from("collaborateurs")
-            .select("id, trigramme")
-            .in("id", ids);
-
-        if (collabError) {
-          console.error(
-            "Erreur chargement collaborateurs :",
-            collabError
-          );
-        } else {
-          collaborateursData = (collabs || []).map(
-            (collab: any) => ({
-              id: collab.id,
-              trigramme: collab.trigramme || "?",
-            })
-          );
-        }
+      // Client (nom abrégé)
+      const base = lignes.find((l) => l.genre === "BASE") ?? lignes[0];
+      if (base?.client_id) {
+        const { data } = await supabase.from("suivi_clients").select("nom_abrege").eq("id", base.client_id).maybeSingle();
+        setClient((data as { nom_abrege: string } | null)?.nom_abrege ?? null);
+      } else {
+        setClient(null);
       }
 
-      setCollaborateurs(collaborateursData);
+      // Affaire du Pilotage (visible des ADMIN / RESPONSABLE seulement)
+      const p = ((pil.data ?? []) as (AffairePilotage & { numero: string })[]).find((a) => a.numero.replace(/^0+/, "") === num) ?? null;
+      setPilotage(p);
 
-      /* =====================================================
-         AJOUT DU TRIGRAMME AUX LIGNES
-      ===================================================== */
-
-      const mapCollaborateurs = new Map<
-        string,
-        string
-      >();
-
-      for (const collab of collaborateursData) {
-        mapCollaborateurs.set(
-          collab.id,
-          collab.trigramme
-        );
+      if (p) {
+        const { data } = await supabase.from("pilotage_charges").select("activite_id,heures").eq("affaire_id", p.id);
+        setChiffrePilotage(((data ?? []) as { activite_id: string; heures: number }[]).map((c) => ({ ...c, heures: Number(c.heures) || 0 })));
+      } else {
+        setChiffrePilotage([]);
       }
-
-      const lignesAvecTrigramme = historique.map(
-        (ligne) => ({
-          ...ligne,
-          trigramme:
-            mapCollaborateurs.get(
-              ligne.collaborateur_id
-            ) || "?",
-        })
-      );
-
-      setLignes(lignesAvecTrigramme);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Impossible de charger le bilan.");
+      setImputations([]);
+      setLignesExcel([]);
     } finally {
-      setLoading(false);
+      setChargement(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (affaire) void charger(affaire);
+  }, [affaire, charger]);
+
+  function rechercher(e: FormEvent) {
+    e.preventDefault();
+    const m = saisie.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
+    if (!m) {
+      setErreur("Saisissez un numéro d’affaire, par exemple 1533 ou CBE1533.");
+      return;
+    }
+    const cible = { type: ((m[1] as TypeAffaire) || type) as TypeAffaire, numero: m[2] };
+    setType(cible.type);
+    setAffaire(cible);
+    window.history.replaceState(null, "", `?affaire=${cible.type}${cible.numero}`);
   }
 
-  /* =========================================================
-     CODE IMPLICATIONS DISTINCTS
-  ========================================================= */
+  /* ------------------------------ calculs ------------------------------ */
 
-  const codes = useMemo(() => {
-    const ensemble = new Set<string>();
+  const nomActivite = useCallback(
+    (id: string) => (id === SANS_ACTIVITE ? "Sans activité (code non rattaché)" : activites.get(id)?.nom ?? "Activité"),
+    [activites]
+  );
 
-    for (const ligne of lignes) {
-      if (ligne.code_imputation) {
-        ensemble.add(ligne.code_imputation);
-      }
-    }
+  const comptees = useMemo(
+    () => lignesExcel.filter((l) => !l.disparue && (l.genre === "BASE" || l.genre === "AVENANT") && !INACTIFS.includes(l.statut ?? "")),
+    [lignesExcel]
+  );
 
-    return Array.from(ensemble).sort();
-  }, [lignes]);
+  const bilan = useMemo(() => {
+    // Chiffré par activité : Excel en priorité, sinon les besoins du Pilotage
+    const chiffre = new Map<string, number>();
+    let chiffreNonRattache = 0;
+    const sourceChiffre: "EXCEL" | "PILOTAGE" | "AUCUN" = comptees.length > 0 ? "EXCEL" : chiffrePilotage.length > 0 ? "PILOTAGE" : "AUCUN";
 
-  /* =========================================================
-     LISTE COLLABORATEURS
-  ========================================================= */
-
-  const collaborateursFiltres = useMemo(() => {
-    return collaborateurs
-      .filter((collab) => collab.trigramme)
-      .sort((a, b) =>
-        a.trigramme.localeCompare(b.trigramme)
-      );
-  }, [collaborateurs]);
-
-  /* =========================================================
-     LISTE SEMAINES
-  ========================================================= */
-
-  const semaines = useMemo(() => {
-    const ensemble = new Set<string>();
-
-    for (const ligne of lignes) {
-      ensemble.add(
-        `${ligne.annee}-${String(
-          ligne.semaine
-        ).padStart(2, "0")}`
-      );
-    }
-
-    return Array.from(ensemble).sort((a, b) => {
-      const [anneeA, semaineA] = a
-        .split("-")
-        .map(Number);
-
-      const [anneeB, semaineB] = b
-        .split("-")
-        .map(Number);
-
-      if (anneeA !== anneeB) {
-        return anneeA - anneeB;
-      }
-
-      return semaineA - semaineB;
-    });
-  }, [lignes]);
-
-  /* =========================================================
-     TABLEAU PAR SEMAINE + COLLABORATEUR
-  ========================================================= */
-
-  const tableau = useMemo(() => {
-    const map = new Map<
-      string,
-      LigneTableau
-    >();
-
-    for (const ligne of lignes) {
-      const cle = `${ligne.annee}-${ligne.semaine}-${ligne.trigramme}`;
-
-      if (!map.has(cle)) {
-        map.set(cle, {
-          semaine: ligne.semaine,
-          annee: ligne.annee,
-          trigramme: ligne.trigramme,
-          codes: {},
-          total: 0,
-        });
-      }
-
-      const resultat = map.get(cle)!;
-
-      resultat.codes[ligne.code_imputation] =
-        (resultat.codes[ligne.code_imputation] || 0) +
-        ligne.heures;
-
-      resultat.total += ligne.heures;
-    }
-
-    return Array.from(map.values());
-  }, [lignes]);
-
-  /* =========================================================
-     FILTRES
-  ========================================================= */
-
-  const tableauFiltre = useMemo(() => {
-    return tableau.filter((ligne) => {
-      const okCollaborateur =
-        !collaborateurFiltre ||
-        ligne.trigramme === collaborateurFiltre;
-
-      const okSemaine =
-        !semaineFiltre ||
-        `${ligne.annee}-${String(
-          ligne.semaine
-        ).padStart(2, "0")}` === semaineFiltre;
-
-      return okCollaborateur && okSemaine;
-    });
-  }, [
-    tableau,
-    collaborateurFiltre,
-    semaineFiltre,
-  ]);
-
-  /* =========================================================
-     TRI TABLEAU
-  ========================================================= */
-
-  const tableauTrie = useMemo(() => {
-    const copie = [...tableauFiltre];
-
-    copie.sort((a, b) => {
-      let comparaison = 0;
-
-      if (triColonne === "semaine") {
-        if (a.annee !== b.annee) {
-          comparaison = a.annee - b.annee;
-        } else {
-          comparaison = a.semaine - b.semaine;
+    if (sourceChiffre === "EXCEL") {
+      for (const l of comptees) {
+        for (const { colonne, champ } of COLONNES_EXCEL) {
+          const h = Number(l[champ]) || 0;
+          if (h === 0) continue;
+          const act = correspondance.get(colonne);
+          if (act) chiffre.set(act, (chiffre.get(act) ?? 0) + h);
+          else chiffreNonRattache += h;
         }
+        // heures sans ventilation par discipline
+        const detail = COLONNES_EXCEL.reduce((t, { champ }) => t + (Number(l[champ]) || 0), 0);
+        if (l.heures_total > detail + 0.01) chiffreNonRattache += l.heures_total - detail;
       }
+    } else if (sourceChiffre === "PILOTAGE") {
+      for (const c of chiffrePilotage) chiffre.set(c.activite_id, (chiffre.get(c.activite_id) ?? 0) + c.heures);
+    }
 
-      if (triColonne === "trigramme") {
-        comparaison =
-          a.trigramme.localeCompare(b.trigramme);
-      }
+    // Réalisé par activité
+    const realise = new Map<string, number>();
+    for (const i of imputations) {
+      const k = i.activite_id ?? SANS_ACTIVITE;
+      realise.set(k, (realise.get(k) ?? 0) + i.heures);
+    }
 
-      if (triColonne === "total") {
-        comparaison = a.total - b.total;
-      }
+    const ids = new Set([...chiffre.keys(), ...realise.keys()]);
+    const parActivite = [...ids]
+      .map((id) => ({ id, nom: nomActivite(id), ordre: activites.get(id)?.ordre ?? 999, chiffre: chiffre.get(id) ?? 0, realise: realise.get(id) ?? 0 }))
+      .sort((a, b) => a.ordre - b.ordre || a.nom.localeCompare(b.nom, "fr"));
 
-      return triDirection === "asc"
-        ? comparaison
-        : -comparaison;
+    const totalChiffre = [...chiffre.values()].reduce((t, v) => t + v, 0) + chiffreNonRattache;
+    const totalRealise = imputations.reduce((t, i) => t + i.heures, 0);
+
+    // Codes non rattachés à une activité
+    const codesSans = [...new Set(imputations.filter((i) => !i.activite_id).map((i) => i.code))].sort();
+
+    // Par personne
+    const parPersonne = new Map<string, { nom: string; heures: number; premiere: string; derniere: string; parActivite: Map<string, number> }>();
+    for (const i of imputations) {
+      const cle = i.collaborateur_id ?? "__autres__";
+      const date = i.jour ?? lundiIso(i.annee, i.semaine);
+      const p = parPersonne.get(cle) ?? {
+        nom: i.collaborateur_id ? i.trigramme ?? noms.get(i.collaborateur_id) ?? "?" : "Autres collaborateurs",
+        heures: 0,
+        premiere: date,
+        derniere: date,
+        parActivite: new Map(),
+      };
+      p.heures += i.heures;
+      if (date < p.premiere) p.premiere = date;
+      if (date > p.derniere) p.derniere = date;
+      const a = i.activite_id ?? SANS_ACTIVITE;
+      p.parActivite.set(a, (p.parActivite.get(a) ?? 0) + i.heures);
+      parPersonne.set(cle, p);
+    }
+
+    // Par mois
+    const parMois = new Map<string, number>();
+    for (const i of imputations) {
+      const date = i.jour ?? lundiIso(i.annee, i.semaine);
+      const m = date.slice(0, 7);
+      parMois.set(m, (parMois.get(m) ?? 0) + i.heures);
+    }
+    const mois = [...parMois.entries()].sort(([a], [b]) => a.localeCompare(b));
+    let cumul = 0;
+    const evolution = mois.map(([m, h]) => {
+      cumul += h;
+      return { mois: m, heures: h, cumul };
     });
 
-    return copie;
-  }, [
-    tableauFiltre,
-    triColonne,
-    triDirection,
-  ]);
-
-  /* =========================================================
-     TOTAL HEURES
-  ========================================================= */
-
-  const totalHeures = useMemo(() => {
-    return tableauFiltre.reduce(
-      (somme, ligne) => somme + ligne.total,
-      0
-    );
-  }, [tableauFiltre]);
-
-  /* =========================================================
-     NOMBRE DE COLLABORATEURS
-  ========================================================= */
-
-  const nombreCollaborateurs = useMemo(() => {
-    return new Set(
-      tableauFiltre.map(
-        (ligne) => ligne.trigramme
-      )
-    ).size;
-  }, [tableauFiltre]);
-
-  /* =========================================================
-     NOMBRE DE SEMAINES
-  ========================================================= */
-
-  const nombreSemaines = useMemo(() => {
-    return new Set(
-      tableauFiltre.map(
-        (ligne) =>
-          `${ligne.annee}-${ligne.semaine}`
-      )
-    ).size;
-  }, [tableauFiltre]);
-
-  /* =========================================================
-     CHANGEMENT DE TRI
-  ========================================================= */
-
-  function changerTri(
-    colonne:
-      | "semaine"
-      | "trigramme"
-      | "total"
-  ) {
-    if (triColonne === colonne) {
-      setTriDirection(
-        triDirection === "asc"
-          ? "desc"
-          : "asc"
-      );
-    } else {
-      setTriColonne(colonne);
-      setTriDirection("asc");
+    // Réalisé imputé directement sur une ligne (base = sans suffixe, R1, LOT1…)
+    const parSuffixe = new Map<string, number>();
+    for (const i of imputations) {
+      const s = suffixe(i.numero_complet);
+      parSuffixe.set(s, (parSuffixe.get(s) ?? 0) + i.heures);
     }
-  }
 
-  /* =========================================================
-     RESET FILTRES
-  ========================================================= */
+    return {
+      sourceChiffre,
+      parActivite,
+      chiffreNonRattache,
+      totalChiffre,
+      totalRealise,
+      codesSans,
+      parPersonne: [...parPersonne.entries()].map(([cle, p]) => ({ cle, ...p })).sort((a, b) => b.heures - a.heures),
+      evolution,
+      parSuffixe,
+      sources: {
+        feuilles: imputations.filter((i) => i.source === "FEUILLE").reduce((t, i) => t + i.heures, 0),
+        historique: imputations.filter((i) => i.source === "HISTORIQUE").reduce((t, i) => t + i.heures, 0),
+      },
+    };
+  }, [comptees, chiffrePilotage, correspondance, imputations, activites, nomActivite, noms]);
 
-  function resetFiltres() {
-    setCollaborateurFiltre("");
-    setSemaineFiltre("");
-  }
+  const detail = useMemo(() => {
+    // Détail semaine par semaine, regroupé par personne / semaine / code
+    const m = new Map<string, { semaine: string; personne: string; cle: string; numero: string; code: string; activite: string; heures: number; source: string }>();
+    for (const i of imputations) {
+      const personne = i.collaborateur_id ? i.trigramme ?? "?" : "Autres";
+      if (filtrePersonne && (i.collaborateur_id ?? "__autres__") !== filtrePersonne) continue;
+      const lundi = i.jour ? i.jour : lundiIso(i.annee, i.semaine);
+      const semaine = `${i.annee}-S${String(i.semaine).padStart(2, "0")}`;
+      const k = `${semaine}|${personne}|${i.numero_complet}|${i.code}`;
+      const e = m.get(k) ?? {
+        semaine,
+        personne,
+        cle: lundi,
+        numero: i.numero_complet,
+        code: i.code,
+        activite: nomActivite(i.activite_id ?? SANS_ACTIVITE),
+        heures: 0,
+        source: i.source === "FEUILLE" ? "Feuille" : "Historique",
+      };
+      e.heures += i.heures;
+      m.set(k, e);
+    }
+    return [...m.values()].sort((a, b) => b.semaine.localeCompare(a.semaine) || a.personne.localeCompare(b.personne));
+  }, [imputations, filtrePersonne, nomActivite]);
 
-  /* =========================================================
-     STYLE COMMUN
-  ========================================================= */
+  /* ------------------------------ rendu ------------------------------ */
 
-  const styles = {
-    page: {
-      minHeight: "100vh",
-      background: "#f5f5f5",
-      fontFamily: "Calibri, Arial, sans-serif",
-      color: "#222",
-    },
+  const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
+  const ecart = bilan.totalChiffre - bilan.totalRealise;
+  const part = bilan.totalChiffre > 0 ? bilan.totalRealise / bilan.totalChiffre : 0;
+  const echeance = (() => {
+    const dates = comptees.map((l) => l.delai ?? l.date_livraison_estimee).filter((d): d is string => Boolean(d)).sort();
+    return pilotage?.echeance ?? dates[dates.length - 1] ?? null;
+  })();
+  const livree = comptees.length > 0 && comptees.every((l) => l.statut === "Livrée");
+  const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
+  const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
 
-    header: {
-      background: "#c00000",
-      color: "#fff",
-      padding: "22px 30px",
-    },
+  const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "10px 8px" };
+  const thN: CSSProperties = { ...th, textAlign: "right" };
+  const td: CSSProperties = { ...page.td, padding: "9px 8px" };
+  const tdN: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
 
-    container: {
-      maxWidth: 1500,
-      margin: "0 auto",
-      padding: "25px 30px 50px",
-    },
-
-    card: {
-      background: "#fff",
-      borderRadius: 12,
-      border: "1px solid #e5e5e5",
-      padding: 20,
-      marginBottom: 20,
-    },
-
-    label: {
-      display: "block",
-      fontSize: 13,
-      fontWeight: 700,
-      color: "#555",
-      marginBottom: 6,
-    },
-
-    input: {
-      width: "100%",
-      boxSizing: "border-box" as const,
-      border: "1px solid #ccc",
-      borderRadius: 7,
-      padding: "10px 12px",
-      fontSize: 14,
-      outline: "none",
-      background: "#fff",
-    },
-
-    select: {
-      width: "100%",
-      boxSizing: "border-box" as const,
-      border: "1px solid #ccc",
-      borderRadius: 7,
-      padding: "10px 12px",
-      fontSize: 14,
-      background: "#fff",
-    },
-
-    button: {
-      border: "none",
-      borderRadius: 7,
-      padding: "10px 20px",
-      background: "#c00000",
-      color: "#fff",
-      fontWeight: 700,
-      fontSize: 14,
-      cursor: "pointer",
-    },
-  };
-
-  /* =========================================================
-     RENDER
-  ========================================================= */
+  const libelleGenre = (l: LigneExcel) =>
+    l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot (découpage)" : l.genre === "ECHEANCE" ? "Échéance (découpage)" : "Devis";
 
   return (
-    <div style={styles.page}>
-      {/* =====================================================
-          HEADER
-      ===================================================== */}
+    <main style={page.fond}>
+      <EnTetePage section="Bilan affaire" />
 
-      <EnTetePage
-        section="Gestion des temps & activités"
-        titre="Bilan affaire"
-        description="Analyse des heures imputées par affaire, semaine et collaborateur"
-      />
-
-      {/* =====================================================
-          CONTENU
-      ===================================================== */}
-
-      <main style={styles.container}>
-        {/* ===================================================
-            RECHERCHE AFFAIRE
-        =================================================== */}
-
-        <div style={styles.card}>
-          <div
-            style={{
-              fontSize: 18,
-              fontWeight: 700,
-              marginBottom: 16,
-            }}
-          >
-            Rechercher une affaire
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "140px minmax(150px, 300px) auto",
-              gap: 12,
-              alignItems: "end",
-            }}
-          >
-            <div>
-              <label style={styles.label}>
-                Type
-              </label>
-
-              <select
-                value={typeAffaire}
-                onChange={(e) =>
-                  setTypeAffaire(e.target.value)
-                }
-                style={styles.select}
-              >
-                <option value="CBE">
-                  CBE
-                </option>
-
-                <option value="DBE">
-                  DBE
-                </option>
-              </select>
-            </div>
-
-            <div>
-              <label style={styles.label}>
-                Numéro d'affaire
-              </label>
-
-              <input
-                value={numero}
-                onChange={(e) =>
-                  setNumero(e.target.value)
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    rechercher();
-                  }
-                }}
-                placeholder="Ex. 1234"
-                style={styles.input}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={rechercher}
-              disabled={loading}
-              style={{
-                ...styles.button,
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              {loading
-                ? "Recherche..."
-                : "Rechercher"}
-            </button>
-          </div>
+      <div style={{ ...page.contenu, maxWidth: 1200 }}>
+        <div style={{ marginBottom: 16 }}>
+          <h1 style={page.titre}>Bilan affaire</h1>
+          <p style={page.sousTitre}>
+            Heures chiffrées (Suivi d’affaire BE, commande et avenants) comparées aux heures réalisées (feuilles d’heures et
+            historique), par activité, par ligne de commande, par personne et mois par mois.
+          </p>
         </div>
 
-        {/* ===================================================
-            RESULTATS
-        =================================================== */}
-
-        {rechercheFaite && (
-          <>
-            {/* ===============================================
-                STATISTIQUES
-            =============================================== */}
-
-            <div
+        <form onSubmit={rechercher} style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
+          {(["CBE", "DBE"] as TypeAffaire[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={type === t}
+              onClick={() => setType(t)}
               style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(3, minmax(0, 1fr))",
-                gap: 15,
-                marginBottom: 20,
+                minHeight: 44,
+                padding: "0 16px",
+                borderRadius: 8,
+                border: `1.5px solid ${type === t ? C.rouge : "#c9cdd2"}`,
+                background: type === t ? C.rouge : "#ffffff",
+                color: type === t ? "#ffffff" : "#3b4046",
+                fontWeight: 800,
+                cursor: "pointer",
+                fontFamily: "inherit",
               }}
             >
-              {/* TOTAL HEURES */}
+              {t}
+            </button>
+          ))}
+          <input
+            list="bilan-affaires"
+            aria-label="Numéro d’affaire"
+            placeholder="N° d’affaire, ex. 1533"
+            value={saisie}
+            onChange={(e) => setSaisie(e.target.value)}
+            style={{ ...page.entrees, maxWidth: 260 }}
+          />
+          <datalist id="bilan-affaires">
+            {suggestions.map((s) => (
+              <option key={s.cle} value={s.cle}>
+                {s.libelle}
+              </option>
+            ))}
+          </datalist>
+          <button type="submit" style={page.btnPrimaire} disabled={chargement}>
+            {chargement ? "Chargement…" : "Afficher le bilan"}
+          </button>
+        </form>
 
-              <div
-                style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  border: "1px solid #e5e5e5",
-                  padding: 20,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "#777",
-                    marginBottom: 5,
-                  }}
-                >
-                  Total heures
-                </div>
+        {erreur && <Message genre="erreur">{erreur}</Message>}
 
-                <div
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 800,
-                    color: "#c00000",
-                  }}
-                >
-                  {totalHeures.toFixed(1)} h
-                </div>
+        {affaire && !chargement && !erreur && (
+          <>
+            {/* ---------- en-tête de l'affaire ---------- */}
+            <section style={{ ...page.carte, padding: 18, marginBottom: 16 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                <BadgeType type={affaire.type} />
+                <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
+                <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
+                {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
+                {pilotage && (
+                  <Link href={`/pilotage/affaire/${pilotage.id}`} style={{ marginLeft: "auto", fontWeight: 700, color: C.rougeFonce }}>
+                    Fiche dans le Pilotage →
+                  </Link>
+                )}
               </div>
-
-              {/* COLLABORATEURS */}
-
-              <div
-                style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  border: "1px solid #e5e5e5",
-                  padding: 20,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "#777",
-                    marginBottom: 5,
-                  }}
-                >
-                  Collaborateurs
-                </div>
-
-                <div
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 800,
-                  }}
-                >
-                  {nombreCollaborateurs}
-                </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 10, fontSize: 14, color: "#3b4046" }}>
+                {client && <span>Client : <strong>{client}</strong></span>}
+                {base?.imputation && <span>Imputation : <strong>{base.imputation}</strong></span>}
+                {pilotage?.responsable_id && <span>Responsable : <strong>{noms.get(pilotage.responsable_id) ?? "—"}</strong></span>}
+                {base?.redacteur && <span>Devis rédigé par : <strong>{base.redacteur}</strong></span>}
+                {base?.date_reception_commande && <span>Commande reçue le <strong>{formatDate(base.date_reception_commande)}</strong></span>}
+                {echeance && <span>Échéance : <strong>{formatDate(echeance)}</strong></span>}
               </div>
+            </section>
 
-              {/* SEMAINES */}
-
-              <div
-                style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  border: "1px solid #e5e5e5",
-                  padding: 20,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "#777",
-                    marginBottom: 5,
-                  }}
-                >
-                  Semaines
-                </div>
-
-                <div
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 800,
-                  }}
-                >
-                  {nombreSemaines}
-                </div>
-              </div>
-            </div>
-
-            {/* ===============================================
-                FILTRES
-            =============================================== */}
-
-            {lignes.length > 0 && (
-              <div style={styles.card}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent:
-                      "space-between",
-                    alignItems: "center",
-                    marginBottom: 15,
-                    gap: 15,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 17,
-                      fontWeight: 700,
-                    }}
-                  >
-                    Filtres
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={resetFiltres}
-                    style={{
-                      border: "1px solid #ccc",
-                      background: "#fff",
-                      borderRadius: 7,
-                      padding:
-                        "7px 12px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    Réinitialiser
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(2, minmax(180px, 1fr))",
-                    gap: 15,
-                  }}
-                >
-                  <div>
-                    <label
-                      style={styles.label}
-                    >
-                      Collaborateur
-                    </label>
-
-                    <select
-                      value={
-                        collaborateurFiltre
-                      }
-                      onChange={(e) =>
-                        setCollaborateurFiltre(
-                          e.target.value
-                        )
-                      }
-                      style={styles.select}
-                    >
-                      <option value="">
-                        Tous les collaborateurs
-                      </option>
-
-                      {collaborateursFiltres.map(
-                        (collab) => (
-                          <option
-                            key={collab.id}
-                            value={
-                              collab.trigramme
-                            }
-                          >
-                            {collab.trigramme}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label
-                      style={styles.label}
-                    >
-                      Semaine
-                    </label>
-
-                    <select
-                      value={semaineFiltre}
-                      onChange={(e) =>
-                        setSemaineFiltre(
-                          e.target.value
-                        )
-                      }
-                      style={styles.select}
-                    >
-                      <option value="">
-                        Toutes les semaines
-                      </option>
-
-                      {semaines.map(
-                        (semaine) => (
-                          <option
-                            key={semaine}
-                            value={semaine}
-                          >
-                            S
-                            {semaine
-                              .split("-")[1]
-                              .padStart(
-                                2,
-                                "0"
-                              )}
-                            -
-                            {
-                              semaine.split(
-                                "-"
-                              )[0]
-                            }
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </div>
-                </div>
-              </div>
+            {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
+              <Message genre="info">
+                Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures
+                chiffrées, seul le réalisé est affiché.
+              </Message>
+            )}
+            {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
+            {affaire.type === "DBE" && (
+              <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>
             )}
 
+            {/* ---------- tuiles ---------- */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 16 }}>
+              <Tuile
+                libelle="Chiffré"
+                valeur={bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}
+                sous={bilan.sourceChiffre === "EXCEL" ? `${comptees.length} ligne${comptees.length > 1 ? "s" : ""} (commande + avenants retenus)` : bilan.sourceChiffre === "PILOTAGE" ? "besoins du Pilotage" : "aucun chiffré"}
+              />
+              <Tuile
+                libelle="Réalisé"
+                valeur={formatHeures(bilan.totalRealise)}
+                sous={`${formatHeures(bilan.sources.feuilles)} saisies · ${formatHeures(bilan.sources.historique)} historique`}
+              />
+              <Tuile
+                libelle={ecart >= 0 ? "Reste" : "Dépassement"}
+                valeur={bilan.totalChiffre > 0 ? formatHeures(Math.abs(ecart)) : "—"}
+                sous={bilan.totalChiffre > 0 ? `${Math.round(part * 100)} % du chiffré consommé` : ""}
+                accent={ecart < 0 && bilan.totalChiffre > 0}
+              />
+              <Tuile libelle="Personnes" valeur={String(bilan.parPersonne.filter((p) => p.cle !== "__autres__").length || bilan.parPersonne.length)} sous="ont imputé sur l’affaire" />
+            </div>
 
-
-            {/* ===============================================
-                TABLEAU
-            =============================================== */}
-
-            <div style={styles.card}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent:
-                    "space-between",
-                  alignItems: "center",
-                  marginBottom: 15,
-                  gap: 15,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                  }}
-                >
-                  Détail des imputations
-                </div>
-
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: "#777",
-                  }}
-                >
-                  {tableauTrie.length} ligne
-                  {tableauTrie.length > 1
-                    ? "s"
-                    : ""}
-                </div>
-              </div>
-
-              {tableauTrie.length === 0 ? (
-                <div
-                  style={{
-                    padding: 30,
-                    textAlign: "center",
-                    color: "#777",
-                  }}
-                >
-                  Aucune donnée ne correspond aux
-                  filtres sélectionnés.
-                </div>
+            {/* ---------- par activité ---------- */}
+            <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+              <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par activité</h2>
+              {bilan.parActivite.length === 0 && bilan.chiffreNonRattache === 0 ? (
+                <p style={{ color: C.gris, margin: 0 }}>Aucune heure chiffrée ni réalisée.</p>
               ) : (
-                <div
-                  style={{
-                    overflowX: "auto",
-                  }}
-                >
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse:
-                        "collapse",
-                      fontSize: 13,
-                    }}
-                  >
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Activité</th>
+                      <th style={thN}>Chiffré</th>
+                      <th style={thN}>Réalisé</th>
+                      <th style={thN}>Écart</th>
+                      <th style={th}>Consommé</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bilan.parActivite.map((a) => {
+                      const e = a.chiffre - a.realise;
+                      const p = a.chiffre > 0 ? a.realise / a.chiffre : 0;
+                      return (
+                        <tr key={a.id}>
+                          <td style={td}>
+                            <strong>{a.nom}</strong>
+                          </td>
+                          <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
+                          <td style={tdN}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
+                          <td style={{ ...tdN, color: e < -0.01 ? C.rougeTexte : undefined, fontWeight: e < -0.01 ? 800 : 400 }}>
+                            {a.chiffre > 0 ? (e < 0 ? `+${formatHeures(-e)} dépassé` : `${formatHeures(e)} restant`) : a.realise > 0 ? "non chiffré" : "—"}
+                          </td>
+                          <td style={td}>
+                            {a.chiffre > 0 ? (
+                              <>
+                                <Barre part={p} depasse={e < -0.01} /> <span style={{ fontSize: 12, color: C.gris }}>{Math.round(p * 100)} %</span>
+                              </>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {bilan.chiffreNonRattache > 0.01 && (
+                      <tr>
+                        <td style={td}>
+                          <strong>Chiffré non rattaché</strong>
+                          <div style={{ fontSize: 12, color: C.gris }}>colonne Excel sans activité (ex. « Autre ») ou heures non ventilées</div>
+                        </td>
+                        <td style={tdN}>{formatHeures(bilan.chiffreNonRattache)}</td>
+                        <td style={tdN}>—</td>
+                        <td style={tdN}>—</td>
+                        <td style={td} />
+                      </tr>
+                    )}
+                    <tr>
+                      <td style={{ ...td, fontWeight: 800 }}>Total</td>
+                      <td style={{ ...tdN, fontWeight: 800 }}>{bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}</td>
+                      <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(bilan.totalRealise)}</td>
+                      <td style={{ ...tdN, fontWeight: 800, color: ecart < -0.01 && bilan.totalChiffre > 0 ? C.rougeTexte : undefined }}>
+                        {bilan.totalChiffre > 0 ? (ecart < 0 ? `+${formatHeures(-ecart)} dépassé` : `${formatHeures(ecart)} restant`) : "—"}
+                      </td>
+                      <td style={td}>{bilan.totalChiffre > 0 && <Barre part={part} depasse={ecart < -0.01} />}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+              {bilan.codesSans.length > 0 && (
+                <p style={{ fontSize: 13, color: C.orangeTexte, margin: "10px 0 0" }}>
+                  Codes saisis sans activité : <strong>{bilan.codesSans.join(", ")}</strong>. Rattachez-les à une activité dans « Gestion des
+                  activités » pour qu’ils se comparent au chiffré.
+                </p>
+              )}
+            </section>
+
+            {/* ---------- commande, avenants, découpages ---------- */}
+            {lignesExcel.length > 0 && (
+              <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Commande, avenants et découpages</h2>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>N°</th>
+                      <th style={th}>Nature</th>
+                      <th style={th}>Statut</th>
+                      <th style={th}>Commande</th>
+                      <th style={th}>Délai</th>
+                      <th style={thN}>Chiffré</th>
+                      <th style={thN}>Imputé sur ce n°</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lignesExcel.map((l) => {
+                      const compte = comptees.includes(l);
+                      const s = l.numero_affaire ? suffixe(l.numero_affaire) : "";
+                      const impute = l.genre === "DEVIS" ? 0 : bilan.parSuffixe.get(s) ?? 0;
+                      return (
+                        <tr key={l.cle} style={{ opacity: l.disparue ? 0.5 : 1 }}>
+                          <td style={{ ...td, fontWeight: 800, whiteSpace: "nowrap" }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</td>
+                          <td style={td}>{libelleGenre(l)}</td>
+                          <td style={td}>
+                            {l.statut ?? "—"}
+                            {!compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenu dans le chiffré</div>}
+                            {l.disparue && <div style={{ fontSize: 12, color: C.gris }}>retirée du classeur</div>}
+                          </td>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
+                          <td style={tdN}>{l.genre === "LOT" || l.genre === "ECHEANCE" ? "découpage" : formatHeures(l.heures_total)}</td>
+                          <td style={tdN}>{impute > 0 ? formatHeures(impute) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p style={{ fontSize: 12, color: C.gris, margin: "10px 0 0" }}>
+                  « Imputé sur ce n° » : heures saisies avec ce numéro exact (CBE{affaire.numero}R2…). La plupart des heures sont
+                  saisies sur le numéro de base : elles sont toutes comptées dans le réalisé de l’affaire.
+                </p>
+              </section>
+            )}
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
+              {/* ---------- par personne ---------- */}
+              <section style={{ ...page.carte, padding: 16, flex: "1 1 420px", minWidth: 0 }}>
+                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par personne</h2>
+                {bilan.parPersonne.length === 0 ? (
+                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure réalisée.</p>
+                ) : (
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                     <thead>
                       <tr>
-                        <th
-                          onClick={() =>
-                            changerTri(
-                              "semaine"
-                            )
-                          }
-                          style={{
-                            padding:
-                              "11px 10px",
-                            textAlign: "left",
-                            borderBottom:
-                              "2px solid #ddd",
-                            cursor: "pointer",
-                            whiteSpace:
-                              "nowrap",
-                          }}
-                        >
-                          Semaine{" "}
-                          {triColonne ===
-                            "semaine" &&
-                            (triDirection ===
-                            "asc"
-                              ? "↑"
-                              : "↓")}
-                        </th>
-
-                        <th
-                          onClick={() =>
-                            changerTri(
-                              "trigramme"
-                            )
-                          }
-                          style={{
-                            padding:
-                              "11px 10px",
-                            textAlign: "left",
-                            borderBottom:
-                              "2px solid #ddd",
-                            cursor: "pointer",
-                            whiteSpace:
-                              "nowrap",
-                          }}
-                        >
-                          Collaborateur{" "}
-                          {triColonne ===
-                            "trigramme" &&
-                            (triDirection ===
-                            "asc"
-                              ? "↑"
-                              : "↓")}
-                        </th>
-
-                        {codes.map(
-                          (code, index) => (
-                            <th
-                              key={code}
-                              style={{
-                                padding:
-                                  "11px 10px",
-                                textAlign:
-                                  "right",
-                                borderBottom:
-                                  "2px solid #ddd",
-                                whiteSpace:
-                                  "nowrap",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  display:
-                                    "inline-block",
-                                  width: 9,
-                                  height: 9,
-                                  borderRadius:
-                                    2,
-                                  backgroundColor:
-                                    couleurCode(
-                                      code,
-                                      index
-                                    ),
-                                  marginRight: 5,
-                                }}
-                              />
-
-                              {code}
-                            </th>
-                          )
-                        )}
-
-                        <th
-                          onClick={() =>
-                            changerTri(
-                              "total"
-                            )
-                          }
-                          style={{
-                            padding:
-                              "11px 10px",
-                            textAlign: "right",
-                            borderBottom:
-                              "2px solid #ddd",
-                            cursor: "pointer",
-                            whiteSpace:
-                              "nowrap",
-                          }}
-                        >
-                          Total{" "}
-                          {triColonne ===
-                            "total" &&
-                            (triDirection ===
-                            "asc"
-                              ? "↑"
-                              : "↓")}
-                        </th>
+                        <th style={th}>Personne</th>
+                        <th style={thN}>Heures</th>
+                        <th style={th}>Activités</th>
+                        <th style={th}>Période</th>
                       </tr>
                     </thead>
-
                     <tbody>
-                      {tableauTrie.map(
-                        (ligne, index) => (
-                          <tr
-                            key={`${ligne.annee}-${ligne.semaine}-${ligne.trigramme}-${index}`}
-                            style={{
-                              backgroundColor:
-                                index % 2 ===
-                                0
-                                  ? "#fff"
-                                  : "#fafafa",
-                            }}
-                          >
-                            {/* SEMAINE */}
-
-                            <td
-                              style={{
-                                padding:
-                                  "10px",
-                                borderBottom:
-                                  "1px solid #eee",
-                                whiteSpace:
-                                  "nowrap",
-                                fontWeight: 600,
-                              }}
-                            >
-                              S
-                              {String(
-                                ligne.semaine
-                              ).padStart(
-                                2,
-                                "0"
-                              )}
-                              -
-                              {ligne.annee}
-                            </td>
-
-                            {/* TRIGRAMME */}
-
-                            <td
-                              style={{
-                                padding:
-                                  "10px",
-                                borderBottom:
-                                  "1px solid #eee",
-                                fontWeight: 800,
-                                color:
-                                  "#c00000",
-                              }}
-                            >
-                              {
-                                ligne.trigramme
-                              }
-                            </td>
-
-                            {/* CODES */}
-
-                            {codes.map(
-                              (code) => (
-                                <td
-                                  key={code}
-                                  style={{
-                                    padding:
-                                      "10px",
-                                    borderBottom:
-                                      "1px solid #eee",
-                                    textAlign:
-                                      "right",
-                                  }}
-                                >
-                                  {ligne.codes[
-                                    code
-                                  ]
-                                    ? ligne.codes[
-                                        code
-                                      ].toFixed(1)
-                                    : "—"}
-                                </td>
-                              )
-                            )}
-
-                            {/* TOTAL */}
-
-                            <td
-                              style={{
-                                padding:
-                                  "10px",
-                                borderBottom:
-                                  "1px solid #eee",
-                                textAlign:
-                                  "right",
-                                fontWeight: 800,
-                              }}
-                            >
-                              {ligne.total.toFixed(
-                                1
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      )}
+                      {bilan.parPersonne.map((p) => (
+                        <tr key={p.cle}>
+                          <td style={{ ...td, fontWeight: 800 }}>{p.nom}</td>
+                          <td style={tdN}>{formatHeures(p.heures)}</td>
+                          <td style={{ ...td, fontSize: 12.5 }}>
+                            {[...p.parActivite.entries()]
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([a, h]) => `${nomActivite(a).replace(" (code non rattaché)", "")} ${formatHeures(h)}`)
+                              .join(" · ")}
+                          </td>
+                          <td style={{ ...td, whiteSpace: "nowrap", fontSize: 12.5 }}>
+                            {formatDate(p.premiere)} → {formatDate(p.derniere)}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
-
-                    {/* =====================================
-                        TOTAL DU TABLEAU
-                    ===================================== */}
-
-                    <tfoot>
-                      <tr
-                        style={{
-                          background:
-                            "#f3f3f3",
-                          fontWeight: 800,
-                        }}
-                      >
-                        <td
-                          colSpan={2}
-                          style={{
-                            padding: 11,
-                            borderTop:
-                              "2px solid #ccc",
-                          }}
-                        >
-                          TOTAL
-                        </td>
-
-                        {codes.map(
-                          (code) => {
-                            const totalCode =
-                              tableauTrie.reduce(
-                                (
-                                  somme,
-                                  ligne
-                                ) =>
-                                  somme +
-                                  (ligne
-                                    .codes[
-                                    code
-                                  ] || 0),
-                                0
-                              );
-
-                            return (
-                              <td
-                                key={code}
-                                style={{
-                                  padding: 11,
-                                  textAlign:
-                                    "right",
-                                  borderTop:
-                                    "2px solid #ccc",
-                                }}
-                              >
-                                {totalCode.toFixed(
-                                  1
-                                )}
-                              </td>
-                            );
-                          }
-                        )}
-
-                        <td
-                          style={{
-                            padding: 11,
-                            textAlign:
-                              "right",
-                            borderTop:
-                              "2px solid #ccc",
-                            color:
-                              "#c00000",
-                          }}
-                        >
-                          {totalHeures.toFixed(
-                            1
-                          )}
-                        </td>
-                      </tr>
-                    </tfoot>
                   </table>
-                </div>
-              )}
+                )}
+              </section>
+
+              {/* ---------- mois par mois ---------- */}
+              <section style={{ ...page.carte, padding: 16, flex: "1 1 420px", minWidth: 0 }}>
+                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Mois par mois</h2>
+                {bilan.evolution.length === 0 ? (
+                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure réalisée.</p>
+                ) : (
+                  <div style={{ display: "grid", gap: 5 }}>
+                    {bilan.evolution.map((m) => (
+                      <div key={m.mois} style={{ display: "grid", gridTemplateColumns: "72px 1fr 64px 120px", alignItems: "center", gap: 8, fontSize: 13 }}>
+                        <span>{`${MOIS[Number(m.mois.slice(5, 7)) - 1]} ${m.mois.slice(2, 4)}`}</span>
+                        <span style={{ background: "#f1f2f4", height: 12, borderRadius: 4, position: "relative" }}>
+                          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(m.heures / maxMois) * 100}%`, background: C.rouge, borderRadius: 4 }} />
+                        </span>
+                        <strong style={{ textAlign: "right" }}>{formatHeures(m.heures)}</strong>
+                        <span style={{ color: m.cumul > bilan.totalChiffre && bilan.totalChiffre > 0 ? C.rougeTexte : C.gris, fontSize: 12 }}>
+                          cumul {formatHeures(m.cumul)}
+                          {bilan.totalChiffre > 0 ? ` (${Math.round((m.cumul / bilan.totalChiffre) * 100)} %)` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
 
-
-                        {/* ===============================================
-                GRAPHIQUE
-            =============================================== */}
-
-            {lignes.length > 0 && (
-              <EvolutionCodes
-                tableau={tableauFiltre}
-                codes={codes}
-              />
-            )}
-
-            {/* ===============================================
-                AUCUN RESULTAT
-            =============================================== */}
-
-            {lignes.length === 0 && (
-              <div
-                style={{
-                  background: "#fff",
-                  borderRadius: 12,
-                  border:
-                    "1px solid #e5e5e5",
-                  padding: 40,
-                  textAlign: "center",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 700,
-                    marginBottom: 8,
-                  }}
+            {/* ---------- détail ---------- */}
+            <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+                <button
+                  type="button"
+                  aria-expanded={voirDetail}
+                  onClick={() => setVoirDetail((v) => !v)}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40 }}
                 >
-                  Aucune imputation trouvée
-                </div>
-
-                <div
-                  style={{
-                    color: "#777",
-                    fontSize: 14,
-                  }}
-                >
-                  Aucune heure n'a été trouvée
-                  pour {typeAffaire}{" "}
-                  {numero}.
-                </div>
+                  <span aria-hidden="true">{voirDetail ? "▾" : "▸"}</span> Détail semaine par semaine
+                </button>
+                {voirDetail && bilan.parPersonne.length > 1 && (
+                  <select aria-label="Filtrer par personne" value={filtrePersonne} onChange={(e) => setFiltrePersonne(e.target.value)} style={{ ...page.entrees, width: "auto" }}>
+                    <option value="">Toutes les personnes</option>
+                    {bilan.parPersonne.map((p) => (
+                      <option key={p.cle} value={p.cle}>
+                        {p.nom}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
-            )}
+              {voirDetail && (
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 8 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Semaine</th>
+                      <th style={th}>Personne</th>
+                      <th style={th}>N° saisi</th>
+                      <th style={th}>Code</th>
+                      <th style={th}>Activité</th>
+                      <th style={thN}>Heures</th>
+                      <th style={th}>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.map((d, k) => (
+                      <tr key={k}>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>
+                          {d.semaine} <span style={{ color: C.gris, fontSize: 12 }}>· {formatDate(d.cle)}</span>
+                        </td>
+                        <td style={{ ...td, fontWeight: 700 }}>{d.personne}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>{d.numero}</td>
+                        <td style={td}>{d.code}</td>
+                        <td style={td}>{d.activite}</td>
+                        <td style={tdN}>{formatHeures(d.heures)}</td>
+                        <td style={{ ...td, color: C.gris }}>{d.source}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
 
 export default function BilanAffairePage() {
   return (
     <GardeAcces droit={null}>
-      <BilanAffairePageContenu />
+      <BilanContenu />
     </GardeAcces>
   );
 }

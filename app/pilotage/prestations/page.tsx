@@ -1,0 +1,1205 @@
+"use client";
+
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as KeyboardReact } from "react";
+import Link from "next/link";
+import EnTetePage from "@/components/EnTetePage";
+import GardeAcces from "@/components/GardeAcces";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
+import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
+import { supabase } from "@/lib/supabase";
+import {
+  chargerActivites,
+  chargerAffaires,
+  chargerAnnuaire,
+  chargerCapacitesAbsences,
+  chargerCharges,
+  chargerImputations,
+  chargerMoi,
+  chargerPlanifie,
+  chargerTout,
+  type AffaireP,
+  type ReferentielActivites,
+} from "@/lib/pilotageDonnees";
+import { formatHeures, nomCollab, num, traduireErreur, type Charge, type Collab, type Imputation } from "@/lib/pilotageCalculs";
+import { estFerie, type AbsenceRow, type Affectation, type JourRow } from "@/lib/pilotagePlanning";
+import { remplirGabarit, type LigneGabarit } from "@/lib/gabaritPrestations";
+
+/* ===============================================================
+   PILOTAGE BE - PRESTATIONS PE / PI (relevé mensuel)
+
+   Ce relevé FAIT FOI pour les PE / PI : ce qu'on y saisit alimente le
+   planning (une affectation par ligne et par mois, fonction SQL
+   prestation_synchroniser_planning) et consomme l'enveloppe de l'affaire.
+
+   Saisie rapide :
+   - « ⤓ » remplit le mois d'une ligne avec sa base horaire (jours ouvrés,
+     « CP » sur un congé validé) ; « Tout remplir » le fait pour toutes
+     les lignes encore vides ;
+   - cliquer-glisser (ou Maj + clic) sélectionne plusieurs jours : la
+     valeur tapée puis Entrée s'applique à toute la sélection ;
+   - Entrée passe au jour suivant, flèches pour se déplacer, Suppr vide.
+
+   Un petit coin orange signale un jour où la feuille d'heures de la
+   personne dit autre chose : on garde le choix (facturer au réel ou
+   comme prévu), mais on le sait.
+
+   Les PE / PI venues d'Excel apparaissent d'elles-mêmes (ligne « à
+   staffer » tant qu'aucune personne n'y est affectée), avec leur n°
+   d'avenant en cours ; elles disparaissent après le mois de leur livraison.
+
+   Commande pas encore reçue (affaire en « Intention de commande ») : le
+   mois est « reporté » : ses heures sont faites et planifiées, mais
+   facturées plus tard. Le premier mois non reporté propose de les
+   facturer (« +35 h ») : on choisit librement combien, et où les placer
+   dans l'export (ajoutées à un jour, ex. 47 h le 1er, ou sur une ligne à
+   part). Le bouton « ↪ » reporte n'importe quel mois.
+
+   « Exporter » remplit le gabarit Excel (public/gabarits/prestations.xlsx)
+   sans en changer la mise en forme, les formules ni le nombre de lignes.
+================================================================ */
+
+type Ligne = {
+  id: string;
+  affaire_id: string;
+  collaborateur_id: string;
+  unite: "JOUR" | "HEURE";
+  taux: number | null;
+  base_horaire: number;
+  activite_id: string | null;
+  intergroupe: boolean;
+  actif: boolean;
+};
+
+type Saisie = { ligne_id: string; jour: string; heures: number | null; code: string | null };
+type MoisLigne = {
+  ligne_id: string;
+  mois: string;
+  hs_refacturer: number;
+  valide: boolean;
+  reporte: boolean;
+  report_heures: number | null;
+  report_jour: number | null;
+  report_ligne_separee: boolean;
+  heures_fige: number | null;
+  montant_fige: number | null;
+};
+type SuiviLigne = { base_affaire: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null };
+
+const LETTRES = ["D", "L", "M", "M", "J", "V", "S"];
+const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const iso = (a: number, m: number, j: number) => `${a}-${pad(m)}-${pad(j)}`;
+const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+const nb = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+const sansZeros = (n: string) => String(n ?? "").replace(/^0+/, "");
+const texteHeures = (h: number) => String(Math.round(h * 100) / 100).replace(".", ",");
+
+function moisDepuisUrl(): string {
+  if (typeof window !== "undefined") {
+    const m = new URLSearchParams(window.location.search).get("mois");
+    if (m && /^\d{4}-\d{2}/.test(m)) return `${m.slice(0, 7)}-01`;
+  }
+  const d = new Date();
+  return iso(d.getFullYear(), d.getMonth() + 1, 1);
+}
+
+function decalerMois(mois: string, n: number): string {
+  const d = new Date(Date.UTC(Number(mois.slice(0, 4)), Number(mois.slice(5, 7)) - 1 + n, 1));
+  return iso(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+function joursDuMois(mois: string) {
+  const a = Number(mois.slice(0, 4));
+  const m = Number(mois.slice(5, 7));
+  const n = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  return Array.from({ length: n }, (_, i) => {
+    const date = iso(a, m, i + 1);
+    const js = new Date(Date.UTC(a, m - 1, i + 1)).getUTCDay();
+    return { date, jour: i + 1, js, weekend: js === 0 || js === 6, ferie: estFerie(date) };
+  });
+}
+
+/* Texte tapé -> saisie (null = case vidée) */
+function lireValeur(texte: string): { heures: number | null; code: string | null } | null {
+  const t = texte.trim().replace(",", ".");
+  if (t === "") return null;
+  if (/^\d+(\.\d+)?$/.test(t)) return { heures: Math.min(24, Number(t)), code: null };
+  return { heures: null, code: t.toUpperCase().slice(0, 6) };
+}
+
+function PrestationsContenu() {
+  const [mois, setMois] = useState(moisDepuisUrl);
+  const [peutAgir, setPeutAgir] = useState(false);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState("");
+  const [info, setInfo] = useState("");
+  const [rechargement, setRechargement] = useState(0);
+
+  const [affaires, setAffaires] = useState<AffaireP[]>([]);
+  const [imputations, setImputations] = useState<Imputation[]>([]);
+  const [annuaire, setAnnuaire] = useState<Collab[]>([]);
+  const [referentiel, setReferentiel] = useState<ReferentielActivites | null>(null);
+  const [charges, setCharges] = useState<Charge[]>([]);
+  const [planifie, setPlanifie] = useState<{ affectations: Affectation[]; jours: JourRow[] }>({ affectations: [], jours: [] });
+  const [absences, setAbsences] = useState<AbsenceRow[]>([]);
+  const [lignes, setLignes] = useState<Ligne[]>([]);
+  const [saisies, setSaisies] = useState<Saisie[]>([]);
+  const [consoAvant, setConsoAvant] = useState<Map<string, number>>(new Map());
+  // heures saisies des mois précédents, par ligne et par mois (« ligne|AAAA-MM »), et leurs réglages
+  const [heuresMoisPasses, setHeuresMoisPasses] = useState<Map<string, number>>(new Map());
+  const [moisPasses, setMoisPasses] = useState<Map<string, MoisLigne>>(new Map());
+  const [moisLignes, setMoisLignes] = useState<Map<string, MoisLigne>>(new Map());
+  const [reel, setReel] = useState<Map<string, number>>(new Map()); // « collab|numero|jour » -> heures des feuilles
+  const [suivi, setSuivi] = useState<{ lignes: SuiviLigne[]; clients: Map<string, string> }>({ lignes: [], clients: new Map() });
+
+  const [selection, setSelection] = useState<{ ligne: string; jours: Set<string> } | null>(null);
+  const ancre = useRef<{ ligne: string; jour: string } | null>(null);
+  const glisse = useRef(false);
+  const champs = useRef(new Map<string, HTMLInputElement>());
+  const minuteurs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const [ajout, setAjout] = useState<{ affaire_id: string; collaborateur_id: string } | null>(null);
+  const [editeurReport, setEditeurReport] = useState<null | { ligne: Ligne; heures: string; jour: string; separee: boolean }>(null);
+  const [enCours, setEnCours] = useState("");
+
+  const jours = useMemo(() => joursDuMois(mois), [mois]);
+  const debut = jours[0].date;
+  const fin = jours[jours.length - 1].date;
+
+  useEffect(() => {
+    window.history.replaceState(null, "", `?mois=${mois.slice(0, 7)}`);
+    setSelection(null);
+  }, [mois]);
+
+  useEffect(() => {
+    const fin = () => (glisse.current = false);
+    window.addEventListener("mouseup", fin);
+    return () => window.removeEventListener("mouseup", fin);
+  }, []);
+
+  /* ------------------------------ chargement ------------------------------ */
+
+  useEffect(() => {
+    let actif = true;
+    setChargement(true);
+    setErreur("");
+
+    (async () => {
+      try {
+        const [moi, af, im, an, ref, ch, pl, cap, re] = await Promise.all([
+          chargerMoi(),
+          chargerAffaires({ horsPlanning: true }),
+          chargerImputations(),
+          chargerAnnuaire(),
+          chargerActivites(),
+          chargerCharges(),
+          chargerPlanifie(debut),
+          chargerCapacitesAbsences(debut, fin),
+          supabase.rpc("prestation_realise_jours", { p_debut: debut, p_fin: fin }),
+        ]);
+        if (!actif) return;
+
+        const estPrestation = (a: AffaireP) => {
+          const i = im.find((x) => x.code === a.imputation);
+          return i ? i.charge_obligatoire === false : a.imputation === "PE" || a.imputation === "PI";
+        };
+        const affPrest = af.filter((a) => estPrestation(a) && a.statut !== "ABANDONNEE");
+        const ids = new Set(affPrest.map((a) => a.id));
+
+        const lireLignes = () => chargerTout<Ligne>((a, b) => supabase.from("prestation_lignes").select("*").order("id").range(a, b));
+        let lg = await lireLignes();
+
+        // Première utilisation : une ligne pour chaque personne déjà affectée à une PE / PI ce mois-ci
+        const joursMois = pl.jours.filter((j) => j.jour >= debut && j.jour <= fin && num(j.heures) > 0);
+        const actives = new Set(joursMois.map((j) => j.affectation_id));
+        const manquantes = new Map<string, { affaire_id: string; collaborateur_id: string; activite_id: string | null }>();
+        for (const a of pl.affectations) {
+          if (!a.affaire_id || !ids.has(a.affaire_id) || !actives.has(a.id)) continue;
+          if (lg.some((l) => l.affaire_id === a.affaire_id && l.collaborateur_id === a.collaborateur_id)) continue;
+          manquantes.set(`${a.affaire_id}|${a.collaborateur_id}`, { affaire_id: a.affaire_id, collaborateur_id: a.collaborateur_id, activite_id: a.activite_id });
+        }
+        if (moi?.peutModifier && manquantes.size > 0) {
+          const { error } = await supabase.from("prestation_lignes").upsert([...manquantes.values()], { onConflict: "affaire_id,collaborateur_id", ignoreDuplicates: true });
+          if (!error) lg = await lireLignes();
+        }
+
+        const [sm, sa, mo, sl, sc] = await Promise.all([
+          chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").gte("jour", debut).lte("jour", fin).order("jour").range(a, b)),
+          chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").lt("jour", debut).order("jour").range(a, b)),
+          supabase.from("prestation_mois").select("ligne_id,mois,hs_refacturer,valide,reporte,report_heures,report_jour,report_ligne_separee,heures_fige,montant_fige").lte("mois", debut),
+          chargerTout<SuiviLigne>((a, b) =>
+            supabase.from("suivi_lignes").select("base_affaire,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
+          ).catch(() => [] as SuiviLigne[]),
+          chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)).catch(() => []),
+        ]);
+        if (!actif) return;
+
+        const affaireDe = new Map(lg.map((l) => [l.id, l.affaire_id]));
+        const avant = new Map<string, number>();
+        const parLigneMois = new Map<string, number>();
+        for (const s of sa) {
+          const x = affaireDe.get(s.ligne_id);
+          if (x) avant.set(x, (avant.get(x) ?? 0) + (Number(s.heures) || 0));
+          const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
+          parLigneMois.set(k, (parLigneMois.get(k) ?? 0) + (Number(s.heures) || 0));
+        }
+        const tousMois = ((mo.data ?? []) as MoisLigne[]).map((x) => ({
+          ...x,
+          hs_refacturer: Number(x.hs_refacturer) || 0,
+          heures_fige: nb(x.heures_fige),
+          montant_fige: nb(x.montant_fige),
+          reporte: Boolean(x.reporte),
+          report_heures: nb(x.report_heures),
+          report_jour: nb(x.report_jour),
+          report_ligne_separee: Boolean(x.report_ligne_separee),
+        }));
+
+        const r = new Map<string, number>();
+        for (const x of ((re.data ?? []) as { collaborateur_id: string; type_affaire: string; numero: string; jour: string; heures: number | string }[])) {
+          const k = `${x.collaborateur_id}|${x.type_affaire}|${sansZeros(x.numero)}|${x.jour}`;
+          r.set(k, (r.get(k) ?? 0) + (Number(x.heures) || 0));
+        }
+
+        setPeutAgir(Boolean(moi?.peutModifier));
+        setAffaires(affPrest);
+        setImputations(im);
+        setAnnuaire(an);
+        setReferentiel(ref);
+        setCharges(ch);
+        setPlanifie({ affectations: pl.affectations, jours: joursMois });
+        setAbsences(cap.absences);
+        // une affaire livrée reste visible jusqu'au mois de sa livraison
+        const visible = (id: string) => {
+          const a = affPrest.find((x) => x.id === id);
+          if (!a) return false;
+          if (a.statut !== "LIVREE") return true;
+          return (a.date_livraison ?? "9999-12-31") >= debut;
+        };
+        setLignes(lg.filter((l) => ids.has(l.affaire_id) && visible(l.affaire_id)));
+        setSaisies(sm.map((s) => ({ ...s, heures: nb(s.heures) })));
+        setConsoAvant(avant);
+        setMoisLignes(new Map(tousMois.filter((x) => x.mois.slice(0, 10) === debut).map((x) => [x.ligne_id, x])));
+        setMoisPasses(new Map(tousMois.filter((x) => x.mois.slice(0, 10) < debut).map((x) => [`${x.ligne_id}|${x.mois.slice(0, 7)}`, x])));
+        setHeuresMoisPasses(parLigneMois);
+        setReel(r);
+        setSuivi({ lignes: sl, clients: new Map(sc.map((c) => [c.id, c.nom_abrege])) });
+      } catch (e) {
+        if (actif) setErreur(e instanceof Error ? e.message : "Impossible de charger les prestations.");
+      } finally {
+        if (actif) setChargement(false);
+      }
+    })();
+
+    return () => {
+      actif = false;
+    };
+  }, [debut, fin, rechargement]);
+
+  /* ------------------------------ données dérivées ------------------------------ */
+
+  const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
+  const collabs = useMemo(() => new Map(annuaire.map((c) => [c.id, c])), [annuaire]);
+  const nomsActivites = useMemo(() => new Map((referentiel?.activites ?? []).map((a) => [a.id, a.nom])), [referentiel]);
+  const saisieParCle = useMemo(() => new Map(saisies.map((s) => [`${s.ligne_id}|${s.jour}`, s])), [saisies]);
+
+  const planParCle = useMemo(() => {
+    const parAff = new Map(planifie.affectations.map((a) => [a.id, a]));
+    const m = new Map<string, number>();
+    for (const j of planifie.jours) {
+      const a = parAff.get(j.affectation_id);
+      if (!a?.affaire_id) continue;
+      const k = `${a.affaire_id}|${a.collaborateur_id}|${j.jour}`;
+      m.set(k, (m.get(k) ?? 0) + num(j.heures));
+    }
+    return m;
+  }, [planifie]);
+
+  const absent = useCallback(
+    (collab: string, date: string) => absences.some((a) => a.collaborateur_id === collab && a.genre !== "HEURES" && a.date_debut <= date && a.date_fin >= date),
+    [absences]
+  );
+
+  const reelDe = useCallback(
+    (l: Ligne, date: string) => {
+      const a = affairesParId.get(l.affaire_id);
+      return a ? reel.get(`${l.collaborateur_id}|${a.type}|${sansZeros(a.numero)}|${date}`) ?? 0 : 0;
+    },
+    [affairesParId, reel]
+  );
+
+  /* Mois reporté : réglage enregistré, sinon automatique tant que la commande n'est pas reçue (intention) */
+  const estReporte = useCallback(
+    (l: Ligne) => {
+      const ml = moisLignes.get(l.id);
+      return ml ? ml.reporte : affairesParId.get(l.affaire_id)?.statut === "EN_ATTENTE";
+    },
+    [moisLignes, affairesParId]
+  );
+
+  /* Heures des mois précédents reportés à la suite, à facturer ce mois-ci */
+  const reportEntrant = useCallback(
+    (l: Ligne) => {
+      let total = 0;
+      for (let k = 1; k <= 24; k++) {
+        const m = decalerMois(mois, -k).slice(0, 7);
+        const ml = moisPasses.get(`${l.id}|${m}`);
+        if (!ml?.reporte) break;
+        total += heuresMoisPasses.get(`${l.id}|${m}`) ?? 0;
+      }
+      return total;
+    },
+    [mois, moisPasses, heuresMoisPasses]
+  );
+
+  const calcul = useCallback(
+    (l: Ligne) => {
+      let heures = 0;
+      let heuresReel = 0;
+      for (const j of jours) {
+        heures += saisieParCle.get(`${l.id}|${j.date}`)?.heures ?? 0;
+        heuresReel += reelDe(l, j.date);
+      }
+      const ml = moisLignes.get(l.id);
+      const reporte = estReporte(l);
+      const disponible = reporte ? 0 : reportEntrant(l); // heures des mois reportés en attente
+      const entrant = reporte ? 0 : ml?.report_heures ?? disponible; // celles qu'on facture ce mois-ci
+      const facturables = reporte ? 0 : heures + entrant;
+      const hs = ml?.hs_refacturer ?? 0;
+      const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+      const montant = tauxH === null ? null : facturables * tauxH + (reporte ? 0 : hs * 1.25 * tauxH);
+      return {
+        heures, // heures faites et planifiées ce mois (consomment l'enveloppe)
+        facturables: ml?.valide && ml.heures_fige !== null ? ml.heures_fige : facturables,
+        reportEntrant: entrant,
+        reportDisponible: disponible,
+        reporte,
+        heuresReel,
+        hs,
+        montant: ml?.valide && ml.montant_fige !== null ? ml.montant_fige : montant,
+        valide: Boolean(ml?.valide),
+      };
+    },
+    [jours, saisieParCle, reelDe, moisLignes, estReporte, reportEntrant]
+  );
+
+  const enveloppes = useMemo(() => {
+    const m = new Map<string, { commande: number; avant: number; mois: number; reste: number }>();
+    for (const a of affaires) {
+      const chiffre = charges.filter((c) => c.affaire_id === a.id).reduce((t, c) => t + num(c.heures), 0);
+      const commande = Math.max(chiffre, a.prestation_unite === "HEURES" ? num(a.prestation_quantite ?? 0) : 0);
+      const avant = consoAvant.get(a.id) ?? 0;
+      const ceMois = lignes.filter((l) => l.affaire_id === a.id).reduce((t, l) => t + calcul(l).heures, 0);
+      m.set(a.id, { commande, avant, mois: ceMois, reste: commande - avant - ceMois });
+    }
+    return m;
+  }, [affaires, charges, consoAvant, lignes, calcul]);
+
+  const categorie = useCallback(
+    (l: Ligne): "PE" | "PI" | "IG" => (l.intergroupe ? "IG" : affairesParId.get(l.affaire_id)?.imputation === "PE" ? "PE" : "PI"),
+    [affairesParId]
+  );
+
+  const blocs = useMemo(() => {
+    const titres = { PE: "Prestations externes (PE)", PI: "Prestations internes au BE (PI)", IG: "Prestations en intergroupe" } as const;
+    const res: { cle: string; titre: string; categorie: "PE" | "PI" | "IG"; unite: "JOUR" | "HEURE"; lignes: Ligne[] }[] = [];
+    for (const cat of ["PE", "PI", "IG"] as const)
+      for (const unite of ["JOUR", "HEURE"] as const) {
+        const ls = lignes
+          .filter((l) => l.actif && categorie(l) === cat && l.unite === unite)
+          .sort(
+            (x, y) =>
+              (affairesParId.get(x.affaire_id)?.numero ?? "").localeCompare(affairesParId.get(y.affaire_id)?.numero ?? "", "fr", { numeric: true }) ||
+              nomCollab(collabs.get(x.collaborateur_id)).localeCompare(nomCollab(collabs.get(y.collaborateur_id)))
+          );
+        if (ls.length) res.push({ cle: `${cat}-${unite}`, titre: `${titres[cat]} — tarif ${unite === "JOUR" ? "journalier" : "horaire"}`, categorie: cat, unite, lignes: ls });
+      }
+    return res;
+  }, [lignes, categorie, affairesParId, collabs]);
+
+  const ordreLignes = useMemo(() => blocs.flatMap((b) => b.lignes.map((l) => l.id)), [blocs]);
+
+  /* PE / PI venues d'Excel sans personne encore : à staffer */
+  const aStaffer = useMemo(
+    () =>
+      affaires
+        .filter((a) => (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || (a.statut === "LIVREE" && (a.date_livraison ?? "") >= debut)) && !lignes.some((l) => l.affaire_id === a.id))
+        .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true })),
+    [affaires, lignes, debut]
+  );
+
+  async function staffer(affaireId: string, collaborateurId: string) {
+    if (!collaborateurId) return;
+    const { error } = await supabase.from("prestation_lignes").upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true }, { onConflict: "affaire_id,collaborateur_id" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setRechargement((n) => n + 1);
+  }
+
+  const totaux = useMemo(() => {
+    let montant = 0;
+    let heures = 0;
+    const parActivite = new Map<string, number>();
+    for (const l of lignes.filter((x) => x.actif)) {
+      const c = calcul(l);
+      heures += c.facturables;
+      montant += c.montant ?? 0;
+      const k = l.activite_id ? nomsActivites.get(l.activite_id) ?? "Activité" : "Sans activité";
+      parActivite.set(k, (parActivite.get(k) ?? 0) + (c.montant ?? 0));
+    }
+    return { montant, heures, parActivite };
+  }, [lignes, calcul, nomsActivites]);
+
+  const moisValide = lignes.some((l) => l.actif) && lignes.filter((l) => l.actif).every((l) => moisLignes.get(l.id)?.valide);
+
+  /* ------------------------------ enregistrement ------------------------------ */
+
+  /* Recopie le mois d'une ligne dans le planning (après une courte pause) */
+  const programmerPlanning = useCallback(
+    (ligneId: string) => {
+      const ancien = minuteurs.current.get(ligneId);
+      if (ancien) clearTimeout(ancien);
+      minuteurs.current.set(
+        ligneId,
+        setTimeout(async () => {
+          minuteurs.current.delete(ligneId);
+          const { error } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: ligneId, p_mois: debut });
+          if (error) setErreur(`Planning non mis à jour : ${traduireErreur(error.message)}`);
+        }, 900)
+      );
+    },
+    [debut]
+  );
+
+  async function ecrire(l: Ligne, valeurs: { jour: string; valeur: { heures: number | null; code: string | null } | null }[]) {
+    if (!peutAgir || moisLignes.get(l.id)?.valide || valeurs.length === 0) return;
+    setErreur("");
+    const aSupprimer = valeurs.filter((v) => v.valeur === null).map((v) => v.jour);
+    const aEcrire = valeurs.filter((v) => v.valeur !== null).map((v) => ({ ligne_id: l.id, jour: v.jour, heures: v.valeur!.heures, code: v.valeur!.code }));
+
+    // affichage immédiat
+    setSaisies((liste) => {
+      const jours = new Set(valeurs.map((v) => v.jour));
+      return [...liste.filter((s) => !(s.ligne_id === l.id && jours.has(s.jour))), ...aEcrire];
+    });
+
+    if (aSupprimer.length) {
+      const { error } = await supabase.from("prestation_saisies").delete().eq("ligne_id", l.id).in("jour", aSupprimer);
+      if (error) return setErreur(traduireErreur(error.message));
+    }
+    if (aEcrire.length) {
+      const { error } = await supabase.from("prestation_saisies").upsert(aEcrire, { onConflict: "ligne_id,jour" });
+      if (error) return setErreur(traduireErreur(error.message));
+    }
+    programmerPlanning(l.id);
+  }
+
+  /* Remplit les jours vides du mois avec la base horaire (CP sur congé validé) */
+  function remplirLigne(l: Ligne, source: "BASE" | "PLANNING" = "BASE") {
+    const valeurs: { jour: string; valeur: { heures: number | null; code: string | null } }[] = [];
+    for (const j of jours) {
+      if (saisieParCle.has(`${l.id}|${j.date}`)) continue;
+      if (source === "PLANNING") {
+        const p = planParCle.get(`${l.affaire_id}|${l.collaborateur_id}|${j.date}`) ?? 0;
+        if (p > 0) valeurs.push({ jour: j.date, valeur: { heures: p, code: null } });
+        continue;
+      }
+      if (j.weekend || j.ferie) continue;
+      valeurs.push({ jour: j.date, valeur: absent(l.collaborateur_id, j.date) ? { heures: null, code: "CP" } : { heures: l.base_horaire, code: null } });
+    }
+    void ecrire(l, valeurs);
+  }
+
+  function viderLigne(l: Ligne) {
+    if (!window.confirm(`Vider le mois de ${nomCollab(collabs.get(l.collaborateur_id))} sur ${affairesParId.get(l.affaire_id)?.numero ?? ""} ?`)) return;
+    void ecrire(l, jours.filter((j) => saisieParCle.has(`${l.id}|${j.date}`)).map((j) => ({ jour: j.date, valeur: null })));
+  }
+
+  function toutRemplir() {
+    for (const l of lignes.filter((x) => x.actif && !moisLignes.get(x.id)?.valide)) {
+      if (jours.some((j) => saisieParCle.has(`${l.id}|${j.date}`))) continue;
+      remplirLigne(l);
+    }
+  }
+
+  async function modifierLigne(l: Ligne, patch: Partial<Ligne>) {
+    setErreur("");
+    const { error } = await supabase.from("prestation_lignes").update(patch).eq("id", l.id);
+    if (error) return setErreur(traduireErreur(error.message));
+    setLignes((liste) => liste.map((x) => (x.id === l.id ? { ...x, ...patch } : x)));
+    if ("activite_id" in patch) programmerPlanning(l.id);
+  }
+
+  async function modifierHs(l: Ligne, texte: string) {
+    const hs = Number(texte.replace(",", ".")) || 0;
+    const { error } = await supabase.from("prestation_mois").upsert({ ligne_id: l.id, mois: debut, hs_refacturer: hs }, { onConflict: "ligne_id,mois" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setMoisLignes((m) => {
+      const n = new Map(m);
+      n.set(l.id, { ligne_id: l.id, mois: debut, valide: false, reporte: estReporte(l), report_heures: null, report_jour: null, report_ligne_separee: false, heures_fige: null, montant_fige: null, ...m.get(l.id), hs_refacturer: hs });
+      return n;
+    });
+  }
+
+  async function basculerReport(l: Ligne) {
+    const reporte = !estReporte(l);
+    const { error } = await supabase.from("prestation_mois").upsert({ ligne_id: l.id, mois: debut, reporte }, { onConflict: "ligne_id,mois" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setMoisLignes((m) => {
+      const n = new Map(m);
+      n.set(l.id, { ligne_id: l.id, mois: debut, hs_refacturer: 0, valide: false, report_heures: null, report_jour: null, report_ligne_separee: false, heures_fige: null, montant_fige: null, ...m.get(l.id), reporte });
+      return n;
+    });
+  }
+
+  /* Premier jour ouvré du mois (pour placer les heures reportées) */
+  const premierOuvre = jours.find((j) => !j.weekend && !j.ferie)?.jour ?? 1;
+
+  function ouvrirReport(l: Ligne) {
+    const ml = moisLignes.get(l.id);
+    const c = calcul(l);
+    setEditeurReport({
+      ligne: l,
+      heures: texteHeures(c.reportEntrant),
+      jour: String(ml?.report_jour ?? premierOuvre),
+      separee: Boolean(ml?.report_ligne_separee),
+    });
+  }
+
+  async function enregistrerReport() {
+    if (!editeurReport) return;
+    const { ligne: l, heures, jour, separee } = editeurReport;
+    const h = Number(heures.replace(",", "."));
+    if (!Number.isFinite(h) || h < 0) return setErreur("Nombre d’heures reportées invalide.");
+    const valeurs = { report_heures: h, report_jour: Number(jour) || premierOuvre, report_ligne_separee: separee };
+    const { error } = await supabase.from("prestation_mois").upsert({ ligne_id: l.id, mois: debut, ...valeurs }, { onConflict: "ligne_id,mois" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setMoisLignes((m) => {
+      const n = new Map(m);
+      n.set(l.id, { ligne_id: l.id, mois: debut, hs_refacturer: 0, valide: false, reporte: false, heures_fige: null, montant_fige: null, ...m.get(l.id), ...valeurs });
+      return n;
+    });
+    setEditeurReport(null);
+  }
+
+  async function validerMois(valider: boolean) {
+    if (valider) {
+      const sansTaux = lignes.filter((l) => l.actif && l.taux === null).length;
+      if (sansTaux && !window.confirm(`${sansTaux} ligne(s) sans taux : leur montant sera vide. Valider quand même ?`)) return;
+      if (!window.confirm(`Valider ${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)} ? Les montants seront figés.`)) return;
+    } else if (!window.confirm("Rouvrir ce mois ? Les heures et les montants pourront de nouveau changer.")) return;
+
+    setEnCours("validation");
+    const maintenant = new Date().toISOString();
+    const lignesMois = lignes
+      .filter((l) => l.actif)
+      .map((l) => {
+        const c = calcul(l);
+        return {
+          ligne_id: l.id,
+          mois: debut,
+          hs_refacturer: c.hs,
+          valide: valider,
+          valide_le: valider ? maintenant : null,
+          reporte: c.reporte,
+          heures_fige: valider ? Math.round(c.facturables * 100) / 100 : null,
+          montant_fige: valider && c.montant !== null ? Math.round(c.montant * 100) / 100 : null,
+        };
+      });
+    const { error } = await supabase.from("prestation_mois").upsert(lignesMois, { onConflict: "ligne_id,mois" });
+    setEnCours("");
+    if (error) return setErreur(traduireErreur(error.message));
+    setInfo(valider ? "Mois validé : montants figés." : "Mois rouvert.");
+    setRechargement((n) => n + 1);
+  }
+
+  async function ajouterLigne() {
+    if (!ajout?.affaire_id || !ajout.collaborateur_id) return;
+    const { error } = await supabase.from("prestation_lignes").upsert({ ...ajout, actif: true }, { onConflict: "affaire_id,collaborateur_id" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setAjout(null);
+    setRechargement((n) => n + 1);
+  }
+
+  /* ------------------------------ saisie au clavier et à la souris ------------------------------ */
+
+  const focaliser = (ligneId: string, date: string) => {
+    const el = champs.current.get(`${ligneId}|${date}`);
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  };
+
+  function surSourisBas(l: Ligne, date: string, shift: boolean) {
+    if (shift && ancre.current?.ligne === l.id) {
+      const [a, b] = [ancre.current.jour, date].sort();
+      setSelection({ ligne: l.id, jours: new Set(jours.filter((j) => j.date >= a && j.date <= b).map((j) => j.date)) });
+      return;
+    }
+    ancre.current = { ligne: l.id, jour: date };
+    glisse.current = true;
+    setSelection({ ligne: l.id, jours: new Set([date]) });
+  }
+
+  function surSourisEntre(l: Ligne, date: string) {
+    if (!glisse.current || ancre.current?.ligne !== l.id) return;
+    const [a, b] = [ancre.current.jour, date].sort();
+    setSelection({ ligne: l.id, jours: new Set(jours.filter((j) => j.date >= a && j.date <= b).map((j) => j.date)) });
+  }
+
+  function surTouche(e: KeyboardReact<HTMLInputElement>, l: Ligne, date: string) {
+    const idx = jours.findIndex((j) => j.date === date);
+    const cible = selection && selection.ligne === l.id && selection.jours.has(date) && selection.jours.size > 1 ? [...selection.jours] : [date];
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const valeur = lireValeur(e.currentTarget.value);
+      void ecrire(l, cible.map((jour) => ({ jour, valeur })));
+      const suivant = jours[Math.min(jours.length - 1, Math.max(...cible.map((c) => jours.findIndex((j) => j.date === c))) + 1)];
+      setSelection(null);
+      if (suivant) focaliser(l.id, suivant.date);
+    } else if ((e.key === "Delete" || (e.key === "Backspace" && e.currentTarget.value === "")) && cible.length > 1) {
+      e.preventDefault();
+      void ecrire(l, cible.map((jour) => ({ jour, valeur: null })));
+      setSelection(null);
+    } else if (e.key === "ArrowRight" && e.currentTarget.selectionStart === e.currentTarget.value.length) {
+      if (jours[idx + 1]) focaliser(l.id, jours[idx + 1].date);
+    } else if (e.key === "ArrowLeft" && e.currentTarget.selectionStart === 0) {
+      if (jours[idx - 1]) focaliser(l.id, jours[idx - 1].date);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const i = ordreLignes.indexOf(l.id) + (e.key === "ArrowDown" ? 1 : -1);
+      if (ordreLignes[i]) focaliser(ordreLignes[i], date);
+    } else if (e.key === "Escape") {
+      setSelection(null);
+    }
+  }
+
+  /* ------------------------------ export au gabarit ------------------------------ */
+
+  /* N° à facturer : l'avenant en cours le plus récent, sinon la commande */
+  const numeroFacture = useCallback(
+    (a: AffaireP) => {
+      const lignesAff = suivi.lignes.filter((s) => sansZeros(s.base_affaire ?? "") === sansZeros(a.numero) && s.statut !== "Devis perdu" && s.statut !== "Commande annulée");
+      const enCours = lignesAff.filter((s) => s.statut !== "Livrée").sort((x, y) => (y.rang_avenant ?? 0) - (x.rang_avenant ?? 0))[0];
+      const choix = enCours ?? lignesAff.sort((x, y) => (y.rang_avenant ?? 0) - (x.rang_avenant ?? 0))[0];
+      return { numero: (choix?.numero_affaire ?? `CBE${a.numero}`).replace(/^CBE/, ""), client: choix?.client_id ? suivi.clients.get(choix.client_id) ?? null : null };
+    },
+    [suivi]
+  );
+
+  async function exporter() {
+    setErreur("");
+    setEnCours("export");
+    try {
+      const reponse = await fetch("/gabarits/prestations.xlsx");
+      if (!reponse.ok) throw new Error("Gabarit introuvable : déposez-le dans public/gabarits/prestations.xlsx.");
+      const modele = await reponse.arrayBuffer();
+
+      const dejaAffaire = new Set<string>();
+      const lignesGabarit: LigneGabarit[] = blocs.flatMap((b) =>
+        b.lignes.flatMap((l): LigneGabarit[] => {
+          const a = affairesParId.get(l.affaire_id)!;
+          const env = enveloppes.get(l.affaire_id);
+          const nf = numeroFacture(a);
+          // enveloppe restante au début du mois, sur la première ligne de l'affaire
+          const premiere = !dejaAffaire.has(l.affaire_id);
+          dejaAffaire.add(l.affaire_id);
+          const resteDebut = env && env.commande > 0 ? env.commande - env.avant : null;
+          const c = calcul(l);
+          const ml = moisLignes.get(l.id);
+          const base: LigneGabarit = {
+            categorie: b.categorie,
+            unite: b.unite,
+            type: a.type,
+            numero: nf.numero,
+            client: nf.client,
+            personne: collabs.get(l.collaborateur_id)?.trigramme ?? nomCollab(collabs.get(l.collaborateur_id)),
+            taux: l.taux,
+            base: l.base_horaire,
+            // mois reporté : rien de facturé ce mois-ci
+            jours: c.reporte
+              ? jours.map(() => null)
+              : jours.map((j) => {
+                  const sa = saisieParCle.get(`${l.id}|${j.date}`);
+                  return sa ? sa.code ?? sa.heures : null;
+                }),
+            hs: c.reporte ? 0 : ml?.hs_refacturer ?? 0,
+            commandeInitiale: premiere && resteDebut !== null ? (l.unite === "JOUR" ? resteDebut / l.base_horaire : resteDebut) : null,
+          };
+
+          // heures reportées des mois précédents : ajoutées au jour choisi, ou sur une ligne à part
+          if (c.reporte || c.reportEntrant <= 0) return [base];
+          const jourReport = Math.min(jours.length, Math.max(1, ml?.report_jour ?? premierOuvre)) - 1;
+
+          if (ml?.report_ligne_separee) {
+            return [
+              base,
+              {
+                ...base,
+                jours: jours.map((_, i) => (i === jourReport ? c.reportEntrant : null)),
+                hs: 0,
+                commandeInitiale: null,
+              },
+            ];
+          }
+
+          const joursAvecReport = [...base.jours];
+          // si le jour choisi porte un code (CP…), on prend le premier jour suivant sans code
+          let i = jourReport;
+          while (i < joursAvecReport.length && typeof joursAvecReport[i] === "string") i++;
+          if (i >= joursAvecReport.length) i = jourReport;
+          const actuel = joursAvecReport[i];
+          joursAvecReport[i] = (typeof actuel === "number" ? actuel : 0) + c.reportEntrant;
+          return [{ ...base, jours: joursAvecReport }];
+        })
+      );
+
+      const r = await remplirGabarit(modele, debut, lignesGabarit);
+      const blob = new Blob([r.fichier as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const lien = document.createElement("a");
+      lien.href = URL.createObjectURL(blob);
+      lien.download = `Prestations ${r.nomFeuille}.xlsx`;
+      lien.click();
+      setTimeout(() => URL.revokeObjectURL(lien.href), 5000);
+
+      setInfo(
+        [
+          `Exporté : ${r.nomFeuille}.`,
+          r.debordements.length ? `⚠ Plus de lignes que le gabarit n’en prévoit, non exportées : ${r.debordements.join(", ")}.` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Export impossible.");
+    } finally {
+      setEnCours("");
+    }
+  }
+
+  /* ------------------------------ rendu ------------------------------ */
+
+  const nomMois = `${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
+  const th: CSSProperties = { ...page.th, padding: "6px 4px", fontSize: 11, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
+  const td: CSSProperties = { ...page.td, padding: "3px 4px", fontSize: 13, whiteSpace: "nowrap" };
+  const fixe = (gauche: number, largeur: number): CSSProperties => ({ position: "sticky", left: gauche, zIndex: 1, background: "#ffffff", minWidth: largeur, maxWidth: largeur });
+  const champ: CSSProperties = { width: "100%", boxSizing: "border-box", border: "1px solid #c9cdd2", borderRadius: 4, padding: "3px 4px", fontSize: 13, fontFamily: "inherit" };
+  const outil: CSSProperties = { minWidth: 26, height: 26, border: "1px solid #c9cdd2", borderRadius: 5, background: "#ffffff", cursor: "pointer", fontSize: 13, padding: 0, fontFamily: "inherit" };
+
+  return (
+    <main style={page.fond}>
+      <EnTetePage section="Pilotage BE" />
+      <OngletsPilotage actif="prestations" />
+
+      <div style={{ ...page.contenu, maxWidth: "none", padding: "16px 20px 40px" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
+          <div>
+            <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
+            <p style={page.sousTitre}>
+              Ce relevé fait foi et alimente le planning. <strong>⤓</strong> remplit le mois d’une ligne · cliquer-glisser sur des jours puis taper
+              une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose.
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, -1))} aria-label="Mois précédent">◀</button>
+            <strong style={{ fontSize: 18, minWidth: 150, textAlign: "center" }}>{nomMois}</strong>
+            <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, 1))} aria-label="Mois suivant">▶</button>
+            {peutAgir && !moisValide && lignes.length > 0 && (
+              <button type="button" style={page.btnSecondaire} onClick={toutRemplir} title="Remplit avec la base horaire toutes les lignes encore vides ce mois-ci">
+                ⤓ Tout remplir
+              </button>
+            )}
+            <button type="button" style={page.btnSecondaire} onClick={() => void exporter()} disabled={lignes.length === 0 || enCours !== ""}>
+              {enCours === "export" ? "Export…" : "Exporter (gabarit Excel)"}
+            </button>
+            {peutAgir && lignes.length > 0 && (
+              <button type="button" style={moisValide ? page.btnSecondaire : page.btnPrimaire} disabled={enCours !== ""} onClick={() => void validerMois(!moisValide)}>
+                {moisValide ? "↺ Rouvrir le mois" : "✓ Valider le mois"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {erreur && <Message genre="erreur">{erreur}</Message>}
+        {info && <Message genre="ok">{info}</Message>}
+        {chargement && <Message genre="info">Chargement…</Message>}
+        {moisValide && <Message genre="ok">Mois validé : heures et montants figés 🔒. « Rouvrir le mois » pour corriger.</Message>}
+        {!chargement && lignes.length === 0 && (
+          <Message genre="info">Aucune prestation ce mois-ci. Ajoutez une ligne (affaire PE / PI × personne) en bas de page.</Message>
+        )}
+
+        {!chargement && (blocs.length > 0 || aStaffer.length > 0) && (
+          <div style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
+            <table style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...th, ...fixe(0, 104), zIndex: 3, background: "#f1f2f4" }}>Affaire</th>
+                  <th style={{ ...th, ...fixe(104, 56), zIndex: 3, background: "#f1f2f4" }}>Pers.</th>
+                  <th style={{ ...th, ...fixe(160, 60), zIndex: 3, background: "#f1f2f4" }} />
+                  <th style={th}>Activité</th>
+                  <th style={th}>Unité</th>
+                  <th style={th}>Taux</th>
+                  <th style={th} title="Base horaire vendue (heures par jour)">Base</th>
+                  <th style={th} title="Facturée à une société du groupe">IG</th>
+                  {jours.map((j) => (
+                    <th key={j.date} style={{ ...th, minWidth: 32, textAlign: "center", background: j.weekend || j.ferie ? "#e3e6ea" : "#f1f2f4" }}>
+                      {LETTRES[j.js]}
+                      <div>{j.jour}</div>
+                    </th>
+                  ))}
+                  <th style={{ ...th, textAlign: "right" }}>Heures</th>
+                  <th style={th} title="Mois reporté (commande pas reçue) ou heures reportées des mois précédents">Report</th>
+                  <th style={{ ...th, textAlign: "right" }}>Facturé</th>
+                  <th style={{ ...th, textAlign: "right" }} title="Heures des feuilles d'heures sur cette affaire">Feuilles</th>
+                  <th style={{ ...th, textAlign: "right" }}>Éq. j</th>
+                  <th style={{ ...th, textAlign: "right" }} title="Heures sup refacturées à 125 %">HS 125 %</th>
+                  <th style={{ ...th, textAlign: "right" }}>Montant</th>
+                  <th style={{ ...th, textAlign: "right" }} title="Commande + avenants, moins les heures facturées (ce mois compris)">Reste enveloppe</th>
+                </tr>
+              </thead>
+              <tbody>
+                {blocs.map((b) => (
+                  <Fragment key={b.cle}>
+                    <tr>
+                      <td colSpan={8 + jours.length + 8} style={{ ...td, background: "#eef0f3", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                        {b.titre}
+                      </td>
+                    </tr>
+                    {b.lignes.map((l, k) => {
+                      const a = affairesParId.get(l.affaire_id);
+                      const c = calcul(l);
+                      const env = enveloppes.get(l.affaire_id);
+                      const premiere = k === 0 || b.lignes[k - 1].affaire_id !== l.affaire_id;
+                      const verrou = !peutAgir || c.valide;
+                      const vide = !jours.some((j) => saisieParCle.has(`${l.id}|${j.date}`));
+                      const planDispo = vide && jours.some((j) => (planParCle.get(`${l.affaire_id}|${l.collaborateur_id}|${j.date}`) ?? 0) > 0);
+                      const ecart = Math.abs(c.heures - c.heuresReel) > 0.01;
+                      return (
+                        <tr key={l.id}>
+                          <td style={{ ...td, ...fixe(0, 104) }} title={a?.designation ?? ""}>
+                            {premiere && a && (
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <BadgeType type={a.type} />
+                                <Link href={`/affaires/bilan?affaire=${a.type}${a.numero}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                  {numeroFacture(a).numero}
+                                </Link>
+                                {a.statut === "EN_ATTENTE" && <span title="Intention de commande : commande pas encore reçue" style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ ...td, ...fixe(104, 56), fontWeight: 800 }}>{nomCollab(collabs.get(l.collaborateur_id))}</td>
+                          <td style={{ ...td, ...fixe(160, 60) }}>
+                            {!verrou && (
+                              <span style={{ display: "inline-flex", gap: 3 }}>
+                                {planDispo ? (
+                                  <button type="button" style={outil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>📅</button>
+                                ) : (
+                                  <button type="button" style={outil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>⤓</button>
+                                )}
+                                <button type="button" style={outil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>✕</button>
+                              </span>
+                            )}
+                          </td>
+                          <td style={td}>
+                            <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={{ ...champ, width: 104 }} aria-label="Activité">
+                              <option value="">—</option>
+                              {(referentiel?.activites ?? []).filter((x) => x.actif || x.id === l.activite_id).map((x) => (
+                                <option key={x.id} value={x.id}>{x.nom}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td style={td}>
+                            <select disabled={verrou} value={l.unite} onChange={(e) => void modifierLigne(l, { unite: e.target.value as Ligne["unite"] })} style={{ ...champ, width: 70 }} aria-label="Unité de vente">
+                              <option value="JOUR">€/jour</option>
+                              <option value="HEURE">€/h</option>
+                            </select>
+                          </td>
+                          <td style={td}>
+                            <input
+                              key={`t-${l.id}-${l.taux}`}
+                              disabled={verrou}
+                              defaultValue={l.taux ?? ""}
+                              inputMode="decimal"
+                              placeholder="taux"
+                              aria-label="Taux de vente"
+                              onBlur={(e) => {
+                                const v = e.target.value.trim().replace(",", ".");
+                                const n = v === "" ? null : Number(v);
+                                if (n !== l.taux && (n === null || Number.isFinite(n))) void modifierLigne(l, { taux: n });
+                              }}
+                              style={{ ...champ, width: 60, textAlign: "right", borderColor: l.taux === null ? "#e9b877" : "#c9cdd2" }}
+                            />
+                          </td>
+                          <td style={td}>
+                            <input
+                              key={`b-${l.id}-${l.base_horaire}`}
+                              disabled={verrou}
+                              defaultValue={texteHeures(l.base_horaire)}
+                              inputMode="decimal"
+                              aria-label="Base horaire vendue"
+                              onBlur={(e) => {
+                                const n = Number(e.target.value.replace(",", "."));
+                                if (Number.isFinite(n) && n > 0 && n <= 12 && n !== l.base_horaire) void modifierLigne(l, { base_horaire: n });
+                              }}
+                              style={{ ...champ, width: 40, textAlign: "right" }}
+                            />
+                          </td>
+                          <td style={{ ...td, textAlign: "center" }}>
+                            <input type="checkbox" disabled={verrou} checked={l.intergroupe} onChange={(e) => void modifierLigne(l, { intergroupe: e.target.checked })} aria-label="Intergroupe" />
+                          </td>
+                          {jours.map((j) => {
+                            const s = saisieParCle.get(`${l.id}|${j.date}`);
+                            const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
+                            const factureH = s?.heures ?? 0;
+                            const r = reelDe(l, j.date);
+                            const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
+                            const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
+                            return (
+                              <td
+                                key={j.date}
+                                onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
+                                onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
+                                title={different ? `Facturé ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : undefined}
+                                style={{
+                                  ...td,
+                                  padding: 1,
+                                  background: choisi ? "#fff3c4" : j.weekend || j.ferie ? "#f3f4f6" : undefined,
+                                  backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
+                                }}
+                              >
+                                <input
+                                  ref={(el) => {
+                                    const cle = `${l.id}|${j.date}`;
+                                    if (el) champs.current.set(cle, el);
+                                    else champs.current.delete(cle);
+                                  }}
+                                  key={`${l.id}-${j.date}-${texte}`}
+                                  disabled={verrou}
+                                  defaultValue={texte}
+                                  aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
+                                  onFocus={(e) => e.currentTarget.select()}
+                                  onKeyDown={(e) => surTouche(e, l, j.date)}
+                                  onBlur={(e) => {
+                                    if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
+                                  }}
+                                  style={{
+                                    width: 32,
+                                    boxSizing: "border-box",
+                                    border: "1px solid transparent",
+                                    background: "transparent",
+                                    textAlign: "center",
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    color: s?.code ? "#7a3e00" : C.encre,
+                                    fontFamily: "inherit",
+                                    padding: "4px 0",
+                                    cursor: verrou ? "default" : "cell",
+                                  }}
+                                />
+                              </td>
+                            );
+                          })}
+                          <td style={{ ...td, textAlign: "right" }}>{formatHeures(c.heures)}</td>
+                          <td style={td}>
+                            {c.reporte ? (
+                              <button type="button" disabled={verrou} onClick={() => void basculerReport(l)} title="Heures facturées le mois suivant (commande pas encore reçue). Cliquer pour facturer ce mois-ci." style={{ ...outil, padding: "0 6px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}>
+                                ↪ reporté
+                              </button>
+                            ) : (
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                {(c.reportEntrant > 0 || c.reportDisponible > 0 || moisLignes.get(l.id)?.report_heures !== null && moisLignes.get(l.id)?.report_heures !== undefined) && (
+                                  <button
+                                    type="button"
+                                    disabled={verrou}
+                                    onClick={() => ouvrirReport(l)}
+                                    title={`Heures reportées facturées ce mois-ci (${formatHeures(c.reportDisponible)} en attente). Cliquer pour choisir combien et où les placer.`}
+                                    style={{ ...outil, padding: "0 6px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}
+                                  >
+                                    +{formatHeures(c.reportEntrant)}
+                                    {moisLignes.get(l.id)?.report_ligne_separee ? " ⧉" : ""}
+                                  </button>
+                                )}
+                                {!verrou && (
+                                  <button type="button" onClick={() => void basculerReport(l)} title="Reporter la facturation de ce mois au mois suivant" style={{ ...outil, padding: "0 6px", color: C.gris }}>
+                                    ↪
+                                  </button>
+                                )}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{formatHeures(c.facturables)}</td>
+                          <td style={{ ...td, textAlign: "right", color: ecart ? "#b35c00" : C.gris, fontWeight: ecart ? 800 : 400 }} title={ecart ? "Écart entre le facturé et les feuilles d'heures" : undefined}>
+                            {formatHeures(c.heuresReel)}
+                          </td>
+                          <td style={{ ...td, textAlign: "right" }}>{(Math.round((c.facturables / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")}</td>
+                          <td style={td}>
+                            <input
+                              key={`hs-${l.id}-${c.hs}`}
+                              disabled={verrou}
+                              defaultValue={c.hs ? texteHeures(c.hs) : ""}
+                              inputMode="decimal"
+                              aria-label="Heures sup à refacturer"
+                              onBlur={(e) => {
+                                if ((Number(e.target.value.replace(",", ".")) || 0) !== c.hs) void modifierHs(l, e.target.value);
+                              }}
+                              style={{ ...champ, width: 44, textAlign: "right" }}
+                            />
+                          </td>
+                          <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>
+                            {c.montant === null ? <span style={{ color: "#7a3e00", fontWeight: 600 }}>taux ?</span> : euros(c.montant)}
+                            {c.valide && <span title="Mois validé : montant figé"> 🔒</span>}
+                          </td>
+                          <td style={{ ...td, textAlign: "right" }}>
+                            {premiere && env && env.commande > 0 ? (
+                              <span title={`Commandé ${formatHeures(env.commande)} · facturé avant ${formatHeures(env.avant)} · ce mois ${formatHeures(env.mois)}`}>
+                                <Pastille genre={env.reste <= 0 ? "crit" : env.reste / env.commande < 0.2 ? "warn" : "ok"}>
+                                  {formatHeures(Math.max(0, env.reste))}
+                                  {l.unite === "JOUR" ? ` · ${(Math.round((Math.max(0, env.reste) / l.base_horaire) * 10) / 10).toLocaleString("fr-FR")} j` : ""}
+                                </Pastille>
+                              </span>
+                            ) : premiere ? (
+                              <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+                {aStaffer.length > 0 && (
+                  <tr>
+                    <td colSpan={8 + jours.length + 8} style={{ ...td, background: "#fff7ea", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
+                      PE / PI à staffer — choisissez la personne
+                    </td>
+                  </tr>
+                )}
+                {aStaffer.map((a) => (
+                  <tr key={`s-${a.id}`}>
+                    <td style={{ ...td, ...fixe(0, 104) }} title={a.designation}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <BadgeType type={a.type} />
+                        <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
+                        {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                      </span>
+                    </td>
+                    <td colSpan={2} style={{ ...td, ...fixe(104, 116) }}>
+                      {peutAgir ? (
+                        <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 112 }} aria-label={`Personne pour ${a.numero}`}>
+                          <option value="">Personne…</option>
+                          {annuaire.map((c) => (
+                            <option key={c.id} value={c.id}>{nomCollab(c)}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td colSpan={5 + jours.length + 8} style={{ ...td, color: C.gris }}>
+                      {a.imputation} · {a.designation}
+                      {(() => {
+                        const env = enveloppes.get(a.id);
+                        return env && env.commande > 0 ? ` · enveloppe ${formatHeures(env.commande)}` : "";
+                      })()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!chargement && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 14 }}>
+            {lignes.length > 0 && (
+              <section style={{ ...page.carte, padding: 14, flex: "1 1 320px" }}>
+                <h2 style={{ margin: "0 0 8px", fontSize: 17 }}>Total de {nomMois}</h2>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{euros(totaux.montant)}</div>
+                <div style={{ color: C.gris, fontSize: 13 }}>{formatHeures(totaux.heures)} facturées</div>
+                <div style={{ marginTop: 8, fontSize: 14 }}>
+                  {[...totaux.parActivite.entries()].sort((x, y) => y[1] - x[1]).map(([k, v]) => (
+                    <div key={k}>
+                      {k} : <strong>{euros(v)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {peutAgir && (
+              <section style={{ ...page.carte, padding: 14, flex: "1 1 420px" }}>
+                <h2 style={{ margin: "0 0 8px", fontSize: 17 }}>Ajouter une ligne</h2>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <select value={ajout?.affaire_id ?? ""} onChange={(e) => setAjout({ affaire_id: e.target.value, collaborateur_id: ajout?.collaborateur_id ?? "" })} style={{ ...page.entrees, width: "auto" }} aria-label="Affaire">
+                    <option value="">Affaire PE / PI…</option>
+                    {affaires.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE").map((a) => (
+                      <option key={a.id} value={a.id}>{a.type} {a.numero} — {a.designation}</option>
+                    ))}
+                  </select>
+                  <select value={ajout?.collaborateur_id ?? ""} onChange={(e) => setAjout({ affaire_id: ajout?.affaire_id ?? "", collaborateur_id: e.target.value })} style={{ ...page.entrees, width: "auto" }} aria-label="Personne">
+                    <option value="">Personne…</option>
+                    {annuaire.map((c) => (
+                      <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}</option>
+                    ))}
+                  </select>
+                  <button type="button" style={page.btnPrimaire} disabled={!ajout?.affaire_id || !ajout?.collaborateur_id} onClick={() => void ajouterLigne()}>
+                    Ajouter
+                  </button>
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        <p style={{ fontSize: 12, color: C.gris, marginTop: 12 }}>
+          Montant = heures facturées × taux horaire (taux jour ÷ base pour un tarif journalier) + heures sup × 125 % × taux horaire. Chaque
+          modification part dans le planning (affectation du mois) une seconde après. Imputations concernées :{" "}
+          {imputations.filter((i) => !i.charge_obligatoire).map((i) => i.code).join(", ") || "PE, PI"}.
+        </p>
+      </div>
+
+      {editeurReport && (
+        <div role="dialog" aria-modal="true" aria-label="Heures reportées" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditeurReport(null)}>
+          <div style={{ ...page.carte, padding: 20, width: 420, maxWidth: "92vw" }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Heures reportées à facturer en {nomMois}</h2>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: C.gris }}>
+              {affairesParId.get(editeurReport.ligne.affaire_id)?.numero} · {nomCollab(collabs.get(editeurReport.ligne.collaborateur_id))} ·{" "}
+              {formatHeures(calcul(editeurReport.ligne).reportDisponible)} en attente des mois reportés.
+            </p>
+            <label style={{ display: "block", fontWeight: 700, marginBottom: 10 }}>
+              Heures à facturer ce mois-ci
+              <input value={editeurReport.heures} onChange={(e) => setEditeurReport({ ...editeurReport, heures: e.target.value })} inputMode="decimal" style={{ ...page.entrees, marginTop: 4 }} autoFocus />
+            </label>
+            <label style={{ display: "block", fontWeight: 700, marginBottom: 10 }}>
+              Jour où les placer dans l’export
+              <select value={editeurReport.jour} onChange={(e) => setEditeurReport({ ...editeurReport, jour: e.target.value })} style={{ ...page.entrees, marginTop: 4 }}>
+                {jours.map((j) => (
+                  <option key={j.jour} value={j.jour}>
+                    {LETTRES[j.js]} {j.jour}
+                    {j.weekend || j.ferie ? " (fermé)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <input type="checkbox" checked={editeurReport.separee} onChange={(e) => setEditeurReport({ ...editeurReport, separee: e.target.checked })} style={{ width: 20, height: 20 }} />
+              Sur une ligne à part (sinon, ajoutées aux heures de ce jour)
+            </label>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" style={page.btnSecondaire} onClick={() => setEditeurReport(null)}>Annuler</button>
+              <button type="button" style={page.btnPrimaire} onClick={() => void enregistrerReport()}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+export default function PrestationsPage() {
+  return (
+    <GardeAcces droit="relevePrestations">
+      <PrestationsContenu />
+    </GardeAcces>
+  );
+}

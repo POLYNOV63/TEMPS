@@ -8,6 +8,7 @@ import {
   codeApresChangementActivite,
   ecartJour,
   estDiversType,
+  etiquetteDivers,
   formaterHeures,
   normaliserCodeGrille,
   numeroSemaineISO,
@@ -45,8 +46,9 @@ import {
 
 export type TypeAffaireChoix = { valeur: string; libelle: string; numeroRequis: boolean };
 
-/* Affaire de la semaine précédente, avec l'activité utilisée en dernier */
-export type AffaireRecenteGrille = AffaireGrille & { activiteId?: string | null };
+/* Affaire proposée par le « + » : prévue au planning cette semaine (prevu renseigné),
+   ou de la semaine précédente, avec l'activité à proposer d'office */
+export type AffaireRecenteGrille = AffaireGrille & { activiteId?: string | null; prevu?: string };
 
 export type ModificationLigne = Partial<Pick<LigneGrille, "activiteId" | "code" | "heures">>;
 
@@ -85,6 +87,13 @@ export type GrilleSemaineProps = {
   masquerNavigationJour?: boolean;
 
   forcerMobile?: boolean;
+
+  /* numéros d'affaire connus (Pilotage, Suivi d'affaire…) : null = numéro inconnu.
+     Absent = pas de contrôle (repères indisponibles). */
+  affaireConnue?: (typeAffaire: string, numero: string) => { designation: string } | null;
+
+  /* heures prévues au planning cette semaine, par affaire (clé « CBE|1533 ») */
+  prevuParAffaire?: Record<string, number>;
 };
 
 const TYPES_PAR_DEFAUT: TypeAffaireChoix[] = [
@@ -457,6 +466,12 @@ function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: Rang
   const lectureSeule = Boolean(props.lectureSeule);
   const nom = nomAffaire(rangee);
   const numeroInvalide = montrerAlertes && !divers && !/^\d{4}$/.test(rangee.numeroAffaire.trim());
+  const numeroInconnu =
+    !divers && /^\d{4}$/.test(rangee.numeroAffaire.trim()) && props.affaireConnue
+      ? props.affaireConnue(rangee.typeAffaire, rangee.numeroAffaire.trim()) === null
+      : false;
+  const prevu = props.prevuParAffaire?.[cleAffaire(rangee)] ?? 0;
+  const descriptionManquante = montrerAlertes && divers && !rangee.description.trim();
 
   const badge: CSSProperties = {
     background: rangee.typeAffaire === "CBE" ? "#f3c9c9" : rangee.typeAffaire === "DBE" ? "#f2bfd0" : "#e9edf2",
@@ -481,6 +496,14 @@ function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: Rang
         <span style={badge}>{divers ? "Divers" : rangee.typeAffaire}</span>
         {!divers && <strong style={{ fontSize: 18 }}>{rangee.numeroAffaire || "—"}</strong>}
         {numeroInvalide && <Puce>numéro à 4 chiffres</Puce>}
+        {numeroInconnu && (
+          <span
+            title="Ce numéro n'existe ni dans le Pilotage ni dans le Suivi d'affaire : vérifiez-le (ses heures ne seraient comptées sur aucune affaire)."
+            style={{ background: "#fff1df", color: "#7a3e00", border: "1px solid #e9b877", borderRadius: 999, padding: "1px 8px", fontSize: 11, fontWeight: 800 }}
+          >
+            n° inconnu
+          </span>
+        )}
         <span style={{ flex: 1 }} />
 
         {!lectureSeule && (
@@ -498,12 +521,26 @@ function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: Rang
 
       <input
         aria-label={`Description de ${nom}`}
-        placeholder="Description (facultative)"
+        aria-invalid={descriptionManquante}
+        placeholder={divers ? "Description (obligatoire)" : "Description (facultative)"}
         value={rangee.description}
         disabled={lectureSeule}
         onChange={(e) => props.onChangerDescription(rangee, e.target.value)}
-        style={{ ...champ(mobile), width: "100%", minHeight: mobile ? 44 : 34, fontSize: 13, marginTop: 6, padding: "0 8px" }}
+        style={{
+          ...champ(mobile),
+          width: "100%",
+          minHeight: mobile ? 44 : 34,
+          fontSize: 13,
+          marginTop: 6,
+          padding: "0 8px",
+          ...(descriptionManquante ? rouge : {}),
+        }}
       />
+      {prevu > 0 && (
+        <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "#34506b" }} title="Heures prévues pour vous sur cette affaire au planning de la semaine">
+          📅 {formaterHeures(prevu)} h prévues au planning
+        </div>
+      )}
     </div>
   );
 }
@@ -529,22 +566,58 @@ function PanneauAjout({
   const [erreur, setErreur] = useState("");
 
   const presentes = new Set(rangees.map((r) => r.cle));
-  const recentes = (props.affairesRecentes ?? []).filter((a) => !presentes.has(cleAffaire(a)));
+  const proposees = (props.affairesRecentes ?? []).filter((a) => !presentes.has(cleAffaire(a)));
+  const prevues = proposees.filter((a) => a.prevu);
+  const recentes = proposees.filter((a) => !a.prevu);
   const choix = types.find((t) => t.valeur === type);
+  const divers = estDiversType(type);
+
+  // Numéro saisi : connu (désignation proposée) ou inconnu (avertissement, on peut ajouter quand même)
+  const n4 = /^[0-9]{4}$/.test(numero.trim()) ? numero.trim() : "";
+  const connue = n4 && props.affaireConnue ? props.affaireConnue(type, n4) : undefined;
 
   function ajouterAutre() {
     const n = numero.trim();
+    const d = description.trim() || (connue?.designation ?? "");
 
     if (choix?.numeroRequis && !/^[0-9]{4}$/.test(n)) {
       setErreur("Le numéro d’affaire a 4 chiffres.");
       return;
     }
 
-    onAjouter({ typeAffaire: type, numeroAffaire: choix?.numeroRequis ? n : "", description: description.trim() });
+    if (divers && !d) {
+      setErreur("Une ligne Divers doit avoir une description (ex. « Formation SolidWorks », « Réunion d’équipe »).");
+      return;
+    }
+
+    if (divers && presentes.has(cleAffaire({ typeAffaire: type, numeroAffaire: etiquetteDivers(d) }))) {
+      setErreur("Cette ligne Divers existe déjà dans la semaine.");
+      return;
+    }
+
+    onAjouter({
+      typeAffaire: type,
+      numeroAffaire: divers ? etiquetteDivers(d) : choix?.numeroRequis ? n : "",
+      description: d,
+    });
     setNumero("");
     setDescription("");
     setErreur("");
   }
+
+  const boutonProposition = (a: AffaireRecenteGrille) => (
+    <button
+      key={cleAffaire(a)}
+      type="button"
+      onClick={() => onAjouter(a)}
+      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 48, padding: "6px 14px", border: "none", borderBottom: `1px solid ${C.ligne}`, background: "#ffffff", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
+    >
+      <strong>{nomAffaire(a)}</strong>
+      <span style={{ flex: 1, fontSize: 13, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description}</span>
+      {a.prevu && <span style={{ fontSize: 12, fontWeight: 700, color: "#34506b", whiteSpace: "nowrap" }}>{a.prevu}</span>}
+      <span style={{ fontWeight: 800, color: C.rougeFonce, fontSize: 13 }}>+ ajouter</span>
+    </button>
+  );
 
   return (
     <div style={{ border: "1.5px solid #b9bec5", borderRadius: 12, background: "#ffffff", boxShadow: "0 8px 22px rgba(0,0,0,.12)", maxWidth: 520, overflow: "hidden" }}>
@@ -555,21 +628,17 @@ function PanneauAjout({
         </button>
       </div>
 
+      {prevues.length > 0 && (
+        <div>
+          <div style={{ padding: "8px 14px 2px", fontSize: 12, fontWeight: 800, letterSpacing: ".3px", color: "#34506b" }}>📅 PRÉVU POUR MOI AU PLANNING CETTE SEMAINE</div>
+          {prevues.map(boutonProposition)}
+        </div>
+      )}
+
       {recentes.length > 0 && (
         <div>
           <div style={{ padding: "8px 14px 2px", fontSize: 12, fontWeight: 800, letterSpacing: ".3px", color: C.gris }}>MES AFFAIRES DE LA SEMAINE PRÉCÉDENTE</div>
-          {recentes.map((a) => (
-            <button
-              key={cleAffaire(a)}
-              type="button"
-              onClick={() => onAjouter(a)}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 48, padding: "6px 14px", border: "none", borderBottom: `1px solid ${C.ligne}`, background: "#ffffff", fontFamily: "inherit", textAlign: "left", cursor: "pointer" }}
-            >
-              <strong>{nomAffaire(a)}</strong>
-              <span style={{ flex: 1, fontSize: 13, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description}</span>
-              <span style={{ fontWeight: 800, color: C.rougeFonce, fontSize: 13 }}>+ ajouter</span>
-            </button>
-          ))}
+          {recentes.map(boutonProposition)}
         </div>
       )}
 
@@ -586,8 +655,22 @@ function PanneauAjout({
           {choix?.numeroRequis && (
             <input aria-label="Numéro d'affaire" inputMode="numeric" maxLength={4} placeholder="N° (4 chiffres)" value={numero} onChange={(e) => setNumero(e.target.value.replace(/[^0-9]/g, ""))} style={{ ...champ(mobile), width: 150, padding: "0 10px" }} />
           )}
-          <input aria-label="Description (facultative)" placeholder="Description (facultative)" value={description} onChange={(e) => setDescription(e.target.value)} style={{ ...champ(mobile), flex: 1, minWidth: 140, padding: "0 10px" }} />
+          <input
+            aria-label={divers ? "Description (obligatoire)" : "Description (facultative)"}
+            placeholder={divers ? "Description (obligatoire)" : connue?.designation ? connue.designation : "Description (facultative)"}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            style={{ ...champ(mobile), flex: 1, minWidth: 140, padding: "0 10px" }}
+          />
         </div>
+        {!divers && n4 && connue && (
+          <div style={{ fontSize: 13, color: "#14532d", fontWeight: 700 }}>✓ {type} {n4} : {connue.designation || "affaire connue"}</div>
+        )}
+        {!divers && n4 && connue === null && (
+          <div style={{ fontSize: 13, color: "#7a3e00", fontWeight: 700 }}>
+            ⚠ {type} {n4} n’existe ni dans le Pilotage ni dans le Suivi d’affaire. Vérifiez le numéro : vous pouvez l’ajouter quand même.
+          </div>
+        )}
         {erreur && <div role="alert" style={{ color: C.alerte, fontSize: 13, fontWeight: 700 }}>{erreur}</div>}
         <div>
           <button type="button" onClick={ajouterAutre} style={{ minHeight: 44, padding: "0 18px", border: `1.5px solid ${C.rouge}`, background: C.rouge, color: "#ffffff", fontWeight: 700, fontSize: 15, fontFamily: "inherit", borderRadius: 8, cursor: "pointer" }}>

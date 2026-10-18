@@ -76,7 +76,7 @@ function RessourcesContenu() {
   useEffect(() => {
     let actif = true;
 
-    Promise.all([chargerAnnuaire(), chargerAffaires()])
+    Promise.all([chargerAnnuaire(), chargerAffaires({ horsPlanning: true })])
       .then(([an, af]) => {
         if (!actif) return;
         setAnnuaire(an);
@@ -627,7 +627,7 @@ function RessourcesContenu() {
 
 export default function RessourcesPage() {
   return (
-    <GardeAcces droit="piloterBE">
+    <GardeAcces droit="chargeRessources">
       <RessourcesContenu />
     </GardeAcces>
   );

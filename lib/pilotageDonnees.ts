@@ -72,17 +72,30 @@ export async function chargerMoi(): Promise<Moi | null> {
   };
 }
 
-export async function chargerAffaires(): Promise<Affaire[]> {
-  return chargerTout<Affaire>((a, b) =>
-    supabase
+/* Affaire avec son choix « au planning » (les affaires venues d'Excel arrivent hors planning). */
+export type AffaireP = Affaire & { au_planning: boolean; suivi_maj_le?: string | null };
+
+/* Par défaut : seulement les affaires mises au planning (c'est ce que lit le Planning des affaires).
+   { horsPlanning: true } : toutes les affaires (portefeuille, fiche, ressources, déclaration). */
+export async function chargerAffaires(options: { horsPlanning?: boolean } = {}): Promise<AffaireP[]> {
+  return chargerTout<AffaireP>((a, b) => {
+    let q = supabase
       .from("pilotage_affaires")
       .select(
-        "id,type,numero,designation,responsable_id,priorite,statut,echeance,echeance_initiale,dbe_origine_id,date_livraison,imputation,created_at,date_debut,prestation_quantite,prestation_unite,prestation_comprend_conges"
-      )
+        "id,type,numero,designation,responsable_id,priorite,statut,echeance,echeance_initiale,dbe_origine_id,date_livraison,imputation,created_at,date_debut,prestation_quantite,prestation_unite,prestation_comprend_conges,au_planning,suivi_maj_le"
+      );
+    if (!options.horsPlanning) q = q.eq("au_planning", true);
+    return q
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
-      .range(a, b)
-  );
+      .range(a, b);
+  });
+}
+
+/* Met une affaire au planning ou l'en retire. */
+export async function changerAuPlanning(affaireId: string, auPlanning: boolean): Promise<void> {
+  const { error } = await supabase.from("pilotage_affaires").update({ au_planning: auPlanning }).eq("id", affaireId);
+  if (error) throw new Error(error.message);
 }
 
 export async function chargerCharges(): Promise<Charge[]> {

@@ -98,7 +98,7 @@ function NouvelleAffaireContenu() {
           chargerAnnuaire(),
           chargerImputations(),
           chargerActivites(),
-          chargerAffaires(),
+          chargerAffaires({ horsPlanning: true }),
           chargerMoi(),
           chargerPlanifie(aujourdhui),
         ]);

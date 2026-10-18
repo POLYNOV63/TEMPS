@@ -108,7 +108,7 @@ function FicheContenu() {
   const charger = useCallback(async () => {
     try {
       const [af, ch, re, an, im, ref, m, hist, affs] = await Promise.all([
-        chargerAffaires(),
+        chargerAffaires({ horsPlanning: true }),
         chargerCharges(),
         chargerRealise(),
         chargerAnnuaire(),

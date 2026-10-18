@@ -1,10 +1,17 @@
-
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
+
+/* ===============================================================
+   TABLEAU DE BORD
+
+   ADMIN : Pilotage BE, Validations RH (dont « Feuilles collaborateurs »
+   avec les feuilles à relancer), Mon espace, Analyse, Paramétrage replié.
+   Autres rôles : Mon espace, Pilotage BE (RESPONSABLE), Suivi des équipes.
+================================================================ */
 
 /* ===============================================================
    TYPES
@@ -29,16 +36,15 @@ type Feuille = {
   statut: string | null;
 };
 
-type EtatFeuille =
-  | "complete"
-  | "incomplete"
-  | "manquante";
+type EtatFeuille = "complete" | "incomplete" | "manquante";
 
 type LigneSurveillance = {
   collaborateur: Collaborateur;
   feuille?: Feuille;
   etat: EtatFeuille;
 };
+
+const COLONNES_FEUILLE = "id, collaborateur_id, semaine_debut, total_heures, total_theorique, heures_supplementaires, statut";
 
 /* ===============================================================
    PAGE
@@ -48,8 +54,6 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [prenom, setPrenom] = useState("");
-  const [nom, setNom] = useState("");
-  const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("");
 
   // Droits liés au rôle (ADMIN / RESPONSABLE) : voir lib/droits.ts
@@ -57,29 +61,14 @@ export default function DashboardPage() {
   const accesBilanRH = peut(role, "bilanRH");
   const accesExportExcel = peut(role, "exporterExcel");
 
-  const [chargement, setChargement] =
-    useState(true);
-
-  const [collaborateurs, setCollaborateurs] =
-    useState<Collaborateur[]>([]);
-
-  const [feuilles, setFeuilles] =
-    useState<Feuille[]>([]);
-
-  const [feuillesPrecedentes, setFeuillesPrecedentes] =
-    useState<Feuille[]>([]);
-
-  const [nombreDemandesRH, setNombreDemandesRH] =
-    useState(0);
-
-  const [erreur, setErreur] =
-    useState<string | null>(null);
-
-  const [semaineCourante, setSemaineCourante] =
-    useState("");
-
-  const [monCollaborateurId, setMonCollaborateurId] =
-    useState<string | null>(null);
+  const [chargement, setChargement] = useState(true);
+  const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
+  const [feuilles, setFeuilles] = useState<Feuille[]>([]);
+  const [feuillesPrecedentes, setFeuillesPrecedentes] = useState<Feuille[]>([]);
+  const [nombreDemandesRH, setNombreDemandesRH] = useState(0);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [semaineCourante, setSemaineCourante] = useState("");
+  const [monCollaborateurId, setMonCollaborateurId] = useState<string | null>(null);
 
   // Groupe « Paramétrage de l'application » : replié par défaut, choix mémorisé dans le navigateur
   const [parametrageOuvert, setParametrageOuvert] = useState(false);
@@ -164,153 +153,62 @@ export default function DashboardPage() {
         setErreur(null);
 
         const {
-          data: {
-            user,
-          },
+          data: { user },
           error: erreurUtilisateur,
         } = await supabase.auth.getUser();
 
-
-        if (erreurUtilisateur) {
-          throw erreurUtilisateur;
-        }
+        if (erreurUtilisateur) throw erreurUtilisateur;
 
         if (!user) {
           router.push("/login");
           return;
         }
 
-        /* -------------------------------------------------------
-           Collaborateur connecté
-        ------------------------------------------------------- */
-
-        const {
-          data: collaborateur,
-          error: erreurCollaborateur,
-        } = await supabase
+        /* Collaborateur connecté */
+        const { data: collaborateur, error: erreurCollaborateur } = await supabase
           .from("collaborateurs")
-          .select(
-            "id, prenom, nom, actif, role, trigramme"
-          )
+          .select("id, prenom, nom, actif, role, trigramme")
           .eq("auth_user_id", user.id)
           .maybeSingle();
 
+        if (erreurCollaborateur) throw erreurCollaborateur;
+        if (!collaborateur) throw new Error("Aucun collaborateur associé à votre compte.");
 
-        if (erreurCollaborateur) {
-          throw erreurCollaborateur;
-        }
-
-if (!collaborateur) {
-
-  throw new Error(
-    "Aucun collaborateur associé à votre compte."
-  );
-}
-
-        setPrenom(
-          collaborateur.prenom ?? ""
-        );
-
-        setNom(
-          collaborateur.nom ?? ""
-        );
-
-        setTrigramme(
-          collaborateur.trigramme ?? ""
-        );
-
+        setPrenom(collaborateur.prenom ?? "");
         setMonCollaborateurId(collaborateur.id);
 
-        const roleUtilisateur =
-          String(
-            collaborateur.role ?? ""
-          ).toUpperCase();
-
+        const roleUtilisateur = String(collaborateur.role ?? "").toUpperCase();
         setRole(roleUtilisateur);
 
-        /* -------------------------------------------------------
-           Semaine courante
-        ------------------------------------------------------- */
+        /* Semaine courante */
+        const lundiString = formatDateSQL(obtenirLundi(new Date()));
+        setSemaineCourante(lundiString);
 
-        const lundi =
-          obtenirLundi(new Date());
-
-        const lundiString =
-          formatDateSQL(lundi);
-
-        setSemaineCourante(
-          lundiString
-        );
-
-        /* -------------------------------------------------------
-           ADMIN
-        ------------------------------------------------------- */
-
-        if (
-          roleUtilisateur ===
-          "ADMIN"
-        ) {
-          const {
-            data: collaborateursActifs,
-            error:
-              erreurCollaborateurs,
-          } = await supabase
+        if (roleUtilisateur === "ADMIN") {
+          /* ADMIN : feuilles de toute l'équipe */
+          const { data: collaborateursActifs, error: erreurCollaborateurs } = await supabase
             .from("collaborateurs")
-            .select(
-              "id, prenom, nom, actif, role"
-            )
+            .select("id, prenom, nom, actif, role")
             .eq("actif", true)
-            .order("nom", {
-              ascending: true,
-            });
+            .order("nom", { ascending: true });
 
-          if (erreurCollaborateurs) {
-            throw erreurCollaborateurs;
-          }
+          if (erreurCollaborateurs) throw erreurCollaborateurs;
 
-          const {
-            data: feuillesCourantes,
-            error: erreurFeuilles,
-          } = await supabase
+          const { data: feuillesCourantes, error: erreurFeuilles } = await supabase
             .from("feuilles_heures")
-            .select(
-              `
-                id,
-                collaborateur_id,
-                semaine_debut,
-                total_heures,
-                total_theorique,
-                heures_supplementaires,
-                statut
-              `
-            )
-            .eq(
-              "semaine_debut",
-              lundiString
-            );
+            .select(COLONNES_FEUILLE)
+            .eq("semaine_debut", lundiString);
 
-          if (erreurFeuilles) {
-            throw erreurFeuilles;
-          }
+          if (erreurFeuilles) throw erreurFeuilles;
 
-          // A traiter : feuilles de la semaine dernière non validées
-          // et demandes RH en attente de validation.
-          const [anneeLundi, moisLundi, jourLundi] = lundiString
-            .split("-")
-            .map(Number);
-
+          // Feuilles à relancer : celles de la semaine dernière non envoyées.
+          const [anneeLundi, moisLundi, jourLundi] = lundiString.split("-").map(Number);
           const precedent = new Date(anneeLundi, moisLundi - 1, jourLundi - 7);
-
-          const lundiPrecedentString = `${precedent.getFullYear()}-${String(
-            precedent.getMonth() + 1
-          ).padStart(2, "0")}-${String(precedent.getDate()).padStart(2, "0")}`;
 
           const { data: feuillesPrecedentesData } = await supabase
             .from("feuilles_heures")
-            .select(
-              "id, collaborateur_id, semaine_debut, total_heures, total_theorique, heures_supplementaires, statut"
-            )
-            .eq("semaine_debut", lundiPrecedentString);
+            .select(COLONNES_FEUILLE)
+            .eq("semaine_debut", formatDateSQL(precedent));
 
           setFeuillesPrecedentes(feuillesPrecedentesData ?? []);
 
@@ -320,66 +218,24 @@ if (!collaborateur) {
             .eq("statut", "EN_ATTENTE");
 
           setNombreDemandesRH(demandesEnAttente ?? 0);
-
-          setCollaborateurs(
-            collaborateursActifs ?? []
-          );
-
-          setFeuilles(
-            feuillesCourantes ?? []
-          );
+          setCollaborateurs(collaborateursActifs ?? []);
+          setFeuilles(feuillesCourantes ?? []);
         } else {
-          /* -----------------------------------------------------
-             COLLABORATEUR
-          ----------------------------------------------------- */
-
-          const {
-            data: maFeuille,
-            error: erreurMaFeuille,
-          } = await supabase
+          /* Autres rôles : sa propre feuille */
+          const { data: maFeuille, error: erreurMaFeuille } = await supabase
             .from("feuilles_heures")
-            .select(
-              `
-                id,
-                collaborateur_id,
-                semaine_debut,
-                total_heures,
-                total_theorique,
-                heures_supplementaires,
-                statut
-              `
-            )
-            .eq(
-              "collaborateur_id",
-              collaborateur.id
-            )
-            .eq(
-              "semaine_debut",
-              lundiString
-            )
+            .select(COLONNES_FEUILLE)
+            .eq("collaborateur_id", collaborateur.id)
+            .eq("semaine_debut", lundiString)
             .maybeSingle();
 
-          if (erreurMaFeuille) {
-            throw erreurMaFeuille;
-          }
+          if (erreurMaFeuille) throw erreurMaFeuille;
 
-          setFeuilles(
-            maFeuille
-              ? [maFeuille]
-              : []
-          );
+          setFeuilles(maFeuille ? [maFeuille] : []);
         }
       } catch (err) {
-        console.error(
-          "Erreur chargement dashboard :",
-          err
-        );
-
-        setErreur(
-          err instanceof Error
-            ? err.message
-            : "Une erreur est survenue lors du chargement du tableau de bord."
-        );
+        console.error("Erreur chargement dashboard :", err);
+        setErreur(err instanceof Error ? err.message : "Une erreur est survenue lors du chargement du tableau de bord.");
       } finally {
         setChargement(false);
       }
@@ -392,166 +248,61 @@ if (!collaborateur) {
      FEUILLE PERSONNELLE
   ============================================================= */
 
-  const maFeuille =
-    useMemo(() => {
-      return (
-        feuilles.find(
-          (feuille) =>
-            feuille.semaine_debut ===
-            semaineCourante &&
-            feuille.collaborateur_id ===
-            monCollaborateurId
-        ) ?? null
-      );
-    }, [
-      feuilles,
-      semaineCourante,
-      role,
-      monCollaborateurId,
-    ]);
+  const maFeuille = useMemo(
+    () => feuilles.find((f) => f.semaine_debut === semaineCourante && f.collaborateur_id === monCollaborateurId) ?? null,
+    [feuilles, semaineCourante, monCollaborateurId]
+  );
 
   /* =============================================================
-     STATISTIQUES ADMIN
+     STATISTIQUES ADMIN (feuilles des collaborateurs actifs, semaine courante)
   ============================================================= */
 
-  const statistiques =
-    useMemo(() => {
-      if (role !== "ADMIN") {
-        return {
-          collaborateurs: 0,
-          feuillesCompletes: 0,
-          feuillesTotal: 0,
-          heures: 0,
-          heuresSupplementaires: 0,
-        };
-      }
+  const statistiques = useMemo(() => {
+    if (role !== "ADMIN") {
+      return { collaborateurs: 0, feuillesCompletes: 0, feuillesTotal: 0, heures: 0, heuresSupplementaires: 0 };
+    }
 
-      /*
-       * On compte uniquement les feuilles correspondant
-       * aux collaborateurs actifs actuellement affichés.
-       *
-       * Une feuille absente = feuille manquante.
-       */
+    const actifs = new Set(collaborateurs.map((c) => c.id));
+    const feuillesActifs = feuilles.filter((f) => actifs.has(f.collaborateur_id));
 
-      const feuillesDesCollaborateursActifs =
-        feuilles.filter((feuille) =>
-          collaborateurs.some(
-            (collaborateur) =>
-              collaborateur.id ===
-              feuille.collaborateur_id
-          )
-        );
-
-      const feuillesCompletes =
-        feuillesDesCollaborateursActifs.filter(
-          (feuille) =>
-            estFeuilleComplete(
-              feuille
-            )
-        ).length;
-
-      const heures =
-        feuillesDesCollaborateursActifs.reduce(
-          (
-            total,
-            feuille
-          ) =>
-            total +
-            Number(
-              feuille.total_heures ?? 0
-            ),
-          0
-        );
-
-      const heuresSupplementaires =
-        feuillesDesCollaborateursActifs.reduce(
-          (
-            total,
-            feuille
-          ) =>
-            total +
-            Number(
-              feuille.heures_supplementaires ??
-                0
-            ),
-          0
-        );
-
-      return {
-        collaborateurs:
-          collaborateurs.length,
-
-        feuillesCompletes,
-
-        feuillesTotal:
-          collaborateurs.length,
-
-        heures,
-
-        heuresSupplementaires,
-      };
-    }, [
-      role,
-      collaborateurs,
-      feuilles,
-    ]);
+    return {
+      collaborateurs: collaborateurs.length,
+      feuillesCompletes: feuillesActifs.filter(estFeuilleComplete).length,
+      feuillesTotal: collaborateurs.length,
+      heures: feuillesActifs.reduce((t, f) => t + Number(f.total_heures ?? 0), 0),
+      heuresSupplementaires: feuillesActifs.reduce((t, f) => t + Number(f.heures_supplementaires ?? 0), 0),
+    };
+  }, [role, collaborateurs, feuilles]);
 
   /* =============================================================
-     SURVEILLANCE
+     FEUILLES À RELANCER (semaine dernière non envoyée)
   ============================================================= */
 
-  const surveillance =
-    useMemo<LigneSurveillance[]>(() => {
-      if (role !== "ADMIN") {
-        return [];
-      }
+  const surveillance = useMemo<LigneSurveillance[]>(() => {
+    if (role !== "ADMIN") return [];
 
-      // Une feuille de la semaine dernière qui n'est pas validée est en retard.
-      return collaborateurs
-        .map((collaborateur): LigneSurveillance | null => {
-          const feuille = feuillesPrecedentes.find(
-            (f) => f.collaborateur_id === collaborateur.id
-          );
+    return collaborateurs
+      .map((collaborateur): LigneSurveillance | null => {
+        const feuille = feuillesPrecedentes.find((f) => f.collaborateur_id === collaborateur.id);
 
-          if (!feuille) {
-            return { collaborateur, feuille: undefined, etat: "manquante" };
-          }
+        if (!feuille) return { collaborateur, feuille: undefined, etat: "manquante" };
+        if (feuille.statut === "A_TRAITER") return null;
 
-          if (feuille.statut === "A_TRAITER") {
-            return null;
-          }
-
-          return { collaborateur, feuille, etat: "incomplete" };
-        })
-        .filter((ligne): ligne is LigneSurveillance => ligne !== null);
-    }, [role, collaborateurs, feuillesPrecedentes]);
+        return { collaborateur, feuille, etat: "incomplete" };
+      })
+      .filter((ligne): ligne is LigneSurveillance => ligne !== null);
+  }, [role, collaborateurs, feuillesPrecedentes]);
 
   /* =============================================================
-     CHARGEMENT
+     CHARGEMENT / ERREUR
   ============================================================= */
 
   if (chargement) {
     return (
-      <main
-        style={
-          styles.page
-        }
-      >
-        <div
-          style={
-            styles.loadingContainer
-          }
-        >
-          <div
-            style={
-              styles.loadingSpinner
-            }
-          />
-
-          <p>
-            Chargement du
-            tableau de bord…
-          </p>
+      <main style={styles.page}>
+        <div style={styles.loadingContainer}>
+          <div style={styles.loadingSpinner} />
+          <p>Chargement du tableau de bord…</p>
         </div>
 
         <style jsx>{`
@@ -559,7 +310,6 @@ if (!collaborateur) {
             from {
               transform: rotate(0deg);
             }
-
             to {
               transform: rotate(360deg);
             }
@@ -569,102 +319,20 @@ if (!collaborateur) {
     );
   }
 
-  /* =============================================================
-     ERREUR
-  ============================================================= */
-
   if (erreur) {
     return (
-      <main
-        style={
-          styles.page
-        }
-      >
-        <header
-          style={
-            styles.header
-          }
-        >
-          <div
-            style={
-              styles.headerInner
-            }
-          >
-            <div>
-              <div
-                style={
-                  styles.logo
-                }
-              >
-                POLYNOV
-              </div>
+      <main style={styles.page}>
+        <EnTete role={role} />
 
-              <div
-                style={
-                  styles.headerSubtitle
-                }
-              >
-                Tableau de bord
-              </div>
-            </div>
-
-            {role && (
-              <div
-                style={
-                  styles.headerRole
-                }
-              >
-                {role}
-              </div>
-            )}
-          </div>
-        </header>
-
-        <div
-          style={
-            styles.container
-          }
-        >
-          <div
-            style={
-              styles.errorCard
-            }
-          >
-            <div
-              style={
-                styles.errorIcon
-              }
-            >
-              !
-            </div>
+        <div style={styles.container}>
+          <div style={styles.errorCard}>
+            <div style={styles.errorIcon}>!</div>
 
             <div>
-              <div
-                style={
-                  styles.errorTitle
-                }
-              >
-                Impossible de charger
-                le tableau de bord
-              </div>
+              <div style={styles.errorTitle}>Impossible de charger le tableau de bord</div>
+              <div style={styles.errorText}>{erreur}</div>
 
-              <div
-                style={
-                  styles.errorText
-                }
-              >
-                {erreur}
-              </div>
-
-              <button
-                type="button"
-                style={
-                  styles.primaryButton
-                }
-                onClick={() =>
-                  window.location.reload()
-                }
-              >
+              <button type="button" style={styles.primaryButton} onClick={() => window.location.reload()}>
                 Réessayer
               </button>
             </div>
@@ -678,55 +346,17 @@ if (!collaborateur) {
      RENDU
   ============================================================= */
 
+  const aller = (url: string) => router.push(url);
+  const statutMaFeuille = maFeuille ? (estFeuilleComplete(maFeuille) ? "complete" : "incomplete") : "absente";
+  const libelleMaFeuille = maFeuille ? `Semaine du ${formaterDateLongue(semaineCourante)}` : "Ma feuille de la semaine courante";
+
   return (
-    <main
-      style={
-        styles.page
-      }
-    >
-      {/* =======================================================
-          HEADER
-      ======================================================= */}
+    <main style={styles.page}>
+      <EnTete
+        role={role}
+        cloche={role === "ADMIN" ? <ClocheDemandesRH nombre={nombreDemandesRH} demandes={demandesCloche} onAller={aller} /> : null}
+      />
 
-      <header
-        style={
-          styles.header
-        }
-      >
-        <div
-          style={
-            styles.headerInner
-          }
-        >
-          <div>
-            <div
-              style={
-                styles.logo
-              }
-            >
-              POLYNOV
-            </div>
-
-            <div
-              style={
-                styles.headerSubtitle
-              }
-            >
-              Tableau de bord
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {role === "ADMIN" && (
-              <ClocheDemandesRH nombre={nombreDemandesRH} demandes={demandesCloche} onAller={(url) => router.push(url)} />
-            )}
-
-            {role && <div style={styles.headerRole}>{role}</div>}
-          </div>
-        </div>
-      </header>
-
-      {/* MA_DASHBOARD_PRIORITES_V2 : cartes par priorité et plus petites (ADMIN : Pilotage BE, Validations RH, Mon espace, Analyse, Paramétrage replié) */}
       <div style={{ ...styles.container, padding: "14px 30px 32px 30px" }}>
         <div style={stylesV2.accueil}>
           <div>
@@ -736,9 +366,7 @@ if (!collaborateur) {
             </h1>
 
             <div style={stylesV2.semaine}>
-              {semaineCourante
-                ? `Semaine S${numeroSemaine(semaineCourante)} · ${formaterSemaine(semaineCourante)}`
-                : "—"}
+              {semaineCourante ? `Semaine S${numeroSemaine(semaineCourante)} · ${formaterSemaine(semaineCourante)}` : "—"}
             </div>
           </div>
 
@@ -759,48 +387,36 @@ if (!collaborateur) {
 
         {role === "ADMIN" ? (
           <>
-            <BlocPilotage aller={(url) => router.push(url)} />
+            <BlocPilotage aller={aller} admin />
 
-            <BlocValidationsRH
-              aller={(url) => router.push(url)}
-              nombreDemandesRH={nombreDemandesRH}
-              aRelancer={surveillance}
-            />
+            <BlocValidationsRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} />
 
-            <BlocMonEspace
-              aller={(url) => router.push(url)}
-              statut={maFeuille ? (estFeuilleComplete(maFeuille) ? "complete" : "incomplete") : "absente"}
-              libelle={maFeuille ? `Semaine du ${formaterDateLongue(semaineCourante)}` : "Ma feuille de la semaine courante"}
-              avecBilanAffaire={false}
-            />
+            <BlocMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} avecBilanAffaire={false} />
 
             <BlocAnalyse
-              aller={(url) => router.push(url)}
+              aller={aller}
               admin
               accesFeuilles={accesFeuilles}
               accesBilanRH={accesBilanRH}
               accesExportExcel={accesExportExcel}
             />
 
-            <BlocParametrage
-              aller={(url) => router.push(url)}
-              ouvert={parametrageOuvert}
-              onBasculer={basculerParametrage}
-            />
+            <BlocParametrage aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />
           </>
         ) : (
           <>
             <BlocMonEspace
-              aller={(url) => router.push(url)}
-              statut={maFeuille ? (estFeuilleComplete(maFeuille) ? "complete" : "incomplete") : "absente"}
-              libelle={maFeuille ? `Semaine du ${formaterDateLongue(semaineCourante)}` : "Ma feuille de la semaine courante"}
+              aller={aller}
+              statut={statutMaFeuille}
+              libelle={libelleMaFeuille}
               avecBilanAffaire={!peut(role, "piloterBE")}
+              avecPlanning={!peut(role, "piloterBE")}
             />
 
-            {peut(role, "piloterBE") && <BlocPilotage aller={(url) => router.push(url)} />}
+            {peut(role, "piloterBE") && <BlocPilotage aller={aller} admin={false} />}
 
             <BlocAnalyse
-              aller={(url) => router.push(url)}
+              aller={aller}
               admin={false}
               accesFeuilles={accesFeuilles}
               accesBilanRH={accesBilanRH}
@@ -809,26 +425,29 @@ if (!collaborateur) {
           </>
         )}
       </div>
-
-      <style jsx>{`
-        @keyframes spin {
-          from {
-            transform: rotate(0deg);
-          }
-
-          to {
-            transform: rotate(360deg);
-          }
-        }
-
-        @media (max-width: 800px) {
-          .dashboard-header {
-            flex-direction: column;
-            align-items: flex-start;
-          }
-        }
-      `}</style>
     </main>
+  );
+}
+
+/* ===============================================================
+   EN-TÊTE ROUGE
+================================================================ */
+
+function EnTete({ role, cloche }: { role: string; cloche?: ReactNode }) {
+  return (
+    <header style={styles.header}>
+      <div style={styles.headerInner}>
+        <div>
+          <div style={styles.logo}>POLYNOV</div>
+          <div style={styles.headerSubtitle}>Tableau de bord</div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {cloche}
+          {role && <div style={styles.headerRole}>{role}</div>}
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -842,17 +461,7 @@ function Pastille({ texte, ton = "neutre" }: { texte: string; ton?: Ton }) {
   return <span style={{ ...stylesV2.pastille, ...stylesV2[`pastille_${ton}`] }}>{texte}</span>;
 }
 
-function ChipSuivi({
-  icone,
-  valeur,
-  label,
-  ton = "neutre",
-}: {
-  icone: string;
-  valeur: string;
-  label: string;
-  ton?: Ton;
-}) {
+function ChipSuivi({ icone, valeur, label, ton = "neutre" }: { icone: string; valeur: string; label: string; ton?: Ton }) {
   return (
     <div style={stylesV2.chip}>
       <span aria-hidden="true">{icone}</span>
@@ -1067,9 +676,9 @@ function ClocheDemandesRH({
   );
 }
 
-function BlocPilotage({ aller }: { aller: (url: string) => void }) {
+function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: boolean }) {
   return (
-    <Groupe titre="Pilotage BE" description="Portefeuille et charge : onglets en haut du planning">
+    <Groupe titre="Pilotage BE" description="Portefeuille, planning et affaires : onglets en haut des pages">
       <div style={stylesV2.grille}>
         <CarteCompacte
           principale
@@ -1085,6 +694,14 @@ function BlocPilotage({ aller }: { aller: (url: string) => void }) {
           description="Déclarer un DBE, un CBE, une PE ou une PI"
           onClick={() => aller("/pilotage/nouvelle")}
         />
+        {admin && (
+          <CarteCompacte
+            icone="🧾"
+            titre="Prestations PE / PI"
+            description="Relevé mensuel facturable : il alimente le planning des PE / PI"
+            onClick={() => aller("/pilotage/prestations")}
+          />
+        )}
         <CarteCompacte
           icone="📊"
           titre="Bilan affaire"
@@ -1108,7 +725,7 @@ function BlocValidationsRH({
   const noms = aRelancer.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
 
   return (
-    <Groupe titre="Validations RH" description="Demandes, compteurs et feuilles à relancer">
+    <Groupe titre="Validations RH" description="Demandes, compteurs et feuilles des collaborateurs">
       <div style={stylesV2.grille}>
         <CarteCompacte
           icone="🧑‍💼"
@@ -1126,13 +743,13 @@ function BlocValidationsRH({
         />
         <CarteCompacte
           icone="📋"
-          titre="Feuilles à relancer"
+          titre="Feuilles collaborateurs"
           description={
             aRelancer.length === 0
-              ? "Toutes les feuilles de la semaine dernière sont validées"
-              : `${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""} : feuille non validée`
+              ? "Consulter et verrouiller les feuilles · semaine dernière : tout est envoyé"
+              : `À relancer (semaine dernière) : ${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""}`
           }
-          badge={aRelancer.length === 0 ? "✓" : String(aRelancer.length)}
+          badge={aRelancer.length === 0 ? "✓" : `${aRelancer.length} à relancer`}
           ton={aRelancer.length === 0 ? "ok" : "alerte"}
           onClick={() => aller("/admin/feuilles")}
         />
@@ -1146,11 +763,13 @@ function BlocMonEspace({
   statut,
   libelle,
   avecBilanAffaire,
+  avecPlanning = false,
 }: {
   aller: (url: string) => void;
   statut: "complete" | "incomplete" | "absente";
   libelle: string;
   avecBilanAffaire: boolean;
+  avecPlanning?: boolean;
 }) {
   return (
     <Groupe titre="Mon espace" description="Mes feuilles, mes affaires et mes demandes RH">
@@ -1169,6 +788,14 @@ function BlocMonEspace({
           description="Mes feuilles de temps enregistrées"
           onClick={() => aller("/mes-feuilles")}
         />
+        {avecPlanning && (
+          <CarteCompacte
+            icone="🗓️"
+            titre="Planning des affaires"
+            description="Qui travaille sur quoi, semaine par semaine (lecture)"
+            onClick={() => aller("/pilotage/affaires")}
+          />
+        )}
         {avecBilanAffaire && (
           <CarteCompacte
             icone="📊"
@@ -1206,13 +833,33 @@ function BlocAnalyse({
   return (
     <Groupe
       titre={admin ? "Analyse" : "Suivi des équipes"}
-      description={
-        admin
-          ? "Charge, activités, bilan RH mensuel, exports et feuilles des collaborateurs"
-          : "Feuilles de temps, bilan RH mensuel et export Excel"
-      }
+      description={admin ? "Indicateurs, finances, charge, activités, bilan RH mensuel et exports" : "Feuilles de temps, bilan RH mensuel et export Excel"}
     >
       <div style={stylesV2.grille}>
+        {admin && (
+          <CarteCompacte
+            icone="📈"
+            titre="Indicateurs"
+            description="Devis, transformation, prise de commande et carnet de commandes"
+            onClick={() => aller("/pilotage/indicateurs")}
+          />
+        )}
+        {admin && (
+          <CarteCompacte
+            icone="💶"
+            titre="Finances"
+            description="CA de l'exercice face au prévisionnel, activités × imputations, rentabilité"
+            onClick={() => aller("/analyse/finances")}
+          />
+        )}
+        {admin && (
+          <CarteCompacte
+            icone="👥"
+            titre="Charge par ressource"
+            description="Charge prévue de chacun, semaine par semaine"
+            onClick={() => aller("/pilotage/ressources")}
+          />
+        )}
         {admin && (
           <CarteCompacte
             icone="📈"
@@ -1245,7 +892,8 @@ function BlocAnalyse({
             onClick={() => aller("/admin/export-excel")}
           />
         )}
-        {accesFeuilles && (
+        {/* L'ADMIN y accède par « Validations RH » ; les RESPONSABLE n'ont que ce chemin */}
+        {accesFeuilles && !admin && (
           <CarteCompacte
             icone="📋"
             titre="Feuilles collaborateurs"
@@ -1270,12 +918,10 @@ function BlocParametrage({
   return (
     <Groupe
       titre="⚙️ Paramétrage de l'application"
-      description="Codes, activités, collaborateurs, rythmes, imputations, export IA, import"
+      description="Codes, activités, collaborateurs, rythmes, imputations, synchronisation, cohérence, export IA, import"
       surClic={onBasculer}
       deplie={ouvert}
-      droite={
-        <span style={stylesV2.boutonGroupe}>{ouvert ? "Replier ▴" : "Afficher les 7 réglages ▾"}</span>
-      }
+      droite={<span style={stylesV2.boutonGroupe}>{ouvert ? "Replier ▴" : "Afficher le paramétrage ▾"}</span>}
     >
       {ouvert && (
         <div style={stylesV2.grille}>
@@ -1283,9 +929,12 @@ function BlocParametrage({
           <CarteCompacte icone="🧩" titre="Gestion des activités" description="Activités du BE et codes d'imputation associés" onClick={() => aller("/admin/Gestion-activites")} />
           <CarteCompacte icone="👥" titre="Collaborateurs" description="Créer, modifier et gérer les collaborateurs" onClick={() => aller("/admin/collaborateurs")} />
           <CarteCompacte icone="⏰" titre="Rythmes horaires" description="Profils, rythmes et bases horaires" onClick={() => aller("/admin/profils-horaires")} />
+          <CarteCompacte icone="🔄" titre="Synchronisation Suivi d'affaire" description="Importer le classeur Excel du BE, aperçu et journal" onClick={() => aller("/admin/synchro-suivi-affaires")} />
+          <CarteCompacte icone="🩺" titre="Cohérence" description="Codes sans activité, rythmes manquants, numéros d'affaire inconnus…" onClick={() => aller("/admin/coherence")} />
           <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
           <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
           <CarteCompacte icone="📥" titre="Import historique" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
+          <CarteCompacte icone="🧹" titre="Remise à zéro" description="Effacer toutes les données d'activité, garder collaborateurs et paramétrage" onClick={() => aller("/admin/reinitialisation")} />
         </div>
       )}
     </Groupe>
@@ -1296,739 +945,69 @@ function BlocParametrage({
    UTILITAIRES
 ================================================================ */
 
-function obtenirLundi(
-  date: Date
-) {
-  const resultat =
-    new Date(date);
-
-  const jour =
-    resultat.getDay();
-
-  const difference =
-    jour === 0
-      ? -6
-      : 1 - jour;
-
-  resultat.setDate(
-    resultat.getDate() +
-      difference
-  );
-
-  resultat.setHours(
-    0,
-    0,
-    0,
-    0
-  );
-
+function obtenirLundi(date: Date) {
+  const resultat = new Date(date);
+  const jour = resultat.getDay();
+  resultat.setDate(resultat.getDate() + (jour === 0 ? -6 : 1 - jour));
+  resultat.setHours(0, 0, 0, 0);
   return resultat;
 }
 
-function formatDateSQL(
-  date: Date
-) {
-  const annee =
-    date.getFullYear();
-
-  const mois = String(
-    date.getMonth() + 1
-  ).padStart(2, "0");
-
-  const jour = String(
-    date.getDate()
-  ).padStart(2, "0");
-
-  return `${annee}-${mois}-${jour}`;
+function formatDateSQL(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function formaterSemaine(
-  dateSQL: string
-) {
-  if (!dateSQL) {
-    return "";
-  }
-
-  const date =
-    new Date(
-      `${dateSQL}T00:00:00`
-    );
-
-  const jour =
-    date.getDate();
-
-  const mois =
-    date.toLocaleDateString(
-      "fr-FR",
-      {
-        month: "short",
-      }
-    );
-
-  return `${jour} ${mois}`;
+function formaterSemaine(dateSQL: string) {
+  if (!dateSQL) return "";
+  const date = new Date(`${dateSQL}T00:00:00`);
+  return `${date.getDate()} ${date.toLocaleDateString("fr-FR", { month: "short" })}`;
 }
 
-function formaterDateLongue(
-  dateSQL: string
-) {
-  if (!dateSQL) {
-    return "";
-  }
-
-  const date =
-    new Date(
-      `${dateSQL}T00:00:00`
-    );
-
-  return date.toLocaleDateString(
-    "fr-FR",
-    {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }
-  );
+function formaterDateLongue(dateSQL: string) {
+  if (!dateSQL) return "";
+  return new Date(`${dateSQL}T00:00:00`).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-function numeroSemaine(
-  dateSQL: string
-) {
-  if (!dateSQL) {
-    return "";
-  }
-
-  const date =
-    new Date(
-      `${dateSQL}T00:00:00`
-    );
-
-  /*
-   * Calcul ISO de la semaine.
-   */
-  const jeudi =
-    new Date(date);
-
-  jeudi.setDate(
-    date.getDate() +
-      4 -
-      (date.getDay() || 7)
-  );
-
-  const debutAnnee =
-    new Date(
-      jeudi.getFullYear(),
-      0,
-      1
-    );
-
-  return String(
-    Math.ceil(
-      (((jeudi.getTime() -
-        debutAnnee.getTime()) /
-        86400000) +
-        1) /
-        7
-    )
-  ).padStart(2, "0");
+/* Numéro de semaine ISO */
+function numeroSemaine(dateSQL: string) {
+  if (!dateSQL) return "";
+  const date = new Date(`${dateSQL}T00:00:00`);
+  const jeudi = new Date(date);
+  jeudi.setDate(date.getDate() + 4 - (date.getDay() || 7));
+  const debutAnnee = new Date(jeudi.getFullYear(), 0, 1);
+  return String(Math.ceil(((jeudi.getTime() - debutAnnee.getTime()) / 86400000 + 1) / 7)).padStart(2, "0");
 }
 
-function formatHeures(
-  valeur:
-    | number
-    | null
-    | undefined
-) {
-  const nombre =
-    Number(valeur ?? 0);
-
-  return nombre.toLocaleString(
-    "fr-FR",
-    {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    }
-  );
+function formatHeures(valeur: number | null | undefined) {
+  return Number(valeur ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-function estFeuilleComplete(
-  feuille: Feuille
-) {
-  const heures =
-    Number(
-      feuille.total_heures ?? 0
-    );
-
-  const theorique =
-    Number(
-      feuille.total_theorique ?? 0
-    );
-
-  if (theorique <= 0) {
-    return heures > 0;
-  }
-
-  return (
-    heures >=
-    theorique - 0.01
-  );
+function estFeuilleComplete(feuille: Feuille) {
+  const heures = Number(feuille.total_heures ?? 0);
+  const theorique = Number(feuille.total_theorique ?? 0);
+  if (theorique <= 0) return heures > 0;
+  return heures >= theorique - 0.01;
 }
 
 /* ===============================================================
    STYLES
 ================================================================ */
 
-const styles: Record<
-  string,
-  CSSProperties
-> = {
-  page: {
-    minHeight: "100vh",
-    background: "#f5f5f5",
-    fontFamily:
-      "Calibri, Arial, sans-serif",
-    color: "#222",
-  },
-
-  header: {
-    background: "#c00000",
-    color: "white",
-    padding:
-      "24px 30px 26px 30px",
-    boxShadow:
-      "0 2px 10px rgba(0,0,0,0.12)",
-  },
-
-  headerInner: {
-    maxWidth: 1200,
-    margin: "0 auto",
-    display: "flex",
-    justifyContent:
-      "space-between",
-    alignItems: "center",
-    gap: 20,
-  },
-
-  logo: {
-    fontSize: 34,
-    fontWeight: 800,
-    letterSpacing:
-      "-0.5px",
-  },
-
-  headerSubtitle: {
-    marginTop: 4,
-    fontSize: 16,
-    opacity: 0.9,
-  },
-
-  headerRole: {
-    background:
-      "rgba(255,255,255,0.15)",
-    border:
-      "1px solid rgba(255,255,255,0.3)",
-    borderRadius: 20,
-    padding:
-      "8px 14px",
-    fontSize: 13,
-    fontWeight: 700,
-  },
-
-  container: {
-    maxWidth: 1200,
-    margin: "0 auto",
-    padding:
-      "30px 30px 60px 30px",
-  },
-
-  loadingContainer: {
-    maxWidth: 1200,
-    margin: "0 auto",
-    padding: 40,
-    textAlign: "center",
-    color: "#666",
-  },
-
-  loadingSpinner: {
-    width: 28,
-    height: 28,
-    margin: "0 auto",
-    border:
-      "3px solid #eeeeee",
-    borderTop:
-      "3px solid #c00000",
-    borderRadius: "50%",
-    animation:
-      "spin 0.8s linear infinite",
-  },
-
-  welcome: {
-    display: "flex",
-    justifyContent:
-      "space-between",
-    alignItems: "center",
-    gap: 20,
-    flexWrap: "wrap",
-    marginBottom: 30,
-  },
-
-  welcomeTitle: {
-    margin: 0,
-    fontSize: 34,
-    color: "#222",
-    fontWeight: 800,
-    letterSpacing:
-      "-0.5px",
-  },
-
-  welcomeText: {
-    margin:
-      "8px 0 0 0",
-    color: "#666",
-    fontSize: 16,
-  },
-
-  weekBadge: {
-    background: "white",
-    border:
-      "1px solid #e5e5e5",
-    borderRadius: 10,
-    padding:
-      "11px 16px",
-    boxShadow:
-      "0 2px 6px rgba(0,0,0,0.05)",
-    display: "flex",
-    flexDirection:
-      "column",
-    gap: 3,
-    minWidth: 135,
-  },
-
-  weekBadgeLabel: {
-    color: "#888",
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing:
-      "0.5px",
-  },
-
-  sectionHeader: {
-    marginBottom: 18,
-    marginTop: 8,
-  },
-
-  sectionTitle: {
-    margin: 0,
-    fontSize: 23,
-    color: "#222",
-    fontWeight: 800,
-  },
-
-  sectionDescription: {
-    margin:
-      "4px 0 0 0",
-    color: "#777",
-    fontSize: 14,
-  },
-
-  personalStatus: {
-    background: "white",
-    borderRadius: 12,
-    borderLeft:
-      "5px solid #c00000",
-    boxShadow:
-      "0 2px 8px rgba(0,0,0,0.08)",
-    padding:
-      "18px 20px",
-    marginBottom: 20,
-    display: "flex",
-    justifyContent:
-      "space-between",
-    alignItems: "center",
-    gap: 20,
-    flexWrap: "wrap",
-  },
-
-  personalStatusLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 14,
-  },
-
-  personalIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 10,
-    background: "#f8e8e8",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 23,
-  },
-
-  personalTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-  },
-
-  personalDescription: {
-    color: "#666",
-    fontSize: 14,
-    marginTop: 3,
-  },
-
-  personalStatusRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 14,
-    flexWrap: "wrap",
-  },
-
-  statusBadge: {
-    borderRadius: 20,
-    padding:
-      "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-  },
-
-  statusComplete: {
-    background: "#e9f6eb",
-    color: "#26712b",
-  },
-
-  statusIncomplete: {
-    background: "#fff2e5",
-    color: "#c76500",
-  },
-
-  statusMissing: {
-    background: "#fdeaea",
-    color: "#c00000",
-    borderRadius: 20,
-    padding:
-      "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-  },
-
-  hoursValue: {
-    fontWeight: 800,
-    fontSize: 16,
-  },
-
-  hoursTheoretical: {
-    color: "#999",
-    fontWeight: 400,
-  },
-
-  smallPrimaryButton: {
-    border: "none",
-    background: "#c00000",
-    color: "white",
-    borderRadius: 7,
-    padding:
-      "8px 13px",
-    cursor: "pointer",
-    fontWeight: 700,
-    fontSize: 13,
-  },
-
-  cardGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: 20,
-    marginBottom: 38,
-  },
-
-  card: {
-    background: "white",
-    borderRadius: 12,
-    padding: 24,
-    cursor: "pointer",
-    borderLeft:
-      "5px solid #c00000",
-    boxShadow:
-      "0 2px 8px rgba(0,0,0,0.07)",
-    transition:
-      "all 0.15s ease",
-    minHeight: 150,
-    display: "flex",
-    flexDirection:
-      "column",
-    justifyContent:
-      "space-between",
-    outline: "none",
-  },
-
-  cardIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 10,
-    background: "#f8e8e8",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 24,
-    marginBottom: 16,
-  },
-
-  cardTitle: {
-    margin: 0,
-    color: "#222",
-    fontSize: 20,
-    fontWeight: 800,
-  },
-
-  cardDescription: {
-    margin:
-      "8px 0 0 0",
-    color: "#666",
-    fontSize: 14,
-    lineHeight: 1.5,
-  },
-
-  cardLink: {
-    marginTop: 18,
-    color: "#c00000",
-    fontSize: 13,
-    fontWeight: 700,
-  },
-
-  kpiGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(200px, 1fr))",
-    gap: 16,
-    marginBottom: 25,
-  },
-
-  kpi: {
-    background: "white",
-    borderRadius: 11,
-    padding:
-      "18px 20px",
-    boxShadow:
-      "0 2px 8px rgba(0,0,0,0.07)",
-  },
-
-  kpiTop: {
-    display: "flex",
-    justifyContent:
-      "space-between",
-  },
-
-  kpiIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 9,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 18,
-  },
-
-  kpiValue: {
-    fontSize: 27,
-    fontWeight: 800,
-    marginTop: 12,
-  },
-
-  kpiLabel: {
-    color: "#777",
-    fontSize: 13,
-    marginTop: 2,
-  },
-
-  monitorCard: {
-    background: "white",
-    borderRadius: 12,
-    boxShadow:
-      "0 2px 8px rgba(0,0,0,0.07)",
-    marginBottom: 38,
-    overflow: "hidden",
-  },
-
-  monitorHeader: {
-    padding:
-      "18px 20px",
-    display: "flex",
-    justifyContent:
-      "space-between",
-    alignItems: "center",
-    gap: 15,
-    borderBottom:
-      "1px solid #eeeeee",
-  },
-
-  monitorTitle: {
-    fontSize: 19,
-    fontWeight: 800,
-  },
-
-  monitorSubtitle: {
-    color: "#888",
-    fontSize: 13,
-    marginTop: 3,
-  },
-
-  monitorCount: {
-    width: 34,
-    height: 34,
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 800,
-    fontSize: 14,
-  },
-
-  monitorCountGreen: {
-    background: "#e9f6eb",
-    color: "#26712b",
-  },
-
-  monitorCountOrange: {
-    background: "#fff1df",
-    color: "#c76500",
-  },
-
-  noAlert: {
-    padding: 20,
-    display: "flex",
-    alignItems: "center",
-    gap: 13,
-    color: "#555",
-    fontSize: 14,
-  },
-
-  noAlertIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: "50%",
-    background: "#e9f6eb",
-    color: "#26712b",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 800,
-  },
-
-  monitorRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 13,
-    padding:
-      "14px 20px",
-    borderBottom:
-      "1px solid #f0f0f0",
-  },
-
-  monitorStatus: {
-    width: 32,
-    height: 32,
-    flexShrink: 0,
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 800,
-    fontSize: 14,
-  },
-
-  monitorStatusMissing: {
-    background: "#fdeaea",
-    color: "#c00000",
-  },
-
-  monitorStatusIncomplete: {
-    background: "#fff1df",
-    color: "#c76500",
-  },
-
-  monitorPerson: {
-    flex: 1,
-    display: "flex",
-    flexDirection:
-      "column",
-    gap: 2,
-    minWidth: 0,
-  },
-
-  monitorButton: {
-    border: "none",
-    background: "transparent",
-    color: "#c00000",
-    fontWeight: 700,
-    fontSize: 13,
-    cursor: "pointer",
-    padding:
-      "7px 4px",
-  },
-
-  seeAllButton: {
-    width: "100%",
-    background: "#fafafa",
-    border: "none",
-    borderTop:
-      "1px solid #eeeeee",
-    color: "#c00000",
-    padding: 13,
-    fontWeight: 700,
-    cursor: "pointer",
-    fontSize: 13,
-  },
-
-  errorCard: {
-    background: "white",
-    borderRadius: 12,
-    padding: 25,
-    display: "flex",
-    gap: 18,
-    alignItems:
-      "flex-start",
-    borderLeft:
-      "5px solid #c00000",
-    boxShadow:
-      "0 2px 8px rgba(0,0,0,0.08)",
-  },
-
-  errorIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: "50%",
-    background: "#fdeaea",
-    color: "#c00000",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 800,
-    fontSize: 20,
-    flexShrink: 0,
-  },
-
-  errorTitle: {
-    fontWeight: 800,
-    fontSize: 18,
-    marginBottom: 5,
-  },
-
-  errorText: {
-    color: "#666",
-    fontSize: 14,
-    marginBottom: 15,
-  },
-
-  primaryButton: {
-    background: "#c00000",
-    color: "white",
-    border: "none",
-    borderRadius: 7,
-    padding:
-      "9px 15px",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
+const styles: Record<string, CSSProperties> = {
+  page: { minHeight: "100vh", background: "#f5f5f5", fontFamily: "Calibri, Arial, sans-serif", color: "#222" },
+  header: { background: "#c00000", color: "white", padding: "24px 30px 26px 30px", boxShadow: "0 2px 10px rgba(0,0,0,0.12)" },
+  headerInner: { maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20 },
+  logo: { fontSize: 34, fontWeight: 800, letterSpacing: "-0.5px" },
+  headerSubtitle: { marginTop: 4, fontSize: 16, opacity: 0.9 },
+  headerRole: { background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 20, padding: "8px 14px", fontSize: 13, fontWeight: 700 },
+  container: { maxWidth: 1200, margin: "0 auto", padding: "30px 30px 60px 30px" },
+  loadingContainer: { maxWidth: 1200, margin: "0 auto", padding: 40, textAlign: "center", color: "#666" },
+  loadingSpinner: { width: 28, height: 28, margin: "0 auto", border: "3px solid #eeeeee", borderTop: "3px solid #c00000", borderRadius: "50%", animation: "spin 0.8s linear infinite" },
+  errorCard: { background: "white", borderRadius: 12, padding: 25, display: "flex", gap: 18, alignItems: "flex-start", borderLeft: "5px solid #c00000", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" },
+  errorIcon: { width: 40, height: 40, borderRadius: "50%", background: "#fdeaea", color: "#c00000", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 20, flexShrink: 0 },
+  errorTitle: { fontWeight: 800, fontSize: 18, marginBottom: 5 },
+  errorText: { color: "#666", fontSize: 14, marginBottom: 15 },
+  primaryButton: { background: "#c00000", color: "white", border: "none", borderRadius: 7, padding: "9px 15px", fontWeight: 700, cursor: "pointer" },
 };
 
 /* ===============================================================

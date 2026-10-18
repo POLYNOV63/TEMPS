@@ -70,6 +70,11 @@ export const normaliserCodeGrille = (code: string) => String(code ?? "").trim().
 
 export const estDiversType = (type: string) => type.toUpperCase() === "DIVERS";
 
+/* Plusieurs lignes « Divers » par semaine : chacune est identifiée (dans la grille seulement)
+   par sa description, rangée dans le numéro d'affaire. Ce repère n'est jamais enregistré :
+   une ligne Divers est sauvegardée sans numéro d'affaire. */
+export const etiquetteDivers = (description: string) => `#${String(description ?? "").trim().toLowerCase()}`;
+
 /* « 3,5 », « 3.5 », « 3h30 », « 3h », « 0,25 » → nombre d'heures. Tout le reste → 0. */
 export function lireHeures(texte: string): number {
   const t = String(texte ?? "").trim().toLowerCase().replace(",", ".");
@@ -201,6 +206,7 @@ export function problemesLigne(l: LigneGrille, groupes: GroupeActiviteGrille[] =
   if (!divers && !/^\d{4}$/.test(l.numeroAffaire.trim())) p.push("numéro d'affaire à 4 chiffres");
   if (!divers && !l.activiteId) p.push("activité manquante");
   if (!l.code) p.push("code manquant");
+  if (divers && !l.description.trim()) p.push("description obligatoire pour une ligne Divers");
 
   if (l.heures.trim() === "") p.push("heures manquantes");
   else if (lireHeures(l.heures) <= 0) p.push("heures à renseigner (supérieures à 0)");
@@ -233,7 +239,9 @@ export function alertesSemaine(
       );
       if (!commencee) continue;
 
-      const nom = estDiversType(ligne.typeAffaire) ? "Divers" : `${ligne.typeAffaire} ${ligne.numeroAffaire || "(sans numéro)"}`;
+      const nom = estDiversType(ligne.typeAffaire)
+        ? `Divers${ligne.description.trim() ? ` « ${ligne.description.trim()} »` : ""}`
+        : `${ligne.typeAffaire} ${ligne.numeroAffaire || "(sans numéro)"}`;
 
       for (const message of problemesLigne(ligne, groupesParType(ligne.typeAffaire))) {
         const cle = `${nom}|${message}`;

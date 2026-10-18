@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
+import { supabase } from "@/lib/supabase";
 import {
   chargerAffaires,
   chargerAnnuaire,
@@ -14,6 +15,9 @@ import {
   chargerMoi,
   chargerPlanifie,
   chargerRealise,
+  chargerTout,
+  changerAuPlanning,
+  type AffaireP,
   type Moi,
 } from "@/lib/pilotageDonnees";
 import {
@@ -27,7 +31,6 @@ import {
   nomCollab,
   planifieParAffaire,
   totauxAffaire,
-  type Affaire,
   type Collab,
   type Genre,
   type Imputation,
@@ -43,14 +46,20 @@ import {
    administrateurs peuvent déclarer ou modifier une affaire.
 ================================================================ */
 
+type DetailActivite = { id: string; nom: string; ordre: number; chiffre: number; realise: number };
+
 type Ligne = {
-  affaire: Affaire;
+  affaire: AffaireP;
+  client: string | null;
+  activites: DetailActivite[];
   totaux: Totaux;
   planning: { planifie: number; fin: string | null; nb: number };
   etat: { genre: Genre; texte: string };
 };
 
-type FiltreStatut = "EN_COURS" | "EN_ATTENTE" | "TOUS" | "DEPASSEMENT";
+type FiltreStatut = "ACTIVES" | "EN_COURS" | "EN_ATTENTE";
+type FiltrePlanning = "TOUS" | "AU" | "HORS";
+type ColonneTri = "numero" | "designation" | "client" | "imputation" | "resp" | "echeance" | "chiffre" | "realise" | "reste";
 type FiltreType = "TOUS" | "DBE" | "CBE";
 
 function normaliser(texte: string) {
@@ -61,7 +70,9 @@ function normaliser(texte: string) {
 }
 
 function PortefeuilleContenu() {
-  const [affaires, setAffaires] = useState<Affaire[]>([]);
+  const [affaires, setAffaires] = useState<AffaireP[]>([]);
+  const [planningEnCours, setPlanningEnCours] = useState("");
+  const [erreurPlanning, setErreurPlanning] = useState("");
   const [charges, setCharges] = useState<Awaited<ReturnType<typeof chargerCharges>>>([]);
   const [realise, setRealise] = useState<Realise[]>([]);
   const [planifies, setPlanifies] = useState<Map<string, { planifie: number; fin: string | null; nb: number }>>(new Map());
@@ -72,9 +83,22 @@ function PortefeuilleContenu() {
   const [erreur, setErreur] = useState("");
 
   const [filtreType, setFiltreType] = useState<FiltreType>("TOUS");
-  const [filtreStatut, setFiltreStatut] = useState<FiltreStatut>("EN_COURS");
-  const [afficherClos, setAfficherClos] = useState(false);
+  const [filtreStatut, setFiltreStatut] = useState<FiltreStatut>("ACTIVES");
+  const [filtrePlanning, setFiltrePlanning] = useState<FiltrePlanning>("TOUS");
+  const [depassementSeul, setDepassementSeul] = useState(false);
+  const [filtreImputation, setFiltreImputation] = useState("");
+  const [filtreClient, setFiltreClient] = useState("");
+  const [filtreResp, setFiltreResp] = useState("");
+  const [tri, setTri] = useState<{ col: ColonneTri; sens: 1 | -1 }>({ col: "echeance", sens: 1 });
+  const [inactivesOuvertes, setInactivesOuvertes] = useState(false);
+  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  const [nomsActivites, setNomsActivites] = useState<Map<string, { nom: string; ordre: number }>>(new Map());
+  const [clientsParAffaire, setClientsParAffaire] = useState<{ cbe: Map<string, string>; dbe: Map<string, string> }>({
+    cbe: new Map(),
+    dbe: new Map(),
+  });
   const [recherche, setRecherche] = useState("");
+  const [toutesAlertes, setToutesAlertes] = useState(false);
 
   useEffect(() => {
     let actif = true;
@@ -82,7 +106,7 @@ function PortefeuilleContenu() {
     async function charger() {
       try {
         const [a, c, r, an, im, m, pl] = await Promise.all([
-          chargerAffaires(),
+          chargerAffaires({ horsPlanning: true }),
           chargerCharges(),
           chargerRealise(),
           chargerAnnuaire(),
@@ -100,6 +124,38 @@ function PortefeuilleContenu() {
         setImputations(im);
         setMoi(m);
         setPlanifies(planifieParAffaire(pl.affectations, pl.jours, aujourdhuiISO()));
+
+        const act = await supabase.from("activites").select("id,nom,ordre_affichage");
+        if (actif && !act.error) {
+          setNomsActivites(
+            new Map(((act.data ?? []) as { id: string; nom: string; ordre_affichage: number }[]).map((x) => [x.id, { nom: x.nom, ordre: x.ordre_affichage }]))
+          );
+        }
+
+        // Client (nom abrégé) : vient du Suivi d'affaire BE. Absent si la synchro n'a jamais tourné.
+        try {
+          const [sl, sc] = await Promise.all([
+            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string }>((de, a) =>
+              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").not("client_id", "is", null).order("cle").range(de, a)
+            ),
+            chargerTout<{ id: string; nom_abrege: string }>((de, a) =>
+              supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(de, a)
+            ),
+          ]);
+          if (!actif) return;
+          const noms = new Map(sc.map((c) => [c.id, c.nom_abrege]));
+          const cbe = new Map<string, string>();
+          const dbe = new Map<string, string>();
+          for (const l of sl) {
+            const nom = noms.get(l.client_id);
+            if (!nom) continue;
+            if (l.base_affaire && (l.genre === "BASE" || !cbe.has(l.base_affaire))) cbe.set(l.base_affaire, nom);
+            if (l.base_devis && !dbe.has(l.base_devis)) dbe.set(l.base_devis, nom);
+          }
+          setClientsParAffaire({ cbe, dbe });
+        } catch {
+          /* pas de copie du classeur : la colonne Client reste vide */
+        }
       } catch (e) {
         if (actif) setErreur(e instanceof Error ? e.message : "Impossible de charger le portefeuille.");
       } finally {
@@ -139,38 +195,129 @@ function PortefeuilleContenu() {
         planningActif: planifies.size > 0,
       };
 
-      return { affaire, totaux, planning: p, etat: etatAffaire(affaire, totaux, aujourdhui, planning) };
+      // Chiffré et réalisé par activité
+      const detail = new Map<string, DetailActivite>();
+      const ligneActivite = (id: string) => {
+        if (!detail.has(id)) {
+          const a = nomsActivites.get(id);
+          detail.set(id, { id, nom: a?.nom ?? "Activité", ordre: a?.ordre ?? 999, chiffre: 0, realise: 0 });
+        }
+        return detail.get(id)!;
+      };
+      for (const c of parAffaireCharges.get(affaire.id) ?? []) {
+        const d = ligneActivite(c.activite_id);
+        d.chiffre += Number(c.heures) || 0;
+        d.realise += Number(c.realise_initial) || 0;
+      }
+      for (const r of parAffaireRealise.get(cleAffaire(affaire.type, affaire.numero)) ?? []) {
+        ligneActivite(r.activite_id ?? "?").realise += Number(r.heures) || 0;
+      }
+      const activites = [...detail.values()]
+        .map((d) => (d.id === "?" ? { ...d, nom: "Sans activité" } : d))
+        .sort((x, y) => x.ordre - y.ordre);
+
+      const num = affaire.numero.replace(/^0+/, "");
+      const client = (affaire.type === "CBE" ? clientsParAffaire.cbe.get(num) : clientsParAffaire.dbe.get(num)) ?? null;
+
+      return { affaire, client, activites, totaux, planning: p, etat: etatAffaire(affaire, totaux, aujourdhui, planning) };
     });
-  }, [affaires, charges, realise, planifies, imputations]);
+  }, [affaires, charges, realise, planifies, imputations, clientsParAffaire, nomsActivites]);
 
   const planningActif = planifies.size > 0;
 
-  const visibles = useMemo(() => {
+  const estInactive = (a: AffaireP) => a.statut === "LIVREE" || a.statut === "ABANDONNEE";
+
+  // Filtres communs aux deux tableaux (actives et inactives)
+  const filtrees = useMemo(() => {
     const q = normaliser(recherche.trim());
 
-    return lignes
-      .filter(({ affaire, totaux }) => {
-        if (filtreType !== "TOUS" && affaire.type !== filtreType) return false;
+    return lignes.filter(({ affaire, totaux, client }) => {
+      if (filtreType !== "TOUS" && affaire.type !== filtreType) return false;
+      if (q && !normaliser(`${affaire.numero} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
+      if (filtreImputation && (affaire.imputation ?? "") !== filtreImputation) return false;
+      if (filtreClient && (client ?? "") !== filtreClient) return false;
+      if (filtreResp && affaire.responsable_id !== filtreResp) return false;
+      if (filtrePlanning === "AU" && !affaire.au_planning) return false;
+      if (filtrePlanning === "HORS" && affaire.au_planning) return false;
+      if (depassementSeul && !(totaux.depassement > 0)) return false;
+      return true;
+    });
+  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul]);
 
-        if (q && !normaliser(`${affaire.numero} ${affaire.designation}`).includes(q)) return false;
-
-        if (filtreStatut === "DEPASSEMENT") return totaux.depassement > 0;
-        if (filtreStatut === "EN_COURS") return affaire.statut === "EN_COURS";
-        if (filtreStatut === "EN_ATTENTE") return affaire.statut === "EN_ATTENTE";
-
-        // Tous : le courant seulement, sauf si l'on demande les affaires terminées
-        if (!afficherClos && (affaire.statut === "LIVREE" || affaire.statut === "ABANDONNEE")) {
-          return false;
+  const trier = useCallback(
+    (liste: Ligne[]) => {
+      const valeur = (l: Ligne): string | number => {
+        switch (tri.col) {
+          case "numero": return Number(l.affaire.numero) || 0;
+          case "designation": return normaliser(l.affaire.designation);
+          case "client": return normaliser(l.client ?? "~");
+          case "imputation": return l.affaire.imputation ?? "~";
+          case "resp": return normaliser(nomCollab(collabs.get(l.affaire.responsable_id)));
+          case "echeance": return l.affaire.echeance ?? "9999-12-31";
+          case "chiffre": return l.totaux.chiffre;
+          case "realise": return l.totaux.realise;
+          case "reste": return l.totaux.reste;
         }
-
-        return true;
-      })
-      .sort((a, b) => {
-        const ea = a.affaire.echeance ?? "9999-12-31";
-        const eb = b.affaire.echeance ?? "9999-12-31";
-        return ea.localeCompare(eb) || b.affaire.numero.localeCompare(a.affaire.numero, "fr", { numeric: true });
+      };
+      return [...liste].sort((x, y) => {
+        const vx = valeur(x);
+        const vy = valeur(y);
+        const c = typeof vx === "number" && typeof vy === "number" ? vx - vy : String(vx).localeCompare(String(vy), "fr");
+        return c * tri.sens || Number(y.affaire.numero) - Number(x.affaire.numero);
       });
-  }, [lignes, filtreType, filtreStatut, afficherClos, recherche]);
+    },
+    [tri, collabs]
+  );
+
+  const actives = useMemo(
+    () =>
+      trier(
+        filtrees.filter(({ affaire }) => {
+          if (estInactive(affaire)) return false;
+          if (filtreStatut === "EN_COURS") return affaire.statut === "EN_COURS";
+          if (filtreStatut === "EN_ATTENTE") return affaire.statut === "EN_ATTENTE";
+          return true;
+        })
+      ),
+    [filtrees, filtreStatut, trier]
+  );
+
+  const inactives = useMemo(() => trier(filtrees.filter(({ affaire }) => estInactive(affaire))), [filtrees, trier]);
+
+  // Listes des menus de filtre (seulement les valeurs présentes)
+  const choixClients = useMemo(
+    () => [...new Set(lignes.map((l) => l.client).filter((c): c is string => Boolean(c)))].sort((x, y) => x.localeCompare(y, "fr")),
+    [lignes]
+  );
+  const choixImputations = useMemo(
+    () => [...new Set(lignes.map((l) => l.affaire.imputation).filter((c): c is string => Boolean(c)))].sort(),
+    [lignes]
+  );
+  const choixResp = useMemo(() => {
+    const ids = [...new Set(lignes.map((l) => l.affaire.responsable_id))];
+    return ids
+      .map((id) => ({ id, nom: nomCollab(collabs.get(id)) }))
+      .sort((x, y) => x.nom.localeCompare(y.nom, "fr"));
+  }, [lignes, collabs]);
+
+  const filtresActifs =
+    filtreType !== "TOUS" || recherche !== "" || filtreImputation !== "" || filtreClient !== "" || filtreResp !== "" ||
+    filtrePlanning !== "TOUS" || depassementSeul || filtreStatut !== "ACTIVES";
+
+  function reinitialiserFiltres() {
+    setFiltreType("TOUS");
+    setRecherche("");
+    setFiltreImputation("");
+    setFiltreClient("");
+    setFiltreResp("");
+    setFiltrePlanning("TOUS");
+    setDepassementSeul(false);
+    setFiltreStatut("ACTIVES");
+  }
+
+  function changerTri(col: ColonneTri) {
+    setTri((t) => (t.col === col ? { col, sens: t.sens === 1 ? -1 : 1 } : { col, sens: 1 }));
+  }
 
   const synthese = useMemo(() => {
     const enCours = lignes.filter((l) => l.affaire.statut === "EN_COURS");
@@ -187,8 +334,9 @@ function PortefeuilleContenu() {
   }, [lignes]);
 
   const alertes = useMemo(() => {
+    // Une affaire hors planning n'est pas encore pilotée : pas d'alerte de planning pour elle.
     const actives = lignes.filter(
-      (l) => l.affaire.statut === "EN_COURS" || l.totaux.depassement > 0
+      (l) => l.affaire.au_planning && (l.affaire.statut === "EN_COURS" || l.totaux.depassement > 0)
     );
 
     return {
@@ -199,14 +347,80 @@ function PortefeuilleContenu() {
 
   function LigneAlerte({ l }: { l: Ligne }) {
     return (
-      <li style={{ padding: "10px 0", borderTop: `1px solid ${C.ligne}`, fontSize: 14 }}>
-        <Link href={`/pilotage/affaire/${l.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+      <li style={{ fontSize: 14, lineHeight: 1.4 }}>
+        <Link href={`/pilotage/affaire/${l.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>
           {l.affaire.type} {l.affaire.numero}
         </Link>{" "}
-        — {l.etat.texte}
+        <span style={{ color: C.gris }}>— {l.etat.texte}</span>
       </li>
     );
   }
+
+  const LIMITE_ALERTES = 6;
+
+  function BlocAlertes({ titre, genre, liste, vide }: { titre: string; genre: Genre; liste: Ligne[]; vide: string }) {
+    const montrees = toutesAlertes ? liste : liste.slice(0, LIMITE_ALERTES);
+    return (
+      <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+        <Pastille genre={genre}>
+          {titre} · {liste.length}
+        </Pastille>
+        {liste.length === 0 ? (
+          <p style={{ margin: "8px 0 0", fontSize: 14, color: C.gris }}>{vide}</p>
+        ) : (
+          <ul
+            style={{
+              listStyle: "none",
+              margin: "8px 0 0",
+              padding: 0,
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+              gap: "6px 20px",
+            }}
+          >
+            {montrees.map((l) => (
+              <LigneAlerte key={l.affaire.id} l={l} />
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  const alertesMasquees =
+    Math.max(0, alertes.critiques.length - LIMITE_ALERTES) + Math.max(0, alertes.surveiller.length - LIMITE_ALERTES);
+
+  const nbHorsPlanning = lignes.filter(
+    (l) => !l.affaire.au_planning && l.affaire.statut !== "LIVREE" && l.affaire.statut !== "ABANDONNEE"
+  ).length;
+
+  async function basculerPlanning(l: Ligne) {
+    const auPlanning = !l.affaire.au_planning;
+    setErreurPlanning("");
+
+    if (!auPlanning && l.planning.nb > 0) {
+      setErreurPlanning(
+        `${l.affaire.type} ${l.affaire.numero} a encore des affectations à venir : retirez-les dans le planning avant de la sortir du planning.`
+      );
+      return;
+    }
+
+    setPlanningEnCours(l.affaire.id);
+    try {
+      await changerAuPlanning(l.affaire.id, auPlanning);
+      setAffaires((liste) => liste.map((a) => (a.id === l.affaire.id ? { ...a, au_planning: auPlanning } : a)));
+    } catch (e) {
+      setErreurPlanning(e instanceof Error ? e.message : "Modification impossible.");
+    } finally {
+      setPlanningEnCours("");
+    }
+  }
+
+  // Tableau compact : chiffres et dates sur une seule ligne
+  const thNum: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap", padding: "10px 8px" };
+  const tdNum: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap", padding: "10px 8px" };
+  const thCourt: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "10px 8px" };
+  const tdCourt: CSSProperties = { ...page.td, whiteSpace: "nowrap", padding: "10px 8px" };
 
   const bouton = (actif: boolean): CSSProperties => ({
     background: actif ? C.rouge : "#ffffff",
@@ -222,11 +436,203 @@ function PortefeuilleContenu() {
   });
 
   const statutsFiltres: { valeur: FiltreStatut; libelle: string }[] = [
+    { valeur: "ACTIVES", libelle: "Toutes les actives" },
     { valeur: "EN_COURS", libelle: "En cours" },
     { valeur: "EN_ATTENTE", libelle: "En attente" },
-    { valeur: "TOUS", libelle: "Tous" },
-    { valeur: "DEPASSEMENT", libelle: "Dépassements" },
   ];
+
+  const selectFiltre: CSSProperties = { ...page.entrees, width: "auto", minWidth: 150, maxWidth: 240 };
+
+  function EnTeteTri({ col, libelle, num }: { col: ColonneTri; libelle: string; num?: boolean }) {
+    const actif = tri.col === col;
+    return (
+      <th style={num ? thNum : thCourt} aria-sort={actif ? (tri.sens === 1 ? "ascending" : "descending") : "none"}>
+        <button
+          type="button"
+          onClick={() => changerTri(col)}
+          title="Trier"
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            color: actif ? C.rougeFonce : "inherit",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {libelle} {actif ? (tri.sens === 1 ? "↑" : "↓") : <span style={{ opacity: 0.35 }}>↕</span>}
+        </button>
+      </th>
+    );
+  }
+
+  function basculerDetail(id: string) {
+    setOuvertes((o) => {
+      const n = new Set(o);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  const gris = (t: string) => <span style={{ color: C.gris }}>{t}</span>;
+  const petit: CSSProperties = { fontSize: 12, color: C.gris, marginTop: 2 };
+
+  function rendreTableau(liste: Ligne[]) {
+    const nbColonnes = 10;
+    return (
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+        <thead>
+          <tr>
+            <EnTeteTri col="numero" libelle="N°" />
+            <EnTeteTri col="designation" libelle="Descriptif" />
+            <EnTeteTri col="client" libelle="Client" />
+            <EnTeteTri col="resp" libelle="Resp." />
+            <EnTeteTri col="echeance" libelle="Échéance" />
+            <EnTeteTri col="chiffre" libelle="Chiffré" num />
+            <EnTeteTri col="realise" libelle="Réalisé" num />
+            <EnTeteTri col="reste" libelle="Reste" num />
+            <th style={thNum} title="Reste à faire non encore affecté dans le planning">À affecter</th>
+            <th style={thCourt}>État / planning</th>
+          </tr>
+        </thead>
+        <tbody>
+          {liste.map((l) => {
+            const { affaire, totaux, etat, planning, client } = l;
+            const ouverte = ouvertes.has(affaire.id);
+            const aAffecter = totaux.reste - planning.planifie;
+            return (
+              <Fragment key={affaire.id}>
+                <tr>
+                  <td style={tdCourt}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <button
+                        type="button"
+                        aria-expanded={ouverte}
+                        aria-label={`Détail par activité de ${affaire.type} ${affaire.numero}`}
+                        onClick={() => basculerDetail(affaire.id)}
+                        style={{ all: "unset", cursor: "pointer", width: 18, textAlign: "center", color: C.gris }}
+                      >
+                        {ouverte ? "▾" : "▸"}
+                      </button>
+                      <BadgeType type={affaire.type} />
+                      <Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
+                        {affaire.numero}
+                      </Link>
+                    </span>
+                    <div style={{ ...petit, paddingLeft: 24 }}>
+                      {affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : "—"}
+                    </div>
+                  </td>
+                  <td style={{ ...page.td, padding: "10px 8px" }}>{affaire.designation}</td>
+                  <td style={{ ...page.td, padding: "10px 8px", maxWidth: 140 }}>{client ?? gris("—")}</td>
+                  <td style={tdCourt}>
+                    <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
+                  </td>
+                  <td style={tdCourt}>
+                    {formatDate(affaire.statut === "LIVREE" && affaire.date_livraison ? affaire.date_livraison : affaire.echeance)}
+                    <div style={petit}>
+                      {affaire.statut === "LIVREE" && affaire.date_livraison
+                        ? "Livrée"
+                        : affaire.echeance
+                          ? affaire.type === "DBE"
+                            ? "Remise"
+                            : "Objectif"
+                          : ""}
+                    </div>
+                  </td>
+                  <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : gris("—")}</td>
+                  <td style={tdNum}>{totaux.realise > 0 ? formatHeures(totaux.realise) : gris("—")}</td>
+                  <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.reste) : gris("—")}</td>
+                  <td style={tdNum}>
+                    {!planningActif || !affaire.au_planning || totaux.chiffre <= 0 || estInactive(affaire) ? (
+                      gris("—")
+                    ) : aAffecter > 0.01 ? (
+                      <strong style={{ color: C.orangeTexte }}>{formatHeures(aAffecter)}</strong>
+                    ) : (
+                      gris("0 h")
+                    )}
+                    {planning.planifie > 0 && <div style={petit}>{formatHeures(planning.planifie)} planifiées</div>}
+                  </td>
+                  <td style={{ ...tdCourt, whiteSpace: "normal" }}>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+                      {affaire.au_planning || estInactive(affaire) ? (
+                        <Pastille genre={etat.genre}>{etat.texte}</Pastille>
+                      ) : (
+                        <Pastille genre="info">À planifier</Pastille>
+                      )}
+                      {moi?.peutModifier ? (
+                        <button
+                          type="button"
+                          disabled={planningEnCours === affaire.id}
+                          onClick={() => basculerPlanning(l)}
+                          title={affaire.au_planning ? "Retirer cette affaire du planning" : "Faire apparaître cette affaire dans le planning"}
+                          style={{
+                            ...(affaire.au_planning ? page.btnSecondaire : page.btnPrimaire),
+                            minHeight: 30,
+                            padding: "0 10px",
+                            fontSize: 13,
+                            whiteSpace: "nowrap",
+                            opacity: planningEnCours === affaire.id ? 0.5 : 1,
+                          }}
+                        >
+                          {affaire.au_planning ? "✓ Planifiée" : "+ Planifier"}
+                        </button>
+                      ) : (
+                        <span style={petit}>{affaire.au_planning ? "Au planning" : "Hors planning"}</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                {ouverte && (
+                  <tr>
+                    <td colSpan={nbColonnes} style={{ ...page.td, background: "#fafbfc", padding: "10px 16px 14px 40px" }}>
+                      {l.activites.length === 0 ? (
+                        <span style={{ color: C.gris }}>
+                          Aucune heure chiffrée par activité
+                          {affaire.prestation_quantite ? ` (prestation : ${affaire.prestation_quantite} ${affaire.prestation_unite === "JOURS" ? "jours" : "h"} vendus)` : ""}.
+                        </span>
+                      ) : (
+                        <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ ...thCourt, background: "transparent" }}>Activité</th>
+                              <th style={{ ...thNum, background: "transparent" }}>Chiffré</th>
+                              <th style={{ ...thNum, background: "transparent" }}>Réalisé</th>
+                              <th style={{ ...thNum, background: "transparent" }}>Reste</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {l.activites.map((d) => {
+                              const reste = d.chiffre - d.realise;
+                              return (
+                                <tr key={d.id}>
+                                  <td style={{ ...tdCourt, padding: "6px 8px" }}>{d.nom}</td>
+                                  <td style={{ ...tdNum, padding: "6px 8px" }}>{d.chiffre > 0 ? formatHeures(d.chiffre) : gris("—")}</td>
+                                  <td style={{ ...tdNum, padding: "6px 8px" }}>{d.realise > 0 ? formatHeures(d.realise) : gris("—")}</td>
+                                  <td style={{ ...tdNum, padding: "6px 8px" }}>
+                                    {d.chiffre <= 0 ? (
+                                      gris("—")
+                                    ) : reste < -0.01 ? (
+                                      <strong style={{ color: C.rougeTexte }}>+{formatHeures(-reste)} dépassé</strong>
+                                    ) : (
+                                      formatHeures(reste)
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
 
   return (
     <main style={page.fond}>
@@ -288,204 +694,145 @@ function PortefeuilleContenu() {
               />
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 20, alignItems: "flex-start" }}>
-              <div style={{ flex: "999 1 640px", minWidth: 0 }}>
-                <section style={{ ...page.carte, padding: 16 }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                    {(["TOUS", "DBE", "CBE"] as FiltreType[]).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        aria-pressed={filtreType === t}
-                        style={bouton(filtreType === t)}
-                        onClick={() => setFiltreType(t)}
-                      >
-                        {t === "TOUS" ? "DBE + CBE" : t}
-                      </button>
-                    ))}
-
-                    <span style={{ width: 8 }} />
-
-                    {statutsFiltres.map((s) => (
-                      <button
-                        key={s.valeur}
-                        type="button"
-                        aria-pressed={filtreStatut === s.valeur}
-                        style={bouton(filtreStatut === s.valeur)}
-                        onClick={() => setFiltreStatut(s.valeur)}
-                      >
-                        {s.libelle}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 16,
-                      alignItems: "center",
-                      margin: "12px 0",
-                    }}
+            {(alertes.critiques.length > 0 || alertes.surveiller.length > 0) && (
+              <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+                  <h2 style={{ margin: 0, fontSize: 18 }}>Alertes</h2>
+                  <span style={{ fontSize: 13, color: C.gris }}>Le logiciel calcule et alerte. Le responsable décide.</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
+                  <BlocAlertes titre="Critique" genre="crit" liste={alertes.critiques} vide="Aucune alerte critique." />
+                  <BlocAlertes titre="À surveiller" genre="warn" liste={alertes.surveiller} vide="Rien à signaler." />
+                </div>
+                {(alertesMasquees > 0 || toutesAlertes) && (
+                  <button
+                    type="button"
+                    onClick={() => setToutesAlertes((v) => !v)}
+                    style={{ ...page.btnSecondaire, minHeight: 36, marginTop: 12, fontSize: 14 }}
                   >
-                    <input
-                      type="search"
-                      aria-label="Rechercher une affaire"
-                      placeholder="Rechercher un numéro ou un descriptif…"
-                      value={recherche}
-                      onChange={(e) => setRecherche(e.target.value)}
-                      style={{ ...page.entrees, maxWidth: 360 }}
-                    />
+                    {toutesAlertes ? "Réduire" : `Voir les ${alertesMasquees} autres alertes`}
+                  </button>
+                )}
+              </section>
+            )}
 
-                    <label
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 10,
-                        minHeight: 44,
-                        fontWeight: 600,
-                        color: "#3b4046",
-                        cursor: filtreStatut === "TOUS" ? "pointer" : "default",
-                        opacity: filtreStatut === "TOUS" ? 1 : 0.5,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={afficherClos}
-                        disabled={filtreStatut !== "TOUS"}
-                        onChange={(e) => setAfficherClos(e.target.checked)}
-                        style={{ width: 20, height: 20, margin: 0 }}
-                      />
-                      Afficher les affaires livrées ou abandonnées
-                    </label>
-                  </div>
+            <section style={{ ...page.carte, padding: 16 }}>
+              {/* ---------- Filtres ---------- */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                {(["TOUS", "DBE", "CBE"] as FiltreType[]).map((t) => (
+                  <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>
+                    {t === "TOUS" ? "DBE + CBE" : t}
+                  </button>
+                ))}
 
-                  {visibles.length === 0 ? (
-                    <p style={{ color: C.gris, padding: "16px 4px" }}>
-                      {affaires.length === 0
-                        ? "Aucune affaire pour le moment."
-                        : "Aucune affaire ne correspond à ces filtres."}
-                    </p>
-                  ) : (
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1000, fontSize: 15 }}>
-                        <thead>
-                          <tr>
-                            <th style={page.th}>N°</th>
-                            <th style={page.th}>Descriptif</th>
-                            <th style={page.th}>Imputation</th>
-                            <th style={page.th}>Resp.</th>
-                            <th style={page.th}>Échéance ↑</th>
-                            <th style={{ ...page.th, textAlign: "right" }}>Chiffré</th>
-                            <th style={{ ...page.th, textAlign: "right" }}>Réalisé</th>
-                            <th style={{ ...page.th, textAlign: "right" }}>Reste</th>
-                            {planningActif && <th style={{ ...page.th, textAlign: "right" }}>Planifié</th>}
-                            {planningActif && <th style={{ ...page.th, textAlign: "right" }}>Non affecté</th>}
-                            <th style={page.th}>État</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {visibles.map(({ affaire, totaux, etat, planning }) => (
-                            <tr key={affaire.id}>
-                              <td style={page.td}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-                                  <BadgeType type={affaire.type} />
-                                  <Link
-                                    href={`/pilotage/affaire/${affaire.id}`}
-                                    style={{ fontWeight: 800, fontSize: 16, color: C.rougeFonce }}
-                                  >
-                                    {affaire.numero}
-                                  </Link>
-                                </span>
-                              </td>
-                              <td style={{ ...page.td, minWidth: 200 }}>{affaire.designation}</td>
-                              <td style={page.td}>{affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : "—"}</td>
-                              <td style={page.td}>
-                                <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
-                              </td>
-                              <td style={{ ...page.td, whiteSpace: "nowrap" }}>
-                                {formatDate(affaire.echeance)}
-                                <div style={{ fontSize: 12, color: C.gris }}>
-                                  {affaire.echeance ? (affaire.type === "DBE" ? "Remise" : "Objectif") : ""}
-                                </div>
-                              </td>
-                              <td style={{ ...page.td, textAlign: "right" }}>
-                                {totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : <span style={{ color: C.gris }}>—</span>}
-                              </td>
-                              <td style={{ ...page.td, textAlign: "right" }}>
-                                {totaux.realise > 0 ? formatHeures(totaux.realise) : <span style={{ color: C.gris }}>—</span>}
-                              </td>
-                              <td style={{ ...page.td, textAlign: "right" }}>
-                                {totaux.chiffre > 0 ? formatHeures(totaux.reste) : <span style={{ color: C.gris }}>—</span>}
-                              </td>
-                              {planningActif && (
-                                <td style={{ ...page.td, textAlign: "right" }}>
-                                  {planning.planifie > 0 ? formatHeures(planning.planifie) : <span style={{ color: C.gris }}>—</span>}
-                                </td>
-                              )}
-                              {planningActif && (
-                                <td style={{ ...page.td, textAlign: "right" }}>
-                                  {affaire.type === "CBE" && affaire.statut === "EN_COURS" && totaux.chiffre > 0 ? (
-                                    totaux.reste - planning.planifie > 0.01 ? (
-                                      <strong style={{ color: C.orangeTexte }}>{formatHeures(totaux.reste - planning.planifie)}</strong>
-                                    ) : (
-                                      <span style={{ color: C.gris }}>0 h</span>
-                                    )
-                                  ) : (
-                                    <span style={{ color: C.gris }}>—</span>
-                                  )}
-                                </td>
-                              )}
-                              <td style={page.td}>
-                                <Pastille genre={etat.genre}>{etat.texte}</Pastille>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                <span style={{ width: 8 }} />
 
-                  <p style={{ margin: "12px 4px 0", fontSize: 13, color: C.gris }}>
-                    Chiffré : heures prévues par activité. Réalisé : heures imputées dans les feuilles d’heures
-                    sur le numéro de l’affaire.
-                  </p>
-                </section>
+                {statutsFiltres.map((st) => (
+                  <button
+                    key={st.valeur}
+                    type="button"
+                    aria-pressed={filtreStatut === st.valeur}
+                    style={bouton(filtreStatut === st.valeur)}
+                    onClick={() => setFiltreStatut(st.valeur)}
+                  >
+                    {st.libelle}
+                  </button>
+                ))}
+
+                <span style={{ width: 8 }} />
+
+                <button
+                  type="button"
+                  aria-pressed={filtrePlanning === "HORS"}
+                  style={bouton(filtrePlanning === "HORS")}
+                  onClick={() => setFiltrePlanning((v) => (v === "HORS" ? "TOUS" : "HORS"))}
+                >
+                  Hors planning ({nbHorsPlanning})
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={depassementSeul}
+                  style={bouton(depassementSeul)}
+                  onClick={() => setDepassementSeul((v) => !v)}
+                >
+                  Dépassements
+                </button>
               </div>
 
-              <aside style={{ flex: "1 1 320px", maxWidth: 380, minWidth: 280 }}>
-                <section style={page.carte}>
-                  <h2 style={{ margin: 0, fontSize: 18 }}>Alertes</h2>
-                  <p style={{ margin: "4px 0 0", fontSize: 13, color: C.gris }}>
-                    Le logiciel calcule et alerte. Le responsable décide.
-                  </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", margin: "12px 0" }}>
+                <input
+                  type="search"
+                  aria-label="Rechercher une affaire"
+                  placeholder="Rechercher un numéro, un descriptif ou un client…"
+                  value={recherche}
+                  onChange={(e) => setRecherche(e.target.value)}
+                  style={{ ...page.entrees, maxWidth: 340 }}
+                />
+                <select aria-label="Filtrer par client" value={filtreClient} onChange={(e) => setFiltreClient(e.target.value)} style={selectFiltre}>
+                  <option value="">Tous les clients</option>
+                  {choixClients.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <select aria-label="Filtrer par imputation" value={filtreImputation} onChange={(e) => setFiltreImputation(e.target.value)} style={selectFiltre}>
+                  <option value="">Toutes les imputations</option>
+                  {choixImputations.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <select aria-label="Filtrer par responsable" value={filtreResp} onChange={(e) => setFiltreResp(e.target.value)} style={selectFiltre}>
+                  <option value="">Tous les responsables</option>
+                  {choixResp.map((r) => (
+                    <option key={r.id} value={r.id}>{r.nom}</option>
+                  ))}
+                </select>
+                {filtresActifs && (
+                  <button type="button" onClick={reinitialiserFiltres} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>
+                    Effacer les filtres
+                  </button>
+                )}
+              </div>
 
-                  <div style={{ marginTop: 16 }}>
-                    <Pastille genre="crit">Critique</Pastille>
-                    <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0 }}>
-                      {alertes.critiques.length === 0 && (
-                        <li style={{ padding: "10px 0", fontSize: 14, color: C.gris }}>Aucune alerte critique.</li>
-                      )}
-                      {alertes.critiques.slice(0, 10).map((l) => (
-                        <LigneAlerte key={l.affaire.id} l={l} />
-                      ))}
-                    </ul>
-                  </div>
+              {erreurPlanning && <Message genre="erreur">{erreurPlanning}</Message>}
 
-                  <div style={{ marginTop: 16 }}>
-                    <Pastille genre="warn">À surveiller</Pastille>
-                    <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0 }}>
-                      {alertes.surveiller.length === 0 && (
-                        <li style={{ padding: "10px 0", fontSize: 14, color: C.gris }}>Rien à signaler.</li>
-                      )}
-                      {alertes.surveiller.slice(0, 10).map((l) => (
-                        <LigneAlerte key={l.affaire.id} l={l} />
-                      ))}
-                    </ul>
-                  </div>
-                </section>
-              </aside>
-            </div>
+              {/* ---------- Affaires actives ---------- */}
+              <h2 style={{ margin: "8px 0", fontSize: 18 }}>
+                Affaires actives <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>
+              </h2>
+              {actives.length === 0 ? (
+                <p style={{ color: C.gris, padding: "8px 4px" }}>
+                  {affaires.length === 0 ? "Aucune affaire pour le moment." : "Aucune affaire active ne correspond à ces filtres."}
+                </p>
+              ) : (
+                rendreTableau(actives)
+              )}
+
+              {/* ---------- Affaires inactives (livrées, abandonnées) ---------- */}
+              <div style={{ marginTop: 20, borderTop: `1px solid ${C.ligne}`, paddingTop: 12 }}>
+                <button
+                  type="button"
+                  aria-expanded={inactivesOuvertes}
+                  onClick={() => setInactivesOuvertes((v) => !v)}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40 }}
+                >
+                  <span aria-hidden="true">{inactivesOuvertes ? "▾" : "▸"}</span>
+                  Affaires inactives <span style={{ color: C.gris, fontWeight: 600 }}>({inactives.length})</span>
+                  <span style={{ fontSize: 13, fontWeight: 400, color: C.gris }}>livrées ou abandonnées</span>
+                </button>
+                {inactivesOuvertes &&
+                  (inactives.length === 0 ? (
+                    <p style={{ color: C.gris, padding: "8px 4px" }}>Aucune affaire inactive ne correspond à ces filtres.</p>
+                  ) : (
+                    <div style={{ marginTop: 8 }}>{rendreTableau(inactives)}</div>
+                  ))}
+              </div>
+
+              <p style={{ margin: "12px 4px 0", fontSize: 13, color: C.gris }}>
+                Chiffré : heures prévues par activité. Réalisé : heures imputées dans les feuilles d’heures sur le numéro de
+                l’affaire. Cliquez sur un titre de colonne pour trier, sur ▸ pour le détail par activité. Une affaire inactive peut être remise au planning (reprise
+                chez le client) : elle reste dans les inactives tant que son statut est « Livrée ».
+              </p>
+            </section>
           </>
         )}
       </div>

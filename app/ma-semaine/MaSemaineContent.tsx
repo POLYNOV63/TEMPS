@@ -30,6 +30,7 @@ import GrilleSemaine, {
 } from "./GrilleSemaine";
 import {
   etatDuJour,
+  etiquetteDivers,
   type CodeGrille,
   type GroupeActiviteGrille,
   type JourGrille,
@@ -2324,7 +2325,7 @@ export default function MaSemainePage() {
               cle,
               typeAffaire,
               activiteId: imputation.activite_id ?? null,
-              numeroAffaire: imputation.numero_affaire ?? "",
+              numeroAffaire: imputation.type_affaire === "Divers" ? etiquetteDivers(imputation.description ?? "") : imputation.numero_affaire ?? "",
               description: imputation.description ?? "",
               code,
               occurrences: 1,
@@ -2560,7 +2561,7 @@ export default function MaSemainePage() {
               id: crypto.randomUUID(),
               typeAffaire: imputation.type_affaire as TypeAffaire,
               activiteId: imputation.activite_id ?? null,
-              numeroAffaire: imputation.numero_affaire ?? "",
+              numeroAffaire: imputation.type_affaire === "Divers" ? etiquetteDivers(imputation.description ?? "") : imputation.numero_affaire ?? "",
               description: imputation.description ?? "",
               code: normaliserCode(imputation.code ?? ""),
               heures: "",
@@ -3193,6 +3194,15 @@ export default function MaSemainePage() {
             return false;
           }
 
+          if (!ligne.description.trim()) {
+            afficherErreurImputation(
+              jour,
+              numeroLigne,
+              "la description est obligatoire pour une ligne Divers."
+            );
+            return false;
+          }
+
           if (!heuresRenseignees) {
             afficherErreurImputation(
               jour,
@@ -3597,7 +3607,7 @@ export default function MaSemainePage() {
                 null,
 
               numeroAffaire:
-                i.numero_affaire ??
+                (i.type_affaire === "Divers" ? etiquetteDivers(i.description ?? "") : i.numero_affaire) ??
                 "",
 
               description:
@@ -4726,6 +4736,90 @@ export default function MaSemainePage() {
     );
   };
 
+  /* PLANNING_V1 - repères du planning : affaires prévues pour la personne cette semaine,
+     et numéros d'affaire connus (un numéro inconnu est signalé à la saisie) */
+  type RepereAffectation = {
+    type: string;
+    numero: string;
+    designation: string | null;
+    activite_id: string | null;
+    heures: number | string;
+  };
+
+  const [reperes, setReperes] = useState<{
+    affectations: RepereAffectation[];
+    affaires: { type: string; numero: string; designation: string | null }[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!idCollaborateurAssistant || !debutSemaineAssistant) return;
+
+    let annule = false;
+
+    void supabase
+      .rpc("ma_semaine_reperes", {
+        p_collaborateur_id: idCollaborateurAssistant,
+        p_lundi: debutSemaineAssistant,
+      })
+      .then(({ data, error }) => {
+        if (annule) return;
+
+        if (error) {
+          console.warn("Repères du planning indisponibles", error);
+          setReperes(null);
+          return;
+        }
+
+        setReperes(data as typeof reperes);
+      });
+
+    return () => {
+      annule = true;
+    };
+  }, [idCollaborateurAssistant, debutSemaineAssistant]);
+
+  const sansZeros = (n: string) => String(n ?? "").trim().replace(/^0+/, "");
+
+  const affairesConnues = new Map(
+    (reperes?.affaires ?? []).map((a) => [`${a.type}|${sansZeros(a.numero)}`, a.designation ?? ""] as const)
+  );
+
+  const affaireConnue = reperes
+    ? (typeAffaire: string, numero: string) => {
+        const designation = affairesConnues.get(`${typeAffaire}|${sansZeros(numero)}`);
+        return designation === undefined ? null : { designation };
+      }
+    : undefined;
+
+  const prevuParAffaire: Record<string, number> = {};
+
+  for (const a of reperes?.affectations ?? []) {
+    const cle = `${a.type}|${String(a.numero).padStart(4, "0")}`;
+    prevuParAffaire[cle] = (prevuParAffaire[cle] ?? 0) + (Number(a.heures) || 0);
+  }
+
+  const affairesPrevues: AffaireRecenteGrille[] = Object.entries(prevuParAffaire).map(([cle, heures]) => {
+    const [typeAffaire, numeroAffaire] = cle.split("|");
+    const principale = (reperes?.affectations ?? [])
+      .filter((a) => a.type === typeAffaire && String(a.numero).padStart(4, "0") === numeroAffaire)
+      .sort((x, y) => (Number(y.heures) || 0) - (Number(x.heures) || 0))[0];
+
+    return {
+      typeAffaire,
+      numeroAffaire,
+      description: principale?.designation ?? "",
+      activiteId: principale?.activite_id ?? null,
+      prevu: `${formatHeures(heures)} h prévues`,
+    };
+  });
+
+  const clesPrevues = new Set(affairesPrevues.map((a) => `${a.typeAffaire}|${a.numeroAffaire}`));
+
+  const affairesProposees: AffaireRecenteGrille[] = [
+    ...affairesPrevues,
+    ...affairesRecentesGrille.filter((a) => !clesPrevues.has(`${a.typeAffaire}|${a.numeroAffaire}`)),
+  ];
+
   const propsGrille: GrilleSemaineProps = {
     jours: joursGrille,
     cleSemaine: debutSemaineAssistant,
@@ -4737,7 +4831,9 @@ export default function MaSemainePage() {
       { valeur: "DBE", libelle: "DBE", numeroRequis: true },
       { valeur: "Divers", libelle: "Divers", numeroRequis: false },
     ],
-    affairesRecentes: affairesRecentesGrille,
+    affairesRecentes: affairesProposees,
+    affaireConnue,
+    prevuParAffaire,
     codesAbsence: codesAbsence
       .filter((code) => normaliserCode(code.code) !== CODE_FE)
       .map((code) => ({ code: code.code, libelle: code.libelle })),

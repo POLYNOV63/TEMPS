@@ -129,6 +129,8 @@ export default function FeuillesPage() {
   const [erreur, setErreur] = useState("");
   const [suppressionEnCours, setSuppressionEnCours] = useState<string | null>(null);
   const [verrouillageEnCours, setVerrouillageEnCours] = useState<string | null>(null);
+  const [lotEnCours, setLotEnCours] = useState<string | null>(null);
+  const [messageLot, setMessageLot] = useState("");
   const [peutAdministrer, setPeutAdministrer] = useState(false);
 
   useEffect(() => {
@@ -198,6 +200,61 @@ export default function FeuillesPage() {
     };
   }, []);
 
+  const estEnvoyeeNonVerrouillee = (f: Feuille) =>
+    !f.verrouillee && (f.statut ?? "").trim().toUpperCase() === "A_TRAITER";
+
+  /* Verrouille directement (sans confirmation) une ou plusieurs feuilles envoyées. */
+  async function verrouillerFeuilles(liste: Feuille[], cleLot: string) {
+    const cibles = liste.filter(estEnvoyeeNonVerrouillee);
+    if (cibles.length === 0) return;
+
+    setLotEnCours(cleLot);
+    setErreur("");
+    setMessageLot("");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) throw new Error("Session utilisateur introuvable.");
+
+      const { data: admin } = await supabase
+        .from("collaborateurs")
+        .select("id, role")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (admin?.role !== "ADMIN") {
+        throw new Error("Seul un administrateur peut verrouiller une feuille.");
+      }
+
+      const now = new Date().toISOString();
+      const ids = cibles.map((f) => f.id);
+
+      // par paquets de 100 (limite de longueur des requêtes)
+      for (let i = 0; i < ids.length; i += 100) {
+        const { error } = await supabase
+          .from("feuilles_heures")
+          .update({ verrouillee: true, verrouillee_le: now, verrouillee_par: admin.id, updated_at: now })
+          .in("id", ids.slice(i, i + 100));
+
+        if (error) throw error;
+      }
+
+      const verrouillees = new Set(ids);
+      setFeuilles((anciennes) =>
+        anciennes.map((f) => (verrouillees.has(f.id) ? { ...f, verrouillee: true, verrouillee_le: now } : f))
+      );
+      if (cibles.length > 1) setMessageLot(`${cibles.length} feuilles verrouillées.`);
+    } catch (error: any) {
+      console.error("Erreur verrouillage par lot :", error);
+      setErreur(error?.message || "Impossible de verrouiller les feuilles.");
+    } finally {
+      setLotEnCours(null);
+    }
+  }
+
   async function basculerVerrouillage(feuille: Feuille) {
     const estEnvoyee =
       (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER";
@@ -212,7 +269,21 @@ export default function FeuillesPage() {
     const verrouiller = !Boolean(feuille.verrouillee);
     const action = verrouiller ? "verrouiller" : "déverrouiller";
 
-    if (!window.confirm(`Confirmer le ${action}ment de cette feuille ?`)) return;
+    // Verrouiller : directement, sans confirmation.
+    if (verrouiller) {
+      setVerrouillageEnCours(feuille.id);
+      await verrouillerFeuilles([feuille], feuille.id);
+      setVerrouillageEnCours(null);
+      return;
+    }
+
+    // Déverrouiller remet la feuille en brouillon et annule sa clôture mensuelle : on confirme.
+    if (
+      !window.confirm(
+        "Déverrouiller cette feuille ?\n\nElle repassera en brouillon et le collaborateur devra la renvoyer."
+      )
+    )
+      return;
 
     setVerrouillageEnCours(feuille.id);
     setErreur("");
@@ -431,6 +502,51 @@ export default function FeuillesPage() {
           </div>
         )}
 
+        {peutAdministrer && (() => {
+          const aVerrouiller = feuilles.filter(estEnvoyeeNonVerrouillee);
+          return (
+            <section
+              style={{
+                ...styles.searchCard,
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div>
+                <div style={styles.searchTitle}>Verrouillage des feuilles envoyées</div>
+                <div style={styles.searchDescription}>
+                  {aVerrouiller.length === 0
+                    ? "Aucune feuille envoyée en attente de verrouillage."
+                    : `${aVerrouiller.length} feuille${aVerrouiller.length > 1 ? "s" : ""} envoyée${aVerrouiller.length > 1 ? "s" : ""}, pas encore verrouillée${aVerrouiller.length > 1 ? "s" : ""}. Chaque semaine a aussi son propre bouton.`}
+                  {messageLot && <strong style={{ color: "#138113", marginLeft: 8 }}>{messageLot}</strong>}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={aVerrouiller.length === 0 || lotEnCours !== null}
+                onClick={() => verrouillerFeuilles(aVerrouiller, "TOUTES")}
+                style={{
+                  minHeight: 44,
+                  padding: "0 18px",
+                  borderRadius: 10,
+                  border: "1.5px solid #e6c36a",
+                  background: aVerrouiller.length === 0 ? "#f4f4f4" : "#fff7e6",
+                  color: aVerrouiller.length === 0 ? "#999" : "#8a6500",
+                  fontWeight: 800,
+                  fontSize: 15,
+                  cursor: aVerrouiller.length === 0 ? "default" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {lotEnCours === "TOUTES" ? "Verrouillage…" : `🔒 Tout verrouiller (${aVerrouiller.length})`}
+              </button>
+            </section>
+          );
+        })()}
+
         <section style={styles.searchCard}>
           <div style={styles.searchHeader}>
             <div>
@@ -569,6 +685,9 @@ export default function FeuillesPage() {
                 verrouillageEnCours={verrouillageEnCours}
                 basculerVerrouillage={basculerVerrouillage}
                 peutAdministrer={peutAdministrer}
+                verrouillerSemaine={() => verrouillerFeuilles(feuillesSemaine, semaine)}
+                aVerrouiller={feuillesSemaine.filter(estEnvoyeeNonVerrouillee).length}
+                lotEnCours={lotEnCours === semaine || lotEnCours === "TOUTES"}
               />
             );
           })}
@@ -621,6 +740,9 @@ function SemaineCard({
   verrouillageEnCours,
   basculerVerrouillage,
   peutAdministrer,
+  verrouillerSemaine,
+  aVerrouiller,
+  lotEnCours,
 }: {
   semaine: string;
   libelle: { numero: number; debut: string; fin: string };
@@ -641,6 +763,9 @@ function SemaineCard({
   verrouillageEnCours: string | null;
   basculerVerrouillage: (feuille: Feuille) => Promise<void>;
   peutAdministrer: boolean;
+  verrouillerSemaine: () => Promise<void>;
+  aVerrouiller: number;
+  lotEnCours: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
 
@@ -722,6 +847,31 @@ function SemaineCard({
           <div>
             <span style={styles.metaLabel}>THÉORIQUE</span>
             <strong>{formatHeures(totalTheorique)}</strong>
+          </div>
+        )}
+        {peutAdministrer && (
+          <div style={{ marginLeft: "auto", alignSelf: "center" }}>
+            <button
+              type="button"
+              disabled={aVerrouiller === 0 || lotEnCours}
+              onClick={() => verrouillerSemaine()}
+              title={aVerrouiller === 0 ? "Aucune feuille envoyée à verrouiller cette semaine" : "Verrouiller toutes les feuilles envoyées de cette semaine"}
+              style={{
+                minHeight: 38,
+                padding: "0 14px",
+                borderRadius: 10,
+                border: "1.5px solid #e6c36a",
+                background: aVerrouiller === 0 ? "#f4f4f4" : "#fff7e6",
+                color: aVerrouiller === 0 ? "#999" : "#8a6500",
+                fontWeight: 800,
+                fontSize: 14,
+                cursor: aVerrouiller === 0 ? "default" : "pointer",
+                fontFamily: "inherit",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {lotEnCours ? "Verrouillage…" : `🔒 Verrouiller la semaine (${aVerrouiller})`}
+            </button>
           </div>
         )}
       </div>
