@@ -27,7 +27,7 @@ import { formatDate, formatHeures, nomCollab, num, type Charge, type Collab, typ
 type Detail = { activite: string; nom: string; chiffre: number; pointe: number };
 type Famille = {
   base: string;
-  type: string;
+  type: AffaireP["type"];
   numeros: string[];
   designation: string;
   imputation: string | null;

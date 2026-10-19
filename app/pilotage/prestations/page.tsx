@@ -621,7 +621,18 @@ function PrestationsContenu() {
     if (error) return setErreur(traduireErreur(error.message));
     setMoisLignes((m) => {
       const n = new Map(m);
-      n.set(l.id, { ligne_id: l.id, mois: debut, hs_refacturer: 0, valide: false, reporte: false, heures_fige: null, montant_fige: null, ...m.get(l.id), ...valeurs });
+      n.set(l.id, {
+        ligne_id: l.id,
+        mois: debut,
+        hs_refacturer: 0,
+        valide: false,
+        reporte: false,
+        report_sortant: null,
+        heures_fige: null,
+        montant_fige: null,
+        ...m.get(l.id),
+        ...valeurs,
+      });
       return n;
     });
     setEditeurReport(null);
