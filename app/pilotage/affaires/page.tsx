@@ -78,6 +78,10 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    n'existe que pour les affaires déclarées à la main : une affaire venue
    d'Excel (repère « XLS ») suit le statut du classeur.
 
+   Une ligne par COMMANDE : commande de base (CBE1604) et chaque avenant
+   (CBE1604R1, R2…) à part, avec ses heures et son délai ; une commande
+   livrée dans Excel quitte le planning, les autres restent.
+
    PE / PI : le relevé « Prestations PE / PI » FAIT FOI. Les barres des
    ressources d'une PE / PI en viennent : elles ne se glissent pas ici, un
    double-clic (ou « + Affecter ») ouvre le relevé du mois.
@@ -148,10 +152,16 @@ function PlanningAffairesContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [rechargement, setRechargement] = useState(0);
+  // Qui d'autre a le planning ouvert (temps réel), et modification faite par quelqu'un d'autre
+  const [moiId, setMoiId] = useState<string | null>(null);
+  const [autres, setAutres] = useState<{ id: string; nom: string; modifie: boolean }[]>([]);
+  const [modifAilleurs, setModifAilleurs] = useState(false);
+  const derniereEcriture = useRef(0);
 
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
   const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("TOUS");
-  const [limiter, setLimiter] = useState(false);
+  // On a toujours le droit de dépasser le chiffré : les barres ne s'arrêtent jamais au chiffré
+  const limiter = false;
   const [drag, setDrag] = useState<DragEtat | null>(null);
   const [dragAffaire, setDragAffaire] = useState<DragEtat | null>(null);
   const [imputations, setImputations] = useState<Imputation[]>([]);
@@ -162,7 +172,6 @@ function PlanningAffairesContenu() {
   const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());
   // heures facturées (relevé des prestations) jusqu'à hier, par affaire
   const [factureParAffaire, setFactureParAffaire] = useState<Map<string, number>>(new Map());
-  const enveloppesVerifiees = useRef(false);
   const [horsAffaireOuvert, setHorsAffaireOuvert] = useState(true);
   const [evenement, setEvenement] = useState<null | {
     prefill?: { collaborateurId?: string; debut?: string };
@@ -197,22 +206,45 @@ function PlanningAffairesContenu() {
     }
   }, []);
 
+  /* Temps réel : présence des autres utilisateurs et modifications faites ailleurs */
   useEffect(() => {
-    try {
-      setLimiter(window.localStorage.getItem("polynov-limiter-chiffre") === "1");
-    } catch {
-      /* stockage indisponible : on garde le réglage par défaut */
-    }
+    chargerMoi()
+      .then((m) => setMoiId(m?.id ?? null))
+      .catch(() => setMoiId(null));
   }, []);
 
-  function changerLimiter(valeur: boolean) {
-    setLimiter(valeur);
-    try {
-      window.localStorage.setItem("polynov-limiter-chiffre", valeur ? "1" : "0");
-    } catch {
-      /* ignoré */
-    }
-  }
+  const nomMoi = annuaire.find((c) => c.id === moiId);
+  useEffect(() => {
+    if (!moiId) return;
+    const canal = supabase.channel("planning-be", { config: { presence: { key: moiId } } });
+
+    canal
+      .on("presence", { event: "sync" }, () => {
+        const etat = canal.presenceState() as Record<string, { id: string; nom: string; modifie: boolean }[]>;
+        const liste = Object.values(etat)
+          .flat()
+          .filter((p) => p.id !== moiId);
+        setAutres([...new Map(liste.map((p) => [p.id, p])).values()]);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "pilotage_affectations" }, () => {
+        // nos propres enregistrements déclenchent aussi l'événement : on les ignore quelques secondes
+        if (Date.now() - derniereEcriture.current > 4000) setModifAilleurs(true);
+      })
+      .subscribe(async (statut) => {
+        if (statut === "SUBSCRIBED") {
+          await canal.track({ id: moiId, nom: nomMoi ? nomCollab(nomMoi) : "Quelqu’un", modifie: peutAgir });
+        }
+      });
+
+    return () => {
+      void supabase.removeChannel(canal);
+    };
+  }, [moiId, nomMoi, peutAgir]);
+
+  // toute écriture faite d'ici est datée, pour ne pas s'alerter soi-même
+  useEffect(() => {
+    derniereEcriture.current = Date.now();
+  }, [rechargement]);
 
   useEffect(() => {
     let actif = true;
@@ -229,7 +261,7 @@ function PlanningAffairesContenu() {
       chargerCapacitesAbsences(lundi, fin),
       chargerCodesDivers().catch(() => [] as { code: string; libelle: string }[]),
       chargerRealise().catch(() => []),
-      supabase.rpc("prestation_consomme_par_affaire"),
+      Promise.resolve(null as { data: { affaire_id: string; heures: number | string }[] | null } | null),
     ])
       .then(([af, ch, an, ref, im, moi, pl, cap, cd, re, fa]) => {
         if (!actif) return;
@@ -256,19 +288,6 @@ function PlanningAffairesContenu() {
         for (const x of ((fa?.data ?? []) as { affaire_id: string; heures: number | string }[])) factures.set(x.affaire_id, Number(x.heures) || 0);
         setFactureParAffaire(factures);
 
-        // Une fois par ouverture : les PI dont l'enveloppe est consommée passent « en attente de commande »
-        if (moi?.peutModifier && !enveloppesVerifiees.current) {
-          enveloppesVerifiees.current = true;
-          void supabase.rpc("pilotage_enveloppes_epuisees").then(({ data }) => {
-            const liste = (data ?? []) as { type: string; numero: string }[];
-            if (liste.length > 0) {
-              setInfo(
-                `Enveloppe consommée : ${liste.map((a) => `${a.type} ${a.numero}`).join(", ")} ${liste.length > 1 ? "passent" : "passe"} « en attente de commande ».`
-              );
-              setRechargement((n) => n + 1);
-            }
-          });
-        }
         setSelection((s) => (s && pl.affectations.some((a) => a.id === s) ? s : null));
 
         const cible = ouvrirId.current;
@@ -518,63 +537,17 @@ function PlanningAffairesContenu() {
 
   /* Barre de chaque affaire (toutes les affaires ayant un début et une fin) */
   /* Enveloppe des prestations (PE, PI) : commandé, consommé, planifié à venir, reste, épuisement prévu */
-  const enveloppes = useMemo(() => {
-    const m = new Map<
-      string,
-      { commande: number; consomme: number; planifie: number; reste: number; epuisement: string | null; alerte: "EPUISEE" | "RELANCE" | null }
-    >();
-    const dans14Jours = ajouterJours(aujourdhui, 14);
-
-    // heures planifiées à venir, jour par jour, par affaire
-    const futurParAffaire = new Map<string, JourHeures[]>();
-    for (const a of affectations) {
-      if (!a.affaire_id) continue;
-      for (const j of joursParAffectation.get(a.id) ?? []) {
-        if (j.jour < aujourdhui) continue;
-        const l = futurParAffaire.get(a.affaire_id) ?? [];
-        l.push(j);
-        futurParAffaire.set(a.affaire_id, l);
-      }
-    }
-
-    for (const af of affaires) {
-      if (!estPrestation(af)) continue;
-
-      const quantite = af.prestation_unite === "HEURES" ? num(af.prestation_quantite ?? 0) : 0;
-      const commande = Math.max(chiffreParAffaire.get(af.id) ?? 0, quantite);
-      // consommé : heures facturées du relevé des prestations, à défaut les feuilles d'heures
-      const consomme = factureParAffaire.get(af.id) ?? realiseParAffaire.get(`${af.type}|${af.numero.replace(/^0+/, "")}`) ?? 0;
-      const futur = (futurParAffaire.get(af.id) ?? []).sort((a, b) => a.jour.localeCompare(b.jour));
-      const planifie = futur.reduce((t, j) => t + j.heures, 0);
-      const reste = commande - consomme - planifie;
-
-      // date à laquelle l'enveloppe sera consommée, au rythme planifié
-      let epuisement: string | null = null;
-      if (commande > 0) {
-        if (consomme >= commande - 0.01) epuisement = aujourdhui;
-        else {
-          let cumul = consomme;
-          for (const j of futur) {
-            cumul += j.heures;
-            if (cumul >= commande - 0.01) {
-              epuisement = j.jour;
-              break;
-            }
-          }
-        }
-      }
-
-      let alerte: "EPUISEE" | "RELANCE" | null = null;
-      if (commande > 0) {
-        if (consomme >= commande - 0.01) alerte = "EPUISEE";
-        else if ((commande - consomme) / commande < 0.2 || (epuisement !== null && epuisement <= dans14Jours)) alerte = "RELANCE";
-      }
-
-      m.set(af.id, { commande, consomme, planifie, reste, epuisement, alerte });
-    }
-
-    return m;
-  }, [affaires, affectations, joursParAffectation, chiffreParAffaire, realiseParAffaire, factureParAffaire, estPrestation, aujourdhui]);
+  /* PE / PI : plus de jauge d'enveloppe ici. Chaque commande (base ou avenant) est une ligne du
+     planning, avec ses heures commandées comme une affaire au forfait ; la consommation et la
+     facturation se suivent dans le relevé des prestations. */
+  const enveloppes = useMemo(
+    () =>
+      new Map<
+        string,
+        { commande: number; consomme: number; planifie: number; reste: number; epuisement: string | null; alerte: "EPUISEE" | "RELANCE" | null }
+      >(),
+    []
+  );
 
   const pistesAffaires = useMemo(() => {
     const m = new Map<string, PisteAffaire>();
@@ -1453,7 +1426,7 @@ function PlanningAffairesContenu() {
                       <div style={{ fontSize: 12, fontWeight: 800 }}>
                         {borne?.debut && borne.fin ? `${formatDate(borne.debut)} → ${formatDate(borne.fin)}` : "Dates à définir"}
                       </div>
-                      <Pastille genre="info">{livree ? etat.texte : "Enveloppe non chiffrée"}</Pastille>
+                      <Pastille genre={etat.genre}>{etat.texte}</Pastille>
                     </>
                   );
                 }
@@ -1629,18 +1602,28 @@ function PlanningAffairesContenu() {
           </div>
         </div>
 
-        {peutAgir && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16, marginBottom: 14, padding: "10px 16px", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 12 }}>
-          <strong>Quand je dépasse le chiffré :</strong>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, cursor: "pointer" }}>
-            <input type="radio" name="depasse" checked={!limiter} onChange={() => changerLimiter(false)} style={{ width: 20, height: 20, margin: 0 }} />
-            m’alerter et me laisser décider
-          </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 44, cursor: "pointer" }}>
-            <input type="radio" name="depasse" checked={limiter} onChange={() => changerLimiter(true)} style={{ width: 20, height: 20, margin: 0 }} />
-            me contenir : le bloc s’arrête au chiffré
-          </label>
-        </div>
+        {/* Présence : d'autres personnes ont le planning ouvert */}
+        {peutAgir && autres.some((a) => a.modifie) && (
+          <Message genre="info">
+            ⚠ <strong>{autres.filter((a) => a.modifie).map((a) => a.nom).join(", ")}</strong>{" "}
+            {autres.filter((a) => a.modifie).length > 1 ? "ont" : "a"} aussi le planning ouvert en ce moment. Si vous modifiez la même barre, la dernière
+            modification enregistrée l’emporte : coordonnez-vous.
+          </Message>
+        )}
+        {modifAilleurs && (
+          <Message genre="info">
+            Le planning vient d’être modifié par quelqu’un d’autre.{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setModifAilleurs(false);
+                setRechargement((n) => n + 1);
+              }}
+              style={{ ...page.btnSecondaire, minHeight: 32, marginLeft: 6 }}
+            >
+              ↻ Actualiser
+            </button>
+          </Message>
         )}
         {!peutAgir && !chargement && (
           <Message genre="info">Planning en lecture seule. Les affectations sont faites par les responsables (et par l’administration pour les PE / PI).</Message>

@@ -36,7 +36,9 @@ import {
      vente obtenu, marge du négoce, affaire par affaire.
 
    Règles de calcul : lib/finances.ts (CA à la livraison, échéances à leur
-   date, PE / PI par le relevé des prestations validé).
+   date, PE / PI par le relevé des prestations validé ; pour les mois que
+   le relevé ne couvre pas, l'historique importé de l'ancien classeur
+   « Suivi des prestations »).
 ================================================================ */
 
 const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
@@ -46,6 +48,17 @@ const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).to
 const pct = (x: number | null) => (x === null || !Number.isFinite(x) ? "—" : `${x > 0 ? "+" : ""}${Math.round(x * 100)} %`);
 
 type Releve = { base: string; mois: string; montant: number; groupe: Groupe; imputation: string | null; client: string | null };
+type Historique = {
+  mois: string;
+  categorie: string;
+  type: string;
+  numero: string;
+  client: string | null;
+  montant_meca: number;
+  montant_calcul: number;
+  montant_elec: number;
+  montant: number;
+};
 
 function exerciceCourant(): number {
   const d = new Date();
@@ -60,6 +73,7 @@ function FinancesContenu() {
 
   const [lignesFin, setLignesFin] = useState<LigneFin[]>([]);
   const [releve, setReleve] = useState<Releve[]>([]);
+  const [historique, setHistorique] = useState<Historique[]>([]);
   const [realiseGroupes, setRealiseGroupes] = useState<Map<string, ParGroupe>>(new Map());
   const [realiseMensuel, setRealiseMensuel] = useState<Map<string, { mois: string; heures: number }[]>>(new Map());
   const [couts, setCouts] = useState<Map<number, number>>(new Map());
@@ -77,7 +91,7 @@ function FinancesContenu() {
     (async () => {
       try {
         const n = (v: number | string | null | undefined) => Number(v) || 0;
-        const [brutes, montants, clients, realise, mensuel, corr, pl, pm, pa, co, pr] = await Promise.all([
+        const [brutes, montants, clients, realise, mensuel, corr, pl, pm, pa, co, pr, hi] = await Promise.all([
           chargerTout<{
             id: string;
             cle: string;
@@ -120,6 +134,13 @@ function FinancesContenu() {
           supabase.from("pilotage_affaires").select("id,numero,imputation").eq("type", "CBE"),
           supabase.from("indicateurs_couts").select("annee,cout_horaire"),
           supabase.from("finances_previsionnel").select("mois,montant"),
+          chargerTout<Historique>((a, b) =>
+            supabase
+              .from("prestation_historique")
+              .select("mois,categorie,type,numero,client,montant_meca,montant_calcul,montant_elec,montant")
+              .order("id")
+              .range(a, b)
+          ).catch(() => [] as Historique[]),
         ]);
         if (!actif) return;
 
@@ -189,7 +210,8 @@ function FinancesContenu() {
           const lp = lignesPrest.get(x.ligne_id);
           const a = lp ? affairesPil.get(lp.affaire_id) : undefined;
           if (!lp || !a) continue;
-          const base = a.numero.replace(/^0+/, "");
+          // famille de l'affaire = numéro de base (1604R2 -> 1604) : réalisé et client y sont rattachés
+          const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
           rel.push({
             base,
             mois: String(x.mois).slice(0, 10),
@@ -200,6 +222,16 @@ function FinancesContenu() {
           });
         }
         setReleve(rel);
+        setHistorique(
+          hi.map((h) => ({
+            ...h,
+            mois: String(h.mois).slice(0, 10),
+            montant_meca: Number(h.montant_meca) || 0,
+            montant_calcul: Number(h.montant_calcul) || 0,
+            montant_elec: Number(h.montant_elec) || 0,
+            montant: Number(h.montant) || 0,
+          }))
+        );
         setCouts(new Map(((co.data ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => [c.annee, Number(c.cout_horaire)])));
         setPrevisionnel(new Map(((pr.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0])));
       } catch (e) {
@@ -223,8 +255,31 @@ function FinancesContenu() {
       g[r.groupe] = r.montant;
       return { date: r.mois, base_affaire: r.base, source: "RELEVE", montant: r.montant, parGroupe: g, negoce: 0, achats: 0, client: r.client, imputation: r.imputation };
     });
-    return [...mvExcel, ...mvReleve];
-  }, [lignesFin, releve]);
+    // Historique de l'ancien classeur : seulement les mois que le relevé validé ne couvre pas
+    const moisReleve = new Set(releve.map((r) => r.mois.slice(0, 7)));
+    const mvHisto: MouvementCA[] = historique
+      .filter((h) => !moisReleve.has(h.mois.slice(0, 7)))
+      .map((h) => {
+        const g = groupesVides();
+        g["Méca"] = h.montant_meca;
+        g.Calcul = h.montant_calcul;
+        g["Elec / Pneu"] = h.montant_elec;
+        const ecart = h.montant - (h.montant_meca + h.montant_calcul + h.montant_elec);
+        if (Math.abs(ecart) > 0.5) g["Non ventilé"] = ecart;
+        return {
+          date: h.mois,
+          base_affaire: `${h.type}${h.numero}`,
+          source: "HISTORIQUE",
+          montant: h.montant,
+          parGroupe: g,
+          negoce: 0,
+          achats: 0,
+          client: h.client,
+          imputation: h.categorie,
+        };
+      });
+    return [...mvExcel, ...mvReleve, ...mvHisto];
+  }, [lignesFin, releve, historique]);
 
   const mois = useMemo(() => moisExercice(exercice), [exercice]);
   const moisN1 = useMemo(() => moisExercice(exercice - 1), [exercice]);
@@ -760,6 +815,7 @@ function FinancesContenu() {
               <ul style={{ lineHeight: 1.6 }}>
                 <li><strong>Exercice</strong> : du 1er novembre au 31 octobre.</li>
                 <li><strong>Chiffre d’affaires</strong> : une commande ou un avenant compte au mois de sa livraison ; une échéance ou un lot au mois de sa propre livraison (la commande ne compte alors que pour le reste) ; une PE / PI suivie dans le relevé, pour le montant de ses mois validés.</li>
+                <li><strong>PE / PI / IG</strong> : uniquement le relevé des prestations (mois validés) ; pour les mois qu’il ne couvre pas, l’historique importé de l’ancien classeur « Suivi des prestations ».</li>
                 <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Autre, Négoce) ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
                 <li><strong>Rentabilité</strong> : affaires au forfait dont toutes les commandes sont livrées dans l’exercice, et mois validés des PE / PI. Coût = heures réellement passées × coût de structure de l’exercice + achats.</li>
                 <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>

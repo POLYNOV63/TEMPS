@@ -14,7 +14,6 @@ const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Dro
   { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
   { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
   { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
-  { cle: "indicateurs", libelle: "Indicateurs", href: "/pilotage/indicateurs", droit: "indicateurs" },
 ];
 
 export default function OngletsPilotage({

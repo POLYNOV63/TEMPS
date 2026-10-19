@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import * as XLSX from "xlsx";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
-import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
@@ -529,8 +528,7 @@ function IndicateursContenu() {
       `}</style>
 
       <div className="sans-impression">
-        <EnTetePage section="Pilotage BE" />
-        <OngletsPilotage actif="indicateurs" />
+        <EnTetePage section="Commercial et carnet" />
       </div>
 
       <div style={{ ...page.contenu, maxWidth: 1300 }}>

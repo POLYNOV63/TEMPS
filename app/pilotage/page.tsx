@@ -44,6 +44,10 @@ import {
 
    Tout le monde voit cette page ; seuls les responsables et les
    administrateurs peuvent déclarer ou modifier une affaire.
+
+   Une ligne par COMMANDE (base ou avenant). Le réalisé d'une famille
+   (base + avenants) est affiché sur la commande de base, avec le reste
+   de toute la famille ; ses avenants indiquent « dans 1604 ».
 ================================================================ */
 
 type DetailActivite = { id: string; nom: string; ordre: number; chiffre: number; realise: number };
@@ -55,6 +59,12 @@ type Ligne = {
   totaux: Totaux;
   planning: { planifie: number; fin: string | null; nb: number };
   etat: { genre: Genre; texte: string };
+  /* Famille d'une affaire (base + avenants, ex. 1604, 1604R1, 1604R2) : les feuilles d'heures
+     sont pointées sur la base, donc le réalisé est celui de toute la famille. Il est porté
+     par une seule ligne (la base, sinon la première commande de la famille). */
+  famille?: { numeros: string[]; chiffre: number };
+  dansFamille?: string; // numéro de la ligne qui porte le réalisé de la famille
+  aAffecter: number; // heures de CETTE commande restant à mettre au planning
 };
 
 type FiltreStatut = "ACTIVES" | "EN_COURS" | "EN_ATTENTE";
@@ -93,6 +103,8 @@ function PortefeuilleContenu() {
   const [inactivesOuvertes, setInactivesOuvertes] = useState(false);
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
   const [nomsActivites, setNomsActivites] = useState<Map<string, { nom: string; ordre: number }>>(new Map());
+  // n° de devis (DBE) de chaque commande, d'après le Suivi d'affaire BE
+  const [devisParCbe, setDevisParCbe] = useState<Map<string, string>>(new Map());
   const [clientsParAffaire, setClientsParAffaire] = useState<{ cbe: Map<string, string>; dbe: Map<string, string> }>({
     cbe: new Map(),
     dbe: new Map(),
@@ -136,7 +148,7 @@ function PortefeuilleContenu() {
         try {
           const [sl, sc] = await Promise.all([
             chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string }>((de, a) =>
-              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").not("client_id", "is", null).order("cle").range(de, a)
+              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").order("cle").range(de, a)
             ),
             chargerTout<{ id: string; nom_abrege: string }>((de, a) =>
               supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(de, a)
@@ -146,13 +158,16 @@ function PortefeuilleContenu() {
           const noms = new Map(sc.map((c) => [c.id, c.nom_abrege]));
           const cbe = new Map<string, string>();
           const dbe = new Map<string, string>();
+          const devis = new Map<string, string>();
           for (const l of sl) {
+            if (l.base_affaire && l.base_devis && (l.genre === "BASE" || !devis.has(l.base_affaire))) devis.set(l.base_affaire.replace(/^0+/, ""), l.base_devis);
             const nom = noms.get(l.client_id);
             if (!nom) continue;
             if (l.base_affaire && (l.genre === "BASE" || !cbe.has(l.base_affaire))) cbe.set(l.base_affaire, nom);
             if (l.base_devis && !dbe.has(l.base_devis)) dbe.set(l.base_devis, nom);
           }
           setClientsParAffaire({ cbe, dbe });
+          setDevisParCbe(devis);
         } catch {
           /* pas de copie du classeur : la colonne Client reste vide */
         }
@@ -181,7 +196,7 @@ function PortefeuilleContenu() {
     const parAffaireRealise = indexParAffaire(realise);
     const aujourdhui = aujourdhuiISO();
 
-    return affaires.map((affaire) => {
+    const brut: Ligne[] = affaires.map((affaire) => {
       const totaux = totauxAffaire(
         parAffaireCharges.get(affaire.id) ?? [],
         parAffaireRealise.get(cleAffaire(affaire.type, affaire.numero)) ?? []
@@ -219,8 +234,57 @@ function PortefeuilleContenu() {
       const num = affaire.numero.replace(/^0+/, "");
       const client = (affaire.type === "CBE" ? clientsParAffaire.cbe.get(num) : clientsParAffaire.dbe.get(num)) ?? null;
 
-      return { affaire, client, activites, totaux, planning: p, etat: etatAffaire(affaire, totaux, aujourdhui, planning) };
+      return {
+        affaire,
+        client,
+        activites,
+        totaux,
+        planning: p,
+        etat: etatAffaire(affaire, totaux, aujourdhui, planning),
+        aAffecter: totaux.reste - p.planifie,
+      } as Ligne;
     });
+
+    // ---------- Familles base + avenants (CBE1604, CBE1604R1…)
+    const parBase = new Map<string, Ligne[]>();
+    for (const l of brut) {
+      if (l.affaire.type !== "CBE") continue;
+      const base = l.affaire.numero.match(/^\d+/)?.[0];
+      if (!base) continue;
+      parBase.set(base, [...(parBase.get(base) ?? []), l]);
+    }
+    for (const [base, membres] of parBase) {
+      const aDesAvenants = membres.some((m) => m.affaire.numero !== base);
+      if (!aDesAvenants) continue;
+      membres.sort((x, y) => x.affaire.numero.localeCompare(y.affaire.numero, "fr", { numeric: true }));
+      // porteur du réalisé : la base si elle est encore active, sinon la première commande active
+      // (une base livrée part dans les inactives alors que ses avenants continuent)
+      const inactive = (a: AffaireP) => a.statut === "LIVREE" || a.statut === "ABANDONNEE";
+      const actives = membres.filter((m) => !inactive(m.affaire));
+      const laBase = membres.find((m) => m.affaire.numero === base);
+      const porteur = laBase && !inactive(laBase.affaire) ? laBase : actives[0] ?? laBase ?? membres[0];
+      const realiseFamille = totauxAffaire([], parAffaireRealise.get(cleAffaire("CBE", base)) ?? []).realise
+        + membres.reduce((t, m) => t + (parAffaireCharges.get(m.affaire.id) ?? []).reduce((u, c) => u + (Number(c.realise_initial) || 0), 0), 0);
+      const chiffreFamille = membres.filter((m) => m.affaire.statut !== "ABANDONNEE").reduce((t, m) => t + m.totaux.chiffre, 0);
+      for (const m of membres) {
+        // à mettre au planning : les heures de chaque commande, moins ce qui y est déjà affecté
+        m.aAffecter = m.totaux.chiffre - m.planning.planifie;
+        if (m === porteur) {
+          m.totaux = {
+            ...m.totaux,
+            realise: realiseFamille,
+            reste: Math.max(0, chiffreFamille - realiseFamille),
+            depassement: chiffreFamille > 0 ? Math.max(0, realiseFamille - chiffreFamille) : 0,
+            pourcent: chiffreFamille > 0 ? (realiseFamille / chiffreFamille) * 100 : null,
+          };
+          m.famille = { numeros: membres.map((x) => x.affaire.numero), chiffre: chiffreFamille };
+        } else {
+          m.totaux = { ...m.totaux, realise: 0, reste: m.totaux.chiffre, depassement: 0, pourcent: null };
+          m.dansFamille = porteur.affaire.numero;
+        }
+      }
+    }
+    return brut;
   }, [affaires, charges, realise, planifies, imputations, clientsParAffaire, nomsActivites]);
 
   const planningActif = planifies.size > 0;
@@ -498,7 +562,7 @@ function PortefeuilleContenu() {
           {liste.map((l) => {
             const { affaire, totaux, etat, planning, client } = l;
             const ouverte = ouvertes.has(affaire.id);
-            const aAffecter = totaux.reste - planning.planifie;
+            const aAffecter = l.aAffecter;
             return (
               <Fragment key={affaire.id}>
                 <tr>
@@ -517,6 +581,11 @@ function PortefeuilleContenu() {
                       <Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
                         {affaire.numero}
                       </Link>
+                      {affaire.type === "CBE" && devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) && (
+                        <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 12, fontWeight: 700, color: C.gris }}>
+                          DBE{devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, ""))}
+                        </span>
+                      )}
                     </span>
                     <div style={{ ...petit, paddingLeft: 24 }}>
                       {affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : "—"}
@@ -540,8 +609,30 @@ function PortefeuilleContenu() {
                     </div>
                   </td>
                   <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : gris("—")}</td>
-                  <td style={tdNum}>{totaux.realise > 0 ? formatHeures(totaux.realise) : gris("—")}</td>
-                  <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.reste) : gris("—")}</td>
+                  <td style={tdNum}>
+                    {l.dansFamille ? (
+                      <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">{gris(`dans ${l.dansFamille}`)}</span>
+                    ) : totaux.realise > 0 ? (
+                      formatHeures(totaux.realise)
+                    ) : (
+                      gris("—")
+                    )}
+                    {l.famille && <div style={petit}>famille</div>}
+                  </td>
+                  <td style={tdNum}>
+                    {l.dansFamille ? (
+                      gris("—")
+                    ) : l.famille ? (
+                      <span title={`Chiffré de la famille ${l.famille.numeros.join(", ")} : ${formatHeures(l.famille.chiffre)}`}>
+                        {formatHeures(totaux.reste)}
+                        <div style={petit}>sur {formatHeures(l.famille.chiffre)} (famille)</div>
+                      </span>
+                    ) : totaux.chiffre > 0 ? (
+                      formatHeures(totaux.reste)
+                    ) : (
+                      gris("—")
+                    )}
+                  </td>
                   <td style={tdNum}>
                     {!planningActif || !affaire.au_planning || totaux.chiffre <= 0 || estInactive(affaire) ? (
                       gris("—")

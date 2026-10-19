@@ -3,8 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as KeyboardReact } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
-import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
+import GardeAcces from "@/components/GardeAcces";
 import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import {
@@ -30,6 +30,10 @@ import { remplirGabarit, type LigneGabarit } from "@/lib/gabaritPrestations";
    Ce relevé FAIT FOI pour les PE / PI : ce qu'on y saisit alimente le
    planning (une affectation par ligne et par mois, fonction SQL
    prestation_synchroniser_planning) et consomme l'enveloppe de l'affaire.
+
+   Mise en page : deux rangées par ligne (paramètres et totaux, puis les
+   jours du mois sur toute la largeur), sans ascenseur horizontal. Chaque
+   commande (base ou avenant, ex. 1604R2) est une affaire à part.
 
    Saisie rapide :
    - « ⤓ » remplit le mois d'une ligne avec sa base horaire (jours ouvrés,
@@ -80,6 +84,7 @@ type MoisLigne = {
   report_heures: number | null;
   report_jour: number | null;
   report_ligne_separee: boolean;
+  report_sortant: number | null; // heures envoyées sur le mois suivant (report libre)
   heures_fige: number | null;
   montant_fige: number | null;
 };
@@ -94,6 +99,7 @@ const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", curr
 const nb = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
 const sansZeros = (n: string) => String(n ?? "").replace(/^0+/, "");
 const texteHeures = (h: number) => String(Math.round(h * 100) / 100).replace(".", ",");
+const numeroBase = (n: string) => n.match(/^\d+/)?.[0] ?? n; // 1604R2 -> 1604
 
 function moisDepuisUrl(): string {
   if (typeof window !== "undefined") {
@@ -227,7 +233,7 @@ function PrestationsContenu() {
         const [sm, sa, mo, sl, sc] = await Promise.all([
           chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").gte("jour", debut).lte("jour", fin).order("jour").range(a, b)),
           chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").lt("jour", debut).order("jour").range(a, b)),
-          supabase.from("prestation_mois").select("ligne_id,mois,hs_refacturer,valide,reporte,report_heures,report_jour,report_ligne_separee,heures_fige,montant_fige").lte("mois", debut),
+          supabase.from("prestation_mois").select("ligne_id,mois,hs_refacturer,valide,reporte,report_heures,report_jour,report_ligne_separee,report_sortant,heures_fige,montant_fige").lte("mois", debut),
           chargerTout<SuiviLigne>((a, b) =>
             supabase.from("suivi_lignes").select("base_affaire,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
           ).catch(() => [] as SuiviLigne[]),
@@ -253,6 +259,7 @@ function PrestationsContenu() {
           report_heures: nb(x.report_heures),
           report_jour: nb(x.report_jour),
           report_ligne_separee: Boolean(x.report_ligne_separee),
+          report_sortant: nb(x.report_sortant),
         }));
 
         const r = new Map<string, number>();
@@ -323,7 +330,8 @@ function PrestationsContenu() {
   const reelDe = useCallback(
     (l: Ligne, date: string) => {
       const a = affairesParId.get(l.affaire_id);
-      return a ? reel.get(`${l.collaborateur_id}|${a.type}|${sansZeros(a.numero)}|${date}`) ?? 0 : 0;
+      // les feuilles d'heures sont pointées sur le numéro de BASE (CBE1604), même pour un avenant
+      return a ? reel.get(`${l.collaborateur_id}|${a.type}|${sansZeros(numeroBase(a.numero))}|${date}`) ?? 0 : 0;
     },
     [affairesParId, reel]
   );
@@ -344,8 +352,14 @@ function PrestationsContenu() {
       for (let k = 1; k <= 24; k++) {
         const m = decalerMois(mois, -k).slice(0, 7);
         const ml = moisPasses.get(`${l.id}|${m}`);
-        if (!ml?.reporte) break;
-        total += heuresMoisPasses.get(`${l.id}|${m}`) ?? 0;
+        if (ml?.reporte) {
+          // mois reporté en entier : toutes ses heures, et on remonte encore
+          total += heuresMoisPasses.get(`${l.id}|${m}`) ?? 0;
+          continue;
+        }
+        // premier mois facturé : ce qu'il a envoyé sur le mois suivant (report libre)
+        total += ml?.report_sortant ?? 0;
+        break;
       }
       return total;
     },
@@ -364,7 +378,9 @@ function PrestationsContenu() {
       const reporte = estReporte(l);
       const disponible = reporte ? 0 : reportEntrant(l); // heures des mois reportés en attente
       const entrant = reporte ? 0 : ml?.report_heures ?? disponible; // celles qu'on facture ce mois-ci
-      const facturables = reporte ? 0 : heures + entrant;
+      // report libre : heures de ce mois envoyées sur le mois suivant, sous la même commande
+      const sortant = reporte ? heures : Math.min(heures, Math.max(0, ml?.report_sortant ?? 0));
+      const facturables = reporte ? 0 : heures - sortant + entrant;
       const hs = ml?.hs_refacturer ?? 0;
       const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
       const montant = tauxH === null ? null : facturables * tauxH + (reporte ? 0 : hs * 1.25 * tauxH);
@@ -373,6 +389,7 @@ function PrestationsContenu() {
         facturables: ml?.valide && ml.heures_fige !== null ? ml.heures_fige : facturables,
         reportEntrant: entrant,
         reportDisponible: disponible,
+        sortant,
         reporte,
         heuresReel,
         hs,
@@ -535,7 +552,36 @@ function PrestationsContenu() {
     if (error) return setErreur(traduireErreur(error.message));
     setMoisLignes((m) => {
       const n = new Map(m);
-      n.set(l.id, { ligne_id: l.id, mois: debut, valide: false, reporte: estReporte(l), report_heures: null, report_jour: null, report_ligne_separee: false, heures_fige: null, montant_fige: null, ...m.get(l.id), hs_refacturer: hs });
+      n.set(l.id, { ligne_id: l.id, mois: debut, valide: false, reporte: estReporte(l), report_heures: null, report_jour: null, report_ligne_separee: false, report_sortant: null, heures_fige: null, montant_fige: null, ...m.get(l.id), hs_refacturer: hs });
+      return n;
+    });
+  }
+
+  /* Report libre : quantité (dans l'unité de la ligne) envoyée sur le mois suivant */
+  async function enregistrerSortant(l: Ligne, texte: string) {
+    const v = texte.trim() === "" ? 0 : Number(texte.replace(",", "."));
+    if (!Number.isFinite(v) || v < 0) return setErreur("Report invalide.");
+    const heures = Math.round((l.unite === "JOUR" ? v * l.base_horaire : v) * 100) / 100;
+    const { error } = await supabase
+      .from("prestation_mois")
+      .upsert({ ligne_id: l.id, mois: debut, report_sortant: heures || null, reporte: false }, { onConflict: "ligne_id,mois" });
+    if (error) return setErreur(traduireErreur(error.message));
+    setMoisLignes((m) => {
+      const n = new Map(m);
+      n.set(l.id, {
+        ligne_id: l.id,
+        mois: debut,
+        hs_refacturer: 0,
+        valide: false,
+        report_heures: null,
+        report_jour: null,
+        report_ligne_separee: false,
+        heures_fige: null,
+        montant_fige: null,
+        ...m.get(l.id),
+        reporte: false,
+        report_sortant: heures || null,
+      });
       return n;
     });
   }
@@ -546,7 +592,7 @@ function PrestationsContenu() {
     if (error) return setErreur(traduireErreur(error.message));
     setMoisLignes((m) => {
       const n = new Map(m);
-      n.set(l.id, { ligne_id: l.id, mois: debut, hs_refacturer: 0, valide: false, report_heures: null, report_jour: null, report_ligne_separee: false, heures_fige: null, montant_fige: null, ...m.get(l.id), reporte });
+      n.set(l.id, { ligne_id: l.id, mois: debut, hs_refacturer: 0, valide: false, report_heures: null, report_jour: null, report_ligne_separee: false, report_sortant: null, heures_fige: null, montant_fige: null, ...m.get(l.id), reporte });
       return n;
     });
   }
@@ -678,12 +724,13 @@ function PrestationsContenu() {
   /* ------------------------------ export au gabarit ------------------------------ */
 
   /* N° à facturer : l'avenant en cours le plus récent, sinon la commande */
+  /* Chaque affaire du Pilotage est une commande : son numéro EST celui à facturer (1604, 1604R2…) */
   const numeroFacture = useCallback(
     (a: AffaireP) => {
-      const lignesAff = suivi.lignes.filter((s) => sansZeros(s.base_affaire ?? "") === sansZeros(a.numero) && s.statut !== "Devis perdu" && s.statut !== "Commande annulée");
-      const enCours = lignesAff.filter((s) => s.statut !== "Livrée").sort((x, y) => (y.rang_avenant ?? 0) - (x.rang_avenant ?? 0))[0];
-      const choix = enCours ?? lignesAff.sort((x, y) => (y.rang_avenant ?? 0) - (x.rang_avenant ?? 0))[0];
-      return { numero: (choix?.numero_affaire ?? `CBE${a.numero}`).replace(/^CBE/, ""), client: choix?.client_id ? suivi.clients.get(choix.client_id) ?? null : null };
+      const ligne = suivi.lignes.find((s) => (s.numero_affaire ?? "").replace(/^CBE/i, "").toUpperCase() === a.numero.toUpperCase());
+      const base = suivi.lignes.find((s) => s.genre === "BASE" && sansZeros(s.base_affaire ?? "") === sansZeros(numeroBase(a.numero)));
+      const client = ligne?.client_id ?? base?.client_id ?? null;
+      return { numero: a.numero, client: client ? suivi.clients.get(client) ?? null : null };
     },
     [suivi]
   );
@@ -717,13 +764,24 @@ function PrestationsContenu() {
             personne: collabs.get(l.collaborateur_id)?.trigramme ?? nomCollab(collabs.get(l.collaborateur_id)),
             taux: l.taux,
             base: l.base_horaire,
-            // mois reporté : rien de facturé ce mois-ci
+            // mois reporté : rien de facturé ce mois-ci ; report libre : retiré des derniers jours du mois
             jours: c.reporte
               ? jours.map(() => null)
-              : jours.map((j) => {
-                  const sa = saisieParCle.get(`${l.id}|${j.date}`);
-                  return sa ? sa.code ?? sa.heures : null;
-                }),
+              : (() => {
+                  const valeurs: (number | string | null)[] = jours.map((j) => {
+                    const sa = saisieParCle.get(`${l.id}|${j.date}`);
+                    return sa ? sa.code ?? sa.heures : null;
+                  });
+                  let aRetirer = c.sortant;
+                  for (let i = valeurs.length - 1; i >= 0 && aRetirer > 0.001; i--) {
+                    const v = valeurs[i];
+                    if (typeof v !== "number" || v <= 0) continue;
+                    const retire = Math.min(v, aRetirer);
+                    valeurs[i] = Math.round((v - retire) * 100) / 100 || null;
+                    aRetirer -= retire;
+                  }
+                  return valeurs;
+                })(),
             hs: c.reporte ? 0 : ml?.hs_refacturer ?? 0,
             commandeInitiale: premiere && resteDebut !== null ? (l.unite === "JOUR" ? resteDebut / l.base_horaire : resteDebut) : null,
           };
@@ -781,11 +839,20 @@ function PrestationsContenu() {
   /* ------------------------------ rendu ------------------------------ */
 
   const nomMois = `${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
-  const th: CSSProperties = { ...page.th, padding: "6px 4px", fontSize: 11, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2 };
-  const td: CSSProperties = { ...page.td, padding: "3px 4px", fontSize: 13, whiteSpace: "nowrap" };
-  const fixe = (gauche: number, largeur: number): CSSProperties => ({ position: "sticky", left: gauche, zIndex: 1, background: "#ffffff", minWidth: largeur, maxWidth: largeur });
-  const champ: CSSProperties = { width: "100%", boxSizing: "border-box", border: "1px solid #c9cdd2", borderRadius: 4, padding: "3px 4px", fontSize: 13, fontFamily: "inherit" };
-  const outil: CSSProperties = { minWidth: 26, height: 26, border: "1px solid #c9cdd2", borderRadius: 5, background: "#ffffff", cursor: "pointer", fontSize: 13, padding: 0, fontFamily: "inherit" };
+  const th: CSSProperties = { ...page.th, padding: "8px 5px", fontSize: 12, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2, overflow: "hidden", textOverflow: "ellipsis" };
+  const td: CSSProperties = { ...page.td, padding: "8px 5px", fontSize: 15, whiteSpace: "nowrap", verticalAlign: "middle" };
+  const champ: CSSProperties = {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1.5px solid #b9bec5",
+    borderRadius: 6,
+    padding: "6px 8px",
+    minHeight: 38,
+    fontSize: 15,
+    fontFamily: "inherit",
+    background: "#ffffff",
+  };
+  const outil: CSSProperties = { minWidth: 34, height: 36, border: "1.5px solid #b9bec5", borderRadius: 6, background: "#ffffff", cursor: "pointer", fontSize: 15, padding: "0 6px", fontFamily: "inherit" };
 
   return (
     <main style={page.fond}>
@@ -830,39 +897,46 @@ function PrestationsContenu() {
         )}
 
         {!chargement && (blocs.length > 0 || aStaffer.length > 0) && (
-          <div style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
-            <table style={{ borderCollapse: "separate", borderSpacing: 0 }}>
+          /* Deux rangées par ligne : paramètres et totaux, puis les jours du mois sur toute la largeur (pas d'ascenseur horizontal) */
+          <div style={{ overflowY: "auto", overflowX: "hidden", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
+            <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", tableLayout: "fixed" }}>
+              {/* largeurs fixes : en-têtes et valeurs restent alignés, tout tient dans la largeur */}
+              <colgroup>
+                {[12, 4.5, 9, 6.5, 6, 5.5, 2.5, 5, 4.5, 10, 5.5, 4, 5, 6.5, 6.5, 6].map((w, i) => (
+                  <col key={i} style={{ width: `${w}%` }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr>
-                  <th style={{ ...th, ...fixe(0, 104), zIndex: 3, background: "#f1f2f4" }}>Affaire</th>
-                  <th style={{ ...th, ...fixe(104, 56), zIndex: 3, background: "#f1f2f4" }}>Pers.</th>
-                  <th style={{ ...th, ...fixe(160, 60), zIndex: 3, background: "#f1f2f4" }} />
-                  <th style={th}>Activité</th>
-                  <th style={th}>Unité</th>
-                  <th style={th}>Taux</th>
-                  <th style={th} title="Base horaire vendue (heures par jour)">Base</th>
-                  <th style={th} title="Facturée à une société du groupe">IG</th>
-                  {jours.map((j) => (
-                    <th key={j.date} style={{ ...th, minWidth: 32, textAlign: "center", background: j.weekend || j.ferie ? "#e3e6ea" : "#f1f2f4" }}>
-                      {LETTRES[j.js]}
-                      <div>{j.jour}</div>
+                  {[
+                    ["Affaire", "left", ""],
+                    ["Pers.", "left", ""],
+                    ["Activité", "left", ""],
+                    ["Unité", "left", ""],
+                    ["Taux", "right", ""],
+                    ["Base", "right", "Base horaire vendue (heures par jour)"],
+                    ["IG", "center", "Facturée à une société du groupe"],
+                    ["Heures", "right", "Heures saisies ce mois"],
+                    ["Feuilles", "right", "Heures des feuilles d'heures (pointées sur l'affaire de base)"],
+                    ["Report", "left", "Reçu des mois précédents (+) et à envoyer sur le mois suivant (↪), en jours ou en heures selon l'unité"],
+                    ["Facturé", "right", ""],
+                    ["Éq. j", "right", ""],
+                    ["HS 125 %", "right", "Heures sup refacturées à 125 %"],
+                    ["Montant", "right", ""],
+                    ["Reste", "right", "Heures commandées sur cette commande, moins les heures facturées (ce mois compris)"],
+                    ["", "left", ""],
+                  ].map(([t, align, titre], i) => (
+                    <th key={i} title={titre || undefined} style={{ ...th, textAlign: align as CSSProperties["textAlign"], background: "#f1f2f4" }}>
+                      {t}
                     </th>
                   ))}
-                  <th style={{ ...th, textAlign: "right" }}>Heures</th>
-                  <th style={th} title="Mois reporté (commande pas reçue) ou heures reportées des mois précédents">Report</th>
-                  <th style={{ ...th, textAlign: "right" }}>Facturé</th>
-                  <th style={{ ...th, textAlign: "right" }} title="Heures des feuilles d'heures sur cette affaire">Feuilles</th>
-                  <th style={{ ...th, textAlign: "right" }}>Éq. j</th>
-                  <th style={{ ...th, textAlign: "right" }} title="Heures sup refacturées à 125 %">HS 125 %</th>
-                  <th style={{ ...th, textAlign: "right" }}>Montant</th>
-                  <th style={{ ...th, textAlign: "right" }} title="Commande + avenants, moins les heures facturées (ce mois compris)">Reste enveloppe</th>
                 </tr>
               </thead>
               <tbody>
                 {blocs.map((b) => (
                   <Fragment key={b.cle}>
                     <tr>
-                      <td colSpan={8 + jours.length + 8} style={{ ...td, background: "#eef0f3", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      <td colSpan={16} style={{ ...td, background: "#eef0f3", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>
                         {b.titre}
                       </td>
                     </tr>
@@ -875,215 +949,291 @@ function PrestationsContenu() {
                       const vide = !jours.some((j) => saisieParCle.has(`${l.id}|${j.date}`));
                       const planDispo = vide && jours.some((j) => (planParCle.get(`${l.affaire_id}|${l.collaborateur_id}|${j.date}`) ?? 0) > 0);
                       const ecart = Math.abs(c.heures - c.heuresReel) > 0.01;
+                      const nf = a ? numeroFacture(a) : null;
+                      const bordHaut: CSSProperties = premiere ? { borderTop: `2px solid ${C.ligne}` } : {};
                       return (
-                        <tr key={l.id}>
-                          <td style={{ ...td, ...fixe(0, 104) }} title={a?.designation ?? ""}>
-                            {premiere && a && (
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                <BadgeType type={a.type} />
-                                <Link href={`/affaires/bilan?affaire=${a.type}${a.numero}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
-                                  {numeroFacture(a).numero}
-                                </Link>
-                                {a.statut === "EN_ATTENTE" && <span title="Intention de commande : commande pas encore reçue" style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ ...td, ...fixe(104, 56), fontWeight: 800 }}>{nomCollab(collabs.get(l.collaborateur_id))}</td>
-                          <td style={{ ...td, ...fixe(160, 60) }}>
-                            {!verrou && (
-                              <span style={{ display: "inline-flex", gap: 3 }}>
-                                {planDispo ? (
-                                  <button type="button" style={outil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>📅</button>
-                                ) : (
-                                  <button type="button" style={outil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>⤓</button>
-                                )}
-                                <button type="button" style={outil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>✕</button>
-                              </span>
-                            )}
-                          </td>
-                          <td style={td}>
-                            <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={{ ...champ, width: 104 }} aria-label="Activité">
-                              <option value="">—</option>
-                              {(referentiel?.activites ?? []).filter((x) => x.actif || x.id === l.activite_id).map((x) => (
-                                <option key={x.id} value={x.id}>{x.nom}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td style={td}>
-                            <select disabled={verrou} value={l.unite} onChange={(e) => void modifierLigne(l, { unite: e.target.value as Ligne["unite"] })} style={{ ...champ, width: 70 }} aria-label="Unité de vente">
-                              <option value="JOUR">€/jour</option>
-                              <option value="HEURE">€/h</option>
-                            </select>
-                          </td>
-                          <td style={td}>
-                            <input
-                              key={`t-${l.id}-${l.taux}`}
-                              disabled={verrou}
-                              defaultValue={l.taux ?? ""}
-                              inputMode="decimal"
-                              placeholder="taux"
-                              aria-label="Taux de vente"
-                              onBlur={(e) => {
-                                const v = e.target.value.trim().replace(",", ".");
-                                const n = v === "" ? null : Number(v);
-                                if (n !== l.taux && (n === null || Number.isFinite(n))) void modifierLigne(l, { taux: n });
-                              }}
-                              style={{ ...champ, width: 60, textAlign: "right", borderColor: l.taux === null ? "#e9b877" : "#c9cdd2" }}
-                            />
-                          </td>
-                          <td style={td}>
-                            <input
-                              key={`b-${l.id}-${l.base_horaire}`}
-                              disabled={verrou}
-                              defaultValue={texteHeures(l.base_horaire)}
-                              inputMode="decimal"
-                              aria-label="Base horaire vendue"
-                              onBlur={(e) => {
-                                const n = Number(e.target.value.replace(",", "."));
-                                if (Number.isFinite(n) && n > 0 && n <= 12 && n !== l.base_horaire) void modifierLigne(l, { base_horaire: n });
-                              }}
-                              style={{ ...champ, width: 40, textAlign: "right" }}
-                            />
-                          </td>
-                          <td style={{ ...td, textAlign: "center" }}>
-                            <input type="checkbox" disabled={verrou} checked={l.intergroupe} onChange={(e) => void modifierLigne(l, { intergroupe: e.target.checked })} aria-label="Intergroupe" />
-                          </td>
-                          {jours.map((j) => {
-                            const s = saisieParCle.get(`${l.id}|${j.date}`);
-                            const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
-                            const factureH = s?.heures ?? 0;
-                            const r = reelDe(l, j.date);
-                            const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
-                            const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
-                            return (
-                              <td
-                                key={j.date}
-                                onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
-                                onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
-                                title={different ? `Facturé ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : undefined}
-                                style={{
-                                  ...td,
-                                  padding: 1,
-                                  background: choisi ? "#fff3c4" : j.weekend || j.ferie ? "#f3f4f6" : undefined,
-                                  backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
+                        <Fragment key={l.id}>
+                          {/* ---------- rangée 1 : paramètres et totaux ---------- */}
+                          <tr>
+                            <td style={{ ...td, ...bordHaut, whiteSpace: "normal", minWidth: 150, maxWidth: 260 }}>
+                              {premiere && a && (
+                                <>
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <BadgeType type={a.type} />
+                                    <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                      {nf?.numero}
+                                    </Link>
+                                    {a.statut === "EN_ATTENTE" && <span title="Intention de commande : commande pas encore reçue" style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                                  </span>
+                                  <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.25 }}>
+                                    {a.designation}
+                                    {nf?.client ? ` · ${nf.client}` : ""}
+                                  </div>
+                                </>
+                              )}
+                            </td>
+                            <td style={{ ...td, ...bordHaut, fontWeight: 800 }}>{nomCollab(collabs.get(l.collaborateur_id))}</td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={{ ...champ, width: "100%" }} aria-label="Activité">
+                                <option value="">—</option>
+                                {(referentiel?.activites ?? []).filter((x) => x.actif || x.id === l.activite_id).map((x) => (
+                                  <option key={x.id} value={x.id}>{x.nom}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              <select disabled={verrou} value={l.unite} onChange={(e) => void modifierLigne(l, { unite: e.target.value as Ligne["unite"] })} style={{ ...champ, width: "100%" }} aria-label="Unité de vente">
+                                <option value="JOUR">€/jour</option>
+                                <option value="HEURE">€/h</option>
+                              </select>
+                            </td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              <input
+                                key={`t-${l.id}-${l.taux}`}
+                                disabled={verrou}
+                                defaultValue={l.taux ?? ""}
+                                inputMode="decimal"
+                                placeholder="taux"
+                                aria-label="Taux de vente"
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim().replace(",", ".");
+                                  const n = v === "" ? null : Number(v);
+                                  if (n !== l.taux && (n === null || Number.isFinite(n))) void modifierLigne(l, { taux: n });
                                 }}
-                              >
-                                <input
-                                  ref={(el) => {
-                                    const cle = `${l.id}|${j.date}`;
-                                    if (el) champs.current.set(cle, el);
-                                    else champs.current.delete(cle);
-                                  }}
-                                  key={`${l.id}-${j.date}-${texte}`}
+                                style={{ ...champ, width: "100%", textAlign: "right", borderColor: l.taux === null ? "#e9b877" : "#c9cdd2" }}
+                              />
+                            </td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              {[7, 7.5].includes(l.base_horaire) ? (
+                                <select
                                   disabled={verrou}
-                                  defaultValue={texte}
-                                  aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
-                                  onFocus={(e) => e.currentTarget.select()}
-                                  onKeyDown={(e) => surTouche(e, l, j.date)}
+                                  value={String(l.base_horaire)}
+                                  aria-label="Base horaire vendue"
+                                  onChange={(e) => {
+                                    if (e.target.value === "autre") {
+                                      const v = window.prompt("Base horaire vendue (heures par jour) :", texteHeures(l.base_horaire));
+                                      const n = v ? Number(v.replace(",", ".")) : NaN;
+                                      if (Number.isFinite(n) && n > 0 && n <= 12) void modifierLigne(l, { base_horaire: n });
+                                      return;
+                                    }
+                                    void modifierLigne(l, { base_horaire: Number(e.target.value) });
+                                  }}
+                                  style={{ ...champ, width: "100%", padding: "6px 2px" }}
+                                >
+                                  <option value="7">7</option>
+                                  <option value="7.5">7,5</option>
+                                  <option value="autre">autre…</option>
+                                </select>
+                              ) : (
+                                <input
+                                  key={`b-${l.id}-${l.base_horaire}`}
+                                  disabled={verrou}
+                                  defaultValue={texteHeures(l.base_horaire)}
+                                  inputMode="decimal"
+                                  aria-label="Base horaire vendue"
+                                  title="Base forcée. Videz ou tapez 7 / 7,5 pour revenir au choix rapide."
                                   onBlur={(e) => {
-                                    if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
+                                    const n = Number(e.target.value.replace(",", "."));
+                                    if (Number.isFinite(n) && n > 0 && n <= 12 && n !== l.base_horaire) void modifierLigne(l, { base_horaire: n });
                                   }}
-                                  style={{
-                                    width: 32,
-                                    boxSizing: "border-box",
-                                    border: "1px solid transparent",
-                                    background: "transparent",
-                                    textAlign: "center",
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    color: s?.code ? "#7a3e00" : C.encre,
-                                    fontFamily: "inherit",
-                                    padding: "4px 0",
-                                    cursor: verrou ? "default" : "cell",
-                                  }}
+                                  style={{ ...champ, width: "100%", textAlign: "right", borderColor: "#e9b877" }}
                                 />
-                              </td>
-                            );
-                          })}
-                          <td style={{ ...td, textAlign: "right" }}>{formatHeures(c.heures)}</td>
-                          <td style={td}>
-                            {c.reporte ? (
-                              <button type="button" disabled={verrou} onClick={() => void basculerReport(l)} title="Heures facturées le mois suivant (commande pas encore reçue). Cliquer pour facturer ce mois-ci." style={{ ...outil, padding: "0 6px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}>
-                                ↪ reporté
-                              </button>
-                            ) : (
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                {(c.reportEntrant > 0 || c.reportDisponible > 0 || moisLignes.get(l.id)?.report_heures !== null && moisLignes.get(l.id)?.report_heures !== undefined) && (
+                              )}
+                            </td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "center" }}>
+                              <input type="checkbox" disabled={verrou} checked={l.intergroupe} onChange={(e) => void modifierLigne(l, { intergroupe: e.target.checked })} aria-label="Intergroupe" />
+                            </td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right" }}>{formatHeures(c.heures)}</td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right", color: ecart ? "#b35c00" : C.gris, fontWeight: ecart ? 800 : 400 }} title={ecart ? "Écart entre les heures saisies et les feuilles d'heures" : undefined}>
+                              {formatHeures(c.heuresReel)}
+                            </td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 3, flexWrap: "wrap" }}>
+                                {/* reçu des mois précédents : cliquer pour choisir combien et où les placer */}
+                                {!c.reporte && (c.reportEntrant > 0 || c.reportDisponible > 0 || (moisLignes.get(l.id)?.report_heures ?? null) !== null) && (
                                   <button
                                     type="button"
                                     disabled={verrou}
                                     onClick={() => ouvrirReport(l)}
-                                    title={`Heures reportées facturées ce mois-ci (${formatHeures(c.reportDisponible)} en attente). Cliquer pour choisir combien et où les placer.`}
-                                    style={{ ...outil, padding: "0 6px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}
+                                    title={`Reçu des mois précédents, facturé ce mois-ci (${formatHeures(c.reportDisponible)} en attente). Cliquer pour choisir combien et où les placer.`}
+                                    style={{ ...outil, padding: "0 5px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}
                                   >
                                     +{formatHeures(c.reportEntrant)}
                                     {moisLignes.get(l.id)?.report_ligne_separee ? " ⧉" : ""}
                                   </button>
                                 )}
-                                {!verrou && (
-                                  <button type="button" onClick={() => void basculerReport(l)} title="Reporter la facturation de ce mois au mois suivant" style={{ ...outil, padding: "0 6px", color: C.gris }}>
-                                    ↪
-                                  </button>
-                                )}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>{formatHeures(c.facturables)}</td>
-                          <td style={{ ...td, textAlign: "right", color: ecart ? "#b35c00" : C.gris, fontWeight: ecart ? 800 : 400 }} title={ecart ? "Écart entre le facturé et les feuilles d'heures" : undefined}>
-                            {formatHeures(c.heuresReel)}
-                          </td>
-                          <td style={{ ...td, textAlign: "right" }}>{(Math.round((c.facturables / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")}</td>
-                          <td style={td}>
-                            <input
-                              key={`hs-${l.id}-${c.hs}`}
-                              disabled={verrou}
-                              defaultValue={c.hs ? texteHeures(c.hs) : ""}
-                              inputMode="decimal"
-                              aria-label="Heures sup à refacturer"
-                              onBlur={(e) => {
-                                if ((Number(e.target.value.replace(",", ".")) || 0) !== c.hs) void modifierHs(l, e.target.value);
-                              }}
-                              style={{ ...champ, width: 44, textAlign: "right" }}
-                            />
-                          </td>
-                          <td style={{ ...td, textAlign: "right", fontWeight: 800 }}>
-                            {c.montant === null ? <span style={{ color: "#7a3e00", fontWeight: 600 }}>taux ?</span> : euros(c.montant)}
-                            {c.valide && <span title="Mois validé : montant figé"> 🔒</span>}
-                          </td>
-                          <td style={{ ...td, textAlign: "right" }}>
-                            {premiere && env && env.commande > 0 ? (
-                              <span title={`Commandé ${formatHeures(env.commande)} · facturé avant ${formatHeures(env.avant)} · ce mois ${formatHeures(env.mois)}`}>
-                                <Pastille genre={env.reste <= 0 ? "crit" : env.reste / env.commande < 0.2 ? "warn" : "ok"}>
-                                  {formatHeures(Math.max(0, env.reste))}
-                                  {l.unite === "JOUR" ? ` · ${(Math.round((Math.max(0, env.reste) / l.base_horaire) * 10) / 10).toLocaleString("fr-FR")} j` : ""}
-                                </Pastille>
-                              </span>
-                            ) : premiere ? (
-                              <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
-                            ) : null}
-                          </td>
-                        </tr>
+                                {/* à envoyer sur le mois suivant : saisie libre (jours ou heures selon l'unité) */}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flex: "1 1 60px", minWidth: 0 }} title="À reporter sur le mois suivant, sous le même n° de commande">
+                                  <span aria-hidden="true" style={{ color: "#7a3e00", fontWeight: 800 }}>↪</span>
+                                  {c.reporte ? (
+                                    <button
+                                      type="button"
+                                      disabled={verrou}
+                                      onClick={() => void basculerReport(l)}
+                                      title="Tout le mois est reporté (commande pas encore reçue). Cliquer pour facturer ce mois-ci."
+                                      style={{ ...outil, padding: "0 5px", color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}
+                                    >
+                                      tout
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <input
+                                        key={`rs-${l.id}-${c.sortant}`}
+                                        disabled={verrou}
+                                        defaultValue={c.sortant > 0 ? texteHeures(l.unite === "JOUR" ? c.sortant / l.base_horaire : c.sortant) : ""}
+                                        placeholder={l.unite === "JOUR" ? "j" : "h"}
+                                        inputMode="decimal"
+                                        aria-label={`À reporter sur le mois suivant, en ${l.unite === "JOUR" ? "jours" : "heures"}`}
+                                        onBlur={(e) => {
+                                          const actuel = c.sortant > 0 ? texteHeures(l.unite === "JOUR" ? c.sortant / l.base_horaire : c.sortant) : "";
+                                          if (e.target.value.trim() !== actuel) void enregistrerSortant(l, e.target.value);
+                                        }}
+                                        style={{ ...champ, width: "100%", minWidth: 0, textAlign: "right" }}
+                                      />
+                                      {!verrou && (
+                                        <button type="button" onClick={() => void basculerReport(l)} title="Reporter tout le mois" style={{ ...outil, padding: "0 4px", color: C.gris, fontSize: 11 }}>
+                                          tout
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </span>
+                              </div>
+                            </td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right", fontWeight: 800 }}>{formatHeures(c.facturables)}</td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right" }}>{(Math.round((c.facturables / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")}</td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              <input
+                                key={`hs-${l.id}-${c.hs}`}
+                                disabled={verrou}
+                                defaultValue={c.hs ? texteHeures(c.hs) : ""}
+                                inputMode="decimal"
+                                aria-label="Heures sup à refacturer"
+                                onBlur={(e) => {
+                                  if ((Number(e.target.value.replace(",", ".")) || 0) !== c.hs) void modifierHs(l, e.target.value);
+                                }}
+                                style={{ ...champ, width: "100%", textAlign: "right" }}
+                              />
+                            </td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right", fontWeight: 800 }}>
+                              {c.montant === null ? <span style={{ color: "#7a3e00", fontWeight: 600 }}>taux ?</span> : euros(c.montant)}
+                              {c.valide && <span title="Mois validé : montant figé"> 🔒</span>}
+                            </td>
+                            <td style={{ ...td, ...bordHaut, textAlign: "right" }}>
+                              {premiere && env && env.commande > 0 ? (
+                                <span title={`Commandé ${formatHeures(env.commande)} · facturé avant ${formatHeures(env.avant)} · ce mois ${formatHeures(env.mois)}`}>
+                                  <Pastille genre={env.reste <= 0 ? "crit" : env.reste / env.commande < 0.2 ? "warn" : "ok"}>
+                                    {formatHeures(Math.max(0, env.reste))}
+                                    {l.unite === "JOUR" ? ` · ${(Math.round((Math.max(0, env.reste) / l.base_horaire) * 10) / 10).toLocaleString("fr-FR")} j` : ""}
+                                  </Pastille>
+                                </span>
+                              ) : premiere ? (
+                                <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
+                              ) : null}
+                            </td>
+                            <td style={{ ...td, ...bordHaut }}>
+                              {!verrou && (
+                                <span style={{ display: "inline-flex", gap: 3 }}>
+                                  {planDispo ? (
+                                    <button type="button" style={outil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>📅</button>
+                                  ) : (
+                                    <button type="button" style={outil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>⤓</button>
+                                  )}
+                                  <button type="button" style={outil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>✕</button>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+
+                          {/* ---------- rangée 2 : les jours du mois ---------- */}
+                          <tr>
+                            <td colSpan={16} style={{ ...td, padding: "2px 8px 10px", borderBottom: `1px solid ${C.ligne}` }}>
+                              <div style={{ display: "grid", gridTemplateColumns: `repeat(${jours.length}, minmax(0, 1fr))`, gap: 3 }}>
+                                {jours.map((j) => {
+                                  const s = saisieParCle.get(`${l.id}|${j.date}`);
+                                  const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
+                                  const factureH = s?.heures ?? 0;
+                                  const r = reelDe(l, j.date);
+                                  const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
+                                  const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
+                                  const ferme = j.weekend || j.ferie;
+                                  return (
+                                    <div
+                                      key={j.date}
+                                      onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
+                                      onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
+                                      title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : `${LETTRES[j.js]} ${j.jour}`}
+                                      style={{
+                                        minWidth: 0,
+                                        borderRadius: 6,
+                                        border: `1px solid ${choisi ? "#e0b400" : "#d5d9de"}`,
+                                        background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
+                                        backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
+                                        textAlign: "center",
+                                      }}
+                                    >
+                                      <div style={{ fontSize: 10, lineHeight: "13px", paddingTop: 2, color: ferme ? "#8a9097" : C.gris, fontWeight: 700 }}>
+                                        {LETTRES[j.js]}
+                                        {j.jour}
+                                      </div>
+                                      <input
+                                        ref={(el) => {
+                                          const cle = `${l.id}|${j.date}`;
+                                          if (el) champs.current.set(cle, el);
+                                          else champs.current.delete(cle);
+                                        }}
+                                        key={`${l.id}-${j.date}-${texte}`}
+                                        disabled={verrou}
+                                        defaultValue={texte}
+                                        aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
+                                        onFocus={(e) => e.currentTarget.select()}
+                                        onKeyDown={(e) => surTouche(e, l, j.date)}
+                                        onBlur={(e) => {
+                                          if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
+                                        }}
+                                        style={{
+                                          width: "100%",
+                                          boxSizing: "border-box",
+                                          border: "none",
+                                          background: "transparent",
+                                          textAlign: "center",
+                                          fontSize: 15,
+                                          fontWeight: 700,
+                                          color: s?.code ? "#7a3e00" : C.encre,
+                                          fontFamily: "inherit",
+                                          padding: "3px 0 6px",
+                                          minHeight: 28,
+                                          cursor: verrou ? "default" : "cell",
+                                        }}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        </Fragment>
                       );
                     })}
                   </Fragment>
                 ))}
                 {aStaffer.length > 0 && (
                   <tr>
-                    <td colSpan={8 + jours.length + 8} style={{ ...td, background: "#fff7ea", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
+                    <td colSpan={16} style={{ ...td, background: "#fff7ea", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
                       PE / PI à staffer — choisissez la personne
                     </td>
                   </tr>
                 )}
                 {aStaffer.map((a) => (
                   <tr key={`s-${a.id}`}>
-                    <td style={{ ...td, ...fixe(0, 104) }} title={a.designation}>
+                    <td style={{ ...td, whiteSpace: "normal" }} title={a.designation}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                         <BadgeType type={a.type} />
                         <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
                         {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                       </span>
                     </td>
-                    <td colSpan={2} style={{ ...td, ...fixe(104, 116) }}>
+                    <td colSpan={2} style={td}>
                       {peutAgir ? (
                         <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 112 }} aria-label={`Personne pour ${a.numero}`}>
                           <option value="">Personne…</option>
@@ -1095,11 +1245,11 @@ function PrestationsContenu() {
                         "—"
                       )}
                     </td>
-                    <td colSpan={5 + jours.length + 8} style={{ ...td, color: C.gris }}>
+                    <td colSpan={13} style={{ ...td, color: C.gris, whiteSpace: "normal" }}>
                       {a.imputation} · {a.designation}
                       {(() => {
                         const env = enveloppes.get(a.id);
-                        return env && env.commande > 0 ? ` · enveloppe ${formatHeures(env.commande)}` : "";
+                        return env && env.commande > 0 ? ` · ${formatHeures(env.commande)} commandées` : "";
                       })()}
                     </td>
                   </tr>

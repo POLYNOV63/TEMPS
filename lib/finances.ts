@@ -9,8 +9,8 @@
    - échéance / lot livré : son montant, à SA date de livraison ;
    - commande de base / avenant livré : son montant, moins ce que ses
      échéances / lots livrés ont déjà apporté, à sa date de livraison ;
-   - PE / PI suivies dans le relevé des prestations : le montant des mois
-     validés du relevé (à la place d'Excel, pour ne rien compter deux fois).
+   - PE / PI : UNIQUEMENT le relevé des prestations (montant des mois
+     validés, historique Suivi_prestations importé compris) ; jamais Excel.
    Lignes perdues, annulées ou retirées du classeur : jamais comptées.
 
    NÉGOCE : revente = colonne « Montant négoce », coût = « Montant achats »
@@ -70,7 +70,7 @@ export const groupesVides = (): ParGroupe => ({ "Méca": 0, Calcul: 0, "Elec / P
 export type MouvementCA = {
   date: string; // AAAA-MM-JJ
   base_affaire: string;
-  source: "LIVRAISON" | "ECHEANCE" | "RELEVE";
+  source: "LIVRAISON" | "ECHEANCE" | "RELEVE" | "HISTORIQUE";
   montant: number;
   parGroupe: ParGroupe;
   negoce: number;
@@ -118,6 +118,7 @@ export function mouvementsExcel(lignes: LigneFin[], viaReleve: (base: string) =>
     if (!l.base_affaire || !active(l) || l.statut !== "Livrée" || !l.date_livraison) continue;
     if (viaReleve(l.base_affaire)) continue;
     const b = base(l);
+    if (estPrestation(b.imputation) || estPrestation(l.imputation)) continue; // PE / PI : CA du relevé seulement
 
     if (estDecoupage(l)) {
       const valeur = l.m.echeances || l.m.montant;

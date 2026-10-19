@@ -393,6 +393,8 @@ export default function DashboardPage() {
 
             <BlocMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} avecBilanAffaire={false} />
 
+            <BlocChiffreAffaires aller={aller} />
+
             <BlocAnalyse
               aller={aller}
               admin
@@ -678,7 +680,8 @@ function ClocheDemandesRH({
 
 function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: boolean }) {
   return (
-    <Groupe titre="Pilotage BE" description="Portefeuille, planning et affaires : onglets en haut des pages">
+    <>
+    <Groupe titre="Planning BE" description="Les affaires, qui travaille dessus et quand">
       <div style={stylesV2.grille}>
         <CarteCompacte
           principale
@@ -696,12 +699,18 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
         />
         {admin && (
           <CarteCompacte
-            icone="🧾"
-            titre="Prestations PE / PI"
-            description="Relevé mensuel facturable : il alimente le planning des PE / PI"
-            onClick={() => aller("/pilotage/prestations")}
+            icone="👥"
+            titre="Charge par ressource"
+            description="Charge prévue de chacun, semaine par semaine"
+            onClick={() => aller("/pilotage/ressources")}
           />
         )}
+        <CarteCompacte
+          icone="🗂️"
+          titre="Portefeuille"
+          description="Toutes les affaires : chiffré, réalisé, reste, statut"
+          onClick={() => aller("/pilotage")}
+        />
         <CarteCompacte
           icone="📊"
           titre="Bilan affaire"
@@ -710,6 +719,21 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
         />
       </div>
     </Groupe>
+
+    {admin && (
+      <Groupe titre="Prestations PE / PI" description="Le relevé mensuel facturable ; il remplit le planning des PE / PI">
+        <div style={stylesV2.grille}>
+          <CarteCompacte
+            principale
+            icone="🧾"
+            titre="Relevé du mois"
+            description="Staffer, saisir les heures facturées, valider le mois, exporter au gabarit"
+            onClick={() => aller("/pilotage/prestations")}
+          />
+        </div>
+      </Groupe>
+    )}
+    </>
   );
 }
 
@@ -815,6 +839,28 @@ function BlocMonEspace({
   );
 }
 
+/* Casquette « chiffre d'affaires » : ADMIN seulement */
+function BlocChiffreAffaires({ aller }: { aller: (url: string) => void }) {
+  return (
+    <Groupe titre="Chiffre d'affaires" description="CA, prévisionnel, rentabilité, commercial et carnet de commandes">
+      <div style={stylesV2.grille}>
+        <CarteCompacte
+          icone="💶"
+          titre="Finances"
+          description="CA de l'exercice face au prévisionnel, activités × imputations, rentabilité"
+          onClick={() => aller("/analyse/finances")}
+        />
+        <CarteCompacte
+          icone="📈"
+          titre="Commercial et carnet"
+          description="Devis, transformation, prise de commande et carnet de commandes"
+          onClick={() => aller("/pilotage/indicateurs")}
+        />
+      </div>
+    </Groupe>
+  );
+}
+
 function BlocAnalyse({
   aller,
   admin,
@@ -832,32 +878,16 @@ function BlocAnalyse({
 
   return (
     <Groupe
-      titre={admin ? "Analyse" : "Suivi des équipes"}
-      description={admin ? "Indicateurs, finances, charge, activités, bilan RH mensuel et exports" : "Feuilles de temps, bilan RH mensuel et export Excel"}
+      titre={admin ? "Analyse technique" : "Suivi des équipes"}
+      description={admin ? "Charge des équipes, heures par activité, bilan RH mensuel et exports" : "Feuilles de temps, bilan RH mensuel et export Excel"}
     >
       <div style={stylesV2.grille}>
         {admin && (
           <CarteCompacte
-            icone="📈"
-            titre="Indicateurs"
-            description="Devis, transformation, prise de commande et carnet de commandes"
-            onClick={() => aller("/pilotage/indicateurs")}
-          />
-        )}
-        {admin && (
-          <CarteCompacte
-            icone="💶"
-            titre="Finances"
-            description="CA de l'exercice face au prévisionnel, activités × imputations, rentabilité"
-            onClick={() => aller("/analyse/finances")}
-          />
-        )}
-        {admin && (
-          <CarteCompacte
-            icone="👥"
-            titre="Charge par ressource"
-            description="Charge prévue de chacun, semaine par semaine"
-            onClick={() => aller("/pilotage/ressources")}
+            icone="🎯"
+            titre="Charge & pointage"
+            description="Pointé face au chiffré par affaire et par activité, dépassements, activités pointées non chiffrées"
+            onClick={() => aller("/analyse/pointage")}
           />
         )}
         {admin && (
@@ -934,6 +964,7 @@ function BlocParametrage({
           <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
           <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
           <CarteCompacte icone="📥" titre="Import historique" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
+          <CarteCompacte icone="🧾" titre="Import Suivi des prestations" description="Reprendre une fois les mois PE / PI facturés dans l'ancien classeur" onClick={() => aller("/admin/import-prestations")} />
           <CarteCompacte icone="💾" titre="Sauvegarde" description="Télécharger toutes les tables dans un fichier ZIP, où vous voulez" onClick={() => aller("/admin/sauvegarde")} />
           <CarteCompacte icone="🧹" titre="Remise à zéro" description="Effacer toutes les données d'activité, garder collaborateurs et paramétrage" onClick={() => aller("/admin/reinitialisation")} />
         </div>
