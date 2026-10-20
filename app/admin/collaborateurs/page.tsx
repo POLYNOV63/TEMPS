@@ -5,6 +5,17 @@ import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import { ROLES, libelleRole, normaliserRole } from "@/lib/droits";
 
+/* ===============================================================
+   ADMINISTRATION - COLLABORATEURS
+
+   L'équipe (rythme horaire, droits RH, feuilles d'heures) et, à part,
+   les ACCÈS DIRECTION : Président, adjoint… en lecture seule (Finances,
+   Indicateurs, Charge). Une fiche Direction n'a ni rythme, ni droits RH,
+   ni feuille d'heures, et n'entre pas dans les statistiques.
+   Une adresse hors @polynov.fr doit être invitée comme « utilisateur
+   externe » dans Microsoft Entra pour pouvoir se connecter.
+================================================================ */
+
 type Collaborateur = {
   id: string;
   auth_user_id?: string | null;
@@ -69,6 +80,11 @@ type Historique = {
   date_fin: string | null;
   profil?: ProfilHoraire;
 };
+
+/* Fiche Direction : consultation seule, sans rythme ni RH */
+const estDirection = (role?: string | null) => normaliserRole(role) === "DIRECTION";
+/* Adresse hors domaine POLYNOV : à inviter dans Microsoft Entra */
+const estExterne = (email?: string | null) => !/@polynov\.fr$/i.test(String(email ?? "").trim());
 
 export default function CollaborateursPage() {
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
@@ -281,11 +297,6 @@ export default function CollaborateursPage() {
       return;
     }
 
-    if (!dateEntree) {
-      setErreur("Veuillez renseigner la date d'entrée.");
-      return;
-    }
-
     if (collaborateurs.some((c) => (c.email || "").trim().toLowerCase() === emailNormalise)) {
       setErreur("Un collaborateur existe déjà avec cette adresse email.");
       return;
@@ -293,6 +304,36 @@ export default function CollaborateursPage() {
 
     if (collaborateurs.some((c) => (c.trigramme || "").trim().toUpperCase() === trigrammeNormalise)) {
       setErreur("Ce trigramme est déjà utilisé par un autre collaborateur.");
+      return;
+    }
+
+    /* ---------- Accès Direction : ni rythme, ni droits RH, ni statistiques ---------- */
+    if (estDirection(role)) {
+      const { error: erreurDirection } = await supabase.from("collaborateurs").insert({
+        prenom,
+        nom,
+        email: emailNormalise,
+        trigramme: trigrammeNormalise,
+        role: "DIRECTION",
+        profil_horaire_id: null,
+        date_entree: dateEntree || new Date().toISOString().split("T")[0],
+        actif: true,
+        inclus_statistiques: false,
+      });
+
+      if (erreurDirection) {
+        console.error(erreurDirection);
+        setErreur(`Impossible de créer l'accès Direction : ${erreurDirection.message}`);
+        return;
+      }
+
+      fermerModalAjout();
+      await chargerDonnees();
+      return;
+    }
+
+    if (!dateEntree) {
+      setErreur("Veuillez renseigner la date d'entrée.");
       return;
     }
 
@@ -690,7 +731,8 @@ const { data: profil, error: erreurProfil } = await supabase
         nom: nomSaisi,
         trigramme: trigrammeSaisi,
         role: editForm.role,
-        inclus_statistiques: editForm.inclusStatistiques,
+        // une fiche Direction n'entre jamais dans les statistiques de l'équipe
+        inclus_statistiques: estDirection(editForm.role) ? false : editForm.inclusStatistiques,
         updated_at: new Date().toISOString(),
       })
       .eq("id", editModal.id);
@@ -707,14 +749,14 @@ const { data: profil, error: erreurProfil } = await supabase
     await chargerDonnees();
   }
 
-  function ouvrirAjout() {
+  function ouvrirAjout(roleInitial: string = "COLLABORATEUR") {
     setErreur("");
 
     setPrenom("");
     setNom("");
     setEmail("");
     setTrigramme("");
-    setRole("COLLABORATEUR");
+    setRole(roleInitial);
     setDateEntree(new Date().toISOString().split("T")[0]);
 
     setBaseSelectionnee("");
@@ -784,6 +826,9 @@ const { data: profil, error: erreurProfil } = await supabase
     );
   }
 
+  const equipe = collaborateurs.filter((c) => c.actif && !estDirection(c.role));
+  const direction = collaborateurs.filter((c) => estDirection(c.role));
+
   return (
     <main
       style={{
@@ -795,21 +840,38 @@ const { data: profil, error: erreurProfil } = await supabase
     >
       {/* EN-TÊTE */}
       <EnTetePage section="Gestion des collaborateurs">
-        <button
-          onClick={ouvrirAjout}
-          style={{
-            background: "white",
-            color: "#c00000",
-            border: "none",
-            borderRadius: 8,
-            padding: "9px 16px",
-            fontWeight: 700,
-            fontSize: 14,
-            cursor: "pointer",
-          }}
-        >
-          + Nouveau collaborateur
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={() => ouvrirAjout()}
+            style={{
+              background: "white",
+              color: "#c00000",
+              border: "none",
+              borderRadius: 8,
+              padding: "9px 16px",
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            + Nouveau collaborateur
+          </button>
+          <button
+            onClick={() => ouvrirAjout("DIRECTION")}
+            style={{
+              background: "rgba(255,255,255,.14)",
+              color: "white",
+              border: "1px solid rgba(255,255,255,.6)",
+              borderRadius: 8,
+              padding: "9px 16px",
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            + Accès Direction
+          </button>
+        </div>
       </EnTetePage>
 
       <div
@@ -844,7 +906,7 @@ const { data: profil, error: erreurProfil } = await supabase
           Collaborateurs
         </h1>
 
-        {collaborateurs.filter(c => c.actif).length === 0 && collaborateurs.filter(c => !c.actif).length === 0 ? (
+        {equipe.length === 0 && collaborateurs.filter(c => !c.actif).length === 0 ? (
           <div style={{background:"white",borderRadius:10,padding:40,textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
             <div style={{fontSize:20,fontWeight:700}}>Aucun collaborateur</div>
             <div style={{marginTop:8,color:"#777"}}>Crée ton premier collaborateur pour commencer.</div>
@@ -852,7 +914,7 @@ const { data: profil, error: erreurProfil } = await supabase
         ) : (
           <>
             <div style={{display:"grid",gap:16}}>
-              {collaborateurs.filter(c => c.actif).map((c) => {
+              {equipe.map((c) => {
                 const profil = profilCourant(c);
                 const historiqueC = historiqueCollaborateur(c.id);
                 return (
@@ -1135,11 +1197,11 @@ const { data: profil, error: erreurProfil } = await supabase
               })}
             </div>
 
-            {collaborateurs.some(c => !c.actif) && (
+            {collaborateurs.some(c => !c.actif && !estDirection(c.role)) && (
               <details style={{marginTop:24,background:"white",border:"1px solid #ddd",borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-                <summary style={{cursor:"pointer",padding:"16px 20px",fontWeight:800,fontSize:17,listStyle:"none"}}>📁 Inactifs ({collaborateurs.filter(c => !c.actif).length})</summary>
+                <summary style={{cursor:"pointer",padding:"16px 20px",fontWeight:800,fontSize:17,listStyle:"none"}}>📁 Inactifs ({collaborateurs.filter(c => !c.actif && !estDirection(c.role)).length})</summary>
                 <div style={{padding:"0 20px 20px",display:"grid",gap:10}}>
-                  {collaborateurs.filter(c => !c.actif).map(c => (
+                  {collaborateurs.filter(c => !c.actif && !estDirection(c.role)).map(c => (
                     <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:15,padding:14,borderTop:"1px solid #eee",background:"#fafafa",borderRadius:8}}>
                       <div><strong>{nomCollaborateur(c)}</strong> <span style={{color:"#777",marginLeft:8}}>{c.trigramme || "—"}</span><div style={{fontSize:13,color:"#777",marginTop:3}}>{c.email}</div></div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -1155,6 +1217,75 @@ const { data: profil, error: erreurProfil } = await supabase
             )}
           </>
         )}
+
+        {/* ---------- ACCÈS DIRECTION ---------- */}
+        <section style={{ marginTop: 32, background: "white", borderRadius: 10, padding: 22, boxShadow: "0 2px 8px rgba(0,0,0,0.06)", borderLeft: "5px solid #5b3e96" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 22 }}>Accès Direction</h2>
+              <div style={{ color: "#666", fontSize: 14, marginTop: 4 }}>
+                Consultation seule : Finances, Indicateurs commerciaux, Charge &amp; pointage, Charge par ressource, planning. Ni feuille d’heures,
+                ni droits RH, ni rythme.
+              </div>
+            </div>
+            <button onClick={() => ouvrirAjout("DIRECTION")} style={primaryButtonStyle}>
+              + Accès Direction
+            </button>
+          </div>
+
+          {direction.length === 0 ? (
+            <div style={{ marginTop: 14, color: "#777" }}>Aucun accès Direction pour l’instant.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10, marginTop: 16 }}>
+              {direction.map((c) => (
+                <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 15, padding: 14, border: "1px solid #eee", borderRadius: 8, background: c.actif ? "#fff" : "#f3f3f3" }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <strong style={{ fontSize: 18 }}>{nomCollaborateur(c)}</strong>
+                      <span style={{ background: "#eee", padding: "2px 7px", borderRadius: 4, fontSize: 12, fontWeight: 700 }}>{c.trigramme || "—"}</span>
+                      <span style={{ background: "#5b3e96", color: "white", padding: "2px 7px", borderRadius: 4, fontSize: 12, fontWeight: 700 }}>Direction</span>
+                      {estExterne(c.email) && (
+                        <span title="Adresse hors @polynov.fr : à inviter comme utilisateur externe dans Microsoft Entra" style={{ background: "#fff4e5", color: "#7a3e00", border: "1px solid #e9b877", padding: "2px 7px", borderRadius: 4, fontSize: 12, fontWeight: 700 }}>
+                          Externe
+                        </span>
+                      )}
+                      {!c.actif && <span style={{ background: "#999", color: "white", padding: "2px 7px", borderRadius: 4, fontSize: 12, fontWeight: 700 }}>Accès coupé</span>}
+                      {c.actif && !c.auth_user_id && (
+                        <span title="La personne ne s'est encore jamais connectée" style={{ color: "#777", fontSize: 12 }}>
+                          · jamais connecté
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#777", marginTop: 3 }}>{c.email}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button onClick={() => ouvrirEdition(c)} style={{ border: "1px solid #333", color: "#333", background: "white", borderRadius: 6, padding: "8px 12px", cursor: "pointer", fontWeight: 700 }}>
+                      Modifier
+                    </button>
+                    {c.actif ? (
+                      <button onClick={() => desactiverCollaborateur(c)} disabled={actionDesactivation === c.id} style={{ border: "1px solid #999", color: "#555", background: "white", borderRadius: 6, padding: "8px 12px", cursor: "pointer", fontWeight: 700 }}>
+                        {actionDesactivation === c.id ? "…" : "Couper l’accès"}
+                      </button>
+                    ) : (
+                      <button onClick={() => reactiverCollaborateur(c)} disabled={actionReactivation === c.id} style={{ border: "1px solid #198754", color: "#198754", background: "white", borderRadius: 6, padding: "8px 12px", cursor: "pointer", fontWeight: 700 }}>
+                        {actionReactivation === c.id ? "…" : "Rétablir l’accès"}
+                      </button>
+                    )}
+                    <button onClick={() => supprimerCollaborateur(c)} disabled={actionSuppression === c.id} style={{ border: "1px solid #c00000", color: "white", background: "#c00000", borderRadius: 6, padding: "8px 12px", cursor: "pointer", fontWeight: 700 }}>
+                      {actionSuppression === c.id ? "…" : "Supprimer"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginTop: 14, padding: 12, background: "#f6f3fb", borderRadius: 7, fontSize: 13, color: "#3d2b66", lineHeight: 1.5 }}>
+            <strong>Adresse hors @polynov.fr :</strong> invitez d’abord la personne dans <strong>Microsoft Entra</strong> (Utilisateurs → Nouvel
+            utilisateur → Inviter un utilisateur externe), avec la même adresse. Elle se connecte ensuite par le bouton Microsoft ; si elle n’a pas
+            de compte Microsoft, un code lui est envoyé par e-mail. Supprimer l’invité dans Entra coupe aussi son accès.
+          </div>
+        </section>
       </div>
 
       {/* MODAL DROITS RH */}
@@ -1224,7 +1355,11 @@ const { data: profil, error: erreurProfil } = await supabase
             <select
               value={editForm.role}
               onChange={(e) =>
-                setEditForm((f) => ({ ...f, role: e.target.value }))
+                setEditForm((f) => ({
+                  ...f,
+                  role: e.target.value,
+                  inclusStatistiques: estDirection(e.target.value) ? false : f.inclusStatistiques,
+                }))
               }
               style={inputStyle}
             >
@@ -1235,6 +1370,7 @@ const { data: profil, error: erreurProfil } = await supabase
               ))}
             </select>
 
+            {!estDirection(editForm.role) && (
             <label
               style={{
                 display: "flex",
@@ -1266,6 +1402,7 @@ const { data: profil, error: erreurProfil } = await supabase
                 </span>
               </span>
             </label>
+            )}
 
             <div
               style={{
@@ -1277,9 +1414,9 @@ const { data: profil, error: erreurProfil } = await supabase
                 color: "#555",
               }}
             >
-              Responsable (niveau 1) : suivi des feuilles en consultation,
-              bilan RH mensuel et export Excel. Le changement s'applique à la
-              prochaine ouverture de page du collaborateur.
+              {estDirection(editForm.role)
+                ? "Direction (lecture seule) : Finances, Indicateurs commerciaux, Charge & pointage, Charge par ressource et planning, en consultation. Pas de feuille d'heures ni de droits RH ; exclu des statistiques."
+                : "Responsable (niveau 1) : suivi des feuilles en consultation, bilan RH mensuel et export Excel. Le changement s'applique à la prochaine ouverture de page du collaborateur."}
             </div>
 
             {erreur && (
@@ -1309,7 +1446,7 @@ const { data: profil, error: erreurProfil } = await supabase
       {modalAjout && (
         <div style={overlayStyle}>
           <div style={modalStyle}>
-            <h2 style={{ marginTop: 0 }}>Nouveau collaborateur</h2>
+            <h2 style={{ marginTop: 0 }}>{estDirection(role) ? "Nouvel accès Direction" : "Nouveau collaborateur"}</h2>
 
             <div style={gridStyle}>
               <Champ
@@ -1337,18 +1474,33 @@ const { data: profil, error: erreurProfil } = await supabase
                 type="email"
               />
 
-              <Champ
-                label="Date d'entrée"
-                value={dateEntree}
-                onChange={setDateEntree}
-                type="date"
-              />
+              {!estDirection(role) && (
+                <Champ
+                  label="Date d'entrée"
+                  value={dateEntree}
+                  onChange={setDateEntree}
+                  type="date"
+                />
+              )}
             </div>
 
             <div style={{ marginTop: 10, fontSize: 13, color: "#666", lineHeight: 1.45 }}>
-              L'adresse email doit être celle du compte Microsoft 365 avec lequel
-              la personne se connectera. Son espace (feuilles de temps, espace RH)
-              est activé automatiquement à sa première connexion.
+              {estDirection(role) ? (
+                <>
+                  L’adresse est celle avec laquelle la personne se connectera par le bouton Microsoft.
+                  {email && estExterne(email) && (
+                    <span style={{ display: "block", marginTop: 6, color: "#7a3e00", fontWeight: 700 }}>
+                      Adresse hors @polynov.fr : invitez-la aussi comme utilisateur externe dans Microsoft Entra, avec cette même adresse.
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  L'adresse email doit être celle du compte Microsoft 365 avec lequel
+                  la personne se connectera. Son espace (feuilles de temps, espace RH)
+                  est activé automatiquement à sa première connexion.
+                </>
+              )}
             </div>
 
             <label style={labelStyle}>Rôle</label>
@@ -1365,6 +1517,13 @@ const { data: profil, error: erreurProfil } = await supabase
               ))}
             </select>
 
+            {estDirection(role) ? (
+              <div style={{ marginTop: 16, padding: 14, background: "#f6f3fb", borderRadius: 8, fontSize: 14, color: "#3d2b66", lineHeight: 1.5 }}>
+                <strong>Consultation seule.</strong> Pas de base horaire, pas de feuille d’heures, pas de droits RH : la fiche n’entre dans aucune
+                statistique ni dans la charge de l’équipe.
+              </div>
+            ) : (
+            <>
             <label style={labelStyle}>Base horaire</label>
 
             <select
@@ -1437,6 +1596,14 @@ const { data: profil, error: erreurProfil } = await supabase
                 Total : {totalHebdomadaire().toFixed(2).replace(".", ",")} h
               </div>
             </div>
+            </>
+            )}
+
+            {erreur && (
+              <div style={{ marginTop: 12, color: "#c00000", fontWeight: 700 }}>
+                {erreur}
+              </div>
+            )}
 
             <div style={buttonRowStyle}>
               <button
@@ -1450,7 +1617,7 @@ const { data: profil, error: erreurProfil } = await supabase
                 onClick={ajouterCollaborateur}
                 style={primaryButtonStyle}
               >
-                Créer le collaborateur
+                {estDirection(role) ? "Créer l’accès Direction" : "Créer le collaborateur"}
               </button>
             </div>
           </div>
