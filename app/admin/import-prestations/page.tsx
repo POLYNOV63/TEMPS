@@ -202,6 +202,7 @@ function ImportContenu() {
           };
           if (ligneId && c.valides.has(`${ligneId}|${m.slice(0, 7)}`)) {
             bilan.verrouilles++;
+            aSynchroniser.push({ ligneId, mois: m }); // ses heures ne bougent pas, mais son planning est remis d'aplomb
             continue; // mois validé dans l'application : intouchable
           }
           if (!ligneId) {
