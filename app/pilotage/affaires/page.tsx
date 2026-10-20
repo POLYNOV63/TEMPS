@@ -82,7 +82,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    Toute commande en cours ou en intention apparaît d'office, PE / PI
    comprises (pour une PE / PI : ses avenants R1, R2… s'il y en a, sinon la
    commande de base). Plus de choix
-   « au planning » à faire dans le portefeuille). Les gars sont au-dessus du
+   « au planning » à faire dans le portefeuille). Les ressources sont au-dessus du
    planning, qui prend toute la largeur.
 
    Une ligne par COMMANDE : commande de base (CBE1604) et chaque avenant
@@ -109,8 +109,9 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
 ================================================================ */
 
 /* PE en haut, PI ensuite, le reste dessous */
-const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" ? 0 : a.imputation === "PI" ? 1 : 2);
-const TITRES_GROUPES = ["Prestations externes (PE) — chez le client", "Prestations internes (PI)", "Autres affaires"];
+// de haut en bas : hors affaire (zone du haut), le reste, puis les PI, puis les PE
+const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" ? 2 : a.imputation === "PI" ? 1 : 0);
+const TITRES_GROUPES = ["Affaires", "Prestations internes (PI)", "Prestations externes (PE) — chez le client"];
 
 const LARGEUR_NOM = 250;
 const LARGEUR_STATUT = 280;
@@ -1873,7 +1874,7 @@ function PlanningAffairesContenu() {
                   onClick={() => setGensReplies((v) => !v)}
                   style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 32 }}
                 >
-                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les gars
+                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les ressources
                 </button>
                 <span style={{ fontSize: 13, color: C.gris }}>
                   Les plus libres d’abord · {Math.min(8, nbSemaines)} prochaines semaines (plus la case est claire, plus la personne est libre) · glissez une
@@ -1916,10 +1917,20 @@ function PlanningAffairesContenu() {
             </section>
           )}
 
-          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0, overflowX: "auto" }}>
+          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0 }}>
             <div style={{ minWidth: 1050 }}>
-              {/* en-têtes */}
-              <div style={{ display: "grid", gridTemplateColumns: gabarit }}>
+              {/* en-têtes : semaines et jours, FIXES sous la barre des mois quand on descend */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: gabarit,
+                  position: "sticky",
+                  top: 128,
+                  zIndex: 15,
+                  background: "#ffffff",
+                  boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)",
+                }}
+              >
                 <div style={{ gridColumn: 1, gridRow: "1 / span 2", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
                   Affaire · ressource
                 </div>
