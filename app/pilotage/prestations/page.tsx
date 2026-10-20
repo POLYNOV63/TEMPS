@@ -166,6 +166,8 @@ function PrestationsContenu() {
   const minuteurs = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   const [ajout, setAjout] = useState<{ affaire_id: string; collaborateur_id: string } | null>(null);
+  // recherche : client, affaire (désignation), n° (CBE, avenant, DBE), trigramme ou nom
+  const [recherche, setRecherche] = useState("");
   const [editeurReport, setEditeurReport] = useState<null | { ligne: Ligne; heures: string; jour: string; separee: boolean }>(null);
   const [enCours, setEnCours] = useState("");
 
@@ -887,6 +889,25 @@ function PrestationsContenu() {
   /* ------------------------------ rendu ------------------------------ */
 
   const nomMois = `${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
+
+  /* Recherche : chaque mot doit se retrouver dans le client, la désignation, les n° ou la personne */
+  const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const mots = sansAccents(recherche).split(/\s+/).filter(Boolean);
+  const correspond = (a: AffaireP | undefined, collabId?: string) => {
+    if (mots.length === 0) return true;
+    if (!a) return false;
+    const nf = numeroFacture(a);
+    const c = collabId ? collabs.get(collabId) : undefined;
+    const texte = sansAccents(
+      [a.type, a.numero, `${a.type}${a.numero}`, nf.devis ? `DBE${nf.devis}` : "", nf.client ?? "", a.designation ?? "", a.imputation ?? "", c?.trigramme ?? "", c ? `${c.prenom ?? ""} ${c.nom ?? ""}` : ""].join(" ")
+    );
+    return mots.every((m) => texte.includes(m));
+  };
+  const blocsAffiches = blocs
+    .map((b) => ({ ...b, lignes: b.lignes.filter((l) => correspond(affairesParId.get(l.affaire_id), l.collaborateur_id)) }))
+    .filter((b) => b.lignes.length > 0);
+  const aStafferAffiches = aStaffer.filter((a) => correspond(a));
+  const nbTrouves = blocsAffiches.reduce((t, b) => t + b.lignes.length, 0) + aStafferAffiches.length;
   const th: CSSProperties = { ...page.th, padding: "8px 5px", fontSize: 12, whiteSpace: "nowrap", position: "sticky", top: 0, zIndex: 2, overflow: "hidden", textOverflow: "ellipsis" };
   const td: CSSProperties = { ...page.td, padding: "8px 5px", fontSize: 15, whiteSpace: "nowrap", verticalAlign: "middle" };
   const champ: CSSProperties = {
@@ -948,6 +969,30 @@ function PrestationsContenu() {
         )}
 
         {!chargement && (blocs.length > 0 || aStaffer.length > 0) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <input
+              type="search"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              placeholder="Rechercher : client, affaire, n° (1604R2, DBE2603), trigramme…"
+              aria-label="Rechercher dans le relevé"
+              style={{ ...page.entrees, maxWidth: 460, minHeight: 40, fontSize: 15 }}
+            />
+            {mots.length > 0 && (
+              <>
+                <span style={{ fontSize: 14, color: C.gris }}>
+                  {nbTrouves} ligne{nbTrouves > 1 ? "s" : ""} trouvée{nbTrouves > 1 ? "s" : ""}
+                </span>
+                <button type="button" style={page.btnSecondaire} onClick={() => setRecherche("")}>
+                  Effacer
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {!chargement && mots.length > 0 && nbTrouves === 0 && <Message genre="info">Aucune ligne ne correspond à « {recherche} ».</Message>}
+
+        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (
           /* Deux rangées par ligne : paramètres et totaux, puis les jours du mois sur toute la largeur (pas d'ascenseur horizontal) */
           <div style={{ overflowY: "auto", overflowX: "hidden", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
             <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", tableLayout: "fixed" }}>
@@ -984,7 +1029,7 @@ function PrestationsContenu() {
                 </tr>
               </thead>
               <tbody>
-                {blocs.map((b) => (
+                {blocsAffiches.map((b) => (
                   <Fragment key={b.cle}>
                     <tr>
                       <td colSpan={16} style={{ ...td, background: "#eef0f3", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>
@@ -1291,14 +1336,14 @@ function PrestationsContenu() {
                     })}
                   </Fragment>
                 ))}
-                {aStaffer.length > 0 && (
+                {aStafferAffiches.length > 0 && (
                   <tr>
                     <td colSpan={16} style={{ ...td, background: "#fff7ea", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
                       PE / PI à staffer — choisissez la personne
                     </td>
                   </tr>
                 )}
-                {aStaffer.map((a) => (
+                {aStafferAffiches.map((a) => (
                   <tr key={`s-${a.id}`}>
                     <td style={{ ...td, whiteSpace: "normal" }} title={a.designation}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
