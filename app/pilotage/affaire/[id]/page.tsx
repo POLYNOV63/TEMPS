@@ -192,6 +192,39 @@ function FicheContenu() {
   );
 
   const origine = affaire?.dbe_origine_id ? toutes.find((a) => a.id === affaire.dbe_origine_id) : undefined;
+
+  // n° de devis (DBE) et client d'après le Suivi d'affaire BE : la ligne de cette commande
+  // (avenant compris), sinon la commande de base
+  const [devisExcel, setDevisExcel] = useState<{ devis: string | null; client: string | null }>({ devis: null, client: null });
+  const numeroAffaire = affaire?.type === "CBE" ? affaire.numero : null;
+  useEffect(() => {
+    if (!numeroAffaire) return;
+    let actif = true;
+    const base = numeroAffaire.match(/^\d+/)?.[0] ?? numeroAffaire;
+    supabase
+      .from("suivi_lignes")
+      .select("numero_affaire,genre,base_devis,client_id")
+      .eq("base_affaire", base)
+      .in("genre", ["BASE", "AVENANT"])
+      .then(async ({ data }) => {
+        if (!actif || !data) return;
+        const lignes = data as { numero_affaire: string | null; genre: string; base_devis: string | null; client_id: string | null }[];
+        const ligne =
+          lignes.find((l) => (l.numero_affaire ?? "").replace(/^CBE/i, "").toUpperCase() === numeroAffaire.toUpperCase()) ??
+          lignes.find((l) => l.genre === "BASE") ??
+          lignes[0];
+        let client: string | null = null;
+        const idClient = ligne?.client_id ?? lignes.find((l) => l.genre === "BASE")?.client_id ?? null;
+        if (idClient) {
+          const { data: c } = await supabase.from("suivi_clients").select("nom_abrege").eq("id", idClient).maybeSingle();
+          client = (c as { nom_abrege: string } | null)?.nom_abrege ?? null;
+        }
+        if (actif) setDevisExcel({ devis: ligne?.base_devis ?? null, client });
+      });
+    return () => {
+      actif = false;
+    };
+  }, [numeroAffaire]);
   const cbeLies = affaire?.type === "DBE" ? toutes.filter((a) => a.dbe_origine_id === affaire.id) : [];
 
   /* ------------------------- ouvertures de fenêtres ------------------------- */
@@ -436,6 +469,16 @@ function FicheContenu() {
               <span>
                 Statut : <strong>{libelleStatut(affaire.statut)}</strong>
               </span>
+              {devisExcel.client && (
+                <span>
+                  Client : <strong>{devisExcel.client}</strong>
+                </span>
+              )}
+              {!origine && devisExcel.devis && (
+                <span title="Devis d'origine, d'après le Suivi d'affaire BE">
+                  Devis : <strong>DBE{devisExcel.devis}</strong>
+                </span>
+              )}
               {origine && (
                 <span>
                   Origine :{" "}
