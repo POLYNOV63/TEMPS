@@ -130,7 +130,7 @@ function joursDuMois(mois: string) {
 function lireValeur(texte: string): { heures: number | null; code: string | null } | null {
   const t = texte.trim().replace(",", ".");
   if (t === "") return null;
-  if (/^\d+(\.\d+)?$/.test(t)) return { heures: Math.min(24, Number(t)), code: null };
+  if (/^\d+(\.\d+)?$/.test(t)) return { heures: Math.min(744, Number(t)), code: null };
   return { heures: null, code: t.toUpperCase().slice(0, 6) };
 }
 
