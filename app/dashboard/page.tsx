@@ -690,13 +690,6 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
           description="Affecter les ressources en glissant et en étirant, comparer au chiffré"
           onClick={() => aller("/pilotage/affaires")}
         />
-        <CarteCompacte
-          principale
-          icone="＋"
-          titre="Nouvelle affaire"
-          description="Déclarer un DBE, un CBE, une PE ou une PI"
-          onClick={() => aller("/pilotage/nouvelle")}
-        />
         {admin && (
           <CarteCompacte
             icone="👥"

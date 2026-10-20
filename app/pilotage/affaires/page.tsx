@@ -78,6 +78,12 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    n'existe que pour les affaires déclarées à la main : une affaire venue
    d'Excel (repère « XLS ») suit le statut du classeur.
 
+   Toute commande en cours ou en intention apparaît d'office, PE / PI
+   comprises (pour une PE / PI : ses avenants R1, R2… s'il y en a, sinon la
+   commande de base). Plus de choix
+   « au planning » à faire dans le portefeuille). Les gars sont au-dessus du
+   planning, qui prend toute la largeur.
+
    Une ligne par COMMANDE : commande de base (CBE1604) et chaque avenant
    (CBE1604R1, R2…) à part, avec ses heures et son délai ; une commande
    livrée dans Excel quitte le planning, les autres restent.
@@ -152,6 +158,7 @@ function PlanningAffairesContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [rechargement, setRechargement] = useState(0);
+  const [gensReplies, setGensReplies] = useState(false);
   // Qui d'autre a le planning ouvert (temps réel), et modification faite par quelqu'un d'autre
   const [moiId, setMoiId] = useState<string | null>(null);
   const [autres, setAutres] = useState<{ id: string; nom: string; modifie: boolean }[]>([]);
@@ -251,7 +258,7 @@ function PlanningAffairesContenu() {
     setChargement(true);
 
     Promise.all([
-      chargerAffaires(),
+      chargerAffaires({ horsPlanning: true }),
       chargerCharges(),
       chargerAnnuaire(),
       chargerActivites(),
@@ -265,7 +272,25 @@ function PlanningAffairesContenu() {
     ])
       .then(([af, ch, an, ref, im, moi, pl, cap, cd, re, fa]) => {
         if (!actif) return;
-        setAffaires(af);
+        // Au planning d'office : toute commande en cours ou en intention de commande ; une commande
+        // livrée ou abandonnée n'y reste que si elle a eu des affectations (historique de charge).
+        const avecAffectations = new Set(pl.affectations.map((x) => x.affaire_id).filter(Boolean) as string[]);
+        const actives = af.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || avecAffectations.has(a.id));
+
+        // PE / PI : seulement les avenants (R1, R2…) quand il y en a ; sinon la commande de base.
+        // (une base qui a déjà des affectations reste visible, pour l'historique de charge)
+        const prestationImp = (code: string | null) => {
+          const i = im.find((x) => x.code === code);
+          return i ? i.charge_obligatoire === false : code === "PE" || code === "PI";
+        };
+        const basesAvecAvenant = new Set(
+          actives.filter((a) => a.type === "CBE" && prestationImp(a.imputation) && /R\d+$/i.test(a.numero)).map((a) => a.numero.match(/^\d+/)?.[0] ?? "")
+        );
+        setAffaires(
+          actives.filter(
+            (a) => !(a.type === "CBE" && prestationImp(a.imputation) && /^\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero) && !avecAffectations.has(a.id))
+          )
+        );
         setCharges(ch);
         setAnnuaire(an);
         setReferentiel(ref);
@@ -1642,7 +1667,60 @@ function PlanningAffairesContenu() {
         {chargement && <Message genre="info">Chargement du planning…</Message>}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "999 1 760px", minWidth: 0, overflowX: "auto" }}>
+          {/* ---------- les gars : bandeau au-dessus du planning (responsables et administration) ---------- */}
+          {peutAgir && (
+            <section style={{ ...page.carte, padding: "10px 12px", flex: "1 1 100%", minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  aria-expanded={!gensReplies}
+                  onClick={() => setGensReplies((v) => !v)}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 32 }}
+                >
+                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les gars
+                </button>
+                <span style={{ fontSize: 13, color: C.gris }}>
+                  Les plus libres d’abord · {Math.min(8, nbSemaines)} prochaines semaines (plus la case est claire, plus la personne est libre) · glissez une
+                  personne sur une affaire, à la date voulue.
+                  {estAdmin && (
+                    <>
+                      {" "}
+                      <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>Charge par ressource</Link>
+                    </>
+                  )}
+                </span>
+              </div>
+              {!gensReplies && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8, marginTop: 8, maxHeight: 230, overflowY: "auto" }}>
+                  {ressources.map(({ collab, libre, chezLeClientJusquau }) => {
+                    const verrou = Boolean(chezLeClientJusquau);
+                    return (
+                      <div
+                        key={collab.id}
+                        draggable={peutAgir && !verrou}
+                        onDragStart={(e) => e.dataTransfer.setData("text/plain", collab.id)}
+                        title={verrou ? `En prestation externe chez le client jusqu’au ${formatDate(chezLeClientJusquau)} : non affectable` : "Glisser sur une affaire"}
+                        style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 8px", border: `1px solid ${C.ligne}`, borderRadius: 8, background: "#ffffff", opacity: verrou ? 0.55 : 1, cursor: verrou ? "not-allowed" : "grab" }}
+                      >
+                        <strong style={{ fontSize: 16, minWidth: 40 }}>{nomCollab(collab)}</strong>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${collab.prenom ?? ""} ${collab.nom ?? ""}`.trim()}</div>
+                          <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
+                            {libre.map((v, i) => (
+                              <span key={i} title={`S${numeroSemaine(ajouterJours(lundi, i * 7))} : ${v} % de libre`} style={{ display: "inline-block", width: 18, height: 12, boxSizing: "border-box", border: "1px solid #c9cdd2", background: v >= 80 ? "#ffffff" : v >= 40 ? "#dce6f1" : v > 0 ? "#9fb4cb" : "#34506b" }} />
+                            ))}
+                          </div>
+                          {verrou && <div style={{ fontSize: 11, color: C.gris }}>Client jusqu’au {formatDate(chezLeClientJusquau)}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0, overflowX: "auto" }}>
             <div style={{ minWidth: 1050 }}>
               {/* en-têtes */}
               <div style={{ display: "grid", gridTemplateColumns: gabarit }}>
@@ -1773,55 +1851,11 @@ function PlanningAffairesContenu() {
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6b58a8", border: "1px solid #4a3a85" }} />PI</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#8fb0d6 40%,#bcd0e8 40%,#bcd0e8 70%,#eaf1fa 70%)", border: "2px dashed #34506b", boxSizing: "border-box" }} />PE / PI : enveloppe consommée, planifiée, restante · ⌛ épuisement prévu</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: ROUGE_HACHURE, border: "1px solid #b3261e" }} />la ressource dépasse la prestation</span>
             </div>
           </section>
 
-          {/* panneau des ressources : seulement pour ceux qui affectent */}
-          {peutAgir && (
-          <aside style={{ ...page.carte, flex: "1 1 300px", maxWidth: 360, minWidth: 280 }}>
-            <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Ressources</h2>
-            <p style={{ margin: "0 0 10px", color: C.gris, fontSize: 13 }}>
-              Les plus libres d’abord ({Math.min(8, nbSemaines)} prochaines semaines : plus la case est claire, plus la personne est libre). Glissez une personne sur une affaire, à la date voulue.
-            </p>
 
-            {ressources.map(({ collab, libre, chezLeClientJusquau }) => {
-              const verrou = Boolean(chezLeClientJusquau);
-
-              return (
-                <div
-                  key={collab.id}
-                  draggable={peutAgir && !verrou}
-                  onDragStart={(e) => e.dataTransfer.setData("text/plain", collab.id)}
-                  title={verrou ? `En prestation externe chez le client jusqu’au ${formatDate(chezLeClientJusquau)} : non affectable` : "Glisser sur une affaire"}
-                  style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 4px", borderTop: `1px solid ${C.ligne}`, opacity: verrou ? 0.55 : 1, cursor: verrou ? "not-allowed" : peutAgir ? "grab" : "default" }}
-                >
-                  <strong style={{ fontSize: 18, minWidth: 46 }}>{nomCollab(collab)}</strong>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, color: "#3b4046" }}>{`${collab.prenom ?? ""} ${collab.nom ?? ""}`.trim()}</div>
-                    <div style={{ display: "flex", gap: 2, margin: "4px 0" }}>
-                      {libre.map((v, i) => (
-                        <span key={i} title={`S${numeroSemaine(ajouterJours(lundi, i * 7))} : ${v} % de libre`} style={{ display: "inline-block", width: 22, height: 14, boxSizing: "border-box", border: "1px solid #c9cdd2", background: v >= 80 ? "#ffffff" : v >= 40 ? "#dce6f1" : v > 0 ? "#9fb4cb" : "#34506b" }} />
-                      ))}
-                    </div>
-                    {verrou && <div style={{ fontSize: 12, color: C.gris }}>Chez le client jusqu’au {formatDate(chezLeClientJusquau)}</div>}
-                  </div>
-                </div>
-              );
-            })}
-
-            <p style={{ margin: "10px 0 0", fontSize: 12, color: C.gris }}>
-              L’encadrement n’apparaît pas ici.
-              {estAdmin && (
-                <>
-                  {" "}Pour voir la charge de chacun semaine par semaine :{" "}
-                  <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>Charge par ressource</Link>.
-                </>
-              )}
-            </p>
-          </aside>
-          )}
         </div>
       </div>
 

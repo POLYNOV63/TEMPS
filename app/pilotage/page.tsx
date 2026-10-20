@@ -16,7 +16,6 @@ import {
   chargerPlanifie,
   chargerRealise,
   chargerTout,
-  changerAuPlanning,
   type AffaireP,
   type Moi,
 } from "@/lib/pilotageDonnees";
@@ -44,6 +43,10 @@ import {
 
    Tout le monde voit cette page ; seuls les responsables et les
    administrateurs peuvent déclarer ou modifier une affaire.
+
+   Toute commande en cours ou en intention est au planning d'office (plus
+   de bouton « Planifier »), et les affaires viennent toutes du Suivi
+   d'affaire BE (plus de « Nouvelle affaire »).
 
    Une ligne par COMMANDE (base ou avenant). Le réalisé d'une famille
    (base + avenants) est affiché sur la commande de base, avec le reste
@@ -81,7 +84,6 @@ function normaliser(texte: string) {
 
 function PortefeuilleContenu() {
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
-  const [planningEnCours, setPlanningEnCours] = useState("");
   const [erreurPlanning, setErreurPlanning] = useState("");
   const [charges, setCharges] = useState<Awaited<ReturnType<typeof chargerCharges>>>([]);
   const [realise, setRealise] = useState<Realise[]>([]);
@@ -301,8 +303,6 @@ function PortefeuilleContenu() {
       if (filtreImputation && (affaire.imputation ?? "") !== filtreImputation) return false;
       if (filtreClient && (client ?? "") !== filtreClient) return false;
       if (filtreResp && affaire.responsable_id !== filtreResp) return false;
-      if (filtrePlanning === "AU" && !affaire.au_planning) return false;
-      if (filtrePlanning === "HORS" && affaire.au_planning) return false;
       if (depassementSeul && !(totaux.depassement > 0)) return false;
       return true;
     });
@@ -400,7 +400,7 @@ function PortefeuilleContenu() {
   const alertes = useMemo(() => {
     // Une affaire hors planning n'est pas encore pilotée : pas d'alerte de planning pour elle.
     const actives = lignes.filter(
-      (l) => l.affaire.au_planning && (l.affaire.statut === "EN_COURS" || l.totaux.depassement > 0)
+      (l) => l.affaire.statut === "EN_COURS" || l.totaux.depassement > 0
     );
 
     return {
@@ -454,31 +454,7 @@ function PortefeuilleContenu() {
   const alertesMasquees =
     Math.max(0, alertes.critiques.length - LIMITE_ALERTES) + Math.max(0, alertes.surveiller.length - LIMITE_ALERTES);
 
-  const nbHorsPlanning = lignes.filter(
-    (l) => !l.affaire.au_planning && l.affaire.statut !== "LIVREE" && l.affaire.statut !== "ABANDONNEE"
-  ).length;
 
-  async function basculerPlanning(l: Ligne) {
-    const auPlanning = !l.affaire.au_planning;
-    setErreurPlanning("");
-
-    if (!auPlanning && l.planning.nb > 0) {
-      setErreurPlanning(
-        `${l.affaire.type} ${l.affaire.numero} a encore des affectations à venir : retirez-les dans le planning avant de la sortir du planning.`
-      );
-      return;
-    }
-
-    setPlanningEnCours(l.affaire.id);
-    try {
-      await changerAuPlanning(l.affaire.id, auPlanning);
-      setAffaires((liste) => liste.map((a) => (a.id === l.affaire.id ? { ...a, au_planning: auPlanning } : a)));
-    } catch (e) {
-      setErreurPlanning(e instanceof Error ? e.message : "Modification impossible.");
-    } finally {
-      setPlanningEnCours("");
-    }
-  }
 
   // Tableau compact : chiffres et dates sur une seule ligne
   const thNum: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap", padding: "10px 8px" };
@@ -634,7 +610,7 @@ function PortefeuilleContenu() {
                     )}
                   </td>
                   <td style={tdNum}>
-                    {!planningActif || !affaire.au_planning || totaux.chiffre <= 0 || estInactive(affaire) ? (
+                    {!planningActif || totaux.chiffre <= 0 || estInactive(affaire) ? (
                       gris("—")
                     ) : aAffecter > 0.01 ? (
                       <strong style={{ color: C.orangeTexte }}>{formatHeures(aAffecter)}</strong>
@@ -644,33 +620,7 @@ function PortefeuilleContenu() {
                     {planning.planifie > 0 && <div style={petit}>{formatHeures(planning.planifie)} planifiées</div>}
                   </td>
                   <td style={{ ...tdCourt, whiteSpace: "normal" }}>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                      {affaire.au_planning || estInactive(affaire) ? (
-                        <Pastille genre={etat.genre}>{etat.texte}</Pastille>
-                      ) : (
-                        <Pastille genre="info">À planifier</Pastille>
-                      )}
-                      {moi?.peutModifier ? (
-                        <button
-                          type="button"
-                          disabled={planningEnCours === affaire.id}
-                          onClick={() => basculerPlanning(l)}
-                          title={affaire.au_planning ? "Retirer cette affaire du planning" : "Faire apparaître cette affaire dans le planning"}
-                          style={{
-                            ...(affaire.au_planning ? page.btnSecondaire : page.btnPrimaire),
-                            minHeight: 30,
-                            padding: "0 10px",
-                            fontSize: 13,
-                            whiteSpace: "nowrap",
-                            opacity: planningEnCours === affaire.id ? 0.5 : 1,
-                          }}
-                        >
-                          {affaire.au_planning ? "✓ Planifiée" : "+ Planifier"}
-                        </button>
-                      ) : (
-                        <span style={petit}>{affaire.au_planning ? "Au planning" : "Hors planning"}</span>
-                      )}
-                    </div>
+                    <Pastille genre={etat.genre}>{etat.texte}</Pastille>
                   </td>
                 </tr>
                 {ouverte && (
@@ -748,16 +698,6 @@ function PortefeuilleContenu() {
             </p>
           </div>
 
-          {moi?.peutModifier && (
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <Link href="/pilotage/nouvelle?type=DBE" style={page.btnSecondaire}>
-                + Nouveau DBE
-              </Link>
-              <Link href="/pilotage/nouvelle?type=CBE" style={page.btnPrimaire}>
-                + Nouveau CBE
-              </Link>
-            </div>
-          )}
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
@@ -832,14 +772,6 @@ function PortefeuilleContenu() {
 
                 <span style={{ width: 8 }} />
 
-                <button
-                  type="button"
-                  aria-pressed={filtrePlanning === "HORS"}
-                  style={bouton(filtrePlanning === "HORS")}
-                  onClick={() => setFiltrePlanning((v) => (v === "HORS" ? "TOUS" : "HORS"))}
-                >
-                  Hors planning ({nbHorsPlanning})
-                </button>
                 <button
                   type="button"
                   aria-pressed={depassementSeul}

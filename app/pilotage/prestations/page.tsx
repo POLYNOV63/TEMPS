@@ -439,9 +439,18 @@ function PrestationsContenu() {
   /* PE / PI venues d'Excel sans personne encore : à staffer */
   const aStaffer = useMemo(
     () =>
-      affaires
-        .filter((a) => (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || (a.statut === "LIVREE" && (a.date_livraison ?? "") >= debut)) && !lignes.some((l) => l.affaire_id === a.id))
-        .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true })),
+      (() => {
+        const candidates = affaires.filter(
+          (a) => (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || (a.statut === "LIVREE" && (a.date_livraison ?? "") >= debut)) && !lignes.some((l) => l.affaire_id === a.id)
+        );
+        // seulement les avenants (R1, R2…) quand il y en a ; sinon la commande de base
+        const basesAvecAvenant = new Set(
+          affaires.filter((a) => /R\d+$/i.test(a.numero) && (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE")).map((a) => a.numero.match(/^\d+/)?.[0] ?? "")
+        );
+        return candidates
+          .filter((a) => !(/^\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero)))
+          .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+      })(),
     [affaires, lignes, debut]
   );
 
