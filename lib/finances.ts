@@ -267,7 +267,8 @@ export function coutHoraire(couts: Map<number, number>, date: string): number | 
 /* ------------------------------ CA attendu (pas encore livré) ------------------------------
 
    FORFAITS seulement (les PE / PI ont leur propre prévision : relevé non validé ou onglets
-   futurs du Suivi des prestations). Lignes « Commande reçue » non livrées :
+   futurs du Suivi des prestations). Lignes « Commande reçue » ou « Intention de commande »
+   non livrées (même traitement) :
    - échéance / lot : son montant, au mois de SON délai estimé ;
    - commande / avenant : son montant, moins ses échéances / lots (livrés, ou attendus avec
      leur propre date), au mois de son délai estimé ;
@@ -293,7 +294,7 @@ export function mouvementsAttendus(
   const aDater: { base: string; numero: string; montant: number }[] = [];
 
   for (const l of lignes) {
-    if (!l.base_affaire || !active(l) || l.statut !== "Commande reçue") continue;
+    if (!l.base_affaire || !active(l) || (l.statut !== "Commande reçue" && l.statut !== "Intention de commande")) continue;
     const b = base(l);
     if (estPrestation(b.imputation) || estPrestation(l.imputation)) continue;
 
@@ -306,7 +307,7 @@ export function mouvementsAttendus(
     } else if (estCommande(l)) {
       // ce que ses découpages couvrent déjà (livrés, ou attendus à leur propre date)
       const couverts = (enfants.get(l.cle) ?? []).filter(
-        (e) => active(e) && (e.statut === "Livrée" || (e.statut === "Commande reçue" && e.date_estimee))
+        (e) => active(e) && (e.statut === "Livrée" || ((e.statut === "Commande reçue" || e.statut === "Intention de commande") && e.date_estimee))
       );
       valeur = Math.max(0, l.m.montant - couverts.reduce((t, e) => t + valeurDecoupage(e), 0));
     } else continue;
