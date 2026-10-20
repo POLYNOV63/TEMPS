@@ -177,6 +177,8 @@ function PlanningAffairesContenu() {
   const [livraisonEnCours, setLivraisonEnCours] = useState("");
   const [codesDivers, setCodesDivers] = useState<{ code: string; libelle: string }[]>([]);
   const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());
+  // toutes les commandes (livrées comprises) : pour répartir le pointé d'une famille base + avenants
+  const [toutesAffaires, setToutesAffaires] = useState<Affaire[]>([]);
   // heures facturées (relevé des prestations) jusqu'à hier, par affaire
   const [factureParAffaire, setFactureParAffaire] = useState<Map<string, number>>(new Map());
   const [horsAffaireOuvert, setHorsAffaireOuvert] = useState(true);
@@ -276,6 +278,7 @@ function PlanningAffairesContenu() {
         // livrée ou abandonnée n'y reste que si elle a eu des affectations (historique de charge).
         const avecAffectations = new Set(pl.affectations.map((x) => x.affaire_id).filter(Boolean) as string[]);
         const actives = af.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || avecAffectations.has(a.id));
+        setToutesAffaires(af);
 
         // PE / PI : seulement les avenants (R1, R2…) quand il y en a ; sinon la commande de base.
         // (une base qui a déjà des affectations reste visible, pour l'historique de charge)
@@ -463,6 +466,52 @@ function PlanningAffairesContenu() {
       .map(([cle, g]) => ({ cle, ...g, debutIdx: Math.min(...g.blocs.map((b) => b.debutIdx)) }))
       .sort((x, y) => x.debutIdx - y.debutIdx || x.libelle.localeCompare(y.libelle, "fr"));
   }, [blocsParAffaire]);
+
+  /* FORFAITS : ce qui reste à planifier, commande par commande
+     = chiffré − déjà pointé (feuilles d'heures) − déjà planifié à venir.
+     Les heures sont pointées sur la commande de base : le pointé de la famille (base + avenants)
+     remplit d'abord la base, puis R1, R2… dans l'ordre. */
+  const resteAPlanifier = useMemo(() => {
+    const m = new Map<string, { chiffre: number; pointe: number; planifie: number; reste: number }>();
+    const futur = new Map<string, number>();
+    for (const a of affectations) {
+      if (!a.affaire_id) continue;
+      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour >= aujourdhui).reduce((t, j) => t + j.heures, 0);
+      futur.set(a.affaire_id, (futur.get(a.affaire_id) ?? 0) + h);
+    }
+    const familles = new Map<string, Affaire[]>();
+    // la famille complète (une base livrée a consommé ses heures en premier)
+    for (const af of toutesAffaires) {
+      if (estPrestation(af) || af.statut === "ABANDONNEE") continue;
+      const k = `${af.type}|${(af.numero.match(/^\d+/)?.[0] ?? af.numero).replace(/^0+/, "")}`;
+      familles.set(k, [...(familles.get(k) ?? []), af]);
+    }
+    for (const [k, membres] of familles) {
+      membres.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+      let pointeRestant = realiseParAffaire.get(k) ?? 0;
+      membres.forEach((af, i) => {
+        const chiffre = chiffreParAffaire.get(af.id) ?? 0;
+        const derniere = i === membres.length - 1;
+        const pointe = derniere ? pointeRestant : Math.min(chiffre, pointeRestant);
+        pointeRestant -= pointe;
+        const planifie = futur.get(af.id) ?? 0;
+        m.set(af.id, { chiffre, pointe, planifie, reste: Math.max(0, chiffre - pointe - planifie) });
+      });
+    }
+    return m;
+  }, [toutesAffaires, affectations, joursParAffectation, chiffreParAffaire, realiseParAffaire, estPrestation, aujourdhui]);
+
+  const totalResteAPlanifier = useMemo(() => {
+    let h = 0;
+    let n = 0;
+    const affichees = new Set(affaires.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE").map((a) => a.id));
+    for (const [id, r] of resteAPlanifier)
+      if (affichees.has(id) && r.reste > 0.5) {
+        h += r.reste;
+        n++;
+      }
+    return { h, n };
+  }, [resteAPlanifier, affaires]);
 
   const affecteParAffaire = useMemo(() => {
     const m = new Map<string, { heures: number; fin: string | null }>();
@@ -1487,6 +1536,18 @@ function PlanningAffairesContenu() {
                   {chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—"}
                 </div>
                 <Pastille genre={etat.genre}>{etat.texte}</Pastille>
+                {(() => {
+                  const r = resteAPlanifier.get(affaire.id);
+                  if (!r || r.chiffre <= 0) return null;
+                  return (
+                    <div
+                      title={`Chiffré ${formatHeures(r.chiffre)} − déjà pointé ${formatHeures(r.pointe)} − planifié à venir ${formatHeures(r.planifie)}`}
+                      style={{ fontSize: 12, fontWeight: 800, color: r.reste > 0.5 ? "#7a3e00" : "#1b5e20" }}
+                    >
+                      {r.reste > 0.5 ? `Reste à planifier ${formatHeures(r.reste)}` : "✓ tout est planifié"}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
@@ -1628,6 +1689,14 @@ function PlanningAffairesContenu() {
         </div>
 
         {/* Présence : d'autres personnes ont le planning ouvert */}
+        {!chargement && totalResteAPlanifier.n > 0 && (
+          <Message genre="info">
+            <strong>Reste à planifier sur les forfaits en cours : {formatHeures(totalResteAPlanifier.h)}</strong> ({totalResteAPlanifier.n} commande
+            {totalResteAPlanifier.n > 1 ? "s" : ""}) — chiffré, moins ce qui est déjà pointé, moins ce qui est déjà planifié à venir. Le détail est dans
+            la colonne de droite de chaque affaire.
+          </Message>
+        )}
+
         {peutAgir && autres.some((a) => a.modifie) && (
           <Message genre="info">
             ⚠ <strong>{autres.filter((a) => a.modifie).map((a) => a.nom).join(", ")}</strong>{" "}
