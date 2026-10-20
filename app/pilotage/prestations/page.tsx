@@ -1221,8 +1221,8 @@ function PrestationsContenu() {
 
                           {/* ---------- rangée 2 : les jours du mois ---------- */}
                           <tr>
-                            <td colSpan={16} style={{ ...td, padding: "2px 8px 10px", borderBottom: `1px solid ${C.ligne}` }}>
-                              <div style={{ display: "grid", gridTemplateColumns: `repeat(${jours.length}, minmax(0, 1fr))`, gap: 3 }}>
+                            <td colSpan={16} style={{ ...td, padding: "0 8px 6px", borderBottom: `1px solid ${C.ligne}` }}>
+                              <div style={{ display: "grid", gridTemplateColumns: `repeat(${jours.length}, minmax(0, 1fr))`, gap: 2 }}>
                                 {jours.map((j) => {
                                   const s = saisieParCle.get(`${l.id}|${j.date}`);
                                   const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
@@ -1239,14 +1239,14 @@ function PrestationsContenu() {
                                       title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : `${LETTRES[j.js]} ${j.jour}`}
                                       style={{
                                         minWidth: 0,
-                                        borderRadius: 6,
-                                        border: `1px solid ${choisi ? "#e0b400" : "#d5d9de"}`,
+                                        borderRadius: 4,
+                                        border: `1px solid ${choisi ? "#e0b400" : "#e3e6ea"}`,
                                         background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
                                         backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
                                         textAlign: "center",
                                       }}
                                     >
-                                      <div style={{ fontSize: 10, lineHeight: "13px", paddingTop: 2, color: ferme ? "#8a9097" : C.gris, fontWeight: 700 }}>
+                                      <div style={{ fontSize: 9, lineHeight: "10px", paddingTop: 1, color: ferme ? "#8a9097" : C.gris, fontWeight: 700 }}>
                                         {LETTRES[j.js]}
                                         {j.jour}
                                       </div>
@@ -1271,12 +1271,12 @@ function PrestationsContenu() {
                                           border: "none",
                                           background: "transparent",
                                           textAlign: "center",
-                                          fontSize: 15,
+                                          fontSize: 13,
                                           fontWeight: 700,
                                           color: s?.code ? "#7a3e00" : C.encre,
                                           fontFamily: "inherit",
-                                          padding: "3px 0 6px",
-                                          minHeight: 28,
+                                          padding: "1px 0 2px",
+                                          minHeight: 18,
                                           cursor: verrou ? "default" : "cell",
                                         }}
                                       />
