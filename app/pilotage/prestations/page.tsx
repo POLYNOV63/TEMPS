@@ -88,7 +88,7 @@ type MoisLigne = {
   heures_fige: number | null;
   montant_fige: number | null;
 };
-type SuiviLigne = { base_affaire: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null };
+type SuiviLigne = { base_affaire: string | null; base_devis: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null };
 
 const LETTRES = ["D", "L", "M", "M", "J", "V", "S"];
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -235,7 +235,7 @@ function PrestationsContenu() {
           chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").lt("jour", debut).order("jour").range(a, b)),
           supabase.from("prestation_mois").select("ligne_id,mois,hs_refacturer,valide,reporte,report_heures,report_jour,report_ligne_separee,report_sortant,heures_fige,montant_fige").lte("mois", debut),
           chargerTout<SuiviLigne>((a, b) =>
-            supabase.from("suivi_lignes").select("base_affaire,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
+            supabase.from("suivi_lignes").select("base_affaire,base_devis,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
           ).catch(() => [] as SuiviLigne[]),
           chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)).catch(() => []),
         ]);
@@ -547,6 +547,33 @@ function PrestationsContenu() {
     }
   }
 
+  /* Changer la personne d'une ligne (erreur de saisie, remplacement) : ses heures, ses mois et ses
+     affectations au planning suivent. */
+  async function changerPersonne(l: Ligne, collaborateurId: string) {
+    if (!collaborateurId || collaborateurId === l.collaborateur_id) return;
+    const ancien = nomCollab(collabs.get(l.collaborateur_id));
+    const nouveau = nomCollab(collabs.get(collaborateurId));
+    if (lignes.some((x) => x.affaire_id === l.affaire_id && x.collaborateur_id === collaborateurId)) {
+      setErreur(`${nouveau} a déjà une ligne sur cette commande : saisissez ses heures sur sa ligne, puis videz celle de ${ancien}.`);
+      return;
+    }
+    if (!window.confirm(`Remplacer ${ancien} par ${nouveau} sur cette ligne ?\nSes heures, ses mois et son planning passent à ${nouveau}.`)) return;
+    setErreur("");
+
+    const { error } = await supabase.from("prestation_lignes").update({ collaborateur_id: collaborateurId }).eq("id", l.id);
+    if (error) return setErreur(traduireErreur(error.message));
+
+    // les affectations du planning créées par ce relevé changent aussi de personne
+    const { data: mois } = await supabase.from("prestation_mois").select("affectation_id").eq("ligne_id", l.id).not("affectation_id", "is", null);
+    const ids = ((mois ?? []) as { affectation_id: string }[]).map((m) => m.affectation_id);
+    if (ids.length) {
+      const { error: ea } = await supabase.from("pilotage_affectations").update({ collaborateur_id: collaborateurId }).in("id", ids);
+      if (ea) setErreur(`Ligne modifiée, mais planning non mis à jour : ${traduireErreur(ea.message)}`);
+    }
+    setInfo(`${ancien} remplacé par ${nouveau}.`);
+    setRechargement((n) => n + 1);
+  }
+
   async function modifierLigne(l: Ligne, patch: Partial<Ligne>) {
     setErreur("");
     const { error } = await supabase.from("prestation_lignes").update(patch).eq("id", l.id);
@@ -750,7 +777,8 @@ function PrestationsContenu() {
       const ligne = suivi.lignes.find((s) => (s.numero_affaire ?? "").replace(/^CBE/i, "").toUpperCase() === a.numero.toUpperCase());
       const base = suivi.lignes.find((s) => s.genre === "BASE" && sansZeros(s.base_affaire ?? "") === sansZeros(numeroBase(a.numero)));
       const client = ligne?.client_id ?? base?.client_id ?? null;
-      return { numero: a.numero, client: client ? suivi.clients.get(client) ?? null : null };
+      const devis = ligne?.base_devis ?? base?.base_devis ?? null;
+      return { numero: a.numero, client: client ? suivi.clients.get(client) ?? null : null, devis };
     },
     [suivi]
   );
@@ -897,6 +925,9 @@ function PrestationsContenu() {
                 ⤓ Tout remplir
               </button>
             )}
+            <Link href="/admin/import-prestations" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }} title="Le Suivi des prestations (Excel) fait foi : importer ses onglets de mois dans le relevé">
+              ⇪ Importer le Suivi des prestations
+            </Link>
             <button type="button" style={page.btnSecondaire} onClick={() => void exporter()} disabled={lignes.length === 0 || enCours !== ""}>
               {enCours === "export" ? "Export…" : "Exporter (gabarit Excel)"}
             </button>
@@ -983,6 +1014,11 @@ function PrestationsContenu() {
                                     <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
                                       {nf?.numero}
                                     </Link>
+                                    {nf?.devis && (
+                                      <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 12, fontWeight: 700, color: C.gris }}>
+                                        DBE{nf.devis}
+                                      </span>
+                                    )}
                                     {a.statut === "EN_ATTENTE" && <span title="Intention de commande : commande pas encore reçue" style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                                   </span>
                                   <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.25 }}>
@@ -992,7 +1028,25 @@ function PrestationsContenu() {
                                 </>
                               )}
                             </td>
-                            <td style={{ ...td, ...bordHaut, fontWeight: 800 }}>{nomCollab(collabs.get(l.collaborateur_id))}</td>
+                            <td style={{ ...td, ...bordHaut, fontWeight: 800 }}>
+                              {verrou ? (
+                                nomCollab(collabs.get(l.collaborateur_id))
+                              ) : (
+                                <select
+                                  value={l.collaborateur_id}
+                                  onChange={(e) => void changerPersonne(l, e.target.value)}
+                                  aria-label="Personne"
+                                  title="Changer la personne de cette ligne (erreur de saisie, remplacement)"
+                                  style={{ ...champ, width: "100%", padding: "6px 2px", fontWeight: 800 }}
+                                >
+                                  {annuaire.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {nomCollab(c)}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
                             <td style={{ ...td, ...bordHaut }}>
                               <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={{ ...champ, width: "100%" }} aria-label="Activité">
                                 <option value="">—</option>

@@ -980,7 +980,7 @@ function BlocParametrage({
           <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
           <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
           <CarteCompacte icone="📥" titre="Import historique" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
-          <CarteCompacte icone="🧾" titre="Import Suivi des prestations" description="Reprendre une fois les mois PE / PI facturés dans l'ancien classeur" onClick={() => aller("/admin/import-prestations")} />
+          <CarteCompacte icone="🧾" titre="Import Suivi des prestations" description="Le classeur fait foi : ses mois remplissent le relevé PE / PI (mois passés validés)" onClick={() => aller("/admin/import-prestations")} />
           <CarteCompacte icone="💾" titre="Sauvegarde" description="Télécharger toutes les tables dans un fichier ZIP, où vous voulez" onClick={() => aller("/admin/sauvegarde")} />
           <CarteCompacte icone="🧹" titre="Remise à zéro" description="Effacer toutes les données d'activité, garder collaborateurs et paramétrage" onClick={() => aller("/admin/reinitialisation")} />
         </div>

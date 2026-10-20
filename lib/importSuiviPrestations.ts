@@ -55,6 +55,7 @@ export type LigneHisto = {
   montant_elec: number;
   montant: number; // total facturé de la ligne = Méca + Calcul + Elec (heures sup comprises)
   reclassee: boolean; // rangée d'office dans une autre catégorie que son bloc
+  jours: (number | string | null)[]; // heures (ou code CP, ML…) du 1er au dernier jour du mois
 };
 
 export type ResultatHisto = {
@@ -134,6 +135,21 @@ export function lireSuiviPrestations(feuilles: Record<string, unknown[][]>): Res
       ignores.push(nom);
       continue;
     }
+
+    // colonne du 1er jour : un « 1 » suivi d'un « 2 » dans les premières lignes, après les montants
+    const apresMontants = Math.max(c.meca ?? 0, c.calcul ?? 0, c.elec ?? 0) + 1;
+    let colJour1 = -1;
+    for (let i = 0; i <= Math.min(4, rows.length - 1) && colJour1 < 0; i++) {
+      const r = rows[i] ?? [];
+      for (let k = apresMontants; k < r.length - 1; k++) {
+        if (nombre(r[k]) === 1 && nombre(r[k + 1]) === 2) {
+          colJour1 = k;
+          break;
+        }
+      }
+    }
+    const [anneeMois, numMois] = [Number(mois.slice(0, 4)), Number(mois.slice(5, 7))];
+    const nbJours = new Date(Date.UTC(anneeMois, numMois, 0)).getUTCDate();
 
     let categorie: CategorieHisto = "PE";
     let unite: "JOUR" | "HEURE" = "JOUR";
@@ -215,6 +231,15 @@ export function lireSuiviPrestations(feuilles: Record<string, unknown[][]>): Res
         montant_elec: elec,
         montant: meca + calcul + elec,
         reclassee,
+        jours: Array.from({ length: nbJours }, (_, j) => {
+          if (colJour1 < 0) return null;
+          const v = r[colJour1 + j];
+          if (v === null || v === undefined || String(v).trim() === "") return null;
+          const n = nombre(v);
+          if (n !== null) return n === 0 ? null : n;
+          const code = String(v).trim().toUpperCase();
+          return code.startsWith("#") ? null : code.slice(0, 6);
+        }),
       });
       // une ligne rangée d'office ailleurs n'est pas dans les totaux de son bloc
       if (reclassee) reclasse += meca + calcul + elec;

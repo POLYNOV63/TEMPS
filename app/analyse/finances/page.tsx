@@ -288,10 +288,11 @@ function FinancesContenu() {
       return { date: r.mois, base_affaire: r.base, source: "RELEVE", montant: r.montant, parGroupe: g, negoce: 0, achats: 0, client: r.client, imputation: r.imputation };
     });
     // Historique de l'ancien classeur : seulement les mois que le relevé validé ne couvre pas
-    const moisReleve = new Set(releve.map((r) => r.mois.slice(0, 7)));
     const moisCourantIso = new Date().toISOString().slice(0, 7);
+    // historique : lignes du Suivi des prestations NON rattachées au relevé (l'import les range à part) ;
+    // mois passés = réalisé, mois en cours et futurs = attendu
     const mvHisto: MouvementCA[] = historique
-      .filter((h) => !moisReleve.has(h.mois.slice(0, 7)) && h.mois.slice(0, 7) < moisCourantIso)
+      .filter((h) => h.mois.slice(0, 7) < moisCourantIso)
       .map((h) => {
         const g = groupesVides();
         g["Méca"] = h.montant_meca;
@@ -322,8 +323,6 @@ function FinancesContenu() {
 
     // PE / PI : le relevé non validé d'abord ; pour les mois qu'il ne couvre pas (ni validé ni prévu),
     // les onglets futurs du Suivi des prestations importé
-    const moisValides = new Set(releve.map((r) => r.mois.slice(0, 7)));
-    const moisPrevus = new Set(prevusReleve.filter((p) => p.montant > 0).map((p) => p.mois.slice(0, 7)));
     const pepi: MouvementCA[] = [
       ...prevusReleve
         .filter((p) => p.montant > 0)
@@ -333,7 +332,7 @@ function FinancesContenu() {
           return { date: p.mois, base_affaire: p.base, source: "ATTENDU" as const, montant: p.montant, parGroupe: g, negoce: 0, achats: 0, client: p.client, imputation: p.imputation };
         }),
       ...historique
-        .filter((h) => h.mois.slice(0, 7) >= moisCourantIso && !moisValides.has(h.mois.slice(0, 7)) && !moisPrevus.has(h.mois.slice(0, 7)))
+        .filter((h) => h.mois.slice(0, 7) >= moisCourantIso)
         .map((h) => {
           const g = groupesVides();
           g["Méca"] = h.montant_meca;
