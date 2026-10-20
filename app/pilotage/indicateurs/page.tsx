@@ -192,6 +192,7 @@ function Carte({ titre, children, style }: { titre: string; children: ReactNode;
 type LigneBrute = {
   id: string;
   cle: string;
+  parent_cle: string | null;
   genre: LigneInd["genre"];
   numero_devis: string | null;
   numero_affaire: string | null;
@@ -242,24 +243,35 @@ function IndicateursContenu() {
             supabase
               .from("suivi_lignes")
               .select(
-                "id,cle,genre,numero_devis,numero_affaire,base_affaire,statut,imputation,designation,client_id,date_ouverture,date_envoi,date_reception_commande,date_livraison,delai,date_livraison_estimee,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
+                "id,cle,parent_cle,genre,numero_devis,numero_affaire,base_affaire,statut,imputation,designation,client_id,date_ouverture,date_envoi,date_reception_commande,date_livraison,delai,date_livraison_estimee,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
               )
               .order("cle")
               .range(a, b)
           ),
-          chargerTout<{ ligne_id: string; montant: number | string }>((a, b) =>
-            supabase.from("suivi_lignes_montants").select("ligne_id,montant").order("ligne_id").range(a, b)
+          chargerTout<{ ligne_id: string; montant: number | string; montant_echeances: number | string }>((a, b) =>
+            supabase.from("suivi_lignes_montants").select("ligne_id,montant,montant_echeances").order("ligne_id").range(a, b)
           ),
           chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)),
           chargerRealise().catch(() => []),
           supabase.from("suivi_synchronisations").select("terminee_le").eq("statut", "APPLIQUEE").order("terminee_le", { ascending: false }).limit(1),
-          supabase.rpc("realise_par_mois"),
+          // heures FACTURÉES des PE / PI, commande par commande : relevé + historique importé
+          Promise.all([
+            chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>
+              supabase.from("prestation_saisies").select("ligne_id,jour,heures").order("jour").range(a, b)
+            ),
+            supabase.from("prestation_lignes").select("id,affaire_id"),
+            supabase.from("pilotage_affaires").select("id,numero").eq("type", "CBE"),
+            chargerTout<{ type: string; numero: string; mois: string; heures: number | string }>((a, b) =>
+              supabase.from("prestation_historique").select("type,numero,mois,heures").order("id").range(a, b)
+            ),
+          ]).catch(() => null),
         ]);
 
         if (!actif) return;
 
         const noms = new Map(clients.map((c) => [c.id, c.nom_abrege]));
         const parLigne = new Map(montants.map((m) => [m.ligne_id, Number(m.montant) || 0]));
+        const echeances = new Map(montants.map((m) => [m.ligne_id, Number(m.montant_echeances) || 0]));
         const n = (v: number | string) => Number(v) || 0;
 
         setLignes(
@@ -291,6 +303,8 @@ function IndicateursContenu() {
             heures_total: n(l.heures_total),
             montant: parLigne.get(l.id) ?? 0,
             disparue: l.disparue,
+            parent_cle: l.parent_cle,
+            montant_decoupage: (echeances.get(l.id) ?? 0) || (parLigne.get(l.id) ?? 0),
           }))
         );
         setMontantsVisibles(montants.length > 0);
@@ -303,13 +317,26 @@ function IndicateursContenu() {
         }
         setRealiseParAffaire(r);
 
+        // heures facturées par commande (« 1604R2 ») et par mois
         const mm = new Map<string, { mois: string; heures: number }[]>();
-        for (const x of ((mensuel.data ?? []) as { type_affaire: string; numero: string; mois: string; heures: number | string }[])) {
-          if (x.type_affaire !== "CBE") continue;
-          const k = String(x.numero).replace(/^0+/, "");
-          const liste = mm.get(k) ?? [];
-          liste.push({ mois: String(x.mois).slice(0, 7), heures: Number(x.heures) || 0 });
-          mm.set(k, liste);
+        const ajouter = (numero: string, mois: string, heures: number) => {
+          const k = numero.toUpperCase().replace(/^0+/, "");
+          mm.set(k, [...(mm.get(k) ?? []), { mois, heures }]);
+        };
+        if (mensuel) {
+          const [saisies, lp, pa, histo] = mensuel;
+          const numeroAffaire = new Map(((pa.data ?? []) as { id: string; numero: string }[]).map((a) => [a.id, a.numero]));
+          const numeroLigne = new Map(((lp.data ?? []) as { id: string; affaire_id: string }[]).map((l) => [l.id, numeroAffaire.get(l.affaire_id) ?? ""]));
+          for (const s of saisies) {
+            const n = numeroLigne.get(s.ligne_id);
+            if (n && s.heures !== null) ajouter(n, String(s.jour).slice(0, 7), Number(s.heures) || 0);
+          }
+          // historique : seulement les mois que le relevé ne couvre pas (pas de double compte)
+          const moisReleve = new Set(saisies.map((s) => String(s.jour).slice(0, 7)));
+          for (const h of histo) {
+            const mois = String(h.mois).slice(0, 7);
+            if (!moisReleve.has(mois)) ajouter(String(h.numero), mois, Number(h.heures) || 0);
+          }
         }
         setRealiseMensuel(mm);
         setDerniereSynchro(synchro.data?.[0]?.terminee_le ?? null);
@@ -336,9 +363,9 @@ function IndicateursContenu() {
 
   /* Heures consommées sur une affaire jusqu'à une date (mois de la date inclus) */
   const consomme: Consomme = useCallback(
-    (base: string, jour: string) => {
+    (numeroCommande: string, jour: string) => {
       const mois = jour.slice(0, 7);
-      return (realiseMensuel.get(base.replace(/^0+/, "")) ?? []).reduce((t, m) => (m.mois <= mois ? t + m.heures : t), 0);
+      return (realiseMensuel.get(numeroCommande.toUpperCase().replace(/^0+/, "")) ?? []).reduce((t, m) => (m.mois <= mois ? t + m.heures : t), 0);
     },
     [realiseMensuel]
   );
@@ -381,6 +408,20 @@ function IndicateursContenu() {
       carnet: total(enCarnet),
       carnetN1: total(enCarnetN1),
       affairesCarnet: carnetParAffaire(enCarnet, lignes),
+      evolution24: (() => {
+        const res: { label: string; devis: Agregat; commandes: Agregat }[] = [];
+        const a0 = Number(fin.slice(0, 4));
+        const m0 = Number(fin.slice(5, 7));
+        for (let k = 23; k >= 0; k--) {
+          const d = new Date(Date.UTC(a0, m0 - 1 - k, 1));
+          const a = d.getUTCFullYear();
+          const m = d.getUTCMonth() + 1;
+          const deb = `${a}-${String(m).padStart(2, "0")}-01`;
+          const fi = finDeMois(a, m);
+          res.push({ label: `${MOIS_COURTS[m - 1]} ${String(a).slice(2)}`, devis: total(devisEmis(lignes, deb, fi)), commandes: total(prisesDeCommande(lignes, deb, fi)) });
+        }
+        return res;
+      })(),
       moisN: parMois(lignes, anneeFin, fin, consomme),
       moisN1: parMois(lignes, anneeFin - 1, `${anneeFin - 1}-12-31`, consomme),
       evolutionCarnet,
@@ -528,13 +569,13 @@ function IndicateursContenu() {
       `}</style>
 
       <div className="sans-impression">
-        <EnTetePage section="Commercial et carnet" />
+        <EnTetePage section="Indicateurs commerciaux" />
       </div>
 
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
           <div>
-            <h1 style={page.titre}>Indicateurs du BE</h1>
+            <h1 style={page.titre}>Indicateurs commerciaux</h1>
             <p style={page.sousTitre}>
               Du {formatDate(debut)} au {formatDate(fin)}, comparé à la même période un an avant. Source : Suivi d’affaire BE
               {derniereSynchro ? `, synchronisé le ${formatDate(derniereSynchro)}` : ""}.
@@ -619,6 +660,45 @@ function IndicateursContenu() {
                 valeur={`${calcul.attente.attente.nb}`}
                 sous={`aujourd’hui, tous devis confondus${montantsVisibles ? ` · ${keuros(calcul.attente.attente.montant)}` : ""}`}
               />
+            </div>
+
+            <div style={rangee}>
+              <Carte titre={`Devis émis par mois — montant chiffré (${fin.slice(0, 4)} et ${Number(fin.slice(0, 4)) - 1})`} style={{ flex: "2 1 520px" }}>
+                <BarresMois
+                  donnees={calcul.moisN1.map((m1, i) => ({
+                    label: MOIS_COURTS[i],
+                    a: montantsVisibles ? calcul.moisN[i]?.devis.montant ?? 0 : calcul.moisN[i]?.devis.heures ?? 0,
+                    b: montantsVisibles ? m1.devis.montant : m1.devis.heures,
+                  }))}
+                  format={formatMetrique}
+                  legendeA={fin.slice(0, 4)}
+                  legendeB={String(Number(fin.slice(0, 4)) - 1)}
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 6, marginTop: 6, fontSize: 12, textAlign: "center" }}>
+                  {calcul.moisN1.map((m1, i) => (
+                    <div key={i} title={`Devis émis : ${calcul.moisN[i]?.devis.nb ?? 0} en ${fin.slice(0, 4)}, ${m1.devis.nb} en ${Number(fin.slice(0, 4)) - 1}`}>
+                      <strong>{calcul.moisN[i]?.devis.nb ?? "—"}</strong>
+                      <div style={{ color: C.gris }}>{m1.devis.nb}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>Sous chaque mois : nombre de devis émis ({fin.slice(0, 4)}, puis {Number(fin.slice(0, 4)) - 1} en gris).</div>
+              </Carte>
+            </div>
+
+            <div style={rangee}>
+              <Carte titre="Évolution des devis émis et du CBE vendu — 24 derniers mois" style={{ flex: "1 1 100%" }}>
+                <BarresMois
+                  donnees={calcul.evolution24.map((e) => ({
+                    label: e.label,
+                    a: montantsVisibles ? e.commandes.montant : e.commandes.heures,
+                    b: montantsVisibles ? e.devis.montant : e.devis.heures,
+                  }))}
+                  format={formatMetrique}
+                  legendeA="CBE vendu (commandes reçues)"
+                  legendeB="Devis émis"
+                />
+              </Carte>
             </div>
 
             <div style={rangee}>

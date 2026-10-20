@@ -20,11 +20,12 @@
      (date de réception de commande), hors annulé ou perdu.
    - CARNET DE COMMANDES à une date : commandes reçues à cette date et pas
      encore livrées (hors annulées) = travail vendu restant à produire.
-     PE et PI (prestations au temps passé) : l'affaire est une ENVELOPPE
-     d'heures (commande + avenants) consommée au fil de l'eau. Elle ne
-     compte au carnet que pour la part de l'enveloppe non consommée :
-     montant × (1 − heures réalisées ÷ heures commandées), à la date voulue.
-     Enveloppe entièrement consommée : plus au carnet.
+     Forfaits : commandes reçues non livrées, moins ce que leurs échéances /
+     lots déjà livrés ont facturé.
+     PE et PI : chaque commande (base ou avenant) à part, pour sa part non
+     consommée : montant × (1 − heures facturées ÷ heures commandées), les
+     heures facturées venant du relevé des prestations et de l'historique
+     importé de l'ancien Suivi des prestations. Livrée : plus au carnet.
 ================================================================ */
 
 export type Discipline = "meca" | "calcul" | "elec" | "pneu" | "scan" | "autre";
@@ -51,6 +52,8 @@ export type LigneInd = {
   heures_total: number;
   montant: number; // 0 si les montants ne sont pas visibles
   disparue: boolean;
+  parent_cle?: string | null; // échéance / lot : sa commande
+  montant_decoupage?: number; // échéance / lot : montant facturé à cette étape
   /* renseignés dans le carnet pour les PE / PI : part restante et valeurs d'origine */
   part_restante?: number;
   montant_commande?: number;
@@ -183,12 +186,15 @@ export type AffaireCarnet = {
 
 export const estPrestation = (l: { imputation: string | null }) => l.imputation === "PE" || l.imputation === "PI";
 
-/* Heures réalisées (consommées) sur une affaire jusqu'à une date : fournie par la page */
-export type Consomme = (baseAffaire: string, jour: string) => number;
+/* Heures CONSOMMÉES d'une commande (base ou avenant, ex. « 1604R2 ») jusqu'à une date :
+   relevé des prestations + historique importé du Suivi des prestations. Fournie par la page. */
+export type Consomme = (numeroCommande: string, jour: string) => number;
 
-/* Lignes de commande en carnet à la date `jour`.
-   Forfait : commandes reçues et pas encore livrées.
-   PE / PI : toute l'enveloppe reçue (commande + avenants), ramenée à sa part non consommée. */
+/* Lignes de commande en carnet à la date `jour` (même logique que la page Finances).
+   Forfait : commandes reçues et pas encore livrées, pour leur montant moins ce que leurs
+   échéances / lots déjà livrés ont facturé.
+   PE / PI : chaque commande (base ou avenant) à part, pour sa part non consommée
+   (heures facturées au relevé / à l'ancien Suivi des prestations) ; livrée = hors carnet. */
 export function lignesEnCarnet(lignes: LigneInd[], jour: string, consomme?: Consomme): LigneInd[] {
   const recues = lignes.filter(
     (l) =>
@@ -199,39 +205,40 @@ export function lignesEnCarnet(lignes: LigneInd[], jour: string, consomme?: Cons
 
   const livree = (l: LigneInd) => Boolean(l.date_livraison && l.date_livraison <= jour);
 
-  // Forfait : pas encore livré (une ligne « Livrée » sans date reste au carnet)
-  const resultat: LigneInd[] = recues.filter((l) => !estPrestation(l) && !livree(l));
-
-  // Prestations : par affaire (enveloppe)
-  const familles = new Map<string, LigneInd[]>();
-  for (const l of recues) {
-    if (!estPrestation(l) || !l.base_affaire) continue;
-    const f = familles.get(l.base_affaire) ?? [];
-    f.push(l);
-    familles.set(l.base_affaire, f);
+  // échéances / lots livrés à la date, par commande
+  const factureParCommande = new Map<string, number>();
+  for (const l of lignes) {
+    if ((l.genre !== "LOT" && l.genre !== "ECHEANCE") || !l.parent_cle || INACTIFS.includes(l.statut ?? "") || l.disparue) continue;
+    if (!livree(l)) continue;
+    factureParCommande.set(l.parent_cle, (factureParCommande.get(l.parent_cle) ?? 0) + (l.montant_decoupage ?? l.montant));
   }
 
-  for (const [base, f] of familles) {
-    if (f.every(livree)) continue; // toute la prestation est terminée
+  const resultat: LigneInd[] = [];
+  for (const l of recues) {
+    if (livree(l)) continue; // une ligne « Livrée » sans date reste au carnet
 
-    const commande = f.reduce((t, l) => t + l.heures_total, 0);
-    const conso = consomme ? consomme(base, jour) : 0;
-    const part = commande > 0 ? Math.max(0, Math.min(1, 1 - conso / commande)) : 1;
-    if (part <= 0) continue; // enveloppe consommée
-
-    for (const l of f) {
-      const heures = { ...l.heures };
-      for (const d of DISCIPLINES) heures[d] = l.heures[d] * part;
-      resultat.push({
-        ...l,
-        montant: l.montant * part,
-        heures_total: l.heures_total * part,
-        heures,
-        part_restante: part,
-        montant_commande: l.montant,
-        heures_commande: l.heures_total,
-      });
+    if (!estPrestation(l)) {
+      const deja = factureParCommande.get(l.cle) ?? 0;
+      resultat.push(deja > 0 ? { ...l, montant: Math.max(0, l.montant - deja), montant_commande: l.montant } : l);
+      continue;
     }
+
+    const numero = (l.numero_affaire ?? `CBE${l.base_affaire ?? ""}`).replace(/^CBE/i, "");
+    const conso = consomme ? consomme(numero, jour) : 0;
+    const part = l.heures_total > 0 ? Math.max(0, Math.min(1, 1 - conso / l.heures_total)) : 1;
+    if (part <= 0) continue; // commande consommée
+
+    const heures = { ...l.heures };
+    for (const d of DISCIPLINES) heures[d] = l.heures[d] * part;
+    resultat.push({
+      ...l,
+      montant: l.montant * part,
+      heures_total: l.heures_total * part,
+      heures,
+      part_restante: part,
+      montant_commande: l.montant,
+      heures_commande: l.heures_total,
+    });
   }
 
   return resultat;

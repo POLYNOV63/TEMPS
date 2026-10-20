@@ -845,8 +845,8 @@ function BlocChiffreAffaires({ aller }: { aller: (url: string) => void }) {
         />
         <CarteCompacte
           icone="📈"
-          titre="Commercial et carnet"
-          description="Devis, transformation, prise de commande et carnet de commandes"
+          titre="Indicateurs commerciaux"
+          description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes"
           onClick={() => aller("/pilotage/indicateurs")}
         />
       </div>
