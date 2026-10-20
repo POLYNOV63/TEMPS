@@ -57,6 +57,7 @@ export type LigneFin = {
   designation: string | null;
   client: string | null;
   date_livraison: string | null;
+  date_estimee?: string | null; // colonne « Délai estimé » du Suivi d'affaire BE
   disparue: boolean;
   heures: Record<Discipline, number>;
   heures_total: number;
@@ -70,7 +71,8 @@ export const groupesVides = (): ParGroupe => ({ "Méca": 0, Calcul: 0, "Elec / P
 export type MouvementCA = {
   date: string; // AAAA-MM-JJ
   base_affaire: string;
-  source: "LIVRAISON" | "ECHEANCE" | "RELEVE" | "HISTORIQUE";
+  source: "LIVRAISON" | "ECHEANCE" | "RELEVE" | "HISTORIQUE" | "ATTENDU";
+  retard?: boolean; // attendu dont le délai estimé est déjà passé (reporté sur le mois en cours)
   montant: number;
   parGroupe: ParGroupe;
   negoce: number;
@@ -260,4 +262,74 @@ export function coutHoraire(couts: Map<number, number>, date: string): number | 
   if (anterieurs.length) return couts.get(anterieurs[0])!;
   const tous = [...couts.keys()].sort((x, y) => x - y);
   return tous.length ? couts.get(tous[0])! : null;
+}
+
+/* ------------------------------ CA attendu (pas encore livré) ------------------------------
+
+   FORFAITS seulement (les PE / PI ont leur propre prévision : relevé non validé ou onglets
+   futurs du Suivi des prestations). Lignes « Commande reçue » non livrées :
+   - échéance / lot : son montant, au mois de SON délai estimé ;
+   - commande / avenant : son montant, moins ses échéances / lots (livrés, ou attendus avec
+     leur propre date), au mois de son délai estimé ;
+   - délai estimé déjà passé : compté sur le mois en cours (en retard) ;
+   - pas de délai estimé : non compté, listé « à dater ».
+*/
+export function mouvementsAttendus(
+  lignes: LigneFin[],
+  aujourdhui: string
+): { mouvements: MouvementCA[]; aDater: { base: string; numero: string; montant: number }[] } {
+  const parCle = new Map(lignes.map((l) => [l.cle, l]));
+  const enfants = new Map<string, LigneFin[]>();
+  for (const l of lignes) {
+    if (!estDecoupage(l) || !l.parent_cle) continue;
+    enfants.set(l.parent_cle, [...(enfants.get(l.parent_cle) ?? []), l]);
+  }
+  const debutMois = `${aujourdhui.slice(0, 7)}-01`;
+  const quand = (d: string | null | undefined) => (!d ? null : d < debutMois ? { date: aujourdhui, retard: true } : { date: d, retard: false });
+  const base = (l: LigneFin) => (l.base_affaire && parCle.get(`CBE${l.base_affaire}`)) || l;
+  const valeurDecoupage = (e: LigneFin) => e.m.echeances || e.m.montant;
+
+  const mouvements: MouvementCA[] = [];
+  const aDater: { base: string; numero: string; montant: number }[] = [];
+
+  for (const l of lignes) {
+    if (!l.base_affaire || !active(l) || l.statut !== "Commande reçue") continue;
+    const b = base(l);
+    if (estPrestation(b.imputation) || estPrestation(l.imputation)) continue;
+
+    let valeur = 0;
+    let detail = l.m;
+    if (estDecoupage(l)) {
+      valeur = valeurDecoupage(l);
+      const parent = l.parent_cle ? parCle.get(l.parent_cle) : undefined;
+      if (l.m.meca + l.m.calcul + l.m.elec_pneu + l.m.scan + l.m.autre + l.m.negoce <= 0 && parent) detail = parent.m;
+    } else if (estCommande(l)) {
+      // ce que ses découpages couvrent déjà (livrés, ou attendus à leur propre date)
+      const couverts = (enfants.get(l.cle) ?? []).filter(
+        (e) => active(e) && (e.statut === "Livrée" || (e.statut === "Commande reçue" && e.date_estimee))
+      );
+      valeur = Math.max(0, l.m.montant - couverts.reduce((t, e) => t + valeurDecoupage(e), 0));
+    } else continue;
+
+    if (valeur < 0.01) continue;
+    const q = quand(l.date_estimee);
+    if (!q) {
+      aDater.push({ base: l.base_affaire, numero: l.cle, montant: valeur });
+      continue;
+    }
+    const part = l.m.montant > 0 && estCommande(l) ? valeur / l.m.montant : 1;
+    mouvements.push({
+      date: q.date,
+      base_affaire: l.base_affaire,
+      source: "ATTENDU",
+      montant: valeur,
+      parGroupe: repartir(detail, valeur),
+      negoce: detail.negoce * (detail === l.m ? part : valeur / (detail.montant || valeur)),
+      achats: 0,
+      client: b.client,
+      imputation: b.imputation,
+      retard: q.retard,
+    });
+  }
+  return { mouvements, aDater };
 }

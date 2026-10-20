@@ -16,6 +16,7 @@ import {
 
   groupesVides,
   moisExercice,
+  mouvementsAttendus,
   mouvementsExcel,
   type Discipline,
   type Groupe,
@@ -30,6 +31,11 @@ import {
    Sur un EXERCICE (novembre → octobre), les 12 mois d'un coup :
    - chiffre d'affaires réalisé face au PRÉVISIONNEL saisi mois par mois,
      écarts et cumuls, et N-1 ;
+   - le CA ATTENDU (pas encore livré / facturé) et l'ATTERRISSAGE
+     (réalisé + attendu) : forfaits non livrés au mois de leur « Délai
+     estimé » (en retard : mois en cours ; sans délai : non comptés, listés
+     « à dater ») ; PE / PI d'après le relevé non validé, sinon les onglets
+     futurs du Suivi des prestations importé ;
    - le réalisé par imputation et par activité ;
    - le croisement activités × imputations ;
    - la rentabilité (coût de structure saisi par exercice) : marge, prix de
@@ -74,6 +80,8 @@ function FinancesContenu() {
   const [lignesFin, setLignesFin] = useState<LigneFin[]>([]);
   const [releve, setReleve] = useState<Releve[]>([]);
   const [historique, setHistorique] = useState<Historique[]>([]);
+  // PE / PI : montants prévus des mois non validés du relevé
+  const [prevusReleve, setPrevusReleve] = useState<{ base: string; mois: string; montant: number; groupe: Groupe; imputation: string | null; client: string | null }[]>([]);
   const [realiseGroupes, setRealiseGroupes] = useState<Map<string, ParGroupe>>(new Map());
   const [realiseMensuel, setRealiseMensuel] = useState<Map<string, { mois: string; heures: number }[]>>(new Map());
   const [couts, setCouts] = useState<Map<number, number>>(new Map());
@@ -91,7 +99,7 @@ function FinancesContenu() {
     (async () => {
       try {
         const n = (v: number | string | null | undefined) => Number(v) || 0;
-        const [brutes, montants, clients, realise, mensuel, corr, pl, pm, pa, co, pr, hi] = await Promise.all([
+        const [brutes, montants, clients, realise, mensuel, corr, pl, pm, pa, co, pr, hi, mp] = await Promise.all([
           chargerTout<{
             id: string;
             cle: string;
@@ -103,6 +111,7 @@ function FinancesContenu() {
             designation: string | null;
             client_id: string | null;
             date_livraison: string | null;
+            date_livraison_estimee: string | null;
             disparue: boolean;
             heures_meca: number | string;
             heures_calcul: number | string;
@@ -114,7 +123,7 @@ function FinancesContenu() {
           }>((a, b) =>
             supabase
               .from("suivi_lignes")
-              .select("id,cle,parent_cle,genre,base_affaire,statut,imputation,designation,client_id,date_livraison,disparue,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total")
+              .select("id,cle,parent_cle,genre,base_affaire,statut,imputation,designation,client_id,date_livraison,date_livraison_estimee,disparue,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total")
               .order("cle")
               .range(a, b)
           ),
@@ -141,6 +150,7 @@ function FinancesContenu() {
               .order("id")
               .range(a, b)
           ).catch(() => [] as Historique[]),
+          supabase.rpc("prestation_montants_prevus"),
         ]);
         if (!actif) return;
 
@@ -159,6 +169,7 @@ function FinancesContenu() {
               designation: l.designation,
               client: l.client_id ? noms.get(l.client_id) ?? null : null,
               date_livraison: l.date_livraison,
+              date_estimee: l.date_livraison_estimee,
               disparue: l.disparue,
               heures: { meca: n(l.heures_meca), calcul: n(l.heures_calcul), elec: n(l.heures_elec), pneu: n(l.heures_pneu), scan: n(l.heures_scan), autre: n(l.heures_autre) },
               heures_total: n(l.heures_total),
@@ -222,6 +233,19 @@ function FinancesContenu() {
           });
         }
         setReleve(rel);
+        setPrevusReleve(
+          ((mp.data ?? []) as { numero: string; imputation: string | null; activite_id: string | null; mois: string; montant: number | string }[]).map((x) => {
+            const base = (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "");
+            return {
+              base,
+              mois: String(x.mois).slice(0, 10),
+              montant: Number(x.montant) || 0,
+              groupe: (x.activite_id && groupeActivite.get(x.activite_id)) || "Non ventilé",
+              imputation: x.imputation,
+              client: clientDeBase.get(base) ?? null,
+            };
+          })
+        );
         setHistorique(
           hi.map((h) => ({
             ...h,
@@ -257,8 +281,9 @@ function FinancesContenu() {
     });
     // Historique de l'ancien classeur : seulement les mois que le relevé validé ne couvre pas
     const moisReleve = new Set(releve.map((r) => r.mois.slice(0, 7)));
+    const moisCourantIso = new Date().toISOString().slice(0, 7);
     const mvHisto: MouvementCA[] = historique
-      .filter((h) => !moisReleve.has(h.mois.slice(0, 7)))
+      .filter((h) => !moisReleve.has(h.mois.slice(0, 7)) && h.mois.slice(0, 7) < moisCourantIso)
       .map((h) => {
         const g = groupesVides();
         g["Méca"] = h.montant_meca;
@@ -281,6 +306,37 @@ function FinancesContenu() {
     return [...mvExcel, ...mvReleve, ...mvHisto];
   }, [lignesFin, releve, historique]);
 
+  /* CA ATTENDU : forfaits non livrés (délai estimé) + PE / PI prévues */
+  const attendus = useMemo(() => {
+    const aujourdhui = new Date().toISOString().slice(0, 10);
+    const moisCourantIso = aujourdhui.slice(0, 7);
+    const forfaits = mouvementsAttendus(lignesFin, aujourdhui);
+
+    // PE / PI : le relevé non validé d'abord ; pour les mois qu'il ne couvre pas (ni validé ni prévu),
+    // les onglets futurs du Suivi des prestations importé
+    const moisValides = new Set(releve.map((r) => r.mois.slice(0, 7)));
+    const moisPrevus = new Set(prevusReleve.filter((p) => p.montant > 0).map((p) => p.mois.slice(0, 7)));
+    const pepi: MouvementCA[] = [
+      ...prevusReleve
+        .filter((p) => p.montant > 0)
+        .map((p) => {
+          const g = groupesVides();
+          g[p.groupe] = p.montant;
+          return { date: p.mois, base_affaire: p.base, source: "ATTENDU" as const, montant: p.montant, parGroupe: g, negoce: 0, achats: 0, client: p.client, imputation: p.imputation };
+        }),
+      ...historique
+        .filter((h) => h.mois.slice(0, 7) >= moisCourantIso && !moisValides.has(h.mois.slice(0, 7)) && !moisPrevus.has(h.mois.slice(0, 7)))
+        .map((h) => {
+          const g = groupesVides();
+          g["Méca"] = h.montant_meca;
+          g.Calcul = h.montant_calcul;
+          g["Elec / Pneu"] = h.montant_elec;
+          return { date: h.mois, base_affaire: `${h.type}${h.numero}`, source: "ATTENDU" as const, montant: h.montant, parGroupe: g, negoce: 0, achats: 0, client: h.client, imputation: h.categorie };
+        }),
+    ];
+    return { mouvements: [...forfaits.mouvements, ...pepi], aDater: forfaits.aDater, enRetard: forfaits.mouvements.filter((m) => m.retard) };
+  }, [lignesFin, releve, prevusReleve, historique]);
+
   const mois = useMemo(() => moisExercice(exercice), [exercice]);
   const moisN1 = useMemo(() => moisExercice(exercice - 1), [exercice]);
 
@@ -290,6 +346,7 @@ function FinancesContenu() {
 
     const realise = parMois(mois);
     const realiseN1 = parMois(moisN1);
+    const attendu = mois.map((m) => attendus.mouvements.filter((x) => x.date.startsWith(m)).reduce((t, x) => t + x.montant, 0));
     const prevu = mois.map((m) => previsionnel.get(m) ?? 0);
     const debut = `${mois[0]}-01`;
     const fin = `${mois[11]}-31`;
@@ -375,6 +432,8 @@ function FinancesContenu() {
 
     return {
       realise,
+      attendu,
+      totalAttendu: attendu.reduce((t, v) => t + v, 0),
       realiseN1,
       prevu,
       imputations,
@@ -393,7 +452,7 @@ function FinancesContenu() {
       negoce,
       achats,
     };
-  }, [mouvements, mois, moisN1, previsionnel, lignesFin, realiseGroupes, couts, releve, realiseMensuel]);
+  }, [mouvements, attendus, mois, moisN1, previsionnel, lignesFin, realiseGroupes, couts, releve, realiseMensuel]);
 
   /* ------------------------------ prévisionnel ------------------------------ */
 
@@ -451,6 +510,8 @@ function FinancesContenu() {
       entete,
       ligne("Prévisionnel", vue.prevu),
       ligne("Réalisé", vue.realise),
+      ligne("Attendu (non livré / non facturé)", vue.attendu),
+      ligne("Atterrissage (réalisé + attendu)", vue.realise.map((v, i) => v + vue.attendu[i])),
       ligne("Écart", ecarts),
       ["Cumul prévu", ...cumulP.map(Math.round), ""],
       ["Cumul réalisé", ...cumulR.map(Math.round), ""],
@@ -501,7 +562,9 @@ function FinancesContenu() {
   const thG: CSSProperties = { ...th, textAlign: "left" };
   const td: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap", padding: "6px", fontSize: 13 };
   const tdG: CSSProperties = { ...td, textAlign: "left", fontWeight: 700 };
-  const maxBarre = Math.max(1, ...vue.realise, ...vue.realiseN1, ...vue.prevu);
+  const atterrissage = vue.realise.map((v, i) => v + vue.attendu[i]);
+  const totalAtterrissage = vue.total + vue.totalAttendu;
+  const maxBarre = Math.max(1, ...atterrissage, ...vue.realiseN1, ...vue.prevu);
   const moisCourant = new Date().toISOString().slice(0, 7);
   const coutEx = coutHoraire(couts, `${mois[0]}-01`);
 
@@ -546,10 +609,12 @@ function FinancesContenu() {
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <Tuile libelle="Réalisé" valeur={keuros(vue.total)} sous={`N-1 : ${keuros(vue.totalN1)} (${pct(vue.totalN1 > 0 ? vue.total / vue.totalN1 - 1 : null)})`} />
+              <Tuile libelle="Attendu" valeur={keuros(vue.totalAttendu)} sous="pas encore livré ou facturé, sur l’exercice" />
               <Tuile
-                libelle="Prévisionnel"
-                valeur={vue.totalPrevu > 0 ? keuros(vue.totalPrevu) : "—"}
-                sous={vue.totalPrevu > 0 ? `réalisé ${Math.round((vue.total / vue.totalPrevu) * 100)} % du prévu` : "à saisir ci-dessous"}
+                libelle="Atterrissage"
+                valeur={keuros(totalAtterrissage)}
+                sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
+                accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
               <Tuile
                 libelle="Marge (affaires terminées + PE / PI)"
@@ -561,6 +626,23 @@ function FinancesContenu() {
               <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
             </div>
 
+            {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
+              <Message genre="info">
+                {attendus.enRetard.length > 0 && (
+                  <div>
+                    <strong>{attendus.enRetard.length} forfait(s) en retard</strong> (délai estimé dépassé, pas encore livrés) comptés sur le mois en cours :{" "}
+                    {attendus.enRetard.map((m) => `CBE${m.base_affaire}`).filter((v, i, t) => t.indexOf(v) === i).join(", ")}.
+                  </div>
+                )}
+                {attendus.aDater.length > 0 && (
+                  <div>
+                    <strong>{attendus.aDater.length} forfait(s) sans délai estimé</strong>, non comptés ({keuros(attendus.aDater.reduce((t, x) => t + x.montant, 0))}) : à dater dans
+                    Excel — {attendus.aDater.map((x) => x.numero).join(", ")}.
+                  </div>
+                )}
+              </Message>
+            )}
+
             {/* ---------- graphique 12 mois ---------- */}
             <section style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Chiffre d’affaires mois par mois</h2>
@@ -569,9 +651,20 @@ function FinancesContenu() {
                   <div key={m} style={{ flex: 1, height: "100%", position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2 }}>
                     <div title={`${libMois(moisN1[i])} : ${euros(vue.realiseN1[i])}`} style={{ width: "30%", height: `${(vue.realiseN1[i] / maxBarre) * 100}%`, background: "#c9cdd2", borderRadius: "3px 3px 0 0" }} />
                     <div
-                      title={`${libMois(m)} : ${euros(vue.realise[i])}`}
-                      style={{ width: "40%", height: `${(vue.realise[i] / maxBarre) * 100}%`, background: vue.prevu[i] > 0 && vue.realise[i] < vue.prevu[i] && m < moisCourant ? "#e57373" : C.rouge, borderRadius: "3px 3px 0 0" }}
-                    />
+                      title={`${libMois(m)} : réalisé ${euros(vue.realise[i])}${vue.attendu[i] > 0 ? ` + attendu ${euros(vue.attendu[i])}` : ""}`}
+                      style={{ width: "40%", height: `${(atterrissage[i] / maxBarre) * 100}%`, display: "flex", flexDirection: "column-reverse" }}
+                    >
+                      <div style={{ height: `${atterrissage[i] > 0 ? (vue.realise[i] / atterrissage[i]) * 100 : 0}%`, background: vue.prevu[i] > 0 && atterrissage[i] < vue.prevu[i] && m < moisCourant ? "#e57373" : C.rouge }} />
+                      <div
+                        style={{
+                          height: `${atterrissage[i] > 0 ? (vue.attendu[i] / atterrissage[i]) * 100 : 0}%`,
+                          background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe3e3 4px,#fbe3e3 8px)",
+                          borderRadius: "3px 3px 0 0",
+                          border: vue.attendu[i] > 0 ? `1px dashed ${C.rouge}` : undefined,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
                     {vue.prevu[i] > 0 && (
                       <div title={`Prévu ${libMois(m)} : ${euros(vue.prevu[i])}`} style={{ position: "absolute", left: "8%", right: "8%", bottom: `${(vue.prevu[i] / maxBarre) * 100}%`, borderTop: "3px solid #1f2328" }} />
                     )}
@@ -585,7 +678,8 @@ function FinancesContenu() {
               </div>
               <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, flexWrap: "wrap" }}>
                 <span><i style={{ display: "inline-block", width: 12, height: 12, background: C.rouge }} /> réalisé</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#e57373" }} /> réalisé sous le prévu (mois passé)</span>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe3e3 3px,#fbe3e3 6px)", border: `1px dashed ${C.rouge}` }} /> attendu (pas encore livré / facturé)</span>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#e57373" }} /> mois passé sous le prévu</span>
                 <span><i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", verticalAlign: "middle" }} /> prévisionnel</span>
                 <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#c9cdd2" }} /> exercice précédent</span>
               </div>
@@ -625,11 +719,13 @@ function FinancesContenu() {
                     <td style={{ ...td, fontWeight: 800 }}>{keuros(vue.totalPrevu)}</td>
                   </tr>
                   {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 })}
+                  {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" })}
+                  {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" })}
                   <tr>
-                    <td style={tdG}>Écart</td>
+                    <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
                     {mois.map((m, i) => {
-                      const e = vue.realise[i] - vue.prevu[i];
-                      const visible = vue.prevu[i] > 0 && m <= moisCourant;
+                      const e = atterrissage[i] - vue.prevu[i];
+                      const visible = vue.prevu[i] > 0;
                       return (
                         <td key={m} style={{ ...td, color: !visible ? C.gris : e < 0 ? C.rougeTexte : "#1b5e20", fontWeight: 700 }}>
                           {visible ? `${e > 0 ? "+" : ""}${keuros(e)}` : "—"}
@@ -637,14 +733,14 @@ function FinancesContenu() {
                         </td>
                       );
                     })}
-                    <td style={{ ...td, fontWeight: 800, color: vue.total - vue.totalPrevu < 0 ? C.rougeTexte : "#1b5e20" }}>
-                      {vue.totalPrevu > 0 ? `${vue.total - vue.totalPrevu > 0 ? "+" : ""}${keuros(vue.total - vue.totalPrevu)}` : "—"}
+                    <td style={{ ...td, fontWeight: 800, color: totalAtterrissage - vue.totalPrevu < 0 ? C.rougeTexte : "#1b5e20" }}>
+                      {vue.totalPrevu > 0 ? `${totalAtterrissage - vue.totalPrevu > 0 ? "+" : ""}${keuros(totalAtterrissage - vue.totalPrevu)}` : "—"}
                     </td>
                   </tr>
                   <tr>
-                    <td style={tdG}>Cumul réalisé / prévu</td>
+                    <td style={tdG}>Cumul atterrissage / prévu</td>
                     {mois.map((m, i) => {
-                      cumR += vue.realise[i];
+                      cumR += atterrissage[i];
                       cumP += vue.prevu[i];
                       return (
                         <td key={m} style={{ ...td, fontSize: 12 }}>
@@ -814,6 +910,7 @@ function FinancesContenu() {
               <summary style={{ cursor: "pointer", fontWeight: 700, minHeight: 32 }}>Comment sont calculés ces chiffres ?</summary>
               <ul style={{ lineHeight: 1.6 }}>
                 <li><strong>Exercice</strong> : du 1er novembre au 31 octobre.</li>
+                <li><strong>Attendu</strong> : forfaits « Commande reçue » non livrés, au mois de leur « Délai estimé » (déjà dépassé : mois en cours ; sans délai : non comptés, listés à dater) ; PE / PI : mois non validés du relevé (heures × taux), sinon onglets futurs du Suivi des prestations. <strong>Atterrissage</strong> = réalisé + attendu, comparé au prévisionnel.</li>
                 <li><strong>Chiffre d’affaires</strong> : une commande ou un avenant compte au mois de sa livraison ; une échéance ou un lot au mois de sa propre livraison (la commande ne compte alors que pour le reste) ; une PE / PI suivie dans le relevé, pour le montant de ses mois validés.</li>
                 <li><strong>PE / PI / IG</strong> : uniquement le relevé des prestations (mois validés) ; pour les mois qu’il ne couvre pas, l’historique importé de l’ancien classeur « Suivi des prestations ».</li>
                 <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Autre, Négoce) ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
