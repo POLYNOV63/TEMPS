@@ -15,21 +15,32 @@
      2 - ADMIN         : tout (administration, référentiels, relevé des
                          prestations PE / PI, charge par ressource,
                          indicateurs et finances)
+
+   Rôle à part, en LECTURE SEULE :
+     DIRECTION         : Président, adjoint… Indicateurs commerciaux,
+                         Finances, Charge & pointage, Charge par ressource,
+                         planning des affaires. Aucune saisie, aucune
+                         modification, pas de feuille d'heures.
 ================================================================ */
 
-export type Role = "COLLABORATEUR" | "RESPONSABLE" | "ADMIN";
+export type Role = "COLLABORATEUR" | "RESPONSABLE" | "ADMIN" | "DIRECTION";
 
 export const ROLES: { value: Role; label: string }[] = [
   { value: "COLLABORATEUR", label: "Collaborateur" },
   { value: "RESPONSABLE", label: "Responsable (niveau 1)" },
   { value: "ADMIN", label: "Administrateur" },
+  { value: "DIRECTION", label: "Direction (lecture seule)" },
 ];
 
 const NIVEAU: Record<Role, number> = {
   COLLABORATEUR: 0,
   RESPONSABLE: 1,
   ADMIN: 2,
+  DIRECTION: -1, // droits listés à part (DROITS_DIRECTION)
 };
+
+/* Ce que la Direction peut consulter (lecture seule) */
+const DROITS_DIRECTION: ReadonlySet<string> = new Set(["voirPlanning", "chargeRessources", "indicateurs"]);
 
 /* Niveau minimum requis pour chaque droit. */
 export const DROITS = {
@@ -50,7 +61,7 @@ export type Droit = keyof typeof DROITS;
 export function normaliserRole(role?: string | null): Role {
   const valeur = String(role ?? "").trim().toUpperCase();
 
-  if (valeur === "ADMIN" || valeur === "RESPONSABLE") {
+  if (valeur === "ADMIN" || valeur === "RESPONSABLE" || valeur === "DIRECTION") {
     return valeur;
   }
 
@@ -66,5 +77,7 @@ export function peut(
   role: string | null | undefined,
   droit: Droit
 ): boolean {
-  return NIVEAU[normaliserRole(role)] >= DROITS[droit];
+  const r = normaliserRole(role);
+  if (r === "DIRECTION") return DROITS_DIRECTION.has(droit);
+  return NIVEAU[r] >= DROITS[droit];
 }

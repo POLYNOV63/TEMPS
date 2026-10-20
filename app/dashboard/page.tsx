@@ -405,6 +405,8 @@ export default function DashboardPage() {
 
             <BlocParametrage aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />
           </>
+        ) : role === "DIRECTION" ? (
+          <BlocDirection aller={aller} />
         ) : (
           <>
             <BlocMonEspace
@@ -829,6 +831,27 @@ function BlocMonEspace({
         />
       </div>
     </Groupe>
+  );
+}
+
+/* Direction (Président, adjoint) : consultation seule */
+function BlocDirection({ aller }: { aller: (url: string) => void }) {
+  return (
+    <>
+      <Groupe titre="Chiffre d'affaires" description="Consultation">
+        <div style={stylesV2.grille}>
+          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel, rentabilité" onClick={() => aller("/analyse/finances")} />
+          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
+        </div>
+      </Groupe>
+      <Groupe titre="Charge du bureau d'études" description="Consultation">
+        <div style={stylesV2.grille}>
+          <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
+          <CarteCompacte icone="🎯" titre="Charge & pointage" description="Pointé face au chiffré, par affaire et par activité" onClick={() => aller("/analyse/pointage")} />
+          <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
+        </div>
+      </Groupe>
+    </>
   );
 }
 

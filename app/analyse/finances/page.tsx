@@ -6,7 +6,7 @@ import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
-import { chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
+import { chargerMoi, chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import {
   GROUPES,
@@ -91,6 +91,14 @@ function FinancesContenu() {
   const [totalAnnuel, setTotalAnnuel] = useState("");
   const [evolution, setEvolution] = useState("0");
   const [voirAffaires, setVoirAffaires] = useState(false);
+  // la Direction consulte : prévisionnel et coût de structure restent saisis par l'administration
+  const [estAdmin, setEstAdmin] = useState(false);
+
+  useEffect(() => {
+    chargerMoi()
+      .then((m) => setEstAdmin(Boolean(m?.estAdmin)))
+      .catch(() => setEstAdmin(false));
+  }, []);
 
   /* ------------------------------ chargement ------------------------------ */
 
@@ -705,6 +713,7 @@ function FinancesContenu() {
                       <td key={m} style={{ ...td, padding: 2 }}>
                         <input
                           key={`${m}-${vue.prevu[i]}`}
+                          disabled={!estAdmin}
                           defaultValue={vue.prevu[i] ? String(Math.round(vue.prevu[i])) : ""}
                           inputMode="decimal"
                           aria-label={`Prévisionnel ${libMois(m)}`}
@@ -761,6 +770,7 @@ function FinancesContenu() {
                 </tbody>
               </table>
 
+              {estAdmin && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
                 <strong>Remplir le prévisionnel :</strong>
                 <input value={totalAnnuel} onChange={(e) => setTotalAnnuel(e.target.value)} placeholder="total annuel €" inputMode="decimal" style={{ ...page.entrees, width: 140 }} aria-label="Total annuel prévu" />
@@ -772,6 +782,7 @@ function FinancesContenu() {
                 <input value={evolution} onChange={(e) => setEvolution(e.target.value)} inputMode="decimal" style={{ ...page.entrees, width: 64 }} aria-label="Évolution en pourcentage" />
                 <span>%</span>
               </div>
+              )}
             </section>
 
             {/* ---------- activités × imputations ---------- */}
@@ -822,8 +833,12 @@ function FinancesContenu() {
                   Coût de structure {exercice}-{exercice + 1} :{" "}
                   <strong>{couts.has(exercice) ? `${couts.get(exercice)!.toLocaleString("fr-FR")} €/h` : coutEx !== null ? `${coutEx.toLocaleString("fr-FR")} €/h (autre exercice)` : "non saisi"}</strong>
                 </span>
-                <input value={coutSaisi} onChange={(e) => setCoutSaisi(e.target.value)} placeholder="€/h" inputMode="decimal" style={{ ...page.entrees, width: 80 }} aria-label="Coût de structure horaire" />
-                <button type="button" style={page.btnSecondaire} disabled={!coutSaisi} onClick={() => void enregistrerCout()}>Enregistrer</button>
+                {estAdmin && (
+                  <>
+                    <input value={coutSaisi} onChange={(e) => setCoutSaisi(e.target.value)} placeholder="€/h" inputMode="decimal" style={{ ...page.entrees, width: 80 }} aria-label="Coût de structure horaire" />
+                    <button type="button" style={page.btnSecondaire} disabled={!coutSaisi} onClick={() => void enregistrerCout()}>Enregistrer</button>
+                  </>
+                )}
               </div>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead>
