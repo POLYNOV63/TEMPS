@@ -147,6 +147,9 @@ function FicheContenu() {
   }, [charger]);
 
   const affaire = toutes.find((a) => a.id === id);
+  // Affaire venue du Suivi d'affaire BE : chiffré, délai, statut et descriptif viennent du classeur
+  // (ils y seraient réécrasés à la prochaine synchro) ; seul le responsable se change ici.
+  const venueExcel = Boolean((affaire as (typeof affaire & { suivi_maj_le?: string | null }) | undefined)?.suivi_maj_le);
   const collabs = useMemo(() => new Map(annuaire.map((c) => [c.id, c])), [annuaire]);
 
   const mesCharges = useMemo(() => chargesParAffaire(charges).get(id) ?? [], [charges, id]);
@@ -447,11 +450,13 @@ function FicheContenu() {
           {peutModifier && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button type="button" style={page.btnSecondaire} onClick={() => ouvrir("infos")}>
-                Modifier
+                {venueExcel ? "Changer le responsable" : "Modifier"}
               </button>
-              <button type="button" style={page.btnSecondaire} onClick={() => ouvrir("charges")}>
-                Modifier la charge
-              </button>
+              {!venueExcel && (
+                <button type="button" style={page.btnSecondaire} onClick={() => ouvrir("charges")}>
+                  Modifier la charge
+                </button>
+              )}
               <Link href="/pilotage/affaires" style={page.btnPrimaire}>
                 Affecter dans le planning
               </Link>
@@ -459,19 +464,30 @@ function FicheContenu() {
           )}
         </div>
 
-        {/* Échéance */}
+        {venueExcel && (
+          <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 10, background: "#eef6f0", border: "1px solid #9cc9ae", color: "#1d4d2f", fontSize: 14, lineHeight: 1.45 }}>
+            <strong>Affaire du Suivi d’affaire BE (repère XLS).</strong> Le chiffré par activité, le délai, le statut et le descriptif viennent du
+            classeur : modifiez-les dans Excel, ils arrivent ici à la synchronisation suivante.
+            {affaire.imputation === "PE" || affaire.imputation === "PI"
+              ? " Pour une PE / PI, le délai suit la consommation des heures du relevé des prestations."
+              : ""}{" "}
+            Ici, vous changez seulement le responsable.
+          </div>
+        )}
+
+        {/* Délai */}
         <section style={{ ...page.carte, marginTop: 20 }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "24px 48px", alignItems: "flex-start", justifyContent: "space-between" }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "24px 48px" }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", color: C.gris }}>
-                  {affaire.type === "DBE" ? "Remise initiale" : "Objectif initial"}
+                  {affaire.type === "DBE" ? "Remise initiale" : "Délai initial"}
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{formatDate(affaire.echeance_initiale)}</div>
               </div>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", color: C.gris }}>
-                  {affaire.type === "DBE" ? "Remise actuelle" : "Objectif actuel"}
+                  {affaire.type === "DBE" ? "Remise actuelle" : "Délai actuel"}
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{formatDate(affaire.echeance)}</div>
                 {historique[0] && (
@@ -490,9 +506,9 @@ function FicheContenu() {
               )}
             </div>
 
-            {peutModifier && (
+            {peutModifier && !venueExcel && (
               <button type="button" style={page.btnSecondaire} onClick={() => ouvrir("echeance")}>
-                {affaire.echeance ? "Modifier l’échéance" : "Définir l’échéance"}
+                {affaire.echeance ? "Modifier le délai" : "Définir le délai"}
               </button>
             )}
           </div>
@@ -718,7 +734,7 @@ function FicheContenu() {
         {/* Historique */}
         <section style={{ ...page.carte, marginTop: 20 }}>
           <h2 style={{ margin: "0 0 12px", fontSize: 20 }}>
-            Historique des {affaire.type === "DBE" ? "dates de remise" : "objectifs"}
+            Historique des {affaire.type === "DBE" ? "dates de remise" : "délais"}
           </h2>
           {historique.length === 0 ? (
             <p style={{ color: C.gris }}>Aucun changement de date.</p>
@@ -771,18 +787,21 @@ function FicheContenu() {
       {/* ---------------------------- Fenêtres ---------------------------- */}
 
       {modal === "infos" && (
-        <Modal titre="Modifier l’affaire" onClose={() => setModal("")}>
+        <Modal titre={venueExcel ? "Changer le responsable" : "Modifier l’affaire"} onClose={() => setModal("")}>
           {erreurModal && <Message genre="erreur">{erreurModal}</Message>}
+          {venueExcel && (
+            <Message genre="info">Descriptif, imputation et statut viennent du Suivi d’affaire BE : ils se modifient dans le classeur.</Message>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
               <label htmlFor="m-des" style={page.etiquette}>Descriptif</label>
-              <input id="m-des" type="text" value={fDesignation} onChange={(e) => setFDesignation(e.target.value)} style={page.entrees} />
+              <input id="m-des" type="text" value={fDesignation} disabled={venueExcel} onChange={(e) => setFDesignation(e.target.value)} style={page.entrees} />
               <div style={page.aide}>Sans nom de client.</div>
             </div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 200px" }}>
                 <label htmlFor="m-imp" style={page.etiquette}>Imputation</label>
-                <select id="m-imp" value={fImputation} onChange={(e) => setFImputation(e.target.value)} style={page.entrees}>
+                <select id="m-imp" value={fImputation} disabled={venueExcel} onChange={(e) => setFImputation(e.target.value)} style={page.entrees}>
                   <option value="">—</option>
                   {imputations
                     .filter((i) => i.actif || i.code === affaire.imputation)
@@ -803,7 +822,7 @@ function FicheContenu() {
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 200px" }}>
                 <label htmlFor="m-sta" style={page.etiquette}>Statut</label>
-                <select id="m-sta" value={fStatut} onChange={(e) => setFStatut(e.target.value as StatutAffaire)} style={page.entrees}>
+                <select id="m-sta" value={fStatut} disabled={venueExcel} onChange={(e) => setFStatut(e.target.value as StatutAffaire)} style={page.entrees}>
                   {STATUTS.map((s) => (
                     <option key={s.valeur} value={s.valeur}>{s.libelle}</option>
                   ))}
@@ -812,7 +831,7 @@ function FicheContenu() {
               {fStatut === "LIVREE" && (
                 <div style={{ flex: "1 1 180px" }}>
                   <label htmlFor="m-liv" style={page.etiquette}>Date de livraison</label>
-                  <input id="m-liv" type="date" value={fLivraison} onChange={(e) => setFLivraison(e.target.value)} style={page.entrees} />
+                  <input id="m-liv" type="date" value={fLivraison} disabled={venueExcel} onChange={(e) => setFLivraison(e.target.value)} style={page.entrees} />
                 </div>
               )}
             </div>
@@ -827,7 +846,7 @@ function FicheContenu() {
       )}
 
       {modal === "echeance" && (
-        <Modal titre={affaire.type === "DBE" ? "Modifier la date de remise" : "Modifier l’objectif"} onClose={() => setModal("")} largeur={560}>
+        <Modal titre={affaire.type === "DBE" ? "Modifier la date de remise" : "Modifier le délai"} onClose={() => setModal("")} largeur={560}>
           {erreurModal && <Message genre="erreur">{erreurModal}</Message>}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
