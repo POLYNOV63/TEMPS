@@ -1744,7 +1744,26 @@ function PlanningAffairesContenu() {
               mois.push({ pos: k, libelle: new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: d.slice(5, 7) === "01" || k === 0 ? "2-digit" : undefined }) });
           }
           return (
-            <div style={{ ...page.carte, padding: "8px 14px 4px", marginBottom: 12 }}>
+            <div
+              style={{
+                ...page.carte,
+                padding: "6px 14px 4px",
+                marginBottom: 12,
+                // reste visible sous les onglets du Pilotage quand on descend dans les affaires
+                position: "sticky",
+                top: 50,
+                zIndex: 20,
+                boxShadow: "0 4px 10px -6px rgba(0,0,0,.35)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+                <button type="button" aria-label="Semaine précédente" onClick={() => setLundi(ajouterJours(lundi, -7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>◀</button>
+                <span>
+                  {formatDate(lundi)} → {formatDate(colonnes[colonnes.length - 1])}
+                  <span style={{ color: C.gris, fontWeight: 600 }}> · S{numeroSemaine(lundi)}</span>
+                </span>
+                <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>▶</button>
+              </div>
               <input
                 type="range"
                 min={0}
