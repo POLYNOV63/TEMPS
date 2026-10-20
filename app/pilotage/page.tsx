@@ -165,7 +165,7 @@ function PortefeuilleContenu() {
             if (l.base_affaire && l.base_devis && (l.genre === "BASE" || !devis.has(l.base_affaire))) devis.set(l.base_affaire.replace(/^0+/, ""), l.base_devis);
             const nom = noms.get(l.client_id);
             if (!nom) continue;
-            if (l.base_affaire && (l.genre === "BASE" || !cbe.has(l.base_affaire))) cbe.set(l.base_affaire, nom);
+            if (l.base_affaire && (l.genre === "BASE" || !cbe.has(l.base_affaire.replace(/^0+/, "")))) cbe.set(l.base_affaire.replace(/^0+/, ""), nom);
             if (l.base_devis && !dbe.has(l.base_devis)) dbe.set(l.base_devis, nom);
           }
           setClientsParAffaire({ cbe, dbe });
@@ -233,7 +233,8 @@ function PortefeuilleContenu() {
         .map((d) => (d.id === "?" ? { ...d, nom: "Sans activité" } : d))
         .sort((x, y) => x.ordre - y.ordre);
 
-      const num = affaire.numero.replace(/^0+/, "");
+      // un avenant (1750R2) prend le client de sa commande de base (1750)
+      const num = (affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
       const client = (affaire.type === "CBE" ? clientsParAffaire.cbe.get(num) : clientsParAffaire.dbe.get(num)) ?? null;
 
       return {

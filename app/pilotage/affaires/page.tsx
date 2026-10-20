@@ -21,6 +21,7 @@ import {
   chargerImputations,
   chargerPlanifie,
   chargerRealise,
+  chargerTout,
   type ReferentielActivites,
 } from "@/lib/pilotageDonnees";
 import {
@@ -112,7 +113,7 @@ const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" 
 const TITRES_GROUPES = ["Prestations externes (PE) — chez le client", "Prestations internes (PI)", "Autres affaires"];
 
 const LARGEUR_NOM = 250;
-const LARGEUR_STATUT = 210;
+const LARGEUR_STATUT = 280;
 const JOURS_COURTS = ["L", "M", "M", "J", "V"];
 const DELAI_DOUBLE_CLIC = 450;
 
@@ -141,7 +142,8 @@ type PisteAffaire = {
 const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
 
 function PlanningAffairesContenu() {
-  const [lundi, setLundi] = useState(() => lundiDe(aISO(new Date())));
+  // le planning s'ouvre une semaine avant la semaine en cours
+  const [lundi, setLundi] = useState(() => ajouterJours(lundiDe(aISO(new Date())), -7));
   const [nbSemaines, setNbSemaines] = useState(4);
 
   const [affaires, setAffaires] = useState<Affaire[]>([]);
@@ -179,6 +181,40 @@ function PlanningAffairesContenu() {
   const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());
   // toutes les commandes (livrées comprises) : pour répartir le pointé d'une famille base + avenants
   const [toutesAffaires, setToutesAffaires] = useState<Affaire[]>([]);
+  // client (nom abrégé du Suivi d'affaire) par commande de base : « CBE|1750 »
+  const [clientsParBase, setClientsParBase] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let actif = true;
+    Promise.all([
+      chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string | null }>((a, b) =>
+        supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").not("client_id", "is", null).order("cle").range(a, b)
+      ),
+      chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)),
+    ])
+      .then(([sl, sc]) => {
+        if (!actif) return;
+        const noms = new Map(sc.map((c) => [c.id, c.nom_abrege]));
+        const m = new Map<string, string>();
+        for (const l of sl) {
+          const nom = l.client_id ? noms.get(l.client_id) : undefined;
+          if (!nom) continue;
+          if (l.base_affaire) {
+            const k = `CBE|${l.base_affaire.replace(/^0+/, "")}`;
+            if (l.genre === "BASE" || !m.has(k)) m.set(k, nom);
+          }
+          if (l.base_devis) {
+            const k = `DBE|${l.base_devis.replace(/^0+/, "")}`;
+            if (!m.has(k)) m.set(k, nom);
+          }
+        }
+        setClientsParBase(m);
+      })
+      .catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, []);
   // heures facturées (relevé des prestations) jusqu'à hier, par affaire
   const [factureParAffaire, setFactureParAffaire] = useState<Map<string, number>>(new Map());
   const [horsAffaireOuvert, setHorsAffaireOuvert] = useState(true);
@@ -1248,11 +1284,17 @@ function PlanningAffairesContenu() {
 
     const livree = affaire.statut === "LIVREE";
     const env = prestation ? enveloppes.get(affaire.id) : undefined;
+    // forfait : la barre montre le déjà POINTÉ (foncé) + le planifié à venir (clair), sur le chiffré
+    const rp = !prestation ? resteAPlanifier.get(affaire.id) : undefined;
     const remplissage = env
       ? env.commande > 0 ? Math.min(100, ((env.consomme + env.planifie) / env.commande) * 100) : 0
-      : chiffre > 0 ? Math.min(100, (affecte / chiffre) * 100) : 0;
-    const partConsommee = env && env.commande > 0 ? Math.min(100, (env.consomme / env.commande) * 100) : 0;
-    const couvert = !env && chiffre > 0 && affecte >= chiffre - 0.5;
+      : rp && rp.chiffre > 0
+        ? Math.min(100, ((rp.pointe + rp.planifie) / rp.chiffre) * 100)
+        : chiffre > 0 ? Math.min(100, (affecte / chiffre) * 100) : 0;
+    const partConsommee = env && env.commande > 0
+      ? Math.min(100, (env.consomme / env.commande) * 100)
+      : rp && rp.chiffre > 0 ? Math.min(100, (rp.pointe / rp.chiffre) * 100) : 0;
+    const couvert = !env && (rp ? rp.chiffre > 0 && rp.reste <= 0.5 : chiffre > 0 && affecte >= chiffre - 0.5);
     const couleurBord = prestation ? (pi ? "#6b58a8" : "#34506b") : affaire.type === "DBE" ? "#d98aa6" : C.rouge;
     const fondBarre = prestation ? (pi ? "#f1eef9" : "#eaf1fa") : affaire.type === "DBE" ? "#fdf1f5" : "#fbeeee";
     const fondRempli = couvert ? "#bfe3c6" : prestation ? (pi ? "#cfc6ea" : "#bcd0e8") : affaire.type === "DBE" ? "#f2bfd0" : "#f0b9b9";
@@ -1261,7 +1303,9 @@ function PlanningAffairesContenu() {
       ? env.commande > 0
         ? `enveloppe ${formatHeures(env.commande)} · reste ${formatHeures(Math.max(0, env.reste))}`
         : ""
-      : chiffre > 0
+      : rp && rp.chiffre > 0
+        ? `${formatHeures(rp.pointe)} pointées${rp.planifie > 0.5 ? ` + ${formatHeures(rp.planifie)} planifiées` : ""} / ${formatHeures(rp.chiffre)}`
+        : chiffre > 0
         ? `${formatHeures(affecte)} / ${formatHeures(chiffre)}`
         : affecte > 0
           ? `${formatHeures(affecte)} affectées`
@@ -1287,7 +1331,13 @@ function PlanningAffairesContenu() {
           title={
             prestation
               ? `Prestation du ${formatDate(piste.debut)} au ${formatDate(piste.fin)} — glisser pour décaler, étirer un bord pour changer le début ou la fin, cliquer pour modifier`
-              : `${affaire.type} ${affaire.numero} : du ${formatDate(piste.debut)} au ${formatDate(piste.fin)}${chiffre > 0 ? ` — ${formatHeures(affecte)} affectées sur ${formatHeures(chiffre)} chiffrées` : ""}`
+              : `${affaire.type} ${affaire.numero} : du ${formatDate(piste.debut)} au ${formatDate(piste.fin)}${
+                  rp && rp.chiffre > 0
+                    ? ` — chiffré ${formatHeures(rp.chiffre)} : déjà pointé ${formatHeures(rp.pointe)}, planifié à venir ${formatHeures(rp.planifie)}, reste à planifier ${formatHeures(rp.reste)}`
+                    : chiffre > 0
+                      ? ` — ${formatHeures(affecte)} affectées sur ${formatHeures(chiffre)} chiffrées`
+                      : ""
+                }`
           }
           onPointerDown={prestation ? (e) => demarrerDragAffaire(e, affaire, "move") : undefined}
           style={{
@@ -1319,9 +1369,9 @@ function PlanningAffairesContenu() {
           {remplissage > 0 && (
             <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${remplissage}%`, background: fondRempli, pointerEvents: "none" }} />
           )}
-          {/* prestation : la partie déjà consommée (feuilles d'heures), plus foncée */}
+          {/* la partie déjà consommée (pointée dans les feuilles d'heures), plus foncée */}
           {partConsommee > 0 && (
-            <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${partConsommee}%`, background: pi ? "#a99bd6" : "#8fb0d6", pointerEvents: "none" }} />
+            <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${partConsommee}%`, background: prestation ? (pi ? "#a99bd6" : "#8fb0d6") : affaire.type === "DBE" ? "#d98aa6" : "#d46a6a", pointerEvents: "none" }} />
           )}
           {prestation && <span aria-hidden="true" style={poignee("debut", piste.coupeGauche)} onPointerDown={(e) => demarrerDragAffaire(e, affaire, "debut")} />}
           <span style={{ position: "relative", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1456,7 +1506,15 @@ function PlanningAffairesContenu() {
                   </button>
                 )}
               </div>
-              <div style={{ fontSize: 12, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{affaire.designation}</div>
+              <div style={{ fontSize: 12, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={affaire.designation}>
+                {(() => {
+                  // client de la commande de base, même pour un avenant (1750R2 -> 1750)
+                  const base = (affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
+                  const client = clientsParBase.get(`${affaire.type}|${base}`);
+                  return client ? <strong style={{ fontWeight: 800 }}>{client} · </strong> : null;
+                })()}
+                {affaire.designation}
+              </div>
             </div>
           </div>
 
@@ -1490,7 +1548,20 @@ function PlanningAffairesContenu() {
             </div>
           )}
 
-          <div style={{ gridColumn: colonnes.length + 2, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "0 8px" }}>
+          <div
+            style={{
+              gridColumn: colonnes.length + 2,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              flexWrap: "nowrap",
+              gap: 6,
+              padding: "0 8px",
+              overflow: "hidden",
+              minWidth: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
             {prestation ? (
               (() => {
                 const env = enveloppes.get(affaire.id);
@@ -1532,20 +1603,21 @@ function PlanningAffairesContenu() {
               })()
             ) : (
               <>
-                <div style={{ fontSize: 12, fontWeight: 800 }}>
-                  {chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—"}
+                <div style={{ fontSize: 12, fontWeight: 800 }} title="Déjà pointé + planifié à venir, sur le chiffré">
+                  {(() => {
+                    const r = resteAPlanifier.get(affaire.id);
+                    if (r && r.chiffre > 0) return `${formatHeures(r.pointe + r.planifie)} / ${formatHeures(r.chiffre)}`;
+                    return chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—";
+                  })()}
                 </div>
-                <Pastille genre={etat.genre}>{etat.texte}</Pastille>
                 {(() => {
                   const r = resteAPlanifier.get(affaire.id);
-                  if (!r || r.chiffre <= 0) return null;
+                  // forfait chiffré : l'état dit ce qui reste à planifier (chiffré − pointé − planifié à venir)
+                  if (!r || r.chiffre <= 0 || etat.genre === "crit") return <Pastille genre={etat.genre}>{etat.texte}</Pastille>;
                   return (
-                    <div
-                      title={`Chiffré ${formatHeures(r.chiffre)} − déjà pointé ${formatHeures(r.pointe)} − planifié à venir ${formatHeures(r.planifie)}`}
-                      style={{ fontSize: 12, fontWeight: 800, color: r.reste > 0.5 ? "#7a3e00" : "#1b5e20" }}
-                    >
-                      {r.reste > 0.5 ? `Reste à planifier ${formatHeures(r.reste)}` : "✓ tout est planifié"}
-                    </div>
+                    <span title={`Chiffré ${formatHeures(r.chiffre)} − déjà pointé ${formatHeures(r.pointe)} − planifié à venir ${formatHeures(r.planifie)}`}>
+                      <Pastille genre={r.reste > 0.5 ? "warn" : "ok"}>{r.reste > 0.5 ? `Reste ${formatHeures(r.reste)} à planifier` : "✓ Tout est planifié"}</Pastille>
+                    </span>
                   );
                 })()}
               </>
@@ -1659,6 +1731,42 @@ function PlanningAffairesContenu() {
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}
 
+        {/* Ascenseur horizontal : glisser pour se déplacer dans les mois */}
+        {(() => {
+          const origine = ajouterJours(lundiDe(aujourdhui), -26 * 7); // 6 mois en arrière
+          const nbPas = 26 + 78; // jusqu'à 18 mois en avant, semaine par semaine
+          const position = Math.round((Date.parse(lundi) - Date.parse(origine)) / (7 * 86400000));
+          const mois: { pos: number; libelle: string }[] = [];
+          for (let k = 0; k <= nbPas; k++) {
+            const d = ajouterJours(origine, k * 7);
+            const precedent = ajouterJours(origine, (k - 1) * 7);
+            if (k === 0 || d.slice(5, 7) !== precedent.slice(5, 7))
+              mois.push({ pos: k, libelle: new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: d.slice(5, 7) === "01" || k === 0 ? "2-digit" : undefined }) });
+          }
+          return (
+            <div style={{ ...page.carte, padding: "8px 14px 4px", marginBottom: 12 }}>
+              <input
+                type="range"
+                min={0}
+                max={nbPas}
+                step={1}
+                value={Math.max(0, Math.min(nbPas, position))}
+                onChange={(e) => setLundi(ajouterJours(origine, Number(e.target.value) * 7))}
+                aria-label="Se déplacer dans les mois"
+                style={{ width: "100%", accentColor: C.rouge, cursor: "grab" }}
+              />
+              <div style={{ position: "relative", height: 16, fontSize: 11, color: C.gris, fontWeight: 700 }}>
+                {mois.map((m) => (
+                  <span key={m.pos} style={{ position: "absolute", left: `${(m.pos / nbPas) * 100}%`, transform: "translateX(-2px)", whiteSpace: "nowrap" }}>
+                    {m.libelle}
+                  </span>
+                ))}
+                <span title="Aujourd’hui" style={{ position: "absolute", left: `${(26 / nbPas) * 100}%`, top: -4, width: 2, height: 18, background: C.rouge }} />
+              </div>
+            </div>
+          );
+        })()}
+
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button type="button" aria-label="Période précédente" style={fleche} onClick={() => setLundi(ajouterJours(lundi, -7 * Math.max(1, Math.floor(nbSemaines / 3))))}>◀</button>
@@ -1667,7 +1775,7 @@ function PlanningAffairesContenu() {
               <div style={{ fontSize: 13, fontWeight: 600, color: C.gris }}>S{numeroSemaine(lundi)} à S{numeroSemaine(colonnes[colonnes.length - 1] ?? lundi)}</div>
             </div>
             <button type="button" aria-label="Période suivante" style={fleche} onClick={() => setLundi(ajouterJours(lundi, 7 * Math.max(1, Math.floor(nbSemaines / 3))))}>▶</button>
-            <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(lundiDe(aujourdhui))}>Aujourd’hui</button>
+            <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}>Aujourd’hui</button>
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
