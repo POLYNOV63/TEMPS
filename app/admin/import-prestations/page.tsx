@@ -48,6 +48,23 @@ type Groupe = {
   source: LigneHisto[];
 };
 
+/* Réseau capricieux (wifi, mise en veille, coupure brève) : on réessaie un appel jusqu'à 4 fois
+   (après 1 s, 3 s puis 8 s) avant d'abandonner. Une vraie erreur de la base n'est pas réessayée. */
+const estCoupure = (m?: string) => /failed to fetch|networkerror|network request failed|load failed|fetch failed/i.test(m ?? "");
+
+async function reessayer<T extends { error: { message: string } | null }>(appel: () => PromiseLike<T>): Promise<T> {
+  const attentes = [1000, 3000, 8000];
+  for (let i = 0; ; i++) {
+    try {
+      const r = await appel();
+      if (!r.error || !estCoupure(r.error.message) || i >= attentes.length) return r;
+    } catch (e) {
+      if (!estCoupure(e instanceof Error ? e.message : String(e)) || i >= attentes.length) throw e;
+    }
+    await new Promise((ok) => setTimeout(ok, attentes[i]));
+  }
+}
+
 function ImportContenu() {
   const [nomFichier, setNomFichier] = useState("");
   const [resultat, setResultat] = useState<ResultatHisto | null>(null);
@@ -150,10 +167,10 @@ function ImportContenu() {
           const r = rattacher(l, c);
           return !r.affaireId || !r.collabId;
         });
-        const { error: eh } = await supabase.from("prestation_historique").delete().eq("mois", m);
+        const { error: eh } = await reessayer(() => supabase.from("prestation_historique").delete().eq("mois", m));
         if (eh) throw new Error(eh.message);
         if (inconnues.length) {
-          const { error } = await supabase.from("prestation_historique").insert(inconnues.map(({ jours: _j, ...h }) => h));
+          const { error } = await reessayer(() => supabase.from("prestation_historique").insert(inconnues.map(({ jours: _j, ...h }) => h)));
           if (error) throw new Error(error.message);
           bilan.historique += inconnues.length;
         }
@@ -188,16 +205,16 @@ function ImportContenu() {
             continue; // mois validé dans l'application : intouchable
           }
           if (!ligneId) {
-            const { data, error } = await supabase
+            const { data, error } = await reessayer(() => supabase
               .from("prestation_lignes")
               .upsert({ affaire_id: g.affaireId, collaborateur_id: g.collabId, ...parametres }, { onConflict: "affaire_id,collaborateur_id" })
               .select("id")
-              .single();
+              .single());
             if (error || !data) throw new Error(error?.message ?? "Ligne du relevé impossible à créer.");
             ligneId = data.id as string;
             c.lignes.set(g.cle, ligneId);
           } else {
-            const { error } = await supabase.from("prestation_lignes").update(parametres).eq("id", ligneId);
+            const { error } = await reessayer(() => supabase.from("prestation_lignes").update(parametres).eq("id", ligneId));
             if (error) throw new Error(error.message);
           }
 
@@ -210,13 +227,13 @@ function ImportContenu() {
               else if (typeof v === "string" && parJour[j].heures === null) parJour[j].code = v;
             });
           const finMois = `${m.slice(0, 7)}-${String(nbJours).padStart(2, "0")}`;
-          const { error: ed } = await supabase.from("prestation_saisies").delete().eq("ligne_id", ligneId).gte("jour", m).lte("jour", finMois);
+          const { error: ed } = await reessayer(() => supabase.from("prestation_saisies").delete().eq("ligne_id", ligneId).gte("jour", m).lte("jour", finMois));
           if (ed) throw new Error(ed.message);
           const saisies = parJour
             .map((v, j) => ({ ligne_id: ligneId as string, jour: `${m.slice(0, 7)}-${String(j + 1).padStart(2, "0")}`, heures: v.heures, code: v.heures === null ? v.code : null }))
             .filter((s) => s.heures !== null || s.code !== null);
           if (saisies.length) {
-            const { error } = await supabase.from("prestation_saisies").insert(saisies);
+            const { error } = await reessayer(() => supabase.from("prestation_saisies").insert(saisies));
             if (error) throw new Error(error.message);
           }
 
@@ -224,7 +241,7 @@ function ImportContenu() {
           const heures = g.source.reduce((t, l) => t + l.heures, 0);
           const montant = Math.round(g.source.reduce((t, l) => t + l.montant, 0) * 100) / 100;
           const passe = m.slice(0, 7) < moisCourant;
-          const { error: em } = await supabase.from("prestation_mois").upsert(
+          const { error: em } = await reessayer(() => supabase.from("prestation_mois").upsert(
             {
               ligne_id: ligneId,
               mois: m,
@@ -238,7 +255,7 @@ function ImportContenu() {
               montant_fige: passe ? montant : null,
             },
             { onConflict: "ligne_id,mois" }
-          );
+          ));
           if (em) throw new Error(em.message);
 
           aSynchroniser.push({ ligneId, mois: m });
@@ -252,7 +269,7 @@ function ImportContenu() {
       for (const s of aSynchroniser) {
         k++;
         if (k % 10 === 0) setProgression(`Mise à jour du planning… ${k} / ${aSynchroniser.length}`);
-        const { error } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: s.ligneId, p_mois: s.mois });
+        const { error } = await reessayer(() => supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: s.ligneId, p_mois: s.mois }));
         if (error) throw new Error(`Planning : ${error.message}`);
       }
 
@@ -264,7 +281,12 @@ function ImportContenu() {
       );
       setContexte(await chargerContexte());
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Import impossible.");
+      const m = e instanceof Error ? e.message : "Import impossible.";
+      setErreur(
+        estCoupure(m)
+          ? "La connexion a été coupée pendant l’import. Relancez-le : les mois déjà importés et validés sont ignorés, l’import reprend où il s’était arrêté."
+          : m
+      );
     } finally {
       setProgression("");
     }
