@@ -229,6 +229,8 @@ type LigneBrute = {
 function IndicateursContenu() {
   const aujourdhui = aujourdhuiISO();
   const [preset, setPreset] = useState<Preset>("EXERCICE");
+  // Top 10 clients : imputation choisie ("" = toutes)
+  const [imputationTop, setImputationTop] = useState("");
   // par défaut : l'exercice en cours, pour que tous les indicateurs suivent les mêmes critères que les Finances
   const [debut, setDebut] = useState(() => periodeDe("EXERCICE", aujourdhui).debut);
   const [fin, setFin] = useState(aujourdhui);
@@ -786,6 +788,88 @@ function IndicateursContenu() {
                 />
               </Carte>
             </div>
+
+            {/* ---------- Top 10 clients par imputation (prise de commande sur la période) ---------- */}
+            {(() => {
+              // imputation d'une commande : la sienne, sinon celle de sa commande de base (avenants)
+              const impBase = new Map(lignes.filter((l) => l.genre === "BASE" && l.base_affaire).map((l) => [l.base_affaire as string, l.imputation]));
+              const imputationDe = (l: (typeof calcul.commandes)[number]) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
+              const parImputation = repartir(calcul.commandes, imputationDe);
+              const choisie = imputationTop && parImputation.some((p) => p.cle === imputationTop) ? imputationTop : "";
+              const perimetre = choisie ? calcul.commandes.filter((l) => imputationDe(l) === choisie) : calcul.commandes;
+              const top = repartir(perimetre, (l) => l.client ?? "Client non renseigné")
+                .sort((x, y) => metrique(y) - metrique(x))
+                .slice(0, 10);
+              const totalPerimetre = perimetre.reduce((t, l) => t + (montantsVisibles ? l.montant : l.heures_total), 0);
+              const boutonImp = (actif: boolean): CSSProperties => ({
+                minHeight: 36,
+                padding: "0 12px",
+                borderRadius: 8,
+                border: `1.5px solid ${actif ? C.rouge : "#c9cdd2"}`,
+                background: actif ? C.rouge : "#ffffff",
+                color: actif ? "#ffffff" : "#3b4046",
+                fontWeight: 700,
+                fontFamily: "inherit",
+                cursor: "pointer",
+              });
+              return (
+                <div style={rangee}>
+                  <Carte titre={`Top 10 clients par imputation — prise de commande (${montantsVisibles ? "€" : "heures"})`} style={{ flex: "1 1 100%" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      <button type="button" aria-pressed={!choisie} style={boutonImp(!choisie)} onClick={() => setImputationTop("")}>
+                        Toutes
+                      </button>
+                      {parImputation.map((p) => (
+                        <button key={p.cle} type="button" aria-pressed={choisie === p.cle} style={boutonImp(choisie === p.cle)} onClick={() => setImputationTop(p.cle)}>
+                          {p.cle} <span style={{ opacity: 0.75, fontWeight: 600 }}>· {formatMetrique(metrique(p))}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {top.length === 0 ? (
+                      <p style={{ color: C.gris }}>Aucune prise de commande sur la période.</p>
+                    ) : (
+                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...page.th, width: 40 }}>#</th>
+                            <th style={page.th}>Client</th>
+                            <th style={{ ...page.th, textAlign: "right" }}>Commandes</th>
+                            <th style={{ ...page.th, textAlign: "right" }}>Heures</th>
+                            {montantsVisibles && <th style={{ ...page.th, textAlign: "right" }}>Montant</th>}
+                            <th style={{ ...page.th, textAlign: "right" }}>Part</th>
+                            <th style={{ ...page.th, width: "28%" }} aria-hidden="true" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {top.map((p, i) => {
+                            const part = totalPerimetre > 0 ? metrique(p) / totalPerimetre : 0;
+                            return (
+                              <tr key={p.cle}>
+                                <td style={{ ...page.td, fontWeight: 800, color: i < 3 ? C.rougeFonce : C.gris }}>{i + 1}</td>
+                                <td style={{ ...page.td, fontWeight: 800 }}>{p.cle}</td>
+                                <td style={{ ...page.td, textAlign: "right" }}>{p.nb}</td>
+                                <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(p.heures)}</td>
+                                {montantsVisibles && <td style={{ ...page.td, textAlign: "right", fontWeight: 800 }}>{keuros(p.montant)}</td>}
+                                <td style={{ ...page.td, textAlign: "right" }}>{Math.round(part * 100)} %</td>
+                                <td style={page.td}>
+                                  <div style={{ height: 10, background: "#eceef1", borderRadius: 5, overflow: "hidden" }}>
+                                    <div style={{ width: `${Math.min(100, part * 100)}%`, height: "100%", background: C.rouge }} />
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                    <div style={{ fontSize: 12, color: C.gris, marginTop: 6 }}>
+                      Commandes de base et avenants reçus sur la période ; un avenant compte dans l’imputation de sa commande s’il n’en a pas. Part : poids
+                      du client dans {choisie ? `l’imputation ${choisie}` : "toutes les prises de commande"}.
+                    </div>
+                  </Carte>
+                </div>
+              );
+            })()}
 
             {/* ================= CARNET DE COMMANDES ================= */}
             <h2 style={titreSection}>2. Carnet de commandes</h2>
