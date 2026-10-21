@@ -309,6 +309,28 @@ export function parMois(lignes: LigneInd[], annee: number, jusquau: string, cons
   return res;
 }
 
+/* 12 mois à partir d'un 1er mois quelconque (ex. novembre : début d'exercice), jusqu'à `jusquau` */
+export function parMoisDepuis(lignes: LigneInd[], premierMois: string, jusquau: string, consomme?: Consomme): Mois[] {
+  const res: Mois[] = [];
+  const a0 = Number(premierMois.slice(0, 4));
+  const m0 = Number(premierMois.slice(5, 7));
+  for (let k = 0; k < 12; k++) {
+    const a = a0 + Math.floor((m0 - 1 + k) / 12);
+    const m = ((m0 - 1 + k) % 12) + 1;
+    const debut = `${a}-${String(m).padStart(2, "0")}-01`;
+    if (debut > jusquau) break;
+    const fin = finDeMois(a, m);
+    const finEffective = fin < jusquau ? fin : jusquau;
+    res.push({
+      cle: debut.slice(0, 7),
+      devis: total(devisEmis(lignes, debut, finEffective)),
+      commandes: total(prisesDeCommande(lignes, debut, finEffective)),
+      carnet: total(lignesEnCarnet(lignes, finEffective, consomme)),
+    });
+  }
+  return res;
+}
+
 /* ------------------------------ répartitions ------------------------------ */
 
 export type Part = { cle: string; nb: number; heures: number; montant: number };

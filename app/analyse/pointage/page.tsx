@@ -287,7 +287,6 @@ function PointageContenu() {
               <Tuile libelle="Affaires" valeur={String(affichees.length)} sous={`${formatHeures(totaux.chiffre)} chiffrées`} />
               <Tuile libelle="Pointé" valeur={formatHeures(totaux.pointe)} sous={totaux.chiffre > 0 ? `${pct(totaux.pointe / totaux.chiffre)} du chiffré` : ""} />
               <Tuile libelle="Au-delà du chiffré" valeur={String(totaux.depassees)} sous="affaires dont le pointé dépasse le chiffré" accent={totaux.depassees > 0} />
-              <Tuile libelle="Pointé hors chiffrage" valeur={formatHeures(totaux.hors)} sous="sur des activités non chiffrées" accent={totaux.hors > 0.5} />
             </div>
 
             <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>

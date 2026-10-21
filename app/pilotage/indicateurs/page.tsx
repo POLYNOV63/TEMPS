@@ -20,6 +20,7 @@ import {
   issueDevis,
   lignesEnCarnet,
   parMois,
+  parMoisDepuis,
   prisesDeCommande,
   repartir,
   syntheseDevis,
@@ -45,7 +46,13 @@ import {
    Export Excel et impression / PDF pour le directeur opérationnel.
 ================================================================ */
 
-type Preset = "ANNEE" | "DOUZE_MOIS" | "ANNEE_DERNIERE" | "TRIMESTRE" | "LIBRE";
+type Preset = "EXERCICE" | "ANNEE" | "DOUZE_MOIS" | "ANNEE_DERNIERE" | "TRIMESTRE" | "LIBRE";
+
+/* Exercice POLYNOV : du 1er novembre au 31 octobre */
+const debutExercice = (jour: string) => {
+  const a = Number(jour.slice(0, 4));
+  return Number(jour.slice(5, 7)) >= 11 ? `${a}-11-01` : `${a - 1}-11-01`;
+};
 
 const NOMS_DISCIPLINES: Record<Discipline, string> = {
   meca: "Méca",
@@ -80,6 +87,8 @@ function periodeDe(preset: Preset, aujourdhui: string): { debut: string; fin: st
   const a = Number(aujourdhui.slice(0, 4));
   const m = Number(aujourdhui.slice(5, 7));
   switch (preset) {
+    case "EXERCICE":
+      return { debut: debutExercice(aujourdhui), fin: aujourdhui };
     case "ANNEE":
       return { debut: `${a}-01-01`, fin: aujourdhui };
     case "DOUZE_MOIS": {
@@ -219,8 +228,9 @@ type LigneBrute = {
 
 function IndicateursContenu() {
   const aujourdhui = aujourdhuiISO();
-  const [preset, setPreset] = useState<Preset>("ANNEE");
-  const [debut, setDebut] = useState(() => periodeDe("ANNEE", aujourdhui).debut);
+  const [preset, setPreset] = useState<Preset>("EXERCICE");
+  // par défaut : l'exercice en cours, pour que tous les indicateurs suivent les mêmes critères que les Finances
+  const [debut, setDebut] = useState(() => periodeDe("EXERCICE", aujourdhui).debut);
   const [fin, setFin] = useState(aujourdhui);
 
   const [lignes, setLignes] = useState<LigneInd[]>([]);
@@ -422,11 +432,15 @@ function IndicateursContenu() {
         }
         return res;
       })(),
-      moisN: parMois(lignes, anneeFin, fin, consomme),
-      moisN1: parMois(lignes, anneeFin - 1, `${anneeFin - 1}-12-31`, consomme),
+      // graphiques mensuels : sur l'exercice (nov. → oct.) quand « Exercice en cours » est choisi, sinon sur l'année civile
+      moisN: preset === "EXERCICE" ? parMoisDepuis(lignes, debutExercice(fin), fin, consomme) : parMois(lignes, anneeFin, fin, consomme),
+      moisN1:
+        preset === "EXERCICE"
+          ? parMoisDepuis(lignes, `${Number(debutExercice(fin).slice(0, 4)) - 1}-11-01`, `${debutExercice(fin).slice(0, 4)}-10-31`, consomme)
+          : parMois(lignes, anneeFin - 1, `${anneeFin - 1}-12-31`, consomme),
       evolutionCarnet,
     };
-  }, [lignes, debut, fin, debutN1, finN1, periodeValide, consomme]);
+  }, [lignes, debut, fin, debutN1, finN1, periodeValide, consomme, preset]);
 
   const valeur = (a: Agregat) => (montantsVisibles ? keuros(a.montant) : formatHeures(a.heures));
   const metrique = (p: Part) => (montantsVisibles ? p.montant : p.heures);
@@ -558,6 +572,11 @@ function IndicateursContenu() {
     ? calcul.affairesCarnet.reduce((t, a) => t + resteAffaire(a), 0)
     : 0;
 
+  // libellés des séries des graphiques mensuels
+  const exN = Number(debutExercice(fin).slice(0, 4));
+  const libN = preset === "EXERCICE" ? `exercice ${exN}-${exN + 1}` : fin.slice(0, 4);
+  const libN1 = preset === "EXERCICE" ? `exercice ${exN - 1}-${exN}` : String(Number(fin.slice(0, 4)) - 1);
+
   return (
     <main style={page.fond}>
       <style>{`
@@ -595,6 +614,7 @@ function IndicateursContenu() {
         <div className="sans-impression" style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 8 }}>
           {(
             [
+              ["EXERCICE", "Exercice en cours"],
               ["ANNEE", "Année en cours"],
               ["TRIMESTRE", "Trimestre en cours"],
               ["DOUZE_MOIS", "12 derniers mois"],
@@ -662,27 +682,49 @@ function IndicateursContenu() {
               />
             </div>
 
+            <details style={{ ...page.carte, padding: "10px 14px", marginBottom: 14, fontSize: 14 }}>
+              <summary style={{ cursor: "pointer", fontWeight: 800 }}>ⓘ Ce que mesure chaque indicateur</summary>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 20, lineHeight: 1.55 }}>
+                <li>
+                  <strong>Prise de commande</strong> : ce que le BE a <em>vendu</em> sur la période. Ce sont les commandes de base et les avenants
+                  (R1, R2…) dont la <strong>date de réception de commande</strong> tombe dans la période, au montant de la commande ; les
+                  commandes annulées sont exclues, les échéances (ECH) ne comptent pas (elles découpent une commande déjà comptée).
+                </li>
+                <li>
+                  <strong>Devis émis</strong> : devis dont la <strong>date d’envoi</strong> tombe dans la période (montant chiffré du devis).
+                </li>
+                <li>
+                  <strong>Carnet de commandes</strong> : ce qui reste à facturer à la date de fin — forfaits commandés pas encore livrés (moins
+                  leurs échéances déjà livrées), PE / PI pour leur part non consommée.
+                </li>
+                <li>
+                  <strong>Exercice en cours</strong> : du 1er novembre au jour même, comme les Finances ; les graphiques mensuels vont alors de
+                  novembre à octobre, comparés à l’exercice précédent.
+                </li>
+              </ul>
+            </details>
+
             <div style={rangee}>
-              <Carte titre={`Devis émis par mois — montant chiffré (${fin.slice(0, 4)} et ${Number(fin.slice(0, 4)) - 1})`} style={{ flex: "2 1 520px" }}>
+              <Carte titre={`Devis émis par mois — montant chiffré (${libN} et ${libN1})`} style={{ flex: "2 1 520px" }}>
                 <BarresMois
                   donnees={calcul.moisN1.map((m1, i) => ({
-                    label: MOIS_COURTS[i],
+                    label: MOIS_COURTS[Number(m1.cle.slice(5, 7)) - 1],
                     a: montantsVisibles ? calcul.moisN[i]?.devis.montant ?? 0 : calcul.moisN[i]?.devis.heures ?? 0,
                     b: montantsVisibles ? m1.devis.montant : m1.devis.heures,
                   }))}
                   format={formatMetrique}
-                  legendeA={fin.slice(0, 4)}
-                  legendeB={String(Number(fin.slice(0, 4)) - 1)}
+                  legendeA={libN}
+                  legendeB={libN1}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 6, marginTop: 6, fontSize: 12, textAlign: "center" }}>
                   {calcul.moisN1.map((m1, i) => (
-                    <div key={i} title={`Devis émis : ${calcul.moisN[i]?.devis.nb ?? 0} en ${fin.slice(0, 4)}, ${m1.devis.nb} en ${Number(fin.slice(0, 4)) - 1}`}>
+                    <div key={i} title={`Devis émis : ${calcul.moisN[i]?.devis.nb ?? 0} en ${libN}, ${m1.devis.nb} en ${libN1}`}>
                       <strong>{calcul.moisN[i]?.devis.nb ?? "—"}</strong>
                       <div style={{ color: C.gris }}>{m1.devis.nb}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>Sous chaque mois : nombre de devis émis ({fin.slice(0, 4)}, puis {Number(fin.slice(0, 4)) - 1} en gris).</div>
+                <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>Sous chaque mois : nombre de devis émis ({libN}, puis {libN1} en gris).</div>
               </Carte>
             </div>
 
@@ -702,16 +744,16 @@ function IndicateursContenu() {
             </div>
 
             <div style={rangee}>
-              <Carte titre={`Prise de commande par mois (${fin.slice(0, 4)} et ${Number(fin.slice(0, 4)) - 1})`} style={{ flex: "2 1 520px" }}>
+              <Carte titre={`Prise de commande par mois (${libN} et ${libN1})`} style={{ flex: "2 1 520px" }}>
                 <BarresMois
                   donnees={calcul.moisN1.map((m1, i) => ({
-                    label: MOIS_COURTS[i],
+                    label: MOIS_COURTS[Number(m1.cle.slice(5, 7)) - 1],
                     a: montantsVisibles ? calcul.moisN[i]?.commandes.montant ?? 0 : calcul.moisN[i]?.commandes.heures ?? 0,
                     b: montantsVisibles ? m1.commandes.montant : m1.commandes.heures,
                   }))}
                   format={formatMetrique}
-                  legendeA={fin.slice(0, 4)}
-                  legendeB={String(Number(fin.slice(0, 4)) - 1)}
+                  legendeA={libN}
+                  legendeB={libN1}
                 />
               </Carte>
               <Carte titre="Issue des devis émis sur la période">

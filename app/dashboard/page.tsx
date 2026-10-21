@@ -841,6 +841,7 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
       <Groupe titre="Chiffre d'affaires" description="Consultation">
         <div style={stylesV2.grille}>
           <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel, rentabilité" onClick={() => aller("/analyse/finances")} />
+          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
           <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
         </div>
       </Groupe>
@@ -866,6 +867,7 @@ function BlocChiffreAffaires({ aller }: { aller: (url: string) => void }) {
           description="CA de l'exercice face au prévisionnel, activités × imputations, rentabilité"
           onClick={() => aller("/analyse/finances")}
         />
+          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
         <CarteCompacte
           icone="📈"
           titre="Indicateurs commerciaux"
@@ -979,7 +981,7 @@ function BlocParametrage({
           <CarteCompacte icone="🩺" titre="Cohérence" description="Codes sans activité, rythmes manquants, numéros d'affaire inconnus…" onClick={() => aller("/admin/coherence")} />
           <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
           <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
-          <CarteCompacte icone="📥" titre="Import historique" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
+          <CarteCompacte icone="📥" titre="Import Récupération heures" description="Importer les anciennes imputations depuis un fichier" onClick={() => aller("/import-historique-v2")} />
           <CarteCompacte icone="🧾" titre="Import Suivi des prestations" description="Le classeur fait foi : ses mois remplissent le relevé PE / PI (mois passés validés)" onClick={() => aller("/admin/import-prestations")} />
           <CarteCompacte icone="💾" titre="Sauvegarde" description="Télécharger toutes les tables dans un fichier ZIP, où vous voulez" onClick={() => aller("/admin/sauvegarde")} />
           <CarteCompacte icone="🧹" titre="Remise à zéro" description="Effacer toutes les données d'activité, garder collaborateurs et paramétrage" onClick={() => aller("/admin/reinitialisation")} />

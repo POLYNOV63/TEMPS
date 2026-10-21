@@ -941,11 +941,6 @@ function PrestationsContenu() {
             <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, -1))} aria-label="Mois précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 150, textAlign: "center" }}>{nomMois}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, 1))} aria-label="Mois suivant">▶</button>
-            {peutAgir && !moisValide && lignes.length > 0 && (
-              <button type="button" style={page.btnSecondaire} onClick={toutRemplir} title="Remplit avec la base horaire toutes les lignes encore vides ce mois-ci">
-                ⤓ Tout remplir
-              </button>
-            )}
             <Link href="/admin/import-prestations" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }} title="Le Suivi des prestations (Excel) fait foi : importer ses onglets de mois dans le relevé">
               ⇪ Importer le Suivi des prestations
             </Link>
@@ -953,8 +948,18 @@ function PrestationsContenu() {
               {enCours === "export" ? "Export…" : "Exporter (gabarit Excel)"}
             </button>
             {peutAgir && lignes.length > 0 && (
-              <button type="button" style={moisValide ? page.btnSecondaire : page.btnPrimaire} disabled={enCours !== ""} onClick={() => void validerMois(!moisValide)}>
-                {moisValide ? "↺ Rouvrir le mois" : "✓ Valider le mois"}
+              <button
+                type="button"
+                style={moisValide ? page.btnSecondaire : page.btnPrimaire}
+                disabled={enCours !== ""}
+                onClick={() => void validerMois(!moisValide)}
+                title={
+                  moisValide
+                    ? "Rouvrir le mois : ses heures et ses montants redeviennent modifiables (et réimportables depuis le Suivi des prestations)."
+                    : "Clôturer le mois une fois la facture faite : heures et montants sont figés (ils ne bougent plus, même si un taux change ou si on réimporte), et le mois compte comme FACTURÉ dans les Finances. Les mois passés importés du Suivi des prestations sont clôturés automatiquement."
+                }
+              >
+                {moisValide ? "↺ Rouvrir le mois" : "🔒 Clôturer le mois (facturé)"}
               </button>
             )}
           </div>
@@ -1056,7 +1061,15 @@ function PrestationsContenu() {
                                 <>
                                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                     <BadgeType type={a.type} />
-                                    <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                    <Link
+                                      href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}`}
+                                      title={a.statut === "EN_COURS" || a.statut === "LIVREE" ? undefined : "Commande pas encore reçue : NON FACTURABLE en l’état"}
+                                      style={{
+                                        fontWeight: 800,
+                                        color: C.rougeFonce,
+                                        ...(a.statut === "EN_COURS" || a.statut === "LIVREE" ? {} : { background: "#ffe94d", padding: "0 4px", borderRadius: 3 }),
+                                      }}
+                                    >
                                       {nf?.numero}
                                     </Link>
                                     {nf?.devis && (
