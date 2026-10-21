@@ -13,13 +13,14 @@ const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Dro
   { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage", droit: "piloterBE" },
   { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
   { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
+  { cle: "ressources-planning", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "chargeRessources" },
   { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
 ];
 
 export default function OngletsPilotage({
   actif,
 }: {
-  actif: "portefeuille" | "affaires" | "ressources" | "prestations" | "indicateurs";
+  actif: "portefeuille" | "affaires" | "ressources" | "ressources-planning" | "prestations" | "indicateurs";
 }) {
   const [role, setRole] = useState<string | null | undefined>(undefined);
 
