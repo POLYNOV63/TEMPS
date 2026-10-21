@@ -176,6 +176,8 @@ function PlanningAffairesContenu() {
   const [dragAffaire, setDragAffaire] = useState<DragEtat | null>(null);
   const [imputations, setImputations] = useState<Imputation[]>([]);
   const [selection, setSelection] = useState<string | null>(null);
+  // FOCUS_PERSONNE : toutes les affectations d'une personne en surbrillance, sa charge jour par jour sous les dates
+  const [focus, setFocus] = useState<string | null>(null);
   const [livreesOuvertes, setLivreesOuvertes] = useState(false);
   const [livraisonEnCours, setLivraisonEnCours] = useState("");
   const [codesDivers, setCodesDivers] = useState<{ code: string; libelle: string }[]>([]);
@@ -435,6 +437,36 @@ function PlanningAffairesContenu() {
   }, [joursRows]);
 
   const chezLeClient = useMemo(() => joursChezLeClient(affectations, joursRows, estPE), [affectations, joursRows, estPE]);
+
+  // personne suivie : choisie dans la barre du haut, sinon celle de la barre sélectionnée
+  const focusCollab = focus ?? (selection ? affectations.find((a) => a.id === selection)?.collaborateur_id ?? null : null);
+
+  // sa charge, jour par jour, avec les affaires concernées
+  const chargeFocus = useMemo(() => {
+    const m = new Map<string, { heures: number; affaires: Map<string, number> }>();
+    if (!focusCollab) return m;
+    const affaireNom = new Map(toutesAffaires.map((a) => [a.id, `${a.type}${a.numero}`]));
+    for (const a of affectations) {
+      if (a.collaborateur_id !== focusCollab) continue;
+      const nom = a.affaire_id ? affaireNom.get(a.affaire_id) ?? "Affaire" : a.libelle ?? "Hors affaire";
+      for (const j of joursParAffectation.get(a.id) ?? []) {
+        const e = m.get(j.jour) ?? { heures: 0, affaires: new Map<string, number>() };
+        e.heures += j.heures;
+        e.affaires.set(nom, (e.affaires.get(nom) ?? 0) + j.heures);
+        m.set(j.jour, e);
+      }
+    }
+    return m;
+  }, [focusCollab, affectations, joursParAffectation, toutesAffaires]);
+
+  useEffect(() => {
+    if (!focus) return;
+    const surTouche = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocus(null);
+    };
+    window.addEventListener("keydown", surTouche);
+    return () => window.removeEventListener("keydown", surTouche);
+  }, [focus]);
 
   const joursAffectes: JourAffecte[] = useMemo(() => {
     const parId = new Map(affectations.map((a) => [a.id, a]));
@@ -1158,6 +1190,8 @@ function PlanningAffairesContenu() {
     const libre = !affaire;
     const verrouille = !peutAgir;
     const choisi = selection === b.affectation.id;
+    const suivi = Boolean(focusCollab) && b.affectation.collaborateur_id === focusCollab;
+    const estompe = Boolean(focusCollab) && !suivi;
     const cap = capacites.get(b.affectation.collaborateur_id);
     const manquants = joursSansCapacite(colonnes[bornes.i], colonnes[bornes.f], cap);
     const nb = bornes.f - bornes.i + 1;
@@ -1211,7 +1245,8 @@ function PlanningAffairesContenu() {
               : choisi
                 ? "3px solid #1f2328"
                 : `1.5px solid ${libre ? "#4b5057" : pe ? "#34506b" : pi ? "#4a3a85" : affaire?.type === "DBE" ? "#d98aa6" : C.rouge}`,
-            boxShadow: choisi ? "0 0 0 3px #ffd54a" : "none",
+            boxShadow: choisi ? "0 0 0 3px #ffd54a" : suivi ? "0 0 0 3px #1f6feb" : "none",
+            opacity: estompe ? 0.22 : 1,
             boxSizing: "border-box",
             display: "flex",
             alignItems: "center",
@@ -1768,6 +1803,28 @@ function PlanningAffairesContenu() {
                   <span style={{ color: C.gris, fontWeight: 600 }}> · S{numeroSemaine(lundi)}</span>
                 </span>
                 <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>▶</button>
+                <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                  <span aria-hidden="true">👁</span>
+                  <select
+                    value={focus ?? ""}
+                    onChange={(e) => setFocus(e.target.value || null)}
+                    aria-label="Voir les affectations d'une personne"
+                    title="Allume toutes les affectations de la personne et montre sa charge jour par jour (Échap pour revenir)"
+                    style={{ minHeight: 28, borderRadius: 6, border: `1.5px solid ${focus ? "#1f6feb" : "#c9cdd2"}`, fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
+                  >
+                    <option value="">Voir une personne…</option>
+                    {annuaire.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+                      </option>
+                    ))}
+                  </select>
+                  {focus && (
+                    <button type="button" onClick={() => setFocus(null)} style={{ ...fleche, minWidth: 26, minHeight: 26, padding: "0 6px", fontSize: 13 }} aria-label="Ne plus suivre cette personne">
+                      ✕
+                    </button>
+                  )}
+                </span>
               </div>
               <input
                 type="range"
@@ -1930,6 +1987,29 @@ function PlanningAffairesContenu() {
                 <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 8px 6px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
                   Pointé + planifié / chiffré
                 </div>
+                {focusCollab && (
+                  <>
+                    <div style={{ gridColumn: 1, gridRow: 4, display: "flex", alignItems: "center", gap: 6, padding: "2px 4px", fontSize: 12, fontWeight: 800, color: "#1f6feb" }}>
+                      Charge de {nomCollab(annuaire.find((c) => c.id === focusCollab))}
+                    </div>
+                    {colonnes.map((j, i) => {
+                      const e = chargeFocus.get(j);
+                      const net = capacites.get(focusCollab)?.get(j)?.net ?? 0;
+                      const h = e?.heures ?? 0;
+                      const ratio = net > 0 ? h / net : h > 0 ? 2 : 0;
+                      const couleur =
+                        net <= 0 && h <= 0 ? "#eceef1" : ratio <= 0.01 ? "#dff3e3" : ratio < 0.99 ? "#fff1c4" : ratio <= 1.01 ? "#ffd8a8" : "#f7b4b4";
+                      const detail = e ? [...e.affaires.entries()].map(([n, x]) => `${n} : ${formatHeures(x)}`).join("\n") : "libre";
+                      return (
+                        <div
+                          key={`f-${j}`}
+                          title={`${formatDate(j)} — ${formatHeures(h)} / ${formatHeures(net)} disponibles\n${detail}`}
+                          style={{ gridColumn: col(i), gridRow: 4, height: 16, margin: "2px 1px", borderRadius: 3, background: couleur, border: ratio > 1.01 ? "1px solid #b3261e" : "1px solid transparent", boxSizing: "border-box" }}
+                        />
+                      );
+                    })}
+                  </>
+                )}
               </div>
 
               {/* événements hors affaire : salons, formations, absences connues… */}
