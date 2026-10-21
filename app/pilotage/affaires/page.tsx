@@ -82,7 +82,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    Toute commande en cours ou en intention apparaît d'office, PE / PI
    comprises (pour une PE / PI : ses avenants R1, R2… s'il y en a, sinon la
    commande de base). Plus de choix
-   « au planning » à faire dans le portefeuille). Les ressources sont au-dessus du
+   « au planning » à faire dans le portefeuille). Les mois sont au-dessus des semaines, et le
    planning, qui prend toute la largeur.
 
    Une ligne par COMMANDE : commande de base (CBE1604) et chaque avenant
@@ -1864,59 +1864,6 @@ function PlanningAffairesContenu() {
         {chargement && <Message genre="info">Chargement du planning…</Message>}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-          {/* ---------- les gars : bandeau au-dessus du planning (responsables et administration) ---------- */}
-          {peutAgir && (
-            <section style={{ ...page.carte, padding: "10px 12px", flex: "1 1 100%", minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  aria-expanded={!gensReplies}
-                  onClick={() => setGensReplies((v) => !v)}
-                  style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 32 }}
-                >
-                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les ressources
-                </button>
-                <span style={{ fontSize: 13, color: C.gris }}>
-                  Les plus libres d’abord · {Math.min(8, nbSemaines)} prochaines semaines (plus la case est claire, plus la personne est libre) · glissez une
-                  personne sur une affaire, à la date voulue.
-                  {estAdmin && (
-                    <>
-                      {" "}
-                      <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>Charge par ressource</Link>
-                    </>
-                  )}
-                </span>
-              </div>
-              {!gensReplies && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 8, marginTop: 8, maxHeight: 230, overflowY: "auto" }}>
-                  {ressources.map(({ collab, libre, chezLeClientJusquau }) => {
-                    const verrou = Boolean(chezLeClientJusquau);
-                    return (
-                      <div
-                        key={collab.id}
-                        draggable={peutAgir && !verrou}
-                        onDragStart={(e) => e.dataTransfer.setData("text/plain", collab.id)}
-                        title={verrou ? `En prestation externe chez le client jusqu’au ${formatDate(chezLeClientJusquau)} : non affectable` : "Glisser sur une affaire"}
-                        style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 8px", border: `1px solid ${C.ligne}`, borderRadius: 8, background: "#ffffff", opacity: verrou ? 0.55 : 1, cursor: verrou ? "not-allowed" : "grab" }}
-                      >
-                        <strong style={{ fontSize: 16, minWidth: 40 }}>{nomCollab(collab)}</strong>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 11, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${collab.prenom ?? ""} ${collab.nom ?? ""}`.trim()}</div>
-                          <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
-                            {libre.map((v, i) => (
-                              <span key={i} title={`S${numeroSemaine(ajouterJours(lundi, i * 7))} : ${v} % de libre`} style={{ display: "inline-block", width: 18, height: 12, boxSizing: "border-box", border: "1px solid #c9cdd2", background: v >= 80 ? "#ffffff" : v >= 40 ? "#dce6f1" : v > 0 ? "#9fb4cb" : "#34506b" }} />
-                            ))}
-                          </div>
-                          {verrou && <div style={{ fontSize: 11, color: C.gris }}>Client jusqu’au {formatDate(chezLeClientJusquau)}</div>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
-
           <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0 }}>
             <div style={{ minWidth: 1050 }}>
               {/* en-têtes : semaines et jours, FIXES sous la barre des mois quand on descend */}
@@ -1931,23 +1878,53 @@ function PlanningAffairesContenu() {
                   boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)",
                 }}
               >
-                <div style={{ gridColumn: 1, gridRow: "1 / span 2", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
+                <div style={{ gridColumn: 1, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
                   Affaire · ressource
                 </div>
+                {/* les mois, au-dessus des numéros de semaine */}
+                {(() => {
+                  const mois: { cle: string; debut: number; nb: number }[] = [];
+                  colonnes.forEach((j, i) => {
+                    const cle = j.slice(0, 7);
+                    const dernier = mois[mois.length - 1];
+                    if (dernier && dernier.cle === cle) dernier.nb++;
+                    else mois.push({ cle, debut: i, nb: 1 });
+                  });
+                  return mois.map((m) => (
+                    <div
+                      key={m.cle}
+                      style={{
+                        gridColumn: `${col(m.debut)} / span ${m.nb}`,
+                        gridRow: 1,
+                        textAlign: "center",
+                        fontWeight: 800,
+                        fontSize: 13,
+                        padding: "4px 0",
+                        color: C.rougeFonce,
+                        background: "#ffffff",
+                        borderLeft: "2px solid #b3b9c0",
+                        overflow: "hidden",
+                        whiteSpace: "nowrap",
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      {m.nb >= 3 ? new Date(`${m.cle}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }) : ""}
+                    </div>
+                  ));
+                })()}
                 {semaines.map((l, w) => (
-                  <div key={l} style={{ gridColumn: `${col(5 * w)} / span 5`, gridRow: 1, textAlign: "center", fontWeight: 800, padding: "6px 0", background: "#f1f2f4", borderLeft: `1px solid ${C.ligne}`, fontSize: nbSemaines > 26 ? 10 : 13, overflow: "hidden", whiteSpace: "nowrap" }}>
+                  <div key={l} style={{ gridColumn: `${col(5 * w)} / span 5`, gridRow: 2, textAlign: "center", fontWeight: 800, padding: "4px 0", background: "#f1f2f4", borderLeft: `1px solid ${C.ligne}`, fontSize: nbSemaines > 26 ? 10 : 13, overflow: "hidden", whiteSpace: "nowrap" }}>
                     S{numeroSemaine(l)}
-                    {nbSemaines <= 26 && <span style={{ fontWeight: 600, color: C.gris }}> · {formatDate(l).slice(0, 5)}</span>}
                   </div>
                 ))}
                 {colonnes.map((j, i) => (
-                  <div key={j} style={{ gridColumn: col(i), gridRow: 2, textAlign: "center", padding: "3px 0", background: estFerie(j) ? "#e3e6ea" : j === aujourdhui ? "#fff4f4" : "#ffffff", borderBottom: `1px solid ${C.ligne}`, fontSize: nbSemaines > 12 ? 9 : 11, lineHeight: 1.1, color: C.gris, fontWeight: 700 }}>
+                  <div key={j} style={{ gridColumn: col(i), gridRow: 3, textAlign: "center", padding: "3px 0", background: estFerie(j) ? "#e3e6ea" : j === aujourdhui ? "#fff4f4" : "#ffffff", borderBottom: `1px solid ${C.ligne}`, fontSize: nbSemaines > 12 ? 9 : 11, lineHeight: 1.1, color: C.gris, fontWeight: 700 }}>
                     {nbSemaines > 12 ? "" : JOURS_COURTS[jourSemaine(j) - 1]}
                     <div style={{ color: j === aujourdhui ? C.rougeFonce : C.encre }}>{nbSemaines > 12 ? "" : Number(j.slice(8))}</div>
                   </div>
                 ))}
-                <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 2", display: "flex", alignItems: "flex-end", padding: "0 8px 6px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
-                  Affecté / chiffré
+                <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 8px 6px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
+                  Pointé + planifié / chiffré
                 </div>
               </div>
 
