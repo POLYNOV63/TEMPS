@@ -59,6 +59,8 @@ type Props = {
   limiter: boolean;
   prefill?: { collaborateurId?: string; debut?: string };
   edition?: { affectation: Affectation; jours: JourRow[] };
+  /* nom court d'une affaire (« CBE1759 ») pour la charge de la personne */
+  nomAffaire?: (affaireId: string | null, libelle: string | null) => string;
 };
 
 function prochainJourOuvre(depuis: string): string {
@@ -80,6 +82,7 @@ export default function AffecterDialog({
   limiter,
   prefill,
   edition,
+  nomAffaire,
 }: Props) {
   const enEdition = Boolean(edition);
   const jourDuJour = aISO(new Date());
@@ -230,6 +233,36 @@ export default function AffecterDialog({
     return { r, fin, manquants, surcharges, conflitsPE, limite };
   }, [pret, capacites, collab, n, unite, p, debut, horizon, limiter, chiffre, affecteAilleurs, restantActivite, joursRows, idsExclus, affaireDe, chezLeClient]);
 
+  /* CHARGE_PERSONNE : où est déjà la personne choisie, semaine par semaine, sur la période du bloc
+     (ou les 6 semaines qui suivent le début), avec ce bloc compris */
+  const chargePersonne = useMemo(() => {
+    if (!pret || !capacites || !collab || !debut) return null;
+    const premier = lundiDe(debut);
+    const finBloc = calcul?.fin ?? null;
+    const dernier = finBloc && finBloc > ajouterJours(premier, 35) ? lundiDe(finBloc) : ajouterJours(premier, 35);
+    const semaines: string[] = [];
+    for (let l = premier; l <= dernier && semaines.length < 12; l = ajouterJours(l, 7)) semaines.push(l);
+
+    const autresJours = joursRows.filter((j) => !idsExclus.has(j.affectation_id) && affaireDe.get(j.affectation_id)?.collaborateur_id === collab);
+    const autres: JourAffecte[] = autresJours.map((j) => ({ collaborateur_id: collab, jour: j.jour, heures: num(j.heures) }));
+    const nouveaux: JourAffecte[] = (calcul?.r.jours ?? []).map((j) => ({ collaborateur_id: collab, jour: j.jour, heures: j.heures }));
+
+    return semaines.map((l) => {
+      const fin = ajouterJours(l, 6);
+      const parAffaire = new Map<string, number>();
+      for (const j of autresJours) {
+        if (j.jour < l || j.jour > fin) continue;
+        const a = affaireDe.get(j.affectation_id);
+        const nom = a?.affaire_id === affaire.id ? "cette affaire" : nomAffaire ? nomAffaire(a?.affaire_id ?? null, a?.libelle ?? null) : "autre";
+        parAffaire.set(nom, (parAffaire.get(nom) ?? 0) + num(j.heures));
+      }
+      const ceBloc = nouveaux.filter((j) => j.jour >= l && j.jour <= fin).reduce((t, j) => t + j.heures, 0);
+      // disponibilités connues à partir du début du bloc : on compare sur ces jours-là
+      const s = chargeParSemaine(capacites, [...autres, ...nouveaux].filter((j) => j.jour >= debut), collab, l);
+      return { lundi: l, parAffaire: [...parAffaire.entries()].sort((x, y) => y[1] - x[1]), ceBloc, affecte: s.affecte, net: s.net };
+    });
+  }, [pret, capacites, collab, debut, calcul, joursRows, idsExclus, affaireDe, nomAffaire, affaire.id]);
+
   const totalApres = calcul ? affecteAilleurs + calcul.r.total : affecteAilleurs;
   const depasse = chiffre > 0 && totalApres > chiffre + 0.001;
   const depasseActivite = Boolean(calcul && activiteChoisie && activiteChoisie.chiffre > 0 && affecteActivite + calcul.r.total > activiteChoisie.chiffre + 0.001);
@@ -330,6 +363,42 @@ export default function AffecterDialog({
               </option>
             ))}
           </select>
+
+          {chargePersonne && (
+            <div style={{ marginTop: 10, border: `1px solid ${C.ligne}`, borderRadius: 8, padding: "8px 10px", background: "#fafbfc" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+                Où est déjà {nomCollab(annuaire.find((c) => c.id === collab))} <span style={{ fontWeight: 400, color: C.gris }}>(ce bloc compris, en bleu)</span>
+              </div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {chargePersonne.map((w) => {
+                  const ratio = w.net > 0 ? w.affecte / w.net : w.affecte > 0 ? 2 : 0;
+                  const couleur = ratio > 1.01 ? "#c62828" : ratio > 0.9 ? "#e08a00" : "#2e7d32";
+                  return (
+                    <div key={w.lundi} style={{ display: "grid", gridTemplateColumns: "92px 1fr 110px", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <span style={{ fontWeight: 800 }}>
+                        S{numeroSemaine(w.lundi)} <span style={{ fontWeight: 400, color: C.gris }}>{formatDate(w.lundi).slice(0, 5)}</span>
+                      </span>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {w.parAffaire.length === 0 && w.ceBloc <= 0 && <span style={{ color: "#2e7d32", fontWeight: 700 }}>libre</span>}
+                        {w.parAffaire.map(([n, h]) => (
+                          <span key={n} style={{ background: "#eceef1", borderRadius: 999, padding: "1px 7px", fontWeight: 700 }}>
+                            {n} · {formatHeures(h)}
+                          </span>
+                        ))}
+                        {w.ceBloc > 0 && (
+                          <span style={{ background: "#dbe8ff", color: "#1f4fa8", borderRadius: 999, padding: "1px 7px", fontWeight: 800 }}>ce bloc · {formatHeures(w.ceBloc)}</span>
+                        )}
+                      </span>
+                      <span style={{ textAlign: "right", fontWeight: 800, color: couleur }} title="Heures affectées / heures disponibles (congés et fériés déduits)">
+                        {formatHeures(w.affecte)} / {formatHeures(w.net)}
+                        {ratio > 1.01 ? " ⚠" : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {affaire.type !== "DBE" && activites.length > 0 && (
