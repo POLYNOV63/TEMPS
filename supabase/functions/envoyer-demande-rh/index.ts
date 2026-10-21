@@ -88,10 +88,19 @@ Deno.serve(async (req)=>{
 
     await envoyerMail({to:[emailRH],cc,subject:objet,html});
 
-    await admin.from("rh_demandes").update({
-      rh_transmise:true,rh_transmise_le:new Date().toISOString(),rh_transmise_par:me.id,email_rh:emailRH,email_envoye_le:new Date().toISOString(),
-      email_message_id:null,updated_at:new Date().toISOString()
+    // L'e-mail est parti : on note la transmission. Si une colonne annexe manque ou bloque,
+    // on retente avec l'essentiel, et on SIGNALE l'échec au lieu de le taire.
+    const maintenant=new Date().toISOString();
+    let {error:majErr}=await admin.from("rh_demandes").update({
+      rh_transmise:true,rh_transmise_le:maintenant,rh_transmise_par:me.id,email_rh:emailRH,email_envoye_le:maintenant,updated_at:maintenant
     }).eq("id",id);
+    if(majErr){
+      console.error("envoyer-demande-rh, mise à jour complète :",majErr.message);
+      ({error:majErr}=await admin.from("rh_demandes").update({rh_transmise:true,rh_transmise_le:maintenant}).eq("id",id));
+    }
+    if(majErr){
+      return new Response(JSON.stringify({ok:true,avertissement:`E-mail envoyé à ${emailRH}, mais la demande n'a pas pu être marquée « transmise » : ${majErr.message}`}),{headers:{...cors,"Content-Type":"application/json"}});
+    }
 
     return new Response(JSON.stringify({ok:true}),{headers:{...cors,"Content-Type":"application/json"}});
   }catch(e){

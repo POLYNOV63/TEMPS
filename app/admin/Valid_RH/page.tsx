@@ -63,8 +63,9 @@ export default function ValidRHPage(){
    if(!transmettre)return "";
    const adresse=emailEnvoi.trim();
    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adresse))return " L’adresse d’envoi n’est pas valide : décision non transmise (utilisez « Transmettre » ensuite).";
-   const {error}=await supabase.functions.invoke("envoyer-demande-rh",{body:{demande_id:d.id,email_rh:adresse}});
-   return error?` Décision non transmise à ${adresse} : ${await motifFonction(error)}`:"";
+   const {data,error}=await supabase.functions.invoke("envoyer-demande-rh",{body:{demande_id:d.id,email_rh:adresse}});
+   if(error)return ` Décision non transmise à ${adresse} : ${await motifFonction(error)}`;
+   return (data as any)?.avertissement?` ${(data as any).avertissement}`:"";
  }
  async function valider(d:Demande){
    if(d.statut!=="EN_ATTENTE")return;
@@ -145,9 +146,10 @@ export default function ValidRHPage(){
    setAction("email");setErreur("");
    try{
      const {data:{session}}=await supabase.auth.getSession();if(!session)throw new Error("Session expirée.");
-     const {error}=await supabase.functions.invoke("envoyer-demande-rh",{body:{demande_id:d.id,email_rh:adresse}});
+     const {data,error}=await supabase.functions.invoke("envoyer-demande-rh",{body:{demande_id:d.id,email_rh:adresse}});
      if(error)throw new Error(`E-mail non envoyé : ${await motifFonction(error)}`);
      await charger();
+     if((data as any)?.avertissement)setErreur((data as any).avertissement);
    }catch(e:any){setErreur(e?.message||"Impossible d’envoyer l’email RH.");}
    finally{setAction("");}
  }
