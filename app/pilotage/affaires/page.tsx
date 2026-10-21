@@ -82,7 +82,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    Toute commande en cours ou en intention apparaît d'office, PE / PI
    comprises (pour une PE / PI : ses avenants R1, R2… s'il y en a, sinon la
    commande de base). Plus de choix
-   « au planning » à faire dans le portefeuille). Les gars sont au-dessus du
+   « au planning » à faire dans le portefeuille). Les ressources sont au-dessus du
    planning, qui prend toute la largeur.
 
    Une ligne par COMMANDE : commande de base (CBE1604) et chaque avenant
@@ -109,11 +109,12 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
 ================================================================ */
 
 /* PE en haut, PI ensuite, le reste dessous */
-const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" ? 0 : a.imputation === "PI" ? 1 : 2);
-const TITRES_GROUPES = ["Prestations externes (PE) — chez le client", "Prestations internes (PI)", "Autres affaires"];
+// de haut en bas : hors affaire (zone du haut), le reste, puis les PI, puis les PE
+const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" ? 2 : a.imputation === "PI" ? 1 : 0);
+const TITRES_GROUPES = ["Affaires", "Prestations internes (PI)", "Prestations externes (PE) — chez le client"];
 
 const LARGEUR_NOM = 250;
-const LARGEUR_STATUT = 210;
+const LARGEUR_STATUT = 280;
 const JOURS_COURTS = ["L", "M", "M", "J", "V"];
 const DELAI_DOUBLE_CLIC = 450;
 
@@ -142,7 +143,8 @@ type PisteAffaire = {
 const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
 
 function PlanningAffairesContenu() {
-  const [lundi, setLundi] = useState(() => lundiDe(aISO(new Date())));
+  // le planning s'ouvre une semaine avant la semaine en cours
+  const [lundi, setLundi] = useState(() => ajouterJours(lundiDe(aISO(new Date())), -7));
   const [nbSemaines, setNbSemaines] = useState(4);
 
   const [affaires, setAffaires] = useState<Affaire[]>([]);
@@ -1547,7 +1549,20 @@ function PlanningAffairesContenu() {
             </div>
           )}
 
-          <div style={{ gridColumn: colonnes.length + 2, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "0 8px" }}>
+          <div
+            style={{
+              gridColumn: colonnes.length + 2,
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              flexWrap: "nowrap",
+              gap: 6,
+              padding: "0 8px",
+              overflow: "hidden",
+              minWidth: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
             {prestation ? (
               (() => {
                 const env = enveloppes.get(affaire.id);
@@ -1717,6 +1732,61 @@ function PlanningAffairesContenu() {
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}
 
+        {/* Ascenseur horizontal : glisser pour se déplacer dans les mois */}
+        {(() => {
+          const origine = ajouterJours(lundiDe(aujourdhui), -26 * 7); // 6 mois en arrière
+          const nbPas = 26 + 78; // jusqu'à 18 mois en avant, semaine par semaine
+          const position = Math.round((Date.parse(lundi) - Date.parse(origine)) / (7 * 86400000));
+          const mois: { pos: number; libelle: string }[] = [];
+          for (let k = 0; k <= nbPas; k++) {
+            const d = ajouterJours(origine, k * 7);
+            const precedent = ajouterJours(origine, (k - 1) * 7);
+            if (k === 0 || d.slice(5, 7) !== precedent.slice(5, 7))
+              mois.push({ pos: k, libelle: new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: d.slice(5, 7) === "01" || k === 0 ? "2-digit" : undefined }) });
+          }
+          return (
+            <div
+              style={{
+                ...page.carte,
+                padding: "6px 14px 4px",
+                marginBottom: 12,
+                // reste visible sous les onglets du Pilotage quand on descend dans les affaires
+                position: "sticky",
+                top: 50,
+                zIndex: 20,
+                boxShadow: "0 4px 10px -6px rgba(0,0,0,.35)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+                <button type="button" aria-label="Semaine précédente" onClick={() => setLundi(ajouterJours(lundi, -7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>◀</button>
+                <span>
+                  {formatDate(lundi)} → {formatDate(colonnes[colonnes.length - 1])}
+                  <span style={{ color: C.gris, fontWeight: 600 }}> · S{numeroSemaine(lundi)}</span>
+                </span>
+                <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>▶</button>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={nbPas}
+                step={1}
+                value={Math.max(0, Math.min(nbPas, position))}
+                onChange={(e) => setLundi(ajouterJours(origine, Number(e.target.value) * 7))}
+                aria-label="Se déplacer dans les mois"
+                style={{ width: "100%", accentColor: C.rouge, cursor: "grab" }}
+              />
+              <div style={{ position: "relative", height: 16, fontSize: 11, color: C.gris, fontWeight: 700 }}>
+                {mois.map((m) => (
+                  <span key={m.pos} style={{ position: "absolute", left: `${(m.pos / nbPas) * 100}%`, transform: "translateX(-2px)", whiteSpace: "nowrap" }}>
+                    {m.libelle}
+                  </span>
+                ))}
+                <span title="Aujourd’hui" style={{ position: "absolute", left: `${(26 / nbPas) * 100}%`, top: -4, width: 2, height: 18, background: C.rouge }} />
+              </div>
+            </div>
+          );
+        })()}
+
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button type="button" aria-label="Période précédente" style={fleche} onClick={() => setLundi(ajouterJours(lundi, -7 * Math.max(1, Math.floor(nbSemaines / 3))))}>◀</button>
@@ -1725,7 +1795,7 @@ function PlanningAffairesContenu() {
               <div style={{ fontSize: 13, fontWeight: 600, color: C.gris }}>S{numeroSemaine(lundi)} à S{numeroSemaine(colonnes[colonnes.length - 1] ?? lundi)}</div>
             </div>
             <button type="button" aria-label="Période suivante" style={fleche} onClick={() => setLundi(ajouterJours(lundi, 7 * Math.max(1, Math.floor(nbSemaines / 3))))}>▶</button>
-            <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(lundiDe(aujourdhui))}>Aujourd’hui</button>
+            <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}>Aujourd’hui</button>
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1804,7 +1874,7 @@ function PlanningAffairesContenu() {
                   onClick={() => setGensReplies((v) => !v)}
                   style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 32 }}
                 >
-                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les gars
+                  <span aria-hidden="true">{gensReplies ? "▸" : "▾"}</span> Les ressources
                 </button>
                 <span style={{ fontSize: 13, color: C.gris }}>
                   Les plus libres d’abord · {Math.min(8, nbSemaines)} prochaines semaines (plus la case est claire, plus la personne est libre) · glissez une
@@ -1847,10 +1917,20 @@ function PlanningAffairesContenu() {
             </section>
           )}
 
-          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0, overflowX: "auto" }}>
+          <section onPointerDown={() => setSelection(null)} style={{ ...page.carte, padding: 12, flex: "1 1 100%", minWidth: 0 }}>
             <div style={{ minWidth: 1050 }}>
-              {/* en-têtes */}
-              <div style={{ display: "grid", gridTemplateColumns: gabarit }}>
+              {/* en-têtes : semaines et jours, FIXES sous la barre des mois quand on descend */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: gabarit,
+                  position: "sticky",
+                  top: 128,
+                  zIndex: 15,
+                  background: "#ffffff",
+                  boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)",
+                }}
+              >
                 <div style={{ gridColumn: 1, gridRow: "1 / span 2", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
                   Affaire · ressource
                 </div>

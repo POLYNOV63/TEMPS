@@ -581,7 +581,7 @@ function PortefeuilleContenu() {
                         : affaire.echeance
                           ? affaire.type === "DBE"
                             ? "Remise"
-                            : "Objectif"
+                            : "Délai"
                           : ""}
                     </div>
                   </td>
