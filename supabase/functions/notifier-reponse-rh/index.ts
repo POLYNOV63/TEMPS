@@ -45,7 +45,11 @@ Deno.serve(async(req)=>{
   const sujet=`POLYNOV – Demande RH ${validee?"validée":"refusée"} – ${d.type_demande}`;
   const html=`<h2>Demande RH POLYNOV ${validee?"validée":"refusée"}</h2><p>Bonjour ${esc(d.prenom)},</p><p>Votre demande de <strong>${esc(d.type_demande)}</strong> du ${esc(dateFR(d.date_debut))}${d.date_fin&&d.date_fin!==d.date_debut?` au ${esc(dateFR(d.date_fin))}`:""} a été <strong>${validee?"validée":"refusée"}</strong> par ${esc(validateur.prenom)} ${esc(validateur.nom)}.</p>${d.type_demande==="RE"?`<p><strong>Récupération :</strong> ${esc(d.heures_re)} h</p>`:`<p><strong>Durée :</strong> ${esc(d.duree_jours)} jour(s)</p>`}${d.motif_refus?`<p><strong>Motif du refus :</strong> ${esc(d.motif_refus)}</p>`:""}${d.commentaire?`<p><strong>Votre commentaire :</strong> ${esc(d.commentaire)}</p>`:""}<p>Le détail reste disponible dans votre espace RH POLYNOV.</p>`;
   try{
-   await envoyerMail({to:[d.collaborateur_email],subject:sujet,html});
+   // les administrateurs (PLG, AMA) sont en copie de chaque étape de la demande
+   const {data:admins}=await admin.from("collaborateurs").select("email").in("trigramme",["PLG","AMA"]).eq("actif",true);
+   const cc=((admins||[]) as {email:string|null}[]).map((a)=>String(a.email||"").trim())
+     .filter((a)=>a && a.toLowerCase()!==String(d.collaborateur_email).toLowerCase());
+   await envoyerMail({to:[d.collaborateur_email],cc,subject:sujet,html});
   }catch(err){
    const message=err instanceof Error?err.message:String(err);
    await admin.from("rh_demandes").update({notification_reponse_erreur:message,updated_at:new Date().toISOString()}).eq("id",demandeId);

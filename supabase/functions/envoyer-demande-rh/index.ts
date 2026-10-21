@@ -1,5 +1,6 @@
 // supabase/functions/envoyer-demande-rh/index.ts
-// Transmet une demande validée ou refusée au service RH, avec le collaborateur et l'autre approbateur en copie.
+// Transmet une demande validée ou refusée au service RH, avec en copie le collaborateur ET les deux
+// approbateurs (PLG et AMA), y compris celui qui envoie.
 // Envoi par Microsoft 365 (Microsoft Graph).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -65,9 +66,13 @@ Deno.serve(async (req)=>{
     if(!["VALIDEE","REFUSEE"].includes(String(d.statut))) throw new Error("La demande doit être validée ou refusée avant l'envoi.");
     if(d.rh_transmise) throw new Error("Cette demande est déjà transmise au RH.");
 
-    const approbateurAutre = me.trigramme==="PLG" ? "AMA" : "PLG";
-    const {data:autre}=await admin.from("collaborateurs").select("email").eq("trigramme",approbateurAutre).eq("actif",true).maybeSingle();
-    const cc=[d.collaborateur_email, autre?.email].filter(Boolean) as string[];
+    // Copie : le collaborateur, PLG et AMA (celui qui envoie compris), sans doublon ni l'adresse RH elle-même
+    const {data:approbateurs}=await admin.from("collaborateurs").select("email").in("trigramme",["PLG","AMA"]).eq("actif",true);
+    const vus=new Set<string>([emailRH.toLowerCase()]);
+    const cc=[d.collaborateur_email, me.email, ...((approbateurs||[]) as {email:string|null}[]).map((a)=>a.email)]
+      .map((a)=>String(a||"").trim())
+      .filter((a)=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a))
+      .filter((a)=>{const k=a.toLowerCase(); if(vus.has(k)) return false; vus.add(k); return true;});
 
     const objet=`POLYNOV – Demande RH – ${d.prenom} ${d.nom} – ${d.type_demande}`;
     const html=`
