@@ -1517,6 +1517,26 @@ export default function RHPage() {
             valeur={compteur}
           />
 
+          {compteur > 30 && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 12,
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "#fff4e5",
+                border: "1px solid #e9b877",
+                color: "#7a3e00",
+                fontSize: 13,
+                fontWeight: 700,
+                lineHeight: 1.45,
+              }}
+            >
+              ⚠ Votre compteur dépasse la limite de 30 h. Pensez à poser des
+              récupérations pour revenir sous 30 h.
+            </div>
+          )}
+
           <small
             style={styles.muted}
           >

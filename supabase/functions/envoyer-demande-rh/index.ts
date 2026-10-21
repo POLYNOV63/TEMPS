@@ -58,8 +58,11 @@ Deno.serve(async (req)=>{
 
     const body=await req.json();
     const id=body.demande_id as string;
-    const emailRH=String(body.email_rh||"").trim();
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailRH)) throw new Error("Adresse e-mail du service RH invalide : renseignez le champ « Email RH ».");
+    // une ou plusieurs adresses, séparées par une virgule ou un point-virgule
+    const destinataires=[...new Set(String(body.email_rh||"").split(/[;,\s]+/).map((a)=>a.trim()).filter(Boolean))];
+    const invalides=destinataires.filter((a)=>!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a));
+    if(destinataires.length===0||invalides.length>0) throw new Error(`Adresse(s) d'envoi invalide(s)${invalides.length?` : ${invalides.join(", ")}`:""}.`);
+    const emailRH=destinataires.join(", ");
 
     const {data:d,error:de}=await admin.from("rh_demandes_admin").select("*").eq("id",id).single();
     if(de||!d) throw new Error("Demande introuvable.");
@@ -68,7 +71,7 @@ Deno.serve(async (req)=>{
 
     // Copie : le collaborateur, PLG et AMA (celui qui envoie compris), sans doublon ni l'adresse RH elle-même
     const {data:approbateurs}=await admin.from("collaborateurs").select("email").in("trigramme",["PLG","AMA"]).eq("actif",true);
-    const vus=new Set<string>([emailRH.toLowerCase()]);
+    const vus=new Set<string>(destinataires.map((a)=>a.toLowerCase()));
     const cc=[d.collaborateur_email, me.email, ...((approbateurs||[]) as {email:string|null}[]).map((a)=>a.email)]
       .map((a)=>String(a||"").trim())
       .filter((a)=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a))
@@ -86,7 +89,7 @@ Deno.serve(async (req)=>{
       <p><strong>Traitée par :</strong> ${esc(me.prenom||"")} ${esc(me.nom||"")}</p>
     `;
 
-    await envoyerMail({to:[emailRH],cc,subject:objet,html});
+    await envoyerMail({to:destinataires,cc,subject:objet,html});
 
     // L'e-mail est parti : on note la transmission. Si une colonne annexe manque ou bloque,
     // on retente avec l'essentiel, et on SIGNALE l'échec au lieu de le taire.

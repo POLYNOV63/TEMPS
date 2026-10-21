@@ -695,6 +695,26 @@ function creerSemaine(
    ABSENCES
 ============================================================ */
 
+/* RE_JOURNEE_ENTIERE : une récupération qui couvre toute la journée (ex. 7,5 h) rend le
+   collaborateur absent ce jour-là (présence « Absent », pas de ticket restaurant). Si la
+   récupération redevient partielle, la présence et le ticket reviennent. */
+function ajusterRecuperation(jour: JourSemaine): JourSemaine {
+  if (jour.absence !== CODE_RE || jour.estWeekend || jour.estFerie) return jour;
+
+  const heures = convertirHeures(jour.heuresRE);
+  const journeeEntiere = jour.heuresTheoriques > 0 && heures >= jour.heuresTheoriques - 0.01;
+
+  if (journeeEntiere) {
+    return { ...jour, presence: "ABSENT", ticketRestaurant: false, imputations: [] };
+  }
+
+  if (jour.presence === "ABSENT") {
+    return { ...jour, presence: "PRESENTIEL", ticketRestaurant: true };
+  }
+
+  return jour;
+}
+
 function absenceNecessiteHeures(absence: CodeAbsence) {
   return ABSENCES_AVEC_HEURES.has(normaliserCode(absence));
 }
@@ -1666,10 +1686,7 @@ export default function MaSemainePage() {
 
   const compteurAllocationMaximum = Math.max(
     0,
-    Math.min(
-      totalHeuresSupMensuelles,
-      30 - compteurApresRE
-    )
+    totalHeuresSupMensuelles
   );
 
   const repartitionValide =
@@ -1721,10 +1738,10 @@ export default function MaSemainePage() {
         ancienne.map(
           jour =>
             jour.date === date
-              ? {
+              ? ajusterRecuperation({
                   ...jour,
                   ...modification,
-                }
+                })
               : jour
         )
     );
@@ -3062,6 +3079,16 @@ export default function MaSemainePage() {
           return false;
         }
 
+        if (cpHeures < 3 || cpHeures > 5) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : une demi-journée de CP compte entre 3 h et 5 h (en général 3,5 h ou 4 h).`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
         if (cpHeures > jour.heuresTheoriques) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
@@ -3086,6 +3113,16 @@ export default function MaSemainePage() {
             `Le ${jour.jour} ${dateAffichage(
               jour.date
             )} : renseignez les heures réellement posées en RTT pour la demi-journée.`
+          );
+          setMessageType("DANGER");
+          return false;
+        }
+
+        if (heuresRTT < 3 || heuresRTT > 5) {
+          setMessage(
+            `Le ${jour.jour} ${dateAffichage(
+              jour.date
+            )} : une demi-journée de RTT compte entre 3 h et 5 h (en général 3,5 h ou 4 h).`
           );
           setMessageType("DANGER");
           return false;
@@ -3836,18 +3873,7 @@ export default function MaSemainePage() {
        * La borne supérieure du compteur est +30 h.
        * On conserve également la borne basse historique de -30 h.
        */
-      if (
-        validationFinale &&
-        compteurApresEnregistrement > 30.01
-      ) {
-        setMessage(
-          `Le compteur de récupération atteindrait ${formatHeures(
-            compteurApresEnregistrement
-          )} h. Il ne peut pas dépasser +30 h.`
-        );
-        setMessageType("DANGER");
-        return;
-      }
+      /* COMPTEUR_SANS_PLAFOND : au-delà de +30 h, la feuille se valide ; l'espace RH prévient le collaborateur */
 
       if (
         validationFinale &&
@@ -4181,7 +4207,7 @@ export default function MaSemainePage() {
             re +
             Number(suivante.compteur_regularisation ?? 0);
 
-          if (apres < -30 || apres > 30) {
+          if (apres < -30) {
             throw new Error(
               `Le recalcul de la feuille ${suivante.semaine_debut} dépasse la limite du compteur (${formatHeures(apres)} h).`
             );
@@ -4671,7 +4697,7 @@ export default function MaSemainePage() {
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
                   ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
-                  : "Renseignez les heures de RTT."}
+                  : "Renseignez les heures de RTT : entre 3 h et 5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
           ) : (
@@ -4707,7 +4733,7 @@ export default function MaSemainePage() {
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
                   ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
-                  : "Renseignez les heures de CP."}
+                  : "Renseignez les heures de CP : entre 3 h et 5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
           ) : (

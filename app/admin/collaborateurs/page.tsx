@@ -93,6 +93,8 @@ export default function CollaborateursPage() {
   const [historique, setHistorique] = useState<Historique[]>([]);
   const [droitsRH, setDroitsRH] = useState<Record<string,DroitsRH>>({});
   const [rhModal, setRhModal] = useState<Collaborateur | null>(null);
+  // Ajout ponctuel de CP exceptionnels (à tout moment de l'exercice)
+  const [ajoutExc, setAjoutExc] = useState({ jours: "", justificatif: true });
   const [rhForm, setRhForm] = useState({cp_reportes:"0",cp_acquis:"0",cp_anciennete:"0",cp_exceptionnels_avec_justificatif:"0",cp_exceptionnels_sans_justificatif:"0",rtt_acquis:"0",compteur_recuperation_initial:"0",cp_periode_debut:"",cp_periode_fin:""});
 
   const [chargement, setChargement] = useState(true);
@@ -547,7 +549,23 @@ const { data: profil, error: erreurProfil } = await supabase
     });
   }
 
-  async function enregistrerRH() {
+  /* Ajoute des CP exceptionnels au droit de l'exercice et enregistre aussitôt */
+  async function ajouterCPExceptionnels() {
+    if (!rhModal) return;
+    const n = Number(ajoutExc.jours.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) {
+      setErreur("Indiquez le nombre de jours de CP exceptionnels à ajouter (ex. 1 ou 0,5).");
+      return;
+    }
+    const champ = ajoutExc.justificatif ? "cp_exceptionnels_avec_justificatif" : "cp_exceptionnels_sans_justificatif";
+    const nouveau = String(Math.round((Number(rhForm[champ] || 0) + n) * 2) / 2);
+    setRhForm((f) => ({ ...f, [champ]: nouveau }));
+    setAjoutExc({ jours: "", justificatif: ajoutExc.justificatif });
+    await enregistrerRH({ ...rhForm, [champ]: nouveau }, true);
+  }
+
+  async function enregistrerRH(formulaire = rhForm, garderOuvert = false) {
+    const rhForm = formulaire;
     if(!rhModal) return;
     setErreur("");
     const payload={collaborateur_id:rhModal.id,exercice:exerciceActuel(),
@@ -557,7 +575,7 @@ const { data: profil, error: erreurProfil } = await supabase
       rtt_acquis:Number(rhForm.rtt_acquis||0),compteur_recuperation_initial:Number(rhForm.compteur_recuperation_initial||0),cp_periode_debut:rhForm.cp_periode_debut || null,cp_periode_fin:rhForm.cp_periode_fin || null};
     const {data,error}=await supabase.from("rh_droits").upsert(payload,{onConflict:"collaborateur_id,exercice"}).select().single();
     if(error){console.error(error);setErreur(error.message);return;}
-    setDroitsRH(v=>({...v,[rhModal.id]:data as DroitsRH})); setRhModal(null);
+    setDroitsRH(v=>({...v,[rhModal.id]:data as DroitsRH})); if(!garderOuvert) setRhModal(null);
   }
 
   async function desactiverCollaborateur(c: Collaborateur) {
@@ -1305,8 +1323,20 @@ const { data: profil, error: erreurProfil } = await supabase
               <Champ label="Début période CP" value={rhForm.cp_periode_debut} onChange={v=>setRhForm(f=>({...f,cp_periode_debut:v}))} type="date" />
               <Champ label="Fin période CP" value={rhForm.cp_periode_fin} onChange={v=>setRhForm(f=>({...f,cp_periode_fin:v}))} type="date" />
             </div>
-            <div style={{marginTop:14,padding:12,background:"#fff8e1",borderRadius:7,fontSize:13}}>Le compteur initial doit rester entre -30 h et +30 h. Les soldes CP/RTT seront ensuite calculés avec les demandes RH validées.</div>
-            <div style={buttonRowStyle}><button onClick={()=>setRhModal(null)} style={secondaryButtonStyle}>Annuler</button><button onClick={enregistrerRH} style={primaryButtonStyle}>Enregistrer les droits RH</button></div>
+            <div style={{marginTop:14,padding:12,background:"#f3f7ff",border:"1px solid #dbe5f5",borderRadius:7}}>
+              <strong>Ajouter des CP exceptionnels</strong>
+              <div style={{fontSize:12,color:"#555",margin:"2px 0 8px"}}>À tout moment de l’exercice (mariage, naissance, décès…) : les jours s’ajoutent au droit et sont enregistrés aussitôt.</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <input value={ajoutExc.jours} onChange={e=>setAjoutExc(a=>({...a,jours:e.target.value.replace(/[^0-9.,]/g,"")}))} placeholder="jours (ex. 1 ou 0,5)" inputMode="decimal" style={{...inputStyle,width:150}} />
+                <select value={ajoutExc.justificatif?"AVEC":"SANS"} onChange={e=>setAjoutExc(a=>({...a,justificatif:e.target.value==="AVEC"}))} style={{...inputStyle,width:"auto"}}>
+                  <option value="AVEC">avec justificatif</option>
+                  <option value="SANS">sans justificatif</option>
+                </select>
+                <button type="button" onClick={()=>void ajouterCPExceptionnels()} style={primaryButtonStyle}>+ Ajouter</button>
+              </div>
+            </div>
+            <div style={{marginTop:14,padding:12,background:"#fff8e1",borderRadius:7,fontSize:13}}>Le compteur de récupération peut dépasser +30 h (le collaborateur est alors prévenu sur son espace RH que la limite est de 30 h). Les soldes CP/RTT sont calculés avec les demandes RH validées.</div>
+            <div style={buttonRowStyle}><button onClick={()=>setRhModal(null)} style={secondaryButtonStyle}>Annuler</button><button onClick={()=>void enregistrerRH()} style={primaryButtonStyle}>Enregistrer les droits RH</button></div>
           </div>
         </div>
       )}
