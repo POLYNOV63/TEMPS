@@ -3079,11 +3079,11 @@ export default function MaSemainePage() {
           return false;
         }
 
-        if (cpHeures < 3 || cpHeures > 5) {
+        if (cpHeures < 3 || cpHeures > 4.5) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
               jour.date
-            )} : une demi-journée de CP compte entre 3 h et 5 h (en général 3,5 h ou 4 h).`
+            )} : une demi-journée de CP compte entre 3 h et 4,5 h (en général 3,5 h ou 4 h).`
           );
           setMessageType("DANGER");
           return false;
@@ -3118,11 +3118,11 @@ export default function MaSemainePage() {
           return false;
         }
 
-        if (heuresRTT < 3 || heuresRTT > 5) {
+        if (heuresRTT < 3 || heuresRTT > 4.5) {
           setMessage(
             `Le ${jour.jour} ${dateAffichage(
               jour.date
-            )} : une demi-journée de RTT compte entre 3 h et 5 h (en général 3,5 h ou 4 h).`
+            )} : une demi-journée de RTT compte entre 3 h et 4,5 h (en général 3,5 h ou 4 h).`
           );
           setMessageType("DANGER");
           return false;
@@ -4697,7 +4697,7 @@ export default function MaSemainePage() {
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
                   ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
-                  : "Renseignez les heures de RTT : entre 3 h et 5 h (en général 3,5 h ou 4 h)."}
+                  : "Renseignez les heures de RTT : entre 3 h et 4,5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
           ) : (
@@ -4733,7 +4733,7 @@ export default function MaSemainePage() {
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
                   ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
-                  : "Renseignez les heures de CP : entre 3 h et 5 h (en général 3,5 h ou 4 h)."}
+                  : "Renseignez les heures de CP : entre 3 h et 4,5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
           ) : (
