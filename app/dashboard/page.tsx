@@ -750,10 +750,10 @@ function BlocValidationsRH({
           onClick={() => aller("/admin/Valid_RH")}
         />
         <CarteCompacte
-          icone="⏱️"
-          titre="Compteurs de récupération"
-          description="Ajuster un compteur, avec motif et historique"
-          onClick={() => aller("/admin/compteurs")}
+          icone="📒"
+          titre="Suivi RH"
+          description="CP, RTT et compteurs de chacun : soldes, historique, ajustements"
+          onClick={() => aller("/admin/suivi-rh")}
         />
         <CarteCompacte
           icone="📋"
