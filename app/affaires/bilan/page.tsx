@@ -20,9 +20,9 @@ import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
      importé (fonction SQL bilan_affaire_imputations, sans double compte).
    - Comparaison par activité, ligne par ligne (base, avenants, lots,
      échéances), par personne et mois par mois.
-   - VENDU ET ACHATS (composant BilanFinancierAffaire) : montants du Suivi
-     d'affaire, visibles seulement de l'administration, des responsables
-     et de la Direction ; les collaborateurs ne voient aucun montant.
+   - NÉGOCE (composant BilanFinancierAffaire) : montant vendu et montant
+     acheté, d'après le Suivi d'affaire ; visible seulement de
+     l'administration, des responsables et de la Direction.
 
    Le détail nominatif n'est donné qu'aux ADMIN / RESPONSABLE (chacun voit
    ses propres heures).
@@ -558,9 +558,6 @@ function BilanContenu() {
               <Tuile libelle="Personnes" valeur={String(bilan.parPersonne.filter((p) => p.cle !== "__autres__").length || bilan.parPersonne.length)} sous="ont imputé sur l’affaire" />
             </div>
 
-            {/* ---------- vendu et achats (administration, responsables, Direction) ---------- */}
-            {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
-
             {/* ---------- par activité ---------- */}
             <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par activité</h2>
@@ -632,6 +629,9 @@ function BilanContenu() {
                 </p>
               )}
             </section>
+
+            {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
+            {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
 
             {/* ---------- commande, avenants, découpages ---------- */}
             {lignesExcel.length > 0 && (

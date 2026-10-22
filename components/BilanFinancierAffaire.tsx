@@ -4,12 +4,11 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 
 /* ===============================================================
-   BILAN AFFAIRE - LA PARTIE FINANCIÈRE (vendu, achats)
+   BILAN AFFAIRE - LE NÉGOCE (vendu et acheté)
 
    Pour une affaire CBE (commande de base + avenants), d'après le Suivi
-   d'affaire BE : ce qui est VENDU (montant de chaque commande, réparti
-   études / négoce), les ACHATS, et ce qui reste une fois les achats
-   déduits ; rapporté aux heures pointées, la valeur produite par heure.
+   d'affaire BE : le montant VENDU en négoce, le montant ACHETÉ, et la
+   marge. Le bloc ne s'affiche que s'il y a du négoce ou des achats.
 
    Les montants sont protégés : seuls l'administration, les responsables
    et la Direction les voient. Pour un collaborateur, la base ne renvoie
@@ -111,15 +110,8 @@ export default function BilanFinancierAffaire({ type, numero }: { type: string; 
         })
         .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
 
-      // heures pointées sur l'affaire (feuilles + historique), quand on a le droit de les voir
-      const { data: re } = await supabase.rpc("pilotage_realise").eq("type_affaire", "CBE").eq("numero", base);
-      const h = ((re ?? []) as { numero: string; heures: number | string }[])
-        .filter((r) => String(r.numero).replace(/^0+/, "") === base)
-        .reduce((t, r) => t + n(r.heures), 0);
-
       if (!actif) return;
       setCommandes(res);
-      setHeures(h);
     })().catch(() => undefined);
 
     return () => {
@@ -128,102 +120,29 @@ export default function BilanFinancierAffaire({ type, numero }: { type: string; 
   }, [type, numero]);
 
   if (!autorise) return null;
-  if (!commandes || commandes.length === 0) {
-    return message ? (
-      <section style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 14, marginBottom: 20, color: "#5b6168", fontSize: 14 }}>
-        <strong style={{ color: "#252525" }}>Vendu et achats</strong> — {message}
-      </section>
-    ) : null;
-  }
+  if (!commandes || commandes.length === 0) return null;
 
-  const total = commandes.reduce(
-    (t, c) => ({ vendu: t.vendu + c.vendu, etudes: t.etudes + c.etudes, negoce: t.negoce + c.negoce, achats: t.achats + c.achats }),
-    { vendu: 0, etudes: 0, negoce: 0, achats: 0 }
-  );
-  const horsAchats = total.vendu - total.achats;
-
-  const carte: CSSProperties = { background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 18, marginBottom: 20 };
-  const tuile: CSSProperties = { flex: "1 1 170px", background: "#f7f8fa", borderRadius: 10, padding: "10px 14px" };
-  const th: CSSProperties = { textAlign: "right", padding: "8px 8px", fontSize: 12, color: "#5b6168", textTransform: "uppercase", borderBottom: "1px solid #e3e6ea", whiteSpace: "nowrap" };
-  const td: CSSProperties = { textAlign: "right", padding: "8px 8px", borderBottom: "1px solid #f0f1f3", whiteSpace: "nowrap" };
+  const vendu = commandes.reduce((t, c) => t + c.negoce, 0);
+  const achete = commandes.reduce((t, c) => t + c.achats, 0);
+  if (vendu <= 0 && achete <= 0) return null; // pas de négoce sur cette affaire
 
   return (
-    <section style={carte} aria-label="Partie financière de l'affaire">
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-        <span style={{ fontSize: 18, fontWeight: 700 }}>Vendu et achats</span>
-        <span style={{ fontWeight: 800, color: "#8f0000" }}>CBE{numero.match(/^\d+/)?.[0]}</span>
-        {entete.devis && (
-          <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontWeight: 800, color: "#5b6168" }}>
-            DBE{entete.devis}
-          </span>
-        )}
-        {entete.client && <span style={{ fontWeight: 700, color: "#5b6168" }}>· {entete.client}</span>}
-      </div>
-      <div style={{ fontSize: 13, color: "#5b6168", marginBottom: 14 }}>
-        D’après le Suivi d’affaire BE, commande de base et avenants (hors commandes annulées). Visible par l’administration, les responsables et la
-        Direction.
-      </div>
-
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
-        <div style={tuile}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#5b6168" }}>VENDU</div>
-          <div style={{ fontSize: 24, fontWeight: 800 }}>{euros(total.vendu)}</div>
-          <div style={{ fontSize: 12, color: "#5b6168" }}>
-            études {euros(total.etudes)}
-            {total.negoce > 0 ? ` · négoce ${euros(total.negoce)}` : ""}
-          </div>
-        </div>
-        <div style={tuile}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#5b6168" }}>ACHATS</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: total.achats > 0 ? "#7a3e00" : undefined }}>{euros(total.achats)}</div>
-          <div style={{ fontSize: 12, color: "#5b6168" }}>{total.vendu > 0 ? `${Math.round((total.achats / total.vendu) * 100)} % du vendu` : ""}</div>
-        </div>
-        <div style={tuile}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#5b6168" }}>VENDU − ACHATS</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#1b5e20" }}>{euros(horsAchats)}</div>
-          <div style={{ fontSize: 12, color: "#5b6168" }}>ce que rapporte le travail du BE</div>
-        </div>
-        {heures > 0 && (
-          <div style={tuile}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#5b6168" }}>PAR HEURE POINTÉE</div>
-            <div style={{ fontSize: 24, fontWeight: 800 }}>{euros(horsAchats / heures)}</div>
-            <div style={{ fontSize: 12, color: "#5b6168" }}>
-              (vendu − achats) ÷ {heures.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h pointées
-            </div>
-          </div>
-        )}
-      </div>
-
-      {commandes.length > 1 && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, textAlign: "left" }}>Commande</th>
-                <th style={{ ...th, textAlign: "left" }}>Statut</th>
-                <th style={th}>Vendu</th>
-                <th style={th}>dont études</th>
-                <th style={th}>dont négoce</th>
-                <th style={th}>Achats</th>
-                <th style={th}>Vendu − achats</th>
-              </tr>
-            </thead>
-            <tbody>
-              {commandes.map((c) => (
-                <tr key={c.numero}>
-                  <td style={{ ...td, textAlign: "left", fontWeight: 800, color: "#8f0000" }}>{c.numero}</td>
-                  <td style={{ ...td, textAlign: "left", color: "#5b6168" }}>{c.statut}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{euros(c.vendu)}</td>
-                  <td style={td}>{euros(c.etudes)}</td>
-                  <td style={td}>{c.negoce ? euros(c.negoce) : "—"}</td>
-                  <td style={td}>{c.achats ? euros(c.achats) : "—"}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{euros(c.vendu - c.achats)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <section
+      aria-label="Négoce de l'affaire"
+      style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: "12px 16px", marginBottom: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 28px", fontSize: 15 }}
+    >
+      <strong style={{ fontSize: 17 }}>Négoce</strong>
+      <span>
+        Vendu : <strong>{euros(vendu)}</strong>
+      </span>
+      <span>
+        Acheté : <strong style={{ color: "#7a3e00" }}>{euros(achete)}</strong>
+      </span>
+      <span>
+        Marge : <strong style={{ color: vendu - achete < 0 ? "#b3261e" : "#1b5e20" }}>{euros(vendu - achete)}</strong>
+        {vendu > 0 && <span style={{ color: "#5b6168", fontSize: 13 }}> ({Math.round(((vendu - achete) / vendu) * 100)} %)</span>}
+      </span>
+      <span style={{ color: "#5b6168", fontSize: 12 }}>d’après le Suivi d’affaire BE, commande et avenants</span>
     </section>
   );
 }
