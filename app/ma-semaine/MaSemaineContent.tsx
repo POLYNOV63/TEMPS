@@ -698,6 +698,12 @@ function creerSemaine(
 /* RE_JOURNEE_ENTIERE : une récupération qui couvre toute la journée (ex. 7,5 h) rend le
    collaborateur absent ce jour-là (présence « Absent », pas de ticket restaurant). Si la
    récupération redevient partielle, la présence et le ticket reviennent. */
+/* DEMI_CONGE_DIRECT : une demi-journée de CP ou de RTT compte entre 3 h et 4,5 h */
+function demiHorsPlage(valeur: string) {
+  const h = convertirHeures(valeur);
+  return h > 0 && (h < 3 || h > 4.5);
+}
+
 function ajusterRecuperation(jour: JourSemaine): JourSemaine {
   if (jour.absence !== CODE_RE || jour.estWeekend || jour.estFerie) return jour;
 
@@ -4696,7 +4702,7 @@ export default function MaSemainePage() {
               </label>
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
-                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                  ? (demiHorsPlage(jour.heuresAbsence) ? "⚠ Une demi-journée compte entre 3 h et 4,5 h : corrigez les heures (en général 3,5 h ou 4 h)." : `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`)
                   : "Renseignez les heures de RTT : entre 3 h et 4,5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
@@ -4732,7 +4738,7 @@ export default function MaSemainePage() {
               </label>
               <span style={styles.cpRemaining}>
                 {jour.heuresAbsence
-                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                  ? (demiHorsPlage(jour.heuresAbsence) ? "⚠ Une demi-journée compte entre 3 h et 4,5 h : corrigez les heures (en général 3,5 h ou 4 h)." : `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`)
                   : "Renseignez les heures de CP : entre 3 h et 4,5 h (en général 3,5 h ou 4 h)."}
               </span>
             </>
@@ -5868,7 +5874,7 @@ export default function MaSemainePage() {
                               </span>
                               <span style={styles.cpRemaining}>
                                 {jour.heuresAbsence
-                                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                                  ? (demiHorsPlage(jour.heuresAbsence) ? "⚠ Une demi-journée compte entre 3 h et 4,5 h : corrigez les heures (en général 3,5 h ou 4 h)." : `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`)
                                   : "Renseignez les heures de RTT pour calculer le temps restant."}
                               </span>
                             </>
@@ -5922,7 +5928,7 @@ export default function MaSemainePage() {
                               </span>
                               <span style={styles.cpRemaining}>
                                 {jour.heuresAbsence
-                                  ? `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`
+                                  ? (demiHorsPlage(jour.heuresAbsence) ? "⚠ Une demi-journée compte entre 3 h et 4,5 h : corrigez les heures (en général 3,5 h ou 4 h)." : `Il reste ${formatHeures(cibleTravailJour(jour, codesImputation))} h à travailler.`)
                                   : "Renseignez les heures de CP pour calculer le temps restant."}
                               </span>
                             </>
