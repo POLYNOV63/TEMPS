@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type For
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
@@ -19,9 +20,12 @@ import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
      importé (fonction SQL bilan_affaire_imputations, sans double compte).
    - Comparaison par activité, ligne par ligne (base, avenants, lots,
      échéances), par personne et mois par mois.
+   - VENDU ET ACHATS (composant BilanFinancierAffaire) : montants du Suivi
+     d'affaire, visibles seulement de l'administration, des responsables
+     et de la Direction ; les collaborateurs ne voient aucun montant.
 
    Le détail nominatif n'est donné qu'aux ADMIN / RESPONSABLE (chacun voit
-   ses propres heures). Aucun montant sur cette page.
+   ses propres heures).
 ================================================================ */
 
 type TypeAffaire = "CBE" | "DBE";
@@ -44,6 +48,7 @@ type LigneExcel = {
   genre: "DEVIS" | "BASE" | "AVENANT" | "LOT" | "ECHEANCE";
   numero_affaire: string | null;
   numero_devis: string | null;
+  base_devis: string | null;
   statut: string | null;
   imputation: string | null;
   designation: string | null;
@@ -97,6 +102,12 @@ function lundiIso(annee: number, semaine: number): string {
 function suffixe(numeroComplet: string): string {
   const m = numeroComplet.replace(/\s/g, "").match(/^(?:CBE|DBE|CAS)?[-:]?\d+(.*)$/i);
   return (m?.[1] ?? "").toUpperCase();
+}
+
+/* « 2603 », « DBE2603 » ou « DBE 2603 » -> « DBE2603 » */
+function numeroDevis(valeur: string | null | undefined): string | null {
+  const m = String(valeur ?? "").toUpperCase().replace(/\s/g, "").match(/^(?:DBE)?(\d+.*)$/);
+  return m ? `DBE${m[1]}` : null;
 }
 
 function lireAffaireDansUrl(): { type: TypeAffaire; numero: string } | null {
@@ -195,7 +206,7 @@ function BilanContenu() {
         supabase
           .from("suivi_lignes")
           .select(
-            "cle,genre,numero_affaire,numero_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
+            "cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
           )
           .eq(cible.type === "CBE" ? "base_affaire" : "base_devis", num),
         supabase.from("pilotage_affaires").select("id,statut,echeance,responsable_id,au_planning,numero").eq("type", cible.type),
@@ -407,6 +418,8 @@ function BilanContenu() {
   /* ------------------------------ rendu ------------------------------ */
 
   const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
+  // n° du devis d'origine (pour un CBE) : celui de la commande de base dans le Suivi d'affaire
+  const devis = affaire?.type === "CBE" ? numeroDevis(base?.base_devis ?? base?.numero_devis) : null;
   const ecart = bilan.totalChiffre - bilan.totalRealise;
   const part = bilan.totalChiffre > 0 ? bilan.totalRealise / bilan.totalChiffre : 0;
   const echeance = (() => {
@@ -489,6 +502,11 @@ function BilanContenu() {
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                 <BadgeType type={affaire.type} />
                 <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
+                {devis && (
+                  <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 16, fontWeight: 800, color: C.gris }}>
+                    {devis}
+                  </span>
+                )}
                 <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
                 {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
                 {pilotage && (
@@ -499,11 +517,12 @@ function BilanContenu() {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 10, fontSize: 14, color: "#3b4046" }}>
                 {client && <span>Client : <strong>{client}</strong></span>}
+                {devis && <span>Devis : <strong>{devis}</strong></span>}
                 {base?.imputation && <span>Imputation : <strong>{base.imputation}</strong></span>}
                 {pilotage?.responsable_id && <span>Responsable : <strong>{noms.get(pilotage.responsable_id) ?? "—"}</strong></span>}
                 {base?.redacteur && <span>Devis rédigé par : <strong>{base.redacteur}</strong></span>}
                 {base?.date_reception_commande && <span>Commande reçue le <strong>{formatDate(base.date_reception_commande)}</strong></span>}
-                {echeance && <span>Échéance : <strong>{formatDate(echeance)}</strong></span>}
+                {echeance && <span>Délai : <strong>{formatDate(echeance)}</strong></span>}
               </div>
             </section>
 
@@ -538,6 +557,9 @@ function BilanContenu() {
               />
               <Tuile libelle="Personnes" valeur={String(bilan.parPersonne.filter((p) => p.cle !== "__autres__").length || bilan.parPersonne.length)} sous="ont imputé sur l’affaire" />
             </div>
+
+            {/* ---------- vendu et achats (administration, responsables, Direction) ---------- */}
+            {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
 
             {/* ---------- par activité ---------- */}
             <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
