@@ -95,6 +95,9 @@ export default function CollaborateursPage() {
   const [rhModal, setRhModal] = useState<Collaborateur | null>(null);
   // Ajout ponctuel de CP exceptionnels (à tout moment de l'exercice)
   const [ajoutExc, setAjoutExc] = useState({ jours: "", justificatif: true });
+  // Ajustement du compteur de récupération (même opération que la page « Compteurs de récupération »)
+  const [ajustement, setAjustement] = useState({ heures: "", motif: "" });
+  const [infoRH, setInfoRH] = useState("");
   const [rhForm, setRhForm] = useState({cp_reportes:"0",cp_acquis:"0",cp_anciennete:"0",cp_exceptionnels_avec_justificatif:"0",cp_exceptionnels_sans_justificatif:"0",rtt_acquis:"0",compteur_recuperation_initial:"0",cp_periode_debut:"",cp_periode_fin:""});
 
   const [chargement, setChargement] = useState(true);
@@ -537,6 +540,8 @@ const { data: profil, error: erreurProfil } = await supabase
 
   function ouvrirRH(c: Collaborateur) {
     const d=droitsRH[c.id];
+    setInfoRH("");
+    setAjustement({ heures: "", motif: "" });
     setRhModal(c);
     setRhForm({
       cp_reportes:String(d?.cp_reportes ?? 0), cp_acquis:String(d?.cp_acquis ?? 0), cp_anciennete:String(d?.cp_anciennete ?? 0),
@@ -547,6 +552,32 @@ const { data: profil, error: erreurProfil } = await supabase
       cp_periode_debut:d?.cp_periode_debut || `${exerciceActuel()}-04-01`,
       cp_periode_fin:d?.cp_periode_fin || `${exerciceActuel()}-05-31`
     });
+  }
+
+  /* Ajuste le compteur de récupération : + ou − des heures, avec un motif (historisé) */
+  async function ajusterCompteur() {
+    if (!rhModal) return;
+    const h = Number(ajustement.heures.replace(",", ".").replace(/\s/g, ""));
+    if (!Number.isFinite(h) || h === 0) {
+      setErreur("Indiquez des heures à ajouter (ex. 3) ou à retirer (ex. -2,5).");
+      return;
+    }
+    if (!ajustement.motif.trim()) {
+      setErreur("Le motif de l'ajustement est obligatoire.");
+      return;
+    }
+    setErreur("");
+    const { error } = await supabase.rpc("rh_regulariser_compteur", {
+      p_collaborateur_id: rhModal.id,
+      p_heures: h,
+      p_motif: ajustement.motif.trim(),
+    });
+    if (error) {
+      setErreur(error.message || "L'ajustement a été refusé.");
+      return;
+    }
+    setAjustement({ heures: "", motif: "" });
+    setInfoRH(`Compteur ajusté de ${h > 0 ? "+" : ""}${String(h).replace(".", ",")} h (motif enregistré dans l'historique).`);
   }
 
   /* Ajoute des CP exceptionnels au droit de l'exercice et enregistre aussitôt */
@@ -1334,6 +1365,17 @@ const { data: profil, error: erreurProfil } = await supabase
                 </select>
                 <button type="button" onClick={()=>void ajouterCPExceptionnels()} style={primaryButtonStyle}>+ Ajouter</button>
               </div>
+            </div>
+            <div style={{marginTop:14,padding:12,background:"#f2faf3",border:"1px solid #9fd4a7",borderRadius:7}}>
+              <strong>Ajuster le compteur de récupération</strong>
+              <div style={{fontSize:12,color:"#555",margin:"2px 0 8px"}}>Ajoute (ex. 3) ou retire (ex. -2,5) des heures au compteur actuel, avec un motif. L’ajustement est appliqué tout de suite et gardé dans l’historique (page « Compteurs de récupération »).</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <input value={ajustement.heures} onChange={e=>setAjustement(a=>({...a,heures:e.target.value.replace(/[^0-9.,\-+]/g,"")}))} placeholder="heures (± )" inputMode="decimal" style={{...inputStyle,width:120}} />
+                <input value={ajustement.motif} onChange={e=>setAjustement(a=>({...a,motif:e.target.value}))} placeholder="motif (obligatoire)" style={{...inputStyle,flex:"1 1 200px",width:"auto"}} />
+                <button type="button" onClick={()=>void ajusterCompteur()} style={primaryButtonStyle}>Ajuster</button>
+              </div>
+              {infoRH && <div style={{marginTop:8,color:"#18713b",fontWeight:700,fontSize:13}}>✓ {infoRH}</div>}
+              {erreur && <div style={{marginTop:8,color:"#c00000",fontWeight:700,fontSize:13}}>{erreur}</div>}
             </div>
             <div style={{marginTop:14,padding:12,background:"#fff8e1",borderRadius:7,fontSize:13}}>Le compteur de récupération peut dépasser +30 h (le collaborateur est alors prévenu sur son espace RH que la limite est de 30 h). Les soldes CP/RTT sont calculés avec les demandes RH validées.</div>
             <div style={buttonRowStyle}><button onClick={()=>setRhModal(null)} style={secondaryButtonStyle}>Annuler</button><button onClick={()=>void enregistrerRH()} style={primaryButtonStyle}>Enregistrer les droits RH</button></div>

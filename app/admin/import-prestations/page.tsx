@@ -70,6 +70,8 @@ function ImportContenu() {
   const [resultat, setResultat] = useState<ResultatHisto | null>(null);
   const [contexte, setContexte] = useState<Contexte | null>(null);
   const [moisChoisis, setMoisChoisis] = useState<Set<string>>(new Set());
+  // par défaut : le mois en cours et les suivants ; « tout importer » ajoute les mois passés
+  const [toutImporter, setToutImporter] = useState(false);
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [progression, setProgression] = useState("");
@@ -106,7 +108,7 @@ function ImportContenu() {
       const r = lireSuiviPrestations(feuilles);
       setContexte(await chargerContexte());
       setResultat(r);
-      setMoisChoisis(new Set(r.mois));
+      setMoisChoisis(new Set(toutImporter ? r.mois : r.mois.filter((m) => m.slice(0, 7) >= moisCourant)));
     } catch (e) {
       setErreur(e instanceof Error ? `Lecture impossible : ${e.message}` : "Lecture impossible.");
     }
@@ -312,10 +314,28 @@ function ImportContenu() {
         {progression && <Message genre="info">{progression}</Message>}
 
         <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-          <label style={{ fontWeight: 700 }}>
-            Classeur Suivi des prestations (.xlsm ou .xlsx)
-            <input type="file" accept=".xlsm,.xlsx" onChange={(e) => e.target.files?.[0] && void lire(e.target.files[0])} style={{ display: "block", marginTop: 8 }} />
-          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14 }}>
+            <label style={{ ...page.btnPrimaire, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              📂 Choisir le classeur Suivi des prestations
+              <input type="file" accept=".xlsm,.xlsx" onChange={(e) => { if (e.target.files?.[0]) void lire(e.target.files[0]); e.target.value = ""; }} style={{ display: "none" }} />
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={toutImporter}
+                onChange={(e) => {
+                  setToutImporter(e.target.checked);
+                  if (resultat) setMoisChoisis(new Set(e.target.checked ? resultat.mois : resultat.mois.filter((m) => m.slice(0, 7) >= moisCourant)));
+                }}
+                style={{ width: 18, height: 18 }}
+              />
+              Tout importer (mois passés compris)
+            </label>
+          </div>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: C.gris }}>
+            Sans cette case : seuls le <strong>mois en cours et les mois suivants</strong> sont importés (c’est l’import courant, chaque mois). Cochez-la
+            pour reprendre aussi les mois passés (première reprise, ou correction d’un mois rouvert).
+          </p>
           {nomFichier && <p style={{ margin: "8px 0 0", fontSize: 13, color: C.gris }}>{nomFichier}</p>}
         </section>
 
