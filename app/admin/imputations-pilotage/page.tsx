@@ -10,11 +10,16 @@ import type { Imputation } from "@/lib/pilotageCalculs";
 /* ===============================================================
    ADMINISTRATION - IMPUTATIONS DES AFFAIRES (Pilotage BE)
 
-   Liste des imputations proposées lors de la déclaration d'une
-   affaire (BE, PE, PI, Scan, Négoce, IG...). Comme Gestion des codes,
-   l'administrateur peut en ajouter, les renommer, les ordonner et les
-   désactiver. Une imputation déjà utilisée ne se supprime pas : on la
-   désactive (elle reste visible sur les affaires existantes).
+   Liste des imputations des affaires (BE, PE, PI, Scan, Négoce, IG...),
+   telles qu'elles arrivent du Suivi d'affaire BE (colonne Imputation).
+   Pour chacune, une seule règle : « Heures chiffrées obligatoires ».
+   - COCHÉE  = affaire AU FORFAIT : elle a des heures chiffrées par
+     activité (Méca, Calcul…) ; on la planifie à la main et on suit le
+     pointé face au chiffré (reste à planifier, dépassements).
+   - DÉCOCHÉE = prestation AU TEMPS PASSÉ (PE, PI) : pas d'heures par
+     activité ; le planning, les dates et la facturation viennent du
+     relevé des prestations (importé du Suivi des prestations).
+   Une imputation déjà utilisée ne se supprime pas : on la désactive.
 ================================================================ */
 
 type Ligne = Imputation & { nouvelle?: boolean; modifiee?: boolean; usages: number };
@@ -185,10 +190,43 @@ function ImputationsContenu() {
         <div style={{ marginBottom: 20 }}>
           <h1 style={page.titre}>Imputations des affaires</h1>
           <p style={page.sousTitre}>
-            Les choix proposés dans le menu « Imputation » lors de la déclaration d’une affaire du Pilotage BE
-            (BE, PE, PI, Scan, Négoce, IG…).
+            Les familles d’affaires (BE, PE, PI, Scan, Négoce, IG…), telles qu’elles arrivent du Suivi d’affaire BE, et la façon dont
+            l’application suit chacune.
           </p>
         </div>
+
+        <details open style={{ ...page.carte, padding: "12px 16px", marginBottom: 16, fontSize: 14, lineHeight: 1.55 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 16 }}>ⓘ À quoi sert cette page, et la case « Heures chiffrées obligatoires »</summary>
+          <p style={{ margin: "8px 0" }}>
+            Chaque affaire du Suivi d’affaire BE porte une <strong>imputation</strong> (colonne « Imputation » du classeur). Cette page
+            liste ces imputations et dit, pour chacune, <strong>comment l’application suit l’affaire</strong>. Une seule case compte :
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
+            <div style={{ border: "1px solid #9fd4a7", background: "#f2faf3", borderRadius: 8, padding: "10px 12px" }}>
+              <strong>☑ Cochée : affaire au forfait</strong> <span style={{ color: C.gris }}>(BE, Scan, Négoce, IG…)</span>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                <li>l’affaire a des <strong>heures chiffrées par activité</strong> (Méca, Calcul…), venues du classeur ;</li>
+                <li>dans le <strong>planning</strong>, on y affecte les ressources à la main, et on voit le pointé et le « reste à planifier » ;</li>
+                <li><strong>Charge &amp; pointage</strong> et le portefeuille comparent le pointé au chiffré (dépassements) ;</li>
+                <li>le <strong>CA</strong> est compté à la livraison (ou au délai estimé tant qu’elle n’est pas livrée).</li>
+              </ul>
+            </div>
+            <div style={{ border: "1px solid #e9b877", background: "#fff7ea", borderRadius: 8, padding: "10px 12px" }}>
+              <strong>☐ Décochée : prestation au temps passé</strong> <span style={{ color: C.gris }}>(PE, PI)</span>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                <li>pas d’heures par activité : on vend du <strong>temps</strong> (jours ou heures, à un taux) ;</li>
+                <li>le <strong>planning</strong> se remplit tout seul depuis le <strong>relevé PE / PI</strong> (importé du Suivi des prestations) ;</li>
+                <li>les <strong>dates</strong> de l’affaire suivent les heures du relevé, pas le délai du classeur ;</li>
+                <li>pas d’alerte « reste à planifier » ni « au-delà du chiffré » ; le <strong>CA</strong> vient du relevé, mois par mois.</li>
+              </ul>
+            </div>
+          </div>
+          <p style={{ margin: "8px 0 0", color: C.gris, fontSize: 13 }}>
+            En pratique : <strong>seules PE et PI sont décochées</strong>. Ne changez la case d’une imputation déjà utilisée qu’en connaissance de
+            cause : toutes ses affaires changent de mode de suivi. « Active » décochée : l’imputation n’est plus proposée, mais reste sur les
+            affaires existantes. « Ordre » : l’ordre d’affichage dans les listes.
+          </p>
+        </details>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}
@@ -205,7 +243,9 @@ function ImputationsContenu() {
                       <th style={page.th}>Libellé</th>
                       <th style={{ ...page.th, width: 90 }}>Ordre</th>
                       <th style={{ ...page.th, width: 90 }}>Active</th>
-                      <th style={{ ...page.th, width: 170 }}>Heures chiffrées obligatoires</th>
+                      <th style={{ ...page.th, width: 200 }} title="Cochée : affaire au forfait (heures par activité). Décochée : prestation au temps passé (PE, PI), suivie par le relevé.">
+                        Heures chiffrées obligatoires
+                      </th>
                       <th style={{ ...page.th, width: 110 }}>Utilisée</th>
                       <th style={page.th} />
                     </tr>
@@ -248,9 +288,21 @@ function ImputationsContenu() {
                             aria-label={`${l.code} : heures chiffrées obligatoires`}
                             type="checkbox"
                             checked={l.charge_obligatoire !== false}
-                            onChange={(e) => modifier(l.code, { charge_obligatoire: e.target.checked })}
-                            style={{ width: 22, height: 22 }}
+                            onChange={(e) => {
+                              if (
+                                l.usages > 0 &&
+                                !window.confirm(
+                                  `${l.usages} affaire(s) ${l.code} changeront de mode de suivi (${e.target.checked ? "forfait : heures par activité" : "temps passé : relevé PE / PI"}). Continuer ?`
+                                )
+                              )
+                                return;
+                              modifier(l.code, { charge_obligatoire: e.target.checked });
+                            }}
+                            style={{ width: 22, height: 22, verticalAlign: "middle" }}
                           />
+                          <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, color: l.charge_obligatoire !== false ? "#1b5e20" : "#7a3e00" }}>
+                            {l.charge_obligatoire !== false ? "forfait" : "temps passé (relevé)"}
+                          </span>
                         </td>
                         <td style={page.td}>{l.usages} affaire(s)</td>
                         <td style={{ ...page.td, whiteSpace: "nowrap", textAlign: "right" }}>
@@ -278,9 +330,8 @@ function ImputationsContenu() {
               </div>
               <p style={{ margin: "12px 4px 0", fontSize: 13, color: C.gris }}>
                 Une imputation utilisée par des affaires ne peut pas être supprimée : désactivez-la, elle ne sera
-                plus proposée pour les nouvelles affaires. Décochez « Heures chiffrées obligatoires » pour les
-                prestations planifiées par une personne et une date de fin (par exemple PE) : l’affaire se déclare sans
-                heures par activité.
+                plus proposée. « Heures chiffrées obligatoires » : cochée pour les affaires au forfait, décochée pour les
+                prestations au temps passé (PE, PI), suivies par le relevé des prestations (voir l’encadré en haut de la page).
               </p>
             </section>
 
