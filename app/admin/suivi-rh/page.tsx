@@ -17,8 +17,11 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    - compteur de récupération : initial, heures sup mises au compteur,
      récupérations (RE), ajustements, compteur actuel ;
    - le détail (clic sur une ligne) : historique daté de tous les
-     mouvements, et deux actions : ajuster le compteur, ajouter des CP
-     exceptionnels.
+     mouvements, et trois actions : saisir / modifier les droits de
+     l'exercice, ajuster le compteur, ajouter des CP exceptionnels.
+   C'est la SEULE page des droits RH (la page Collaborateurs ne sert qu'à
+   créer la fiche). Les autres pages lisent ces droits sans changement :
+   Mon espace RH (soldes), Ma semaine (compteur initial), Validation RH.
 ================================================================ */
 
 type Collab = { id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null; actif: boolean; inclus_statistiques: boolean | null };
@@ -32,6 +35,31 @@ type Droit = {
   cp_exceptionnels_sans_justificatif: number;
   rtt_acquis: number;
   compteur_recuperation_initial: number;
+  cp_periode_debut: string | null;
+  cp_periode_fin: string | null;
+};
+
+const CHAMPS_DROITS: [keyof FormDroits, string, string][] = [
+  ["cp_reportes", "CP reportés (année précédente)", "number"],
+  ["cp_acquis", "CP acquis (année courante)", "number"],
+  ["cp_anciennete", "CP d'ancienneté", "number"],
+  ["rtt_acquis", "RTT acquis", "number"],
+  ["cp_exceptionnels_avec_justificatif", "CP exceptionnels avec justificatif", "number"],
+  ["cp_exceptionnels_sans_justificatif", "CP exceptionnels sans justificatif", "number"],
+  ["compteur_recuperation_initial", "Compteur de récupération initial (h)", "number"],
+  ["cp_periode_debut", "Début de la période CP", "date"],
+  ["cp_periode_fin", "Fin de la période CP", "date"],
+];
+type FormDroits = {
+  cp_reportes: string;
+  cp_acquis: string;
+  cp_anciennete: string;
+  rtt_acquis: string;
+  cp_exceptionnels_avec_justificatif: string;
+  cp_exceptionnels_sans_justificatif: string;
+  compteur_recuperation_initial: string;
+  cp_periode_debut: string;
+  cp_periode_fin: string;
 };
 type Demande = { id: string; collaborateur_id: string; type_demande: string; date_debut: string; date_fin: string; duree_jours: number; heures_re: number | null; statut: string; created_at: string };
 type Feuille = {
@@ -81,6 +109,18 @@ function SuiviRHContenu() {
   const [ajustement, setAjustement] = useState({ heures: "", motif: "" });
   const [ajoutCP, setAjoutCP] = useState({ jours: "", justificatif: true });
   const [rechargement, setRechargement] = useState(0);
+  // formulaire des droits de l'exercice (ouvert pour une personne)
+  const [formDroits, setFormDroits] = useState<{ id: string; f: FormDroits } | null>(null);
+
+  // arrivée depuis Collaborateurs (« Suivi RH → » ou création) : la ligne de la personne s'ouvre
+  const [depuisLien, setDepuisLien] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("collaborateur");
+    if (id) {
+      setOuvert(id);
+      setDepuisLien(id);
+    }
+  }, []);
 
   const debutEx = `${exercice}-11-01`;
   const finEx = `${exercice + 1}-10-31`;
@@ -244,6 +284,59 @@ function SuiviRHContenu() {
     setRechargement((x) => x + 1);
   }
 
+  // nouvelle fiche sans droits : le formulaire s'ouvre directement
+  useEffect(() => {
+    if (!depuisLien || chargement) return;
+    if (!droits.some((d) => d.collaborateur_id === depuisLien)) ouvrirDroits(depuisLien, undefined);
+    setDepuisLien(null);
+  }, [depuisLien, chargement, droits]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function ouvrirDroits(id: string, d: Droit | undefined) {
+    const v = (x: unknown) => String(n(x));
+    setFormDroits({
+      id,
+      f: {
+        cp_reportes: v(d?.cp_reportes),
+        cp_acquis: v(d?.cp_acquis),
+        cp_anciennete: v(d?.cp_anciennete),
+        rtt_acquis: v(d?.rtt_acquis),
+        cp_exceptionnels_avec_justificatif: v(d?.cp_exceptionnels_avec_justificatif),
+        cp_exceptionnels_sans_justificatif: v(d?.cp_exceptionnels_sans_justificatif),
+        compteur_recuperation_initial: v(d?.compteur_recuperation_initial),
+        cp_periode_debut: d?.cp_periode_debut ?? `${exercice}-04-01`,
+        cp_periode_fin: d?.cp_periode_fin ?? `${exercice + 1}-05-31`,
+      },
+    });
+  }
+
+  async function enregistrerDroits() {
+    if (!formDroits) return;
+    const f = formDroits.f;
+    const nb = (x: string) => Number(String(x).replace(",", ".")) || 0;
+    if (nb(f.compteur_recuperation_initial) < -30) return setErreur("Le compteur initial ne peut pas descendre sous -30 h.");
+    setErreur("");
+    const { error } = await supabase.from("rh_droits").upsert(
+      {
+        collaborateur_id: formDroits.id,
+        exercice,
+        cp_reportes: nb(f.cp_reportes),
+        cp_acquis: nb(f.cp_acquis),
+        cp_anciennete: nb(f.cp_anciennete),
+        rtt_acquis: nb(f.rtt_acquis),
+        cp_exceptionnels_avec_justificatif: nb(f.cp_exceptionnels_avec_justificatif),
+        cp_exceptionnels_sans_justificatif: nb(f.cp_exceptionnels_sans_justificatif),
+        compteur_recuperation_initial: nb(f.compteur_recuperation_initial),
+        cp_periode_debut: f.cp_periode_debut || null,
+        cp_periode_fin: f.cp_periode_fin || null,
+      },
+      { onConflict: "collaborateur_id,exercice" }
+    );
+    if (error) return setErreur(error.message);
+    setFormDroits(null);
+    setInfo(`Droits de l'exercice ${exercice}-${exercice + 1} enregistrés.`);
+    setRechargement((x) => x + 1);
+  }
+
   const totaux = useMemo(
     () => ({
       cpSolde: lignes.reduce((t, l) => t + l.cpSolde, 0),
@@ -374,6 +467,39 @@ function SuiviRHContenu() {
                                 </div>
 
                                 <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 12 }}>
+                                  <div style={{ border: `1px solid ${l.d ? C.ligne : "#e9b877"}`, background: l.d ? "#ffffff" : "#fff7ea", borderRadius: 8, padding: 10 }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                      <strong>Droits de l’exercice {exercice}-{exercice + 1}</strong>
+                                      {formDroits?.id !== l.c.id && (
+                                        <button type="button" style={page.btnSecondaire} onClick={() => ouvrirDroits(l.c.id, l.d)}>
+                                          {l.d ? "✏️ Modifier" : "Saisir les droits"}
+                                        </button>
+                                      )}
+                                    </div>
+                                    {!l.d && formDroits?.id !== l.c.id && <div style={{ fontSize: 12, color: "#7a3e00", marginTop: 4 }}>Pas encore saisis : ses soldes restent à zéro.</div>}
+                                    {formDroits?.id === l.c.id && (
+                                      <div style={{ marginTop: 8 }}>
+                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 10px" }}>
+                                          {CHAMPS_DROITS.map(([cle, libelle, type]) => (
+                                            <label key={cle} style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 12, fontWeight: 700 }}>
+                                              {libelle}
+                                              <input
+                                                type={type}
+                                                step={type === "number" ? "0.5" : undefined}
+                                                value={formDroits.f[cle]}
+                                                onChange={(e) => setFormDroits((x) => (x ? { ...x, f: { ...x.f, [cle]: e.target.value } } : x))}
+                                                style={{ ...champ, minHeight: 34 }}
+                                              />
+                                            </label>
+                                          ))}
+                                        </div>
+                                        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                                          <button type="button" style={page.btnSecondaire} onClick={() => setFormDroits(null)}>Annuler</button>
+                                          <button type="button" style={page.btnPrimaire} onClick={() => void enregistrerDroits()}>Enregistrer</button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                   <div style={{ border: "1px solid #9fd4a7", background: "#f2faf3", borderRadius: 8, padding: 10 }}>
                                     <strong>Ajuster le compteur</strong>
                                     <div style={{ fontSize: 12, color: C.gris, margin: "2px 0 6px" }}>Compteur actuel : {fmt(l.compteur)} h. Ex. 3 ou -2,5, avec un motif.</div>
@@ -398,7 +524,7 @@ function SuiviRHContenu() {
                                     </div>
                                   </div>
                                   <div style={{ fontSize: 12, color: C.gris }}>
-                                    Droits détaillés : reportés {fmt(n(l.d?.cp_reportes))} j · acquis {fmt(n(l.d?.cp_acquis))} j · ancienneté {fmt(n(l.d?.cp_anciennete))} j. Pour les modifier : page Collaborateurs → Droits RH.
+                                    Droits : reportés {fmt(n(l.d?.cp_reportes))} j · acquis {fmt(n(l.d?.cp_acquis))} j · ancienneté {fmt(n(l.d?.cp_anciennete))} j · RTT {fmt(n(l.d?.rtt_acquis))} j.
                                   </div>
                                 </div>
                               </div>

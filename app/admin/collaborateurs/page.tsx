@@ -8,7 +8,9 @@ import { ROLES, libelleRole, normaliserRole } from "@/lib/droits";
 /* ===============================================================
    ADMINISTRATION - COLLABORATEURS
 
-   L'équipe (rythme horaire, droits RH, feuilles d'heures) et, à part,
+   La FICHE de chaque personne : identité, rôle, rythme horaire. Les droits
+   RH (CP, RTT, compteur) se saisissent et se suivent dans la page Suivi RH.
+   L'équipe et, à part,
    les ACCÈS DIRECTION : Président, adjoint… en lecture seule (Finances,
    Indicateurs, Charge). Une fiche Direction n'a ni rythme, ni droits RH,
    ni feuille d'heures, et n'entre pas dans les statistiques.
@@ -91,14 +93,6 @@ export default function CollaborateursPage() {
   const [profils, setProfils] = useState<ProfilHoraire[]>([]);
   const [bases, setBases] = useState<BaseHoraire[]>([]);
   const [historique, setHistorique] = useState<Historique[]>([]);
-  const [droitsRH, setDroitsRH] = useState<Record<string,DroitsRH>>({});
-  const [rhModal, setRhModal] = useState<Collaborateur | null>(null);
-  // Ajout ponctuel de CP exceptionnels (à tout moment de l'exercice)
-  const [ajoutExc, setAjoutExc] = useState({ jours: "", justificatif: true });
-  // Ajustement du compteur de récupération (même opération que la page « Compteurs de récupération »)
-  const [ajustement, setAjustement] = useState({ heures: "", motif: "" });
-  const [infoRH, setInfoRH] = useState("");
-  const [rhForm, setRhForm] = useState({cp_reportes:"0",cp_acquis:"0",cp_anciennete:"0",cp_exceptionnels_avec_justificatif:"0",cp_exceptionnels_sans_justificatif:"0",rtt_acquis:"0",compteur_recuperation_initial:"0",cp_periode_debut:"",cp_periode_fin:""});
 
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
@@ -160,7 +154,6 @@ export default function CollaborateursPage() {
     ).padStart(2, "0")}`;
   }
 
-  function exerciceActuel() { const d=new Date(); return d.getMonth()>=10 ? d.getFullYear() : d.getFullYear()-1; }
 
   async function chargerDonnees() {
     setChargement(true);
@@ -171,7 +164,7 @@ export default function CollaborateursPage() {
       profilsResult,
       basesResult,
       historiqueResult,
-      droitsResult,
+      _droitsInutilises,
     ] = await Promise.all([
       supabase
         .from("collaborateurs")
@@ -195,10 +188,7 @@ export default function CollaborateursPage() {
         .select("*")
         .order("date_debut", { ascending: false }),
 
-      supabase
-        .from("rh_droits")
-        .select("*")
-        .eq("exercice", exerciceActuel()),
+      Promise.resolve({ data: [], error: null }),
     ]);
 
     /* -----------------------------------------------------------
@@ -240,7 +230,6 @@ export default function CollaborateursPage() {
       setErreur("Impossible de charger les bases horaires.");
     }
 
-    if (droitsResult.error) { console.error(droitsResult.error); setErreur("Impossible de charger les droits RH."); }
 
     if (historiqueResult.error) {
       console.error(historiqueResult.error);
@@ -251,7 +240,6 @@ export default function CollaborateursPage() {
     setProfils(profilsResult.data || []);
     setBases(basesResult.data || []);
     setHistorique(historiqueResult.data || []);
-    const droitsMap: Record<string,DroitsRH> = {}; (droitsResult.data || []).forEach((d:any)=>{droitsMap[d.collaborateur_id]=d;}); setDroitsRH(droitsMap);
 
     setChargement(false);
   }
@@ -430,8 +418,8 @@ const { data: profil, error: erreurProfil } = await supabase
     await chargerDonnees();
 
     // Son espace est activé à sa première connexion Microsoft. On enchaîne sur
-    // ses droits RH (congés, RTT, compteur) pour qu'ils soient renseignés.
-    ouvrirRH(collaborateur as Collaborateur);
+    // ses droits RH (congés, RTT, compteur), à saisir dans le Suivi RH.
+    window.location.href = `/admin/suivi-rh?collaborateur=${(collaborateur as Collaborateur).id}`;
   }
 
   async function changerRythme() {
@@ -536,77 +524,6 @@ const { data: profil, error: erreurProfil } = await supabase
       console.error(error);
       setErreur(`Impossible de changer le rythme : ${error?.message || "erreur inconnue"}`);
     }
-  }
-
-  function ouvrirRH(c: Collaborateur) {
-    const d=droitsRH[c.id];
-    setInfoRH("");
-    setAjustement({ heures: "", motif: "" });
-    setRhModal(c);
-    setRhForm({
-      cp_reportes:String(d?.cp_reportes ?? 0), cp_acquis:String(d?.cp_acquis ?? 0), cp_anciennete:String(d?.cp_anciennete ?? 0),
-      cp_exceptionnels_avec_justificatif:String(d?.cp_exceptionnels_avec_justificatif ?? 0),
-      cp_exceptionnels_sans_justificatif:String(d?.cp_exceptionnels_sans_justificatif ?? 0),
-      rtt_acquis:String(d?.rtt_acquis ?? 0),
-      compteur_recuperation_initial:String(d?.compteur_recuperation_initial ?? c.compteur_recuperation ?? 0),
-      cp_periode_debut:d?.cp_periode_debut || `${exerciceActuel()}-04-01`,
-      cp_periode_fin:d?.cp_periode_fin || `${exerciceActuel()}-05-31`
-    });
-  }
-
-  /* Ajuste le compteur de récupération : + ou − des heures, avec un motif (historisé) */
-  async function ajusterCompteur() {
-    if (!rhModal) return;
-    const h = Number(ajustement.heures.replace(",", ".").replace(/\s/g, ""));
-    if (!Number.isFinite(h) || h === 0) {
-      setErreur("Indiquez des heures à ajouter (ex. 3) ou à retirer (ex. -2,5).");
-      return;
-    }
-    if (!ajustement.motif.trim()) {
-      setErreur("Le motif de l'ajustement est obligatoire.");
-      return;
-    }
-    setErreur("");
-    const { error } = await supabase.rpc("rh_regulariser_compteur", {
-      p_collaborateur_id: rhModal.id,
-      p_heures: h,
-      p_motif: ajustement.motif.trim(),
-    });
-    if (error) {
-      setErreur(error.message || "L'ajustement a été refusé.");
-      return;
-    }
-    setAjustement({ heures: "", motif: "" });
-    setInfoRH(`Compteur ajusté de ${h > 0 ? "+" : ""}${String(h).replace(".", ",")} h (motif enregistré dans l'historique).`);
-  }
-
-  /* Ajoute des CP exceptionnels au droit de l'exercice et enregistre aussitôt */
-  async function ajouterCPExceptionnels() {
-    if (!rhModal) return;
-    const n = Number(ajoutExc.jours.replace(",", "."));
-    if (!Number.isFinite(n) || n <= 0) {
-      setErreur("Indiquez le nombre de jours de CP exceptionnels à ajouter (ex. 1 ou 0,5).");
-      return;
-    }
-    const champ = ajoutExc.justificatif ? "cp_exceptionnels_avec_justificatif" : "cp_exceptionnels_sans_justificatif";
-    const nouveau = String(Math.round((Number(rhForm[champ] || 0) + n) * 2) / 2);
-    setRhForm((f) => ({ ...f, [champ]: nouveau }));
-    setAjoutExc({ jours: "", justificatif: ajoutExc.justificatif });
-    await enregistrerRH({ ...rhForm, [champ]: nouveau }, true);
-  }
-
-  async function enregistrerRH(formulaire = rhForm, garderOuvert = false) {
-    const rhForm = formulaire;
-    if(!rhModal) return;
-    setErreur("");
-    const payload={collaborateur_id:rhModal.id,exercice:exerciceActuel(),
-      cp_reportes:Number(rhForm.cp_reportes||0),cp_acquis:Number(rhForm.cp_acquis||0),cp_anciennete:Number(rhForm.cp_anciennete||0),
-      cp_exceptionnels_avec_justificatif:Number(rhForm.cp_exceptionnels_avec_justificatif||0),
-      cp_exceptionnels_sans_justificatif:Number(rhForm.cp_exceptionnels_sans_justificatif||0),
-      rtt_acquis:Number(rhForm.rtt_acquis||0),compteur_recuperation_initial:Number(rhForm.compteur_recuperation_initial||0),cp_periode_debut:rhForm.cp_periode_debut || null,cp_periode_fin:rhForm.cp_periode_fin || null};
-    const {data,error}=await supabase.from("rh_droits").upsert(payload,{onConflict:"collaborateur_id,exercice"}).select().single();
-    if(error){console.error(error);setErreur(error.message);return;}
-    setDroitsRH(v=>({...v,[rhModal.id]:data as DroitsRH})); if(!garderOuvert) setRhModal(null);
   }
 
   async function desactiverCollaborateur(c: Collaborateur) {
@@ -1066,10 +983,11 @@ const { data: profil, error: erreurProfil } = await supabase
                       Modifier
                     </button>
                     <button
-                      onClick={() => ouvrirRH(c)}
+                      onClick={() => { window.location.href = `/admin/suivi-rh?collaborateur=${c.id}`; }}
+                      title="Congés, RTT et compteur : dans le Suivi RH"
                       style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"9px 14px",cursor:"pointer",fontWeight:700}}
                     >
-                      Droits RH
+                      Suivi RH →
                     </button>
                     <button
                       onClick={() => ouvrirRythme(c)}
@@ -1255,7 +1173,6 @@ const { data: profil, error: erreurProfil } = await supabase
                       <div><strong>{nomCollaborateur(c)}</strong> <span style={{color:"#777",marginLeft:8}}>{c.trigramme || "—"}</span><div style={{fontSize:13,color:"#777",marginTop:3}}>{c.email}</div></div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                         <button onClick={()=>ouvrirEdition(c)} style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"8px 12px",cursor:"pointer",fontWeight:700}}>Modifier</button>
-                        <button onClick={()=>ouvrirRH(c)} style={{border:"1px solid #333",color:"#333",background:"white",borderRadius:6,padding:"8px 12px",cursor:"pointer",fontWeight:700}}>Droits RH</button>
                         <button onClick={()=>reactiverCollaborateur(c)} disabled={actionReactivation===c.id} style={{border:"1px solid #198754",color:"#198754",background:"white",borderRadius:6,padding:"8px 12px",cursor:actionReactivation===c.id?"wait":"pointer",fontWeight:700}}>{actionReactivation===c.id?"Réactivation…":"Réactiver"}</button>
                         <button onClick={()=>supprimerCollaborateur(c)} disabled={actionSuppression===c.id} style={{border:"1px solid #c00000",color:"white",background:"#c00000",borderRadius:6,padding:"8px 12px",cursor:actionSuppression===c.id?"wait":"pointer",fontWeight:700}}>{actionSuppression===c.id?"Suppression…":"Supprimer"}</button>
                       </div>
@@ -1336,52 +1253,6 @@ const { data: profil, error: erreurProfil } = await supabase
           </div>
         </section>
       </div>
-
-      {/* MODAL DROITS RH */}
-      {rhModal && (
-        <div style={overlayStyle}>
-          <div style={modalStyle}>
-            <h2 style={{marginTop:0}}>Droits RH — {nomCollaborateur(rhModal)}</h2>
-            <div style={{color:"#777",marginBottom:18}}>Exercice {exerciceActuel()}-{exerciceActuel()+1}</div>
-            <div style={gridStyle}>
-              <Champ label="CP reportés" value={rhForm.cp_reportes} onChange={v=>setRhForm(f=>({...f,cp_reportes:v}))} type="number" />
-              <Champ label="CP acquis — année courante" value={rhForm.cp_acquis} onChange={v=>setRhForm(f=>({...f,cp_acquis:v}))} type="number" />
-              <Champ label="CP ancienneté" value={rhForm.cp_anciennete} onChange={v=>setRhForm(f=>({...f,cp_anciennete:v}))} type="number" />
-              <Champ label="CP exceptionnel avec justificatif" value={rhForm.cp_exceptionnels_avec_justificatif} onChange={v=>setRhForm(f=>({...f,cp_exceptionnels_avec_justificatif:v}))} type="number" />
-              <Champ label="CP exceptionnel sans justificatif" value={rhForm.cp_exceptionnels_sans_justificatif} onChange={v=>setRhForm(f=>({...f,cp_exceptionnels_sans_justificatif:v}))} type="number" />
-              <Champ label="RTT acquis" value={rhForm.rtt_acquis} onChange={v=>setRhForm(f=>({...f,rtt_acquis:v}))} type="number" />
-              <Champ label="Compteur récupération initial" value={rhForm.compteur_recuperation_initial} onChange={v=>setRhForm(f=>({...f,compteur_recuperation_initial:v}))} type="number" />
-              <Champ label="Début période CP" value={rhForm.cp_periode_debut} onChange={v=>setRhForm(f=>({...f,cp_periode_debut:v}))} type="date" />
-              <Champ label="Fin période CP" value={rhForm.cp_periode_fin} onChange={v=>setRhForm(f=>({...f,cp_periode_fin:v}))} type="date" />
-            </div>
-            <div style={{marginTop:14,padding:12,background:"#f3f7ff",border:"1px solid #dbe5f5",borderRadius:7}}>
-              <strong>Ajouter des CP exceptionnels</strong>
-              <div style={{fontSize:12,color:"#555",margin:"2px 0 8px"}}>À tout moment de l’exercice (mariage, naissance, décès…) : les jours s’ajoutent au droit et sont enregistrés aussitôt.</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <input value={ajoutExc.jours} onChange={e=>setAjoutExc(a=>({...a,jours:e.target.value.replace(/[^0-9.,]/g,"")}))} placeholder="jours (ex. 1 ou 0,5)" inputMode="decimal" style={{...inputStyle,width:150}} />
-                <select value={ajoutExc.justificatif?"AVEC":"SANS"} onChange={e=>setAjoutExc(a=>({...a,justificatif:e.target.value==="AVEC"}))} style={{...inputStyle,width:"auto"}}>
-                  <option value="AVEC">avec justificatif</option>
-                  <option value="SANS">sans justificatif</option>
-                </select>
-                <button type="button" onClick={()=>void ajouterCPExceptionnels()} style={primaryButtonStyle}>+ Ajouter</button>
-              </div>
-            </div>
-            <div style={{marginTop:14,padding:12,background:"#f2faf3",border:"1px solid #9fd4a7",borderRadius:7}}>
-              <strong>Ajuster le compteur de récupération</strong>
-              <div style={{fontSize:12,color:"#555",margin:"2px 0 8px"}}>Ajoute (ex. 3) ou retire (ex. -2,5) des heures au compteur actuel, avec un motif. L’ajustement est appliqué tout de suite et gardé dans l’historique (page « Compteurs de récupération »).</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                <input value={ajustement.heures} onChange={e=>setAjustement(a=>({...a,heures:e.target.value.replace(/[^0-9.,\-+]/g,"")}))} placeholder="heures (± )" inputMode="decimal" style={{...inputStyle,width:120}} />
-                <input value={ajustement.motif} onChange={e=>setAjustement(a=>({...a,motif:e.target.value}))} placeholder="motif (obligatoire)" style={{...inputStyle,flex:"1 1 200px",width:"auto"}} />
-                <button type="button" onClick={()=>void ajusterCompteur()} style={primaryButtonStyle}>Ajuster</button>
-              </div>
-              {infoRH && <div style={{marginTop:8,color:"#18713b",fontWeight:700,fontSize:13}}>✓ {infoRH}</div>}
-              {erreur && <div style={{marginTop:8,color:"#c00000",fontWeight:700,fontSize:13}}>{erreur}</div>}
-            </div>
-            <div style={{marginTop:14,padding:12,background:"#fff8e1",borderRadius:7,fontSize:13}}>Le compteur de récupération peut dépasser +30 h (le collaborateur est alors prévenu sur son espace RH que la limite est de 30 h). Les soldes CP/RTT sont calculés avec les demandes RH validées.</div>
-            <div style={buttonRowStyle}><button onClick={()=>setRhModal(null)} style={secondaryButtonStyle}>Annuler</button><button onClick={()=>void enregistrerRH()} style={primaryButtonStyle}>Enregistrer les droits RH</button></div>
-          </div>
-        </div>
-      )}
 
       {/* MODAL MODIFICATION */}
       {editModal && (
