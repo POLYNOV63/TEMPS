@@ -16,7 +16,7 @@ import { supabase } from "@/lib/supabase";
    aucun montant et ce bloc ne s'affiche pas.
 ================================================================ */
 
-type Ligne = { id: string; cle: string; genre: string; parent_cle: string | null; numero_affaire: string | null; statut: string | null; disparue: boolean };
+type Ligne = { id: string; cle: string; genre: string; parent_cle: string | null; numero_affaire: string | null; statut: string | null; disparue: boolean; base_devis: string | null; client_id: string | null };
 type Montant = {
   ligne_id: string;
   montant: number;
@@ -38,24 +38,48 @@ const INACTIF = /perdu|annul/i;
 export default function BilanFinancierAffaire({ type, numero }: { type: string; numero: string }) {
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [heures, setHeures] = useState(0);
+  // « autorise » : la personne a le droit de voir les montants ; « message » : rien trouvé, et pourquoi
+  const [autorise, setAutorise] = useState(false);
+  const [message, setMessage] = useState("");
+  const [entete, setEntete] = useState<{ devis: string | null; client: string | null }>({ devis: null, client: null });
 
   useEffect(() => {
     let actif = true;
     setCommandes(null);
+    setMessage("");
     const base = numero.match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
     if (type !== "CBE" || !base) return;
 
     (async () => {
-      const { data: lignes } = await supabase
-        .from("suivi_lignes")
-        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue")
-        .eq("base_affaire", base);
-      const ls = ((lignes ?? []) as Ligne[]).filter((l) => !l.disparue && !INACTIF.test(l.statut ?? ""));
-      if (ls.length === 0) return;
+      // seuls l'administration, les responsables et la Direction voient les montants
+      const { data: droit, error: ed } = await supabase.rpc("polynov_peut_voir_pilotage");
+      if (!actif || (!ed && droit !== true)) return;
+      // fonction de droits indisponible : on n'affiche que si des montants sont lisibles
+      if (!ed) setAutorise(true);
 
-      const { data: mts } = await supabase.from("suivi_lignes_montants").select("*").in("ligne_id", ls.map((l) => l.id));
+      const { data: lignes, error: el } = await supabase
+        .from("suivi_lignes")
+        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue,base_devis,client_id")
+        .eq("base_affaire", base);
+      if (el) return actif && setMessage(`Lecture du Suivi d'affaire impossible : ${el.message}`);
+      const toutes = (lignes ?? []) as Ligne[];
+      const ls = toutes.filter((l) => !l.disparue && !INACTIF.test(l.statut ?? ""));
+      if (ls.length === 0) return actif && setMessage(`CBE${base} n'est pas (ou plus) dans le Suivi d'affaire BE : pas de montant à afficher.`);
+
+      // n° de devis et client : ceux de la commande de base
+      const baseLigne = ls.find((l) => l.genre === "BASE") ?? ls[0];
+      let client: string | null = null;
+      if (baseLigne.client_id) {
+        const { data: c } = await supabase.from("suivi_clients").select("nom_abrege").eq("id", baseLigne.client_id).maybeSingle();
+        client = (c as { nom_abrege: string } | null)?.nom_abrege ?? null;
+      }
+      if (actif) setEntete({ devis: baseLigne.base_devis, client });
+
+      const { data: mts, error: em } = await supabase.from("suivi_lignes_montants").select("*").in("ligne_id", ls.map((l) => l.id));
+      if (em) return actif && setMessage(`Lecture des montants impossible : ${em.message}`);
       const montants = new Map(((mts ?? []) as Montant[]).map((m) => [m.ligne_id, m]));
-      if (montants.size === 0) return; // pas le droit de voir les montants : on n'affiche rien
+      if (montants.size > 0 && actif) setAutorise(true);
+      if (montants.size === 0) return actif && setMessage(`Aucun montant pour CBE${base} dans le Suivi d'affaire BE (synchronisation à refaire ?).`);
 
       // les échéances / lots portent parfois la ventilation à la place de leur commande
       const decoupages = new Map<string, { etudes: number; negoce: number; achats: number }>();
@@ -103,7 +127,14 @@ export default function BilanFinancierAffaire({ type, numero }: { type: string; 
     };
   }, [type, numero]);
 
-  if (!commandes || commandes.length === 0) return null;
+  if (!autorise) return null;
+  if (!commandes || commandes.length === 0) {
+    return message ? (
+      <section style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 14, marginBottom: 20, color: "#5b6168", fontSize: 14 }}>
+        <strong style={{ color: "#252525" }}>Vendu et achats</strong> — {message}
+      </section>
+    ) : null;
+  }
 
   const total = commandes.reduce(
     (t, c) => ({ vendu: t.vendu + c.vendu, etudes: t.etudes + c.etudes, negoce: t.negoce + c.negoce, achats: t.achats + c.achats }),
@@ -118,7 +149,16 @@ export default function BilanFinancierAffaire({ type, numero }: { type: string; 
 
   return (
     <section style={carte} aria-label="Partie financière de l'affaire">
-      <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Vendu et achats</div>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+        <span style={{ fontSize: 18, fontWeight: 700 }}>Vendu et achats</span>
+        <span style={{ fontWeight: 800, color: "#8f0000" }}>CBE{numero.match(/^\d+/)?.[0]}</span>
+        {entete.devis && (
+          <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontWeight: 800, color: "#5b6168" }}>
+            DBE{entete.devis}
+          </span>
+        )}
+        {entete.client && <span style={{ fontWeight: 700, color: "#5b6168" }}>· {entete.client}</span>}
+      </div>
       <div style={{ fontSize: 13, color: "#5b6168", marginBottom: 14 }}>
         D’après le Suivi d’affaire BE, commande de base et avenants (hors commandes annulées). Visible par l’administration, les responsables et la
         Direction.
