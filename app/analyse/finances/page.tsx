@@ -91,6 +91,8 @@ function FinancesContenu() {
   const [totalAnnuel, setTotalAnnuel] = useState("");
   const [evolution, setEvolution] = useState("0");
   const [voirAffaires, setVoirAffaires] = useState(false);
+  // montant cliqué dans le tableau mois par mois (activité ou imputation)
+  const [detail, setDetail] = useState<{ mois: string; groupe?: Groupe; imputation?: string } | null>(null);
   // la Direction consulte : prévisionnel et coût de structure restent saisis par l'administration
   const [estAdmin, setEstAdmin] = useState(false);
 
@@ -578,11 +580,26 @@ function FinancesContenu() {
   let cumR = 0;
   let cumP = 0;
 
-  const ligneValeurs = (libelle: string, valeurs: number[], style?: CSSProperties) => (
+  const ligneValeurs = (libelle: string, valeurs: number[], style?: CSSProperties, surClic?: (i: number) => void) => (
     <tr key={libelle}>
       <td style={{ ...tdG, ...style }}>{libelle}</td>
       {valeurs.map((v, i) => (
-        <td key={i} style={{ ...td, ...style }}>{Math.abs(v) > 0.5 ? keuros(v) : "—"}</td>
+        <td key={i} style={{ ...td, ...style }}>
+          {Math.abs(v) > 0.5 && surClic ? (
+            <button
+              type="button"
+              title="Voir le détail de ce montant"
+              onClick={() => surClic(i)}
+              style={{ all: "unset", cursor: "pointer", textDecoration: "underline dotted", color: libelle === "Non ventilé" ? "#7a3e00" : undefined, fontWeight: libelle === "Non ventilé" ? 800 : undefined }}
+            >
+              {keuros(v)}
+            </button>
+          ) : Math.abs(v) > 0.5 ? (
+            keuros(v)
+          ) : (
+            "—"
+          )}
+        </td>
       ))}
       <td style={{ ...td, fontWeight: 800, ...style }}>{keuros(valeurs.reduce((t, v) => t + v, 0))}</td>
     </tr>
@@ -762,12 +779,73 @@ function FinancesContenu() {
                   {ligneValeurs(`Réalisé ${exercice - 1}-${exercice}`, vue.realiseN1, { color: C.gris, fontWeight: 400 })}
 
                   <tr><td colSpan={14} style={{ ...tdG, background: "#eef0f3", fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>Réalisé par imputation</td></tr>
-                  {vue.parImputation.map((r) => ligneValeurs(r.cle, r.valeurs))}
+                  {vue.parImputation.map((r) => ligneValeurs(r.cle, r.valeurs, undefined, (i) => setDetail({ mois: mois[i], imputation: r.cle })))}
 
                   <tr><td colSpan={14} style={{ ...tdG, background: "#eef0f3", fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>Réalisé par activité</td></tr>
-                  {vue.parActivite.map((r) => ligneValeurs(r.cle, r.valeurs))}
+                  {vue.parActivite.map((r) => ligneValeurs(r.cle, r.valeurs, undefined, (i) => setDetail({ mois: mois[i], groupe: r.cle })))}
                 </tbody>
               </table>
+
+              {/* DETAIL_CLIQUABLE : ce qui compose le montant cliqué */}
+              {detail && (() => {
+                const lignesDetail = mouvements
+                  .filter((x) => x.date.startsWith(detail.mois))
+                  .map((x) => ({ x, part: detail.groupe ? x.parGroupe[detail.groupe] : (x.imputation ?? "—") === detail.imputation ? x.montant : 0 }))
+                  .filter((l) => Math.abs(l.part) > 0.5)
+                  .sort((a, b) => Math.abs(b.part) - Math.abs(a.part));
+                const total = lignesDetail.reduce((t, l) => t + l.part, 0);
+                const sources: Record<string, string> = { LIVRAISON: "Forfait livré", ECHEANCE: "Échéance / lot livré", RELEVE: "Relevé PE / PI", HISTORIQUE: "Historique (ancien classeur)" };
+                const raison: Record<string, string> = {
+                  LIVRAISON: "Suivi d’affaire BE : aucune colonne « Montant Méca / Calcul / Elec-Pneu / Scan / Autre / Négoce » remplie pour cette ligne (ni pour ses échéances) : à compléter dans le classeur.",
+                  ECHEANCE: "Suivi d’affaire BE : l’échéance (ou le lot) n’a pas de montant par discipline : à compléter dans le classeur.",
+                  RELEVE: "Relevé PE / PI : la ligne n’a pas d’activité, ou son activité n’est rattachée à aucune colonne du Suivi d’affaire (correspondance des activités).",
+                  HISTORIQUE: "Ancien classeur : le total ne correspond pas à Méca + Calcul + Elec.",
+                };
+                const moisLong = new Date(`${detail.mois}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+                return (
+                  <div style={{ marginTop: 14, padding: 14, border: `2px solid ${C.rouge}`, borderRadius: 10, background: "#fffafa" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <strong style={{ fontSize: 16 }}>
+                        {detail.groupe ?? detail.imputation} — {moisLong} : {total.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}
+                      </strong>
+                      <span style={{ flex: 1 }} />
+                      <button type="button" onClick={() => setDetail(null)} style={page.btnSecondaire}>Fermer ✕</button>
+                    </div>
+                    {lignesDetail.length === 0 ? (
+                      <p style={{ margin: 0, color: C.gris }}>Aucune ligne.</p>
+                    ) : (
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                          <thead>
+                            <tr>
+                              <th style={thG}>Affaire</th>
+                              <th style={thG}>Source</th>
+                              <th style={thG}>Client</th>
+                              <th style={thG}>Imputation</th>
+                              <th style={th}>Montant du mouvement</th>
+                              <th style={th}>{detail.groupe ? `Dont ${detail.groupe}` : "Montant"}</th>
+                              {detail.groupe === "Non ventilé" && <th style={thG}>Pourquoi / où corriger</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {lignesDetail.map(({ x, part }, i) => (
+                              <tr key={i}>
+                                <td style={{ ...tdG, fontWeight: 800 }}>{x.base_affaire}</td>
+                                <td style={tdG}>{sources[x.source] ?? x.source}</td>
+                                <td style={tdG}>{x.client ?? "—"}</td>
+                                <td style={tdG}>{x.imputation ?? "—"}</td>
+                                <td style={td}>{x.montant.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €</td>
+                                <td style={{ ...td, fontWeight: 800 }}>{part.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €</td>
+                                {detail.groupe === "Non ventilé" && <td style={{ ...tdG, fontSize: 12, color: "#7a3e00", whiteSpace: "normal", minWidth: 260 }}>{raison[x.source] ?? ""}</td>}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {estAdmin && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
