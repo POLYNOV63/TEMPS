@@ -439,10 +439,11 @@ function BilanContenu() {
     l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot (découpage)" : l.genre === "ECHEANCE" ? "Échéance (découpage)" : "Devis";
 
   return (
-    <main style={page.fond}>
+    <main style={page.fond} className="bilan-page">
+      <style>{CSS_MOBILE_BILAN}</style>
       <EnTetePage section="Bilan affaire" />
 
-      <div style={{ ...page.contenu, maxWidth: 1200 }}>
+      <div className="bilan-contenu" style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ marginBottom: 16 }}>
           <h1 style={page.titre}>Bilan affaire</h1>
           <p style={page.sousTitre}>
@@ -800,6 +801,22 @@ function BilanContenu() {
     </main>
   );
 }
+
+/* BILAN_MOBILE : affichage téléphone (< 760 px) — marges réduites, tuiles sur deux colonnes,
+   tableaux qui défilent dans leur cadre, champs et boutons plus grands. Rien ne change sur ordinateur. */
+const CSS_MOBILE_BILAN = `
+@media (max-width: 760px) {
+  .bilan-contenu { padding: 10px 10px 40px !important; }
+  .bilan-page h1 { font-size: 24px !important; }
+  .bilan-page section { padding: 12px !important; }
+  .bilan-page table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  .bilan-page input, .bilan-page select { font-size: 16px !important; min-height: 44px; max-width: none !important; flex: 1 1 100%; }
+  .bilan-page form button[type="submit"] { flex: 1 1 100%; min-height: 48px; }
+  .bilan-page [role="status"], .bilan-page .tuile { min-width: 0; }
+  .bilan-page div[style*="grid-template-columns: 72px"] { grid-template-columns: 56px 1fr 52px !important; }
+  .bilan-page div[style*="grid-template-columns: 72px"] > span:last-child { grid-column: 2 / 4; font-size: 11px !important; }
+}
+`;
 
 export default function BilanAffairePage() {
   return (
