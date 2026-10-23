@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { chargerTout } from "@/lib/pilotageDonnees";
 import { exporterExcelPolynov } from "@/lib/excelPolynov";
 import type { Groupe, MouvementCA } from "@/lib/finances";
+import { baseAffaire, chargerFacturationMois, type LigneFacturationMois } from "@/lib/facturationMois";
 
 /* ===============================================================
    FINANCES - DÉTAIL D'UN MONTANT CLIQUÉ
@@ -17,7 +18,7 @@ import type { Groupe, MouvementCA } from "@/lib/finances";
    export Excel aux couleurs de POLYNOV.
 ================================================================ */
 
-export type DetailDemande = { mois: string; groupe?: Groupe; imputation?: string; ligne?: "REALISE" | "ATTENDU" };
+export type DetailDemande = { mois: string; groupe?: Groupe; imputation?: string; ligne?: "REALISE" | "ATTENDU" | "ATTERRISSAGE" };
 
 const SOURCES: Record<string, string> = {
   LIVRAISON: "Forfait livré",
@@ -53,7 +54,12 @@ type Ligne = {
   raison: string;
 };
 
-export default function DetailMontant({
+/* clic sur l'atterrissage : rapprochement avec la page Facturation ; sinon, le détail du montant */
+export default function DetailMontant(props: { detail: DetailDemande; mouvements: MouvementCA[]; attendus: MouvementCA[]; onFermer: () => void }) {
+  return props.detail.ligne === "ATTERRISSAGE" ? <Rapprochement {...props} /> : <DetailListe {...props} />;
+}
+
+function DetailListe({
   detail,
   mouvements,
   attendus,
@@ -228,6 +234,193 @@ export default function DetailMontant({
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ===============================================================
+   RAPPROCHEMENT : ATTERRISSAGE DE FINANCES  ↔  PAGE FACTURATION
+
+   Pour le mois cliqué, affaire par affaire : ce que compte Finances
+   (réalisé + attendu) et ce que compte Facturation (livré, prévu, PE / PI),
+   l'écart et sa raison. Par défaut, seules les affaires en écart.
+================================================================ */
+
+type LigneRappro = {
+  base: string;
+  client: string;
+  finances: number;
+  sourcesFinances: string;
+  facturation: number; // facturable (livré + prévu + PE / PI facturables)
+  nonFacturable: number;
+  typesFacturation: string;
+  ecart: number; // Finances − Facturation (facturable)
+  raison: string;
+};
+
+function Rapprochement({ detail, mouvements, attendus, onFermer }: { detail: DetailDemande; mouvements: MouvementCA[]; attendus: MouvementCA[]; onFermer: () => void }) {
+  const [fact, setFact] = useState<LigneFacturationMois[] | null>(null);
+  const [erreur, setErreur] = useState("");
+  const [toutes, setToutes] = useState(false);
+
+  useEffect(() => {
+    let actif = true;
+    setFact(null);
+    chargerFacturationMois(detail.mois)
+      .then((l) => actif && setFact(l))
+      .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement de la facturation impossible."));
+    return () => {
+      actif = false;
+    };
+  }, [detail.mois]);
+
+  const lignes = useMemo<LigneRappro[]>(() => {
+    if (!fact) return [];
+    const m = new Map<string, LigneRappro & { _sources: Set<string>; _types: Set<string> }>();
+    const prendre = (base: string) => {
+      const e = m.get(base) ?? { base, client: "", finances: 0, sourcesFinances: "", facturation: 0, nonFacturable: 0, typesFacturation: "", ecart: 0, raison: "", _sources: new Set<string>(), _types: new Set<string>() };
+      m.set(base, e);
+      return e;
+    };
+    for (const x of [...mouvements, ...attendus]) {
+      if (!x.date.startsWith(detail.mois)) continue;
+      const e = prendre(baseAffaire(x.base_affaire) || x.base_affaire);
+      e.finances += x.montant;
+      e._sources.add(libelleSource(x));
+      if (!e.client && x.client) e.client = x.client;
+    }
+    for (const f of fact) {
+      const e = prendre(f.base || f.numero);
+      if (f.facturable) e.facturation += f.montant;
+      else e.nonFacturable += f.montant;
+      e._types.add(f.facturable ? f.type : `${f.type} non facturable`);
+      if (!e.client && f.client) e.client = f.client;
+    }
+    return [...m.values()]
+      .map((e) => {
+        const ecart = Math.round((e.finances - e.facturation) * 100) / 100;
+        let raison = "✓ identique";
+        if (Math.abs(ecart) >= 1) {
+          if (e.facturation === 0 && e.nonFacturable === 0) {
+            raison = [...e._sources].some((s) => s.startsWith("Historique"))
+              ? "Absent de Facturation : ligne du classeur non rattachée au relevé (historique)"
+              : [...e._sources].some((s) => s.includes("prestation prévue"))
+                ? "Absent de Facturation : PE / PI prévue dans Finances mais rien dans le relevé du mois"
+                : "Absent de Facturation";
+          } else if (e.finances === 0) raison = "Absent de Finances";
+          else if (Math.abs(ecart - e.nonFacturable) < 1) raison = "Non facturable : compté dans Finances, exclu de Facturation";
+          else raison = "Montant différent";
+        }
+        return { base: e.base, client: e.client, finances: e.finances, sourcesFinances: [...e._sources].join(" + "), facturation: e.facturation, nonFacturable: e.nonFacturable, typesFacturation: [...e._types].join(" + "), ecart, raison };
+      })
+      .sort((a, b) => Math.abs(b.ecart) - Math.abs(a.ecart) || a.base.localeCompare(b.base, "fr", { numeric: true }));
+  }, [fact, mouvements, attendus, detail.mois]);
+
+  const visibles = toutes ? lignes : lignes.filter((l) => Math.abs(l.ecart) >= 1);
+  const totalFin = lignes.reduce((t, l) => t + l.finances, 0);
+  const totalFact = lignes.reduce((t, l) => t + l.facturation, 0);
+  const parRaison = new Map<string, number>();
+  for (const l of lignes) if (Math.abs(l.ecart) >= 1) parRaison.set(l.raison, (parRaison.get(l.raison) ?? 0) + l.ecart);
+  const moisLong = new Date(`${detail.mois}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+  const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 8px" };
+  const td: CSSProperties = { ...page.td, padding: "8px 8px" };
+  const tdD: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+
+  function exporter() {
+    void exporterExcelPolynov(`Rapprochement_${detail.mois}`, [
+      {
+        nom: "Rapprochement",
+        titre: `Rapprochement Finances ↔ Facturation — ${moisLong}`,
+        sousTitre: "Finances = réalisé + attendu (atterrissage). Facturation = livré + prévu + PE / PI facturables. Écart = Finances − Facturation.",
+        colonnes: [
+          { titre: "Affaire", cle: "base", largeur: 10 },
+          { titre: "Client", cle: "client", largeur: 18 },
+          { titre: "Finances", cle: "finances", format: "euros", largeur: 14, total: true },
+          { titre: "Sources Finances", cle: "sourcesFinances", largeur: 40 },
+          { titre: "Facturation", cle: "facturation", format: "euros", largeur: 14, total: true },
+          { titre: "Non facturable", cle: "nonFacturable", format: "euros", largeur: 14, total: true },
+          { titre: "Lignes Facturation", cle: "typesFacturation", largeur: 28 },
+          { titre: "Écart", cle: "ecart", format: "euros", largeur: 12, total: true },
+          { titre: "Raison", cle: "raison", largeur: 50 },
+        ],
+        lignes,
+        alerte: (l) => Math.abs(Number(l.ecart)) >= 1,
+      },
+    ]);
+  }
+
+  return (
+    <div style={{ marginTop: 14, padding: 14, border: `2px solid ${C.rouge}`, borderRadius: 10, background: "#fffafa" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <strong style={{ fontSize: 16 }}>Rapprochement avec la page Facturation — {moisLong}</strong>
+        <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+          <input type="checkbox" checked={toutes} onChange={(e) => setToutes(e.target.checked)} /> voir aussi les affaires identiques
+        </label>
+        <button type="button" onClick={exporter} disabled={!fact} style={page.btnPrimaire}>Exporter en Excel</button>
+        <button type="button" onClick={onFermer} style={page.btnSecondaire}>Fermer ✕</button>
+      </div>
+
+      {erreur && <p style={{ color: "#b3261e", fontWeight: 700 }}>{erreur}</p>}
+      {!fact && !erreur && <p style={{ color: C.gris }}>Calcul de la facturation du mois…</p>}
+
+      {fact && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginBottom: 10, fontSize: 15 }}>
+            <span>Atterrissage Finances : <strong>{euros(totalFin)}</strong></span>
+            <span>Facturation (facturable) : <strong>{euros(totalFact)}</strong></span>
+            <span>Écart : <strong style={{ color: Math.abs(totalFin - totalFact) >= 1 ? "#b3261e" : "#1b5e20" }}>{euros(totalFin - totalFact)}</strong></span>
+          </div>
+          {parRaison.size > 0 && (
+            <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 14 }}>
+              {[...parRaison.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([r, v]) => (
+                <li key={r}>
+                  {r} : <strong>{euros(v)}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+          {visibles.length === 0 ? (
+            <p style={{ margin: 0, color: "#1b5e20", fontWeight: 700 }}>✓ Aucune différence : les deux pages comptent les mêmes affaires, pour les mêmes montants.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Affaire</th>
+                    <th style={th}>Client</th>
+                    <th style={{ ...th, textAlign: "right" }}>Finances</th>
+                    <th style={th}>Sources Finances</th>
+                    <th style={{ ...th, textAlign: "right" }}>Facturation</th>
+                    <th style={th}>Lignes Facturation</th>
+                    <th style={{ ...th, textAlign: "right" }}>Écart</th>
+                    <th style={th}>Raison</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibles.map((l) => (
+                    <tr key={l.base} style={Math.abs(l.ecart) >= 1 ? { background: "#fff7c2" } : undefined}>
+                      <td style={{ ...td, fontWeight: 800 }}>{l.base}</td>
+                      <td style={td}>{l.client || "—"}</td>
+                      <td style={tdD}>{l.finances ? euros(l.finances) : "—"}</td>
+                      <td style={{ ...td, fontSize: 12, color: C.gris }}>{l.sourcesFinances || "—"}</td>
+                      <td style={tdD}>
+                        {l.facturation ? euros(l.facturation) : "—"}
+                        {l.nonFacturable > 0 && <div style={{ fontSize: 11, color: "#7a3e00" }}>+ {euros(l.nonFacturable)} non facturable</div>}
+                      </td>
+                      <td style={{ ...td, fontSize: 12, color: C.gris }}>{l.typesFacturation || "—"}</td>
+                      <td style={{ ...tdD, fontWeight: 800, color: Math.abs(l.ecart) >= 1 ? "#b3261e" : "#1b5e20" }}>{euros(l.ecart)}</td>
+                      <td style={{ ...td, fontSize: 12.5 }}>{l.raison}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

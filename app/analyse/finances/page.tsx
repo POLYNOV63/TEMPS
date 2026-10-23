@@ -746,7 +746,7 @@ function FinancesContenu() {
                   </tr>
                   {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 }, (i) => setDetail({ mois: mois[i], ligne: "REALISE" }))}
                   {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" }, (i) => setDetail({ mois: mois[i], ligne: "ATTENDU" }))}
-                  {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" })}
+                  {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" }, (i) => setDetail({ mois: mois[i], ligne: "ATTERRISSAGE" }))}
                   <tr>
                     <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
                     {mois.map((m, i) => {
