@@ -26,6 +26,10 @@ import { exporterExcelPolynov } from "@/lib/excelPolynov";
 
    Numéro ARC Louxor, client et STATUT : colonnes du Suivi d'affaire BE.
    Alerte quand le n° Louxor manque sur une commande reçue ou livrée.
+   PRÉVU : les commandes reçues (et intentions) pas encore livrées, attendues
+   dans le mois d'après la date de livraison estimée du Suivi d'affaire BE
+   (même règle que le CA attendu de Finances), affichées en bleu, à part
+   du total « à facturer » ; « Prévisionnel du mois » = les deux.
    Les totaux « à facturer » N'INCLUENT PAS les lignes non facturables
    (affichées à part). Colonnes triables ; export Excel mis en page.
 ================================================================ */
@@ -42,6 +46,7 @@ type LigneSuivi = {
   designation: string | null;
   client_id: string | null;
   date_livraison: string | null;
+  date_livraison_estimee: string | null;
   numero_arc_louxor: string | null;
   base_devis: string | null;
   disparue: boolean;
@@ -58,6 +63,10 @@ type LigneForfait = {
   statut: string | null; // statut de la ligne dans le Suivi d'affaire BE
   statutBase: string | null; // statut de la commande de base (si différent : échéance, avenant)
   dbe: string | null;
+  /* PREVU_DU_MOIS : commande reçue / intention pas encore livrée, attendue ce mois-ci
+     (date de livraison estimée du Suivi d'affaire BE ; déjà dépassée = comptée au mois en cours) */
+  prevu: boolean;
+  retard: boolean;
 };
 type LignePrestation = {
   numero: string;
@@ -88,7 +97,9 @@ const numeroDbe = (v: string | null | undefined) => {
 
 /* une ligne du tableau unique : forfait livré ou PE / PI du relevé */
 type LigneFacturation = {
-  type: "Forfait" | "PE / PI";
+  type: "Forfait" | "Forfait prévu" | "PE / PI";
+  prevu: boolean;
+  retard: boolean;
   client: string;
   numero: string;
   dbe: string;
@@ -128,7 +139,7 @@ function FacturationContenu() {
       chargerTout<LigneSuivi>((a, b) =>
         supabase
           .from("suivi_lignes")
-          .select("id,cle,genre,parent_cle,base_affaire,numero_affaire,statut,imputation,designation,client_id,date_livraison,numero_arc_louxor,base_devis,disparue")
+          .select("id,cle,genre,parent_cle,base_affaire,numero_affaire,statut,imputation,designation,client_id,date_livraison,date_livraison_estimee,numero_arc_louxor,base_devis,disparue")
           .order("cle")
           .range(a, b)
       ),
@@ -243,9 +254,47 @@ function FacturationContenu() {
       decoupages.set(l.parent_cle, (decoupages.get(l.parent_cle) ?? 0) + ((m?.echeances || m?.montant) ?? 0));
     }
     const res: LigneForfait[] = [];
+    const moisCourant = new Date().toISOString().slice(0, 7);
+    const enAttente = (l: LigneSuivi) => l.statut === "Commande reçue" || l.statut === "Intention de commande";
+    // ce que les découpages d'une commande couvrent déjà : livrés, ou attendus à leur propre date
+    const couverts = new Map<string, number>();
     for (const l of suivi) {
-      if (l.disparue || l.statut !== "Livrée" || !l.date_livraison || !l.date_livraison.startsWith(mois)) continue;
-      if (!["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre)) continue;
+      if ((l.genre !== "ECHEANCE" && l.genre !== "LOT") || !l.parent_cle || l.disparue) continue;
+      if (l.statut !== "Livrée" && !(enAttente(l) && l.date_livraison_estimee)) continue;
+      const m = montants.get(l.id);
+      couverts.set(l.parent_cle, (couverts.get(l.parent_cle) ?? 0) + ((m?.echeances || m?.montant) ?? 0));
+    }
+    for (const l of suivi) {
+      if (l.disparue || !["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre)) continue;
+      // prévu : pas encore livré, attendu ce mois-ci d'après la date de livraison estimée
+      if (enAttente(l)) {
+        const d = l.date_livraison_estimee;
+        const retard = Boolean(d && d.slice(0, 7) < moisCourant && mois === moisCourant);
+        if (!d || !(d.startsWith(mois) || retard)) continue;
+        const baseP = baseDe(l);
+        const imputationP = baseP.imputation ?? l.imputation;
+        if (prestation(imputationP)) continue;
+        const mp = montants.get(l.id);
+        const montantP =
+          l.genre === "ECHEANCE" || l.genre === "LOT" ? (mp?.echeances || mp?.montant) ?? 0 : Math.max(0, (mp?.montant ?? 0) - (couverts.get(l.cle) ?? 0));
+        if (montantP <= 0.004) continue;
+        res.push({
+          numero: l.genre === "BASE" || l.genre === "AVENANT" ? l.numero_affaire ?? l.cle : l.cle,
+          arc: l.numero_arc_louxor?.trim() || null,
+          dbe: numeroDbe(l.base_devis ?? baseP.base_devis),
+          client: (l.client_id ?? baseP.client_id) ? clients.get((l.client_id ?? baseP.client_id) as string) ?? null : null,
+          imputation: imputationP,
+          designation: baseP.designation ?? l.designation,
+          livraison: d,
+          montant: Math.round(montantP * 100) / 100,
+          statut: l.statut,
+          statutBase: baseP !== l ? baseP.statut : null,
+          prevu: true,
+          retard,
+        });
+        continue;
+      }
+      if (l.statut !== "Livrée" || !l.date_livraison || !l.date_livraison.startsWith(mois)) continue;
       const base = baseDe(l);
       const imputation = base.imputation ?? l.imputation;
       if (prestation(imputation)) continue;
@@ -265,6 +314,8 @@ function FacturationContenu() {
         montant: Math.round(montant * 100) / 100,
         statut: l.statut,
         statutBase: base !== l ? base.statut : null,
+        prevu: false,
+        retard: false,
       });
     }
     return res.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
@@ -278,7 +329,9 @@ function FacturationContenu() {
   const lignes = useMemo<LigneFacturation[]>(
     () => [
       ...forfaits.map((f) => ({
-        type: "Forfait" as const,
+        type: f.prevu ? ("Forfait prévu" as const) : ("Forfait" as const),
+        prevu: f.prevu,
+        retard: f.retard,
         client: f.client ?? "",
         numero: f.numero,
         dbe: f.dbe ?? "",
@@ -299,6 +352,8 @@ function FacturationContenu() {
       })),
       ...prestations.map((p) => ({
         type: "PE / PI" as const,
+        prevu: false,
+        retard: false,
         client: p.client ?? "",
         numero: p.numero,
         dbe: p.dbe ?? "",
@@ -337,7 +392,10 @@ function FacturationContenu() {
     [lignes, tri]
   );
 
-  const totalForfaits = forfaits.reduce((t, f) => t + f.montant, 0);
+  const forfaitsLivres = forfaits.filter((f) => !f.prevu);
+  const forfaitsPrevus = forfaits.filter((f) => f.prevu);
+  const totalForfaits = forfaitsLivres.reduce((t, f) => t + f.montant, 0);
+  const totalPrevu = forfaitsPrevus.reduce((t, f) => t + f.montant, 0);
   const nonFacturables = prestations.filter((p) => !p.facturable);
   const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);
   // le total « à facturer » des PE / PI N'INCLUT PAS les lignes non facturables
@@ -369,6 +427,7 @@ function FacturationContenu() {
           { titre: "Livrée le", cle: "livraison", format: "date", largeur: 11 },
           { titre: "Statut Suivi d'affaire", cle: "statutTexte", largeur: 24 },
           { titre: "Montant facturable", cle: "montantFacturable", format: "euros", largeur: 16, total: true },
+          { titre: "Prévu (pas encore livré)", cle: "montantPrevu", format: "euros", largeur: 16, total: true },
           { titre: "Non facturable", cle: "montantNon", format: "euros", largeur: 14, total: true },
           { titre: "Alerte", cle: "alerte", largeur: 30 },
         ],
@@ -385,7 +444,8 @@ function FacturationContenu() {
           taux: l.taux,
           livraison: l.livraison,
           statutTexte: l.statutBase ? `${l.statut} (commande : ${l.statutBase})` : l.statut,
-          montantFacturable: l.facturable ? l.montant : null,
+          montantFacturable: l.facturable && !l.prevu ? l.montant : null,
+          montantPrevu: l.prevu ? l.montant : null,
           montantNon: l.facturable ? null : l.montant,
           alerte: [l.facturable ? "" : "NON FACTURABLE", l.alerteLouxor ? "N° Louxor manquant" : ""].filter(Boolean).join(" · "),
         })),
@@ -401,9 +461,11 @@ function FacturationContenu() {
           { titre: "Lignes", cle: "lignes", format: "nombre", largeur: 10 },
         ],
         lignes: [
-          { poste: "Forfaits livrés", montant: totalForfaits, lignes: forfaits.length },
+          { poste: "Forfaits livrés", montant: totalForfaits, lignes: forfaitsLivres.length },
           { poste: "PE / PI facturables", montant: totalPrestations, lignes: prestations.length - nonFacturables.length },
-          { poste: "TOTAL À FACTURER (hors non facturable)", montant: totalForfaits + totalPrestations, lignes: forfaits.length + prestations.length - nonFacturables.length },
+          { poste: "TOTAL À FACTURER (hors non facturable)", montant: totalForfaits + totalPrestations, lignes: forfaitsLivres.length + prestations.length - nonFacturables.length },
+          { poste: "Prévu : commandes reçues pas encore livrées (date de livraison estimée)", montant: totalPrevu, lignes: forfaitsPrevus.length },
+          { poste: "PRÉVISIONNEL DU MOIS (à facturer + prévu)", montant: totalForfaits + totalPrestations + totalPrevu, lignes: forfaitsLivres.length + forfaitsPrevus.length + prestations.length - nonFacturables.length },
           { poste: "Non facturable (NON compté dans le total)", montant: totalNonFacturable, lignes: nonFacturables.length },
         ],
         alerte: (l) => String(l.poste).startsWith("Non facturable") && Number(l.montant) > 0,
@@ -457,7 +519,9 @@ function FacturationContenu() {
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <Tuile libelle="À facturer" valeur={euros(totalForfaits + totalPrestations)} sous="forfaits + PE / PI facturables · sans le non facturable" />
-              <Tuile libelle="Forfaits livrés" valeur={euros(totalForfaits)} sous={`${forfaits.length} lignes`} />
+              <Tuile libelle="Forfaits livrés" valeur={euros(totalForfaits)} sous={`${forfaitsLivres.length} lignes`} />
+              <Tuile libelle="Prévu, pas encore livré" valeur={euros(totalPrevu)} sous={`${forfaitsPrevus.length} commande(s) · date de livraison estimée`} />
+              <Tuile libelle="Prévisionnel du mois" valeur={euros(totalForfaits + totalPrestations + totalPrevu)} sous="à facturer + prévu" />
               <Tuile libelle="PE / PI facturables" valeur={euros(totalPrestations)} sous={`${prestations.length - nonFacturables.length} lignes`} />
               <Tuile
                 libelle="Non facturable"
@@ -510,7 +574,7 @@ function FacturationContenu() {
                   </thead>
                   <tbody>
                     {lignesTriees.map((l, i) => (
-                      <tr key={`${l.type}-${l.numero}-${l.personne}-${i}`} style={l.facturable && !l.alerteLouxor ? undefined : { background: "#fff7c2" }}>
+                      <tr key={`${l.type}-${l.numero}-${l.personne}-${i}`} style={!l.facturable || l.alerteLouxor ? { background: "#fff7c2" } : l.prevu ? { background: "#f3f7ff", fontStyle: "italic" } : undefined}>
                         <td style={{ ...td, fontWeight: 700 }}>{l.client || "—"}</td>
                         <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{l.numero}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{l.dbe || "—"}</td>
@@ -521,7 +585,10 @@ function FacturationContenu() {
                         <td style={{ ...td, fontWeight: 800 }}>{l.personne}</td>
                         <td style={tdD}>{l.quantite === null ? "" : `${nombre(l.quantite)} ${l.unite}`}</td>
                         <td style={tdD}>{l.taux !== null ? `${nombre(l.taux)} €/${l.unite}` : ""}</td>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{l.livraison ? new Date(`${l.livraison}T00:00:00`).toLocaleDateString("fr-FR") : ""}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>
+                          {l.livraison ? new Date(`${l.livraison}T00:00:00`).toLocaleDateString("fr-FR") : ""}
+                          {l.prevu && <div style={{ fontSize: 11, color: l.retard ? "#b3261e" : "#2455a4", fontStyle: "normal", fontWeight: 700 }}>{l.retard ? "estimée, dépassée" : "estimée"}</div>}
+                        </td>
                         <td style={{ ...td, fontWeight: l.facturable ? 400 : 800, color: l.facturable ? undefined : "#7a3e00" }}>
                           {l.facturable ? l.statut || "—" : `⚠ ${l.statut} — non facturable`}
                           {l.statutBase && <div style={{ fontSize: 12, color: C.gris }}>commande : {l.statutBase}</div>}
@@ -535,9 +602,21 @@ function FacturationContenu() {
                       </tr>
                     ))}
                     <tr>
-                      <td colSpan={12} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total à facturer (forfaits + PE / PI facturables)</td>
+                      <td colSpan={12} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total à facturer (forfaits livrés + PE / PI facturables)</td>
                       <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalForfaits + totalPrestations)}</td>
                     </tr>
+                    {forfaitsPrevus.length > 0 && (
+                      <>
+                        <tr>
+                          <td colSpan={12} style={{ ...td, textAlign: "right", color: "#2455a4" }}>Prévu : commandes reçues pas encore livrées (en bleu)</td>
+                          <td style={{ ...tdD, color: "#2455a4", fontWeight: 700 }}>{euros(totalPrevu)}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={12} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Prévisionnel du mois (à facturer + prévu)</td>
+                          <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalForfaits + totalPrestations + totalPrevu)}</td>
+                        </tr>
+                      </>
+                    )}
                     {nonFacturables.length > 0 && (
                       <tr>
                         <td colSpan={12} style={{ ...td, textAlign: "right", color: "#7a3e00" }}>Non facturable — NON compté ci-dessus</td>
