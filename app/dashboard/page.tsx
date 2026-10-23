@@ -38,6 +38,9 @@ type Feuille = {
 
 type EtatFeuille = "complete" | "incomplete" | "manquante";
 
+/* FEUILLES_A_RELANCER_V2 : état des feuilles de la semaine dernière */
+type BilanRelance = { semaine: string; transmises: number; completes: number; incompletes: number; nonSaisies: number };
+
 type LigneSurveillance = {
   collaborateur: Collaborateur;
   feuille?: Feuille;
@@ -288,10 +291,24 @@ export default function DashboardPage() {
         if (!feuille) return { collaborateur, feuille: undefined, etat: "manquante" };
         if (feuille.statut === "A_TRAITER") return null;
 
-        return { collaborateur, feuille, etat: "incomplete" };
+        // remplie (toutes les heures) mais pas encore validée / transmise
+        return { collaborateur, feuille, etat: estFeuilleComplete(feuille) ? "complete" : "incomplete" };
       })
       .filter((ligne): ligne is LigneSurveillance => ligne !== null);
   }, [role, collaborateurs, feuillesPrecedentes]);
+
+  const bilanRelance = useMemo<BilanRelance>(() => {
+    const ids = new Set(collaborateurs.map((c) => c.id));
+    const [a, m, j] = (semaineCourante || "2000-01-03").split("-").map(Number);
+    const lundiPrecedent = formatDateSQL(new Date(a, m - 1, j - 7));
+    return {
+      semaine: `S${numeroSemaine(lundiPrecedent)}`,
+      transmises: feuillesPrecedentes.filter((f) => ids.has(f.collaborateur_id) && f.statut === "A_TRAITER").length,
+      completes: surveillance.filter((l) => l.etat === "complete").length,
+      incompletes: surveillance.filter((l) => l.etat === "incomplete").length,
+      nonSaisies: surveillance.filter((l) => l.etat === "manquante").length,
+    };
+  }, [collaborateurs, feuillesPrecedentes, surveillance, semaineCourante]);
 
   /* =============================================================
      CHARGEMENT / ERREUR
@@ -394,7 +411,7 @@ export default function DashboardPage() {
 
             <BlocAnalyses aller={aller} />
 
-            <BlocValidationsRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} />
+            <BlocValidationsRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} bilan={bilanRelance} />
 
             <BlocExports aller={aller} />
 
@@ -525,6 +542,7 @@ function CarteCompacte({
   badge,
   ton = "neutre",
   principale = false,
+  extra,
 }: {
   icone: string;
   titre: string;
@@ -533,6 +551,8 @@ function CarteCompacte({
   badge?: string | null;
   ton?: Ton;
   principale?: boolean;
+  /* contenu ajouté sous la description (ex. compteurs de feuilles) */
+  extra?: ReactNode;
 }) {
   const [survol, setSurvol] = useState(false);
 
@@ -566,6 +586,7 @@ function CarteCompacte({
         </div>
 
         <p style={stylesV2.carteDescription}>{description}</p>
+        {extra}
       </div>
     </div>
   );
@@ -731,12 +752,21 @@ function BlocValidationsRH({
   aller,
   nombreDemandesRH,
   aRelancer,
+  bilan,
 }: {
   aller: (url: string) => void;
   nombreDemandesRH: number;
   aRelancer: LigneSurveillance[];
+  bilan: BilanRelance;
 }) {
-  const noms = aRelancer.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
+  // à relancer en priorité : non saisies et incomplètes ; les complètes n'ont plus qu'à être validées
+  const prioritaires = aRelancer.filter((l) => l.etat !== "complete");
+  const noms = prioritaires.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
+  const compteur = (valeur: number, texte: string, fond: string, encre: string, aide: string) => (
+    <span title={aide} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: fond, color: encre, borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
+      {valeur} {texte}
+    </span>
+  );
 
   return (
     <Groupe titre="RH" description="Demandes, feuilles et compteurs des collaborateurs">
@@ -760,11 +790,21 @@ function BlocValidationsRH({
           titre="Feuilles collaborateurs"
           description={
             aRelancer.length === 0
-              ? "Consulter et verrouiller les feuilles · semaine dernière : tout est envoyé"
-              : `À relancer (semaine dernière) : ${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""}`
+              ? `${bilan.semaine} : toutes les feuilles sont transmises, rien à relancer`
+              : prioritaires.length === 0
+                ? `${bilan.semaine} : tout est rempli, il ne reste qu'à valider`
+                : `${bilan.semaine}, à relancer : ${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""}`
           }
-          badge={aRelancer.length === 0 ? "✓" : `${aRelancer.length} à relancer`}
+          badge={aRelancer.length === 0 ? "✓ rien à relancer" : `${aRelancer.length} à relancer`}
           ton={aRelancer.length === 0 ? "ok" : "alerte"}
+          extra={
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
+              {compteur(bilan.transmises, "transmises", "#e9f6eb", "#26712b", "Feuilles validées et transmises")}
+              {bilan.completes > 0 && compteur(bilan.completes, "à valider", "#e8f0ff", "#2455a4", "Remplies mais pas encore validées : il ne reste qu'à cliquer « Valider ma semaine »")}
+              {bilan.incompletes > 0 && compteur(bilan.incompletes, "incomplètes", "#fff1df", "#c76500", "Commencées mais il manque des heures")}
+              {bilan.nonSaisies > 0 && compteur(bilan.nonSaisies, "non saisies", "#fdecec", "#a51d1d", "Aucune feuille pour la semaine")}
+            </div>
+          }
           onClick={() => aller("/admin/feuilles")}
         />
       </div>
