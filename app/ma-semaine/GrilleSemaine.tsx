@@ -50,7 +50,8 @@ export type TypeAffaireChoix = { valeur: string; libelle: string; numeroRequis: 
    ou de la semaine précédente, avec l'activité à proposer d'office */
 export type AffaireRecenteGrille = AffaireGrille & { activiteId?: string | null; prevu?: string };
 
-export type ModificationLigne = Partial<Pick<LigneGrille, "activiteId" | "code" | "heures">>;
+/* SOUS_DOSSIER : texte libre facultatif, précisant le sous-dossier de l'affaire */
+export type ModificationLigne = Partial<Pick<LigneGrille, "activiteId" | "code" | "heures">> & { sousDossier?: string };
 
 export type GrilleSemaineProps = {
   jours: JourGrille[];
@@ -216,6 +217,8 @@ function Entree({
   onActivite,
   onCode,
   onHeures,
+  sousDossier,
+  onSousDossier,
   onSupprimer,
 }: {
   jour: JourGrille;
@@ -231,6 +234,8 @@ function Entree({
   onActivite: (activiteId: string | null) => void;
   onCode: (code: string) => void;
   onHeures: (texte: string) => void;
+  sousDossier: string;
+  onSousDossier: (texte: string) => void;
   onSupprimer: (() => void) | null;
 }) {
   const divers = estDiversType(ligne.typeAffaire);
@@ -335,6 +340,27 @@ function Entree({
           </button>
         )}
       </div>
+
+      {!replie && !brouillon && !divers && (
+        <input
+          aria-label={`Sous-dossier, ${nom}, ${jour.libelle}`}
+          title="Sous-dossier de l'affaire sur lequel vous avez travaillé (facultatif)"
+          placeholder="Sous-dossier (facultatif)"
+          value={sousDossier}
+          disabled={lectureSeule}
+          onChange={(e) => onSousDossier(e.target.value)}
+          style={{
+            ...champ(mobile),
+            width: "100%",
+            minHeight: mobile ? 40 : 28,
+            fontSize: mobile ? 15 : 12,
+            marginTop: 4,
+            padding: "0 6px",
+            borderColor: "#d5d9de",
+            background: "#fcfcfd",
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -392,6 +418,12 @@ function CelluleJour({
 
   const entrees = brouillon ? [modele] : lignes;
 
+  // sous-dossier de la ligne (porté par l'imputation de la feuille)
+  const sousDossierDe = (id: string) => {
+    const trouvee = [...(jour.imputations as unknown as { id: string; sousDossier?: string }[]), ...(lignes as unknown as { id: string; sousDossier?: string }[])].find((l) => l.id === id);
+    return String(trouvee?.sousDossier ?? "");
+  };
+
   const modifier = (ligne: LigneGrille, patch: ModificationLigne) => {
     if (brouillon) props.onAjouterLigne(jour.date, { ...ligne, ...patch });
     else props.onModifierLigne(jour.date, ligne.id, patch);
@@ -423,6 +455,8 @@ function CelluleJour({
           }
           onCode={(code) => modifier(ligne, { code })}
           onHeures={(heures) => modifier(ligne, { heures })}
+          sousDossier={sousDossierDe(ligne.id)}
+          onSousDossier={(sousDossier) => modifier(ligne, { sousDossier })}
           onSupprimer={!brouillon ? () => props.onSupprimerLigne(jour.date, ligne.id) : null}
         />
       ))}

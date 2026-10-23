@@ -99,6 +99,8 @@ type Imputation = {
   description: string;
   code: string;
   heures: string;
+  /* SOUS_DOSSIER : sous-dossier de l'affaire (texte libre, facultatif) */
+  sousDossier?: string;
 };
 
 type JourSemaine = {
@@ -3657,6 +3659,8 @@ export default function MaSemainePage() {
                 i.description ??
                 "",
 
+              sousDossier: i.sous_dossier ?? "",
+
               code: normaliserCode(i.code ?? ""),
 
               heures:
@@ -4109,6 +4113,7 @@ export default function MaSemainePage() {
         description: string | null;
         code: string;
         heures: number;
+        sous_dossier: string | null;
       }[] = [];
 
       for (const jour of semaine.filter(jourDoitEtreEnregistre)) {
@@ -4146,6 +4151,10 @@ export default function MaSemainePage() {
             description: ligne.description || null,
             code: ligne.code,
             heures: convertirHeures(ligne.heures),
+            sous_dossier:
+              ligne.typeAffaire === "Divers"
+                ? null
+                : ligne.sousDossier?.trim() || null,
           });
         }
       }
