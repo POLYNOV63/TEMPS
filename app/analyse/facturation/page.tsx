@@ -396,6 +396,15 @@ function FacturationContenu() {
   const forfaitsPrevus = forfaits.filter((f) => f.prevu);
   const totalForfaits = forfaitsLivres.reduce((t, f) => t + f.montant, 0);
   const totalPrevu = forfaitsPrevus.reduce((t, f) => t + f.montant, 0);
+  /* TROIS_CHIFFRES : total facturable du mois, déjà facturé, reste à facturer
+     - facturé : forfaits livrés + PE / PI facturables dont le mois est clôturé (« Clôturer le mois (facturé) ») ;
+     - reste : forfaits prévus (pas encore livrés) + PE / PI facturables pas encore clôturés ;
+     - le non facturable n'entre dans aucun des trois (affiché à part) */
+  const peFacturables = prestations.filter((p) => p.facturable);
+  const totalPeClotures = peFacturables.filter((p) => p.cloture).reduce((t, p) => t + p.montant, 0);
+  const totalFacture = totalForfaits + totalPeClotures;
+  const totalFacturable = totalForfaits + totalPrevu + peFacturables.reduce((t, p) => t + p.montant, 0);
+  const resteAFacturer = totalFacturable - totalFacture;
   const nonFacturables = prestations.filter((p) => !p.facturable);
   const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);
   // le total « à facturer » des PE / PI N'INCLUT PAS les lignes non facturables
@@ -419,7 +428,6 @@ function FacturationContenu() {
           { titre: "N° DBE", cle: "dbe", largeur: 11 },
           { titre: "N° ARC Louxor", cle: "arc", largeur: 15 },
           { titre: "Type", cle: "type", largeur: 9 },
-          { titre: "Imputation", cle: "imputation", largeur: 11 },
           { titre: "Désignation", cle: "designation", largeur: 36 },
           { titre: "Pers.", cle: "personne", largeur: 7 },
           { titre: "Quantité", cle: "quantiteTexte", largeur: 10 },
@@ -461,12 +469,10 @@ function FacturationContenu() {
           { titre: "Lignes", cle: "lignes", format: "nombre", largeur: 10 },
         ],
         lignes: [
-          { poste: "Forfaits livrés", montant: totalForfaits, lignes: forfaitsLivres.length },
-          { poste: "PE / PI facturables", montant: totalPrestations, lignes: prestations.length - nonFacturables.length },
-          { poste: "TOTAL À FACTURER (hors non facturable)", montant: totalForfaits + totalPrestations, lignes: forfaitsLivres.length + prestations.length - nonFacturables.length },
-          { poste: "Prévu : commandes reçues pas encore livrées (date de livraison estimée)", montant: totalPrevu, lignes: forfaitsPrevus.length },
-          { poste: "PRÉVISIONNEL DU MOIS (à facturer + prévu)", montant: totalForfaits + totalPrestations + totalPrevu, lignes: forfaitsLivres.length + forfaitsPrevus.length + prestations.length - nonFacturables.length },
-          { poste: "Non facturable (NON compté dans le total)", montant: totalNonFacturable, lignes: nonFacturables.length },
+          { poste: "TOTAL FACTURABLE (forfaits livrés et prévus + PE / PI facturables)", montant: totalFacturable, lignes: forfaits.length + peFacturables.length },
+          { poste: "Facturé (forfaits livrés + PE / PI des mois clôturés)", montant: totalFacture, lignes: forfaitsLivres.length + peFacturables.filter((p) => p.cloture).length },
+          { poste: "RESTE À FACTURER (forfaits prévus + PE / PI non clôturés)", montant: resteAFacturer, lignes: forfaitsPrevus.length + peFacturables.filter((p) => !p.cloture).length },
+          { poste: "Non facturable (compté nulle part)", montant: totalNonFacturable, lignes: nonFacturables.length },
         ],
         alerte: (l) => String(l.poste).startsWith("Non facturable") && Number(l.montant) > 0,
         notes: sansLouxor.length > 0 ? [`N° ARC Louxor manquant (commande reçue ou livrée) : ${sansLouxor.join(", ")}`] : [],
@@ -517,18 +523,10 @@ function FacturationContenu() {
 
         {!chargement && (
           <>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <Tuile libelle="À facturer" valeur={euros(totalForfaits + totalPrestations)} sous="forfaits + PE / PI facturables · sans le non facturable" />
-              <Tuile libelle="Forfaits livrés" valeur={euros(totalForfaits)} sous={`${forfaitsLivres.length} lignes`} />
-              <Tuile libelle="Prévu, pas encore livré" valeur={euros(totalPrevu)} sous={`${forfaitsPrevus.length} commande(s) · date de livraison estimée`} />
-              <Tuile libelle="Prévisionnel du mois" valeur={euros(totalForfaits + totalPrestations + totalPrevu)} sous="à facturer + prévu" />
-              <Tuile libelle="PE / PI facturables" valeur={euros(totalPrestations)} sous={`${prestations.length - nonFacturables.length} lignes`} />
-              <Tuile
-                libelle="Non facturable"
-                valeur={euros(totalNonFacturable)}
-                sous={`${nonFacturables.length} PE / PI · NON compté dans « À facturer »`}
-                accent={nonFacturables.length > 0}
-              />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 14 }}>
+              <Tuile libelle="Total facturable" valeur={euros(totalFacturable)} sous="forfaits livrés et prévus + PE / PI facturables du mois" />
+              <Tuile libelle="Facturé" valeur={euros(totalFacture)} sous="forfaits livrés + PE / PI des mois clôturés" />
+              <Tuile libelle="Reste à facturer" valeur={euros(resteAFacturer)} sous="forfaits prévus + PE / PI non clôturés" accent={resteAFacturer > 0.5} />
             </div>
 
             {sansLouxor.length > 0 && (
@@ -554,7 +552,7 @@ function FacturationContenu() {
               {lignes.length === 0 ? (
                 <p style={{ color: C.gris }}>Rien à facturer ce mois-ci.</p>
               ) : (
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
                   <thead>
                     <tr>
                       <EnteteTri cle="client" libelle="Client" />
@@ -562,7 +560,6 @@ function FacturationContenu() {
                       <EnteteTri cle="dbe" libelle="N° DBE" />
                       <EnteteTri cle="arc" libelle="N° ARC Louxor" />
                       <EnteteTri cle="type" libelle="Type" />
-                      <EnteteTri cle="imputation" libelle="Imput." />
                       <EnteteTri cle="designation" libelle="Désignation" />
                       <EnteteTri cle="personne" libelle="Pers." />
                       <EnteteTri cle="quantite" libelle="Quantité" droite />
@@ -580,8 +577,7 @@ function FacturationContenu() {
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{l.dbe || "—"}</td>
                         <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{celluleLouxor(l.arc || null, l.statut)}</td>
                         <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{l.type}</td>
-                        <td style={td}>{l.imputation || "—"}</td>
-                        <td style={td}>{l.designation}</td>
+                        <td style={{ ...td, maxWidth: 240, fontSize: 13 }}>{l.designation}</td>
                         <td style={{ ...td, fontWeight: 800 }}>{l.personne}</td>
                         <td style={tdD}>{l.quantite === null ? "" : `${nombre(l.quantite)} ${l.unite}`}</td>
                         <td style={tdD}>{l.taux !== null ? `${nombre(l.taux)} €/${l.unite}` : ""}</td>
@@ -602,24 +598,20 @@ function FacturationContenu() {
                       </tr>
                     ))}
                     <tr>
-                      <td colSpan={12} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total à facturer (forfaits livrés + PE / PI facturables)</td>
-                      <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalForfaits + totalPrestations)}</td>
+                      <td colSpan={11} style={{ ...td, fontWeight: 800, textAlign: "right", borderTop: `2px solid ${C.rouge}` }}>Total facturable</td>
+                      <td style={{ ...tdD, fontWeight: 800, borderTop: `2px solid ${C.rouge}` }}>{euros(totalFacturable)}</td>
                     </tr>
-                    {forfaitsPrevus.length > 0 && (
-                      <>
-                        <tr>
-                          <td colSpan={12} style={{ ...td, textAlign: "right", color: "#2455a4" }}>Prévu : commandes reçues pas encore livrées (en bleu)</td>
-                          <td style={{ ...tdD, color: "#2455a4", fontWeight: 700 }}>{euros(totalPrevu)}</td>
-                        </tr>
-                        <tr>
-                          <td colSpan={12} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Prévisionnel du mois (à facturer + prévu)</td>
-                          <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalForfaits + totalPrestations + totalPrevu)}</td>
-                        </tr>
-                      </>
-                    )}
+                    <tr>
+                      <td colSpan={11} style={{ ...td, textAlign: "right" }}>dont facturé</td>
+                      <td style={tdD}>{euros(totalFacture)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan={11} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Reste à facturer</td>
+                      <td style={{ ...tdD, fontWeight: 800 }}>{euros(resteAFacturer)}</td>
+                    </tr>
                     {nonFacturables.length > 0 && (
                       <tr>
-                        <td colSpan={12} style={{ ...td, textAlign: "right", color: "#7a3e00" }}>Non facturable — NON compté ci-dessus</td>
+                        <td colSpan={11} style={{ ...td, textAlign: "right", color: "#7a3e00" }}>Non facturable — compté nulle part ci-dessus</td>
                         <td style={{ ...tdD, color: "#7a3e00", textDecoration: "line-through" }}>{euros(totalNonFacturable)}</td>
                       </tr>
                     )}
