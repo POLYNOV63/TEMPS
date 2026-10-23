@@ -278,7 +278,7 @@ export default function DashboardPage() {
   }, [role, collaborateurs, feuilles]);
 
   /* =============================================================
-     FEUILLES À RELANCER (semaine dernière non envoyée)
+     FEUILLES À RELANCER (semaine en cours non transmise)
   ============================================================= */
 
   const surveillance = useMemo<LigneSurveillance[]>(() => {
@@ -286,7 +286,8 @@ export default function DashboardPage() {
 
     return collaborateurs
       .map((collaborateur): LigneSurveillance | null => {
-        const feuille = feuillesPrecedentes.find((f) => f.collaborateur_id === collaborateur.id);
+        // semaine EN COURS (mêmes chiffres que la page Feuilles collaborateurs)
+        const feuille = feuilles.find((f) => f.collaborateur_id === collaborateur.id && f.semaine_debut === semaineCourante);
 
         if (!feuille) return { collaborateur, feuille: undefined, etat: "manquante" };
         if (feuille.statut === "A_TRAITER") return null;
@@ -295,20 +296,18 @@ export default function DashboardPage() {
         return { collaborateur, feuille, etat: estFeuilleComplete(feuille) ? "complete" : "incomplete" };
       })
       .filter((ligne): ligne is LigneSurveillance => ligne !== null);
-  }, [role, collaborateurs, feuillesPrecedentes]);
+  }, [role, collaborateurs, feuilles, semaineCourante]);
 
   const bilanRelance = useMemo<BilanRelance>(() => {
     const ids = new Set(collaborateurs.map((c) => c.id));
-    const [a, m, j] = (semaineCourante || "2000-01-03").split("-").map(Number);
-    const lundiPrecedent = formatDateSQL(new Date(a, m - 1, j - 7));
     return {
-      semaine: `S${numeroSemaine(lundiPrecedent)}`,
-      transmises: feuillesPrecedentes.filter((f) => ids.has(f.collaborateur_id) && f.statut === "A_TRAITER").length,
+      semaine: `S${numeroSemaine(semaineCourante)}`,
+      transmises: feuilles.filter((f) => ids.has(f.collaborateur_id) && f.semaine_debut === semaineCourante && f.statut === "A_TRAITER").length,
       completes: surveillance.filter((l) => l.etat === "complete").length,
       incompletes: surveillance.filter((l) => l.etat === "incomplete").length,
       nonSaisies: surveillance.filter((l) => l.etat === "manquante").length,
     };
-  }, [collaborateurs, feuillesPrecedentes, surveillance, semaineCourante]);
+  }, [collaborateurs, feuilles, surveillance, semaineCourante]);
 
   /* =============================================================
      CHARGEMENT / ERREUR
