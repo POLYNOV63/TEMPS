@@ -92,7 +92,7 @@ function FinancesContenu() {
   const [evolution, setEvolution] = useState("0");
   const [voirAffaires, setVoirAffaires] = useState(false);
   // montant cliqué dans le tableau mois par mois (activité ou imputation)
-  const [detail, setDetail] = useState<{ mois: string; groupe?: Groupe; imputation?: string } | null>(null);
+  const [detail, setDetail] = useState<{ mois: string; groupe?: Groupe; imputation?: string; ligne?: "REALISE" | "ATTENDU" } | null>(null);
   // la Direction consulte : prévisionnel et coût de structure restent saisis par l'administration
   const [estAdmin, setEstAdmin] = useState(false);
 
@@ -743,8 +743,8 @@ function FinancesContenu() {
                     ))}
                     <td style={{ ...td, fontWeight: 800 }}>{keuros(vue.totalPrevu)}</td>
                   </tr>
-                  {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 })}
-                  {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" })}
+                  {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 }, (i) => setDetail({ mois: mois[i], ligne: "REALISE" }))}
+                  {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" }, (i) => setDetail({ mois: mois[i], ligne: "ATTENDU" }))}
                   {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" })}
                   <tr>
                     <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
@@ -786,15 +786,23 @@ function FinancesContenu() {
                 </tbody>
               </table>
 
-              {/* DETAIL_CLIQUABLE : ce qui compose le montant cliqué */}
+              {/* DETAIL_CLIQUABLE_V2 : ce qui compose le montant cliqué (réalisé, attendu, imputation, activité) */}
               {detail && (() => {
-                const lignesDetail = mouvements
+                const lignesDetail = (detail.ligne === "ATTENDU" ? attendus.mouvements : mouvements)
                   .filter((x) => x.date.startsWith(detail.mois))
-                  .map((x) => ({ x, part: detail.groupe ? x.parGroupe[detail.groupe] : (x.imputation ?? "—") === detail.imputation ? x.montant : 0 }))
+                  .map((x) => ({ x, part: detail.ligne ? x.montant : detail.groupe ? x.parGroupe[detail.groupe] : (x.imputation ?? "—") === detail.imputation ? x.montant : 0 }))
                   .filter((l) => Math.abs(l.part) > 0.5)
                   .sort((a, b) => Math.abs(b.part) - Math.abs(a.part));
                 const total = lignesDetail.reduce((t, l) => t + l.part, 0);
                 const sources: Record<string, string> = { LIVRAISON: "Forfait livré", ECHEANCE: "Échéance / lot livré", RELEVE: "Relevé PE / PI", HISTORIQUE: "Historique (ancien classeur)" };
+                const libelleSource = (x: (typeof lignesDetail)[number]["x"]) =>
+                  x.source !== "ATTENDU"
+                    ? sources[x.source] ?? x.source
+                    : x.retard
+                      ? "Attendu — délai dépassé, reporté sur ce mois"
+                      : x.imputation === "PE" || x.imputation === "PI"
+                        ? "Attendu — prestation prévue (relevé / Suivi des prestations)"
+                        : "Attendu — forfait à son délai estimé";
                 const raison: Record<string, string> = {
                   LIVRAISON: "Suivi d’affaire BE : aucune colonne « Montant Méca / Calcul / Elec-Pneu / Scan / Autre / Négoce » remplie pour cette ligne (ni pour ses échéances) : à compléter dans le classeur.",
                   ECHEANCE: "Suivi d’affaire BE : l’échéance (ou le lot) n’a pas de montant par discipline : à compléter dans le classeur.",
@@ -806,7 +814,7 @@ function FinancesContenu() {
                   <div style={{ marginTop: 14, padding: 14, border: `2px solid ${C.rouge}`, borderRadius: 10, background: "#fffafa" }}>
                     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
                       <strong style={{ fontSize: 16 }}>
-                        {detail.groupe ?? detail.imputation} — {moisLong} : {total.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}
+                        {detail.groupe ?? detail.imputation ?? (detail.ligne === "ATTENDU" ? "Attendu" : "Réalisé")} — {moisLong} : {total.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 })}
                       </strong>
                       <span style={{ flex: 1 }} />
                       <button type="button" onClick={() => setDetail(null)} style={page.btnSecondaire}>Fermer ✕</button>
@@ -831,7 +839,7 @@ function FinancesContenu() {
                             {lignesDetail.map(({ x, part }, i) => (
                               <tr key={i}>
                                 <td style={{ ...tdG, fontWeight: 800 }}>{x.base_affaire}</td>
-                                <td style={tdG}>{sources[x.source] ?? x.source}</td>
+                                <td style={tdG}>{libelleSource(x)}</td>
                                 <td style={tdG}>{x.client ?? "—"}</td>
                                 <td style={tdG}>{x.imputation ?? "—"}</td>
                                 <td style={td}>{x.montant.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €</td>

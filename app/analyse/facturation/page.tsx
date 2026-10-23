@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import * as XLSX from "xlsx";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerTout } from "@/lib/pilotageDonnees";
+import { exporterExcelPolynov } from "@/lib/excelPolynov";
 
 /* ===============================================================
    FACTURATION DU MOIS (point de fin de mois avec la comptabilité)
@@ -24,7 +24,10 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    prestations, sinon heures × taux). Une PE / PI dont la commande n'est ni
    « Commande reçue » ni « Livrée » est signalée NON FACTURABLE.
 
-   Numéro ARC Louxor et client : colonnes du Suivi d'affaire BE.
+   Numéro ARC Louxor, client et STATUT : colonnes du Suivi d'affaire BE.
+   Alerte quand le n° Louxor manque sur une commande reçue ou livrée.
+   Les totaux « à facturer » N'INCLUENT PAS les lignes non facturables
+   (affichées à part). Colonnes triables ; export Excel mis en page.
 ================================================================ */
 
 type LigneSuivi = {
@@ -43,7 +46,17 @@ type LigneSuivi = {
   disparue: boolean;
 };
 
-type LigneForfait = { numero: string; arc: string | null; client: string | null; imputation: string | null; designation: string | null; livraison: string; montant: number };
+type LigneForfait = {
+  numero: string;
+  arc: string | null;
+  client: string | null;
+  imputation: string | null;
+  designation: string | null;
+  livraison: string;
+  montant: number;
+  statut: string | null; // statut de la ligne dans le Suivi d'affaire BE
+  statutBase: string | null; // statut de la commande de base (si différent : échéance, avenant)
+};
 type LignePrestation = {
   numero: string;
   arc: string | null;
@@ -216,60 +229,142 @@ function FacturationContenu() {
         designation: base.designation ?? l.designation,
         livraison: l.date_livraison,
         montant: Math.round(montant * 100) / 100,
+        statut: l.statut,
+        statutBase: base !== l ? base.statut : null,
       });
     }
     return res.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
   }, [suivi, montants, clients, mois]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* N° Louxor attendu dès que la commande est reçue ou livrée */
+  const louxorManquant = (statut: string | null, arc: string | null) =>
+    !arc?.trim() && (statut === "Commande reçue" || statut === "Livrée");
+
+  /* tri des colonnes (clic sur l'en-tête) */
+  const [triF, setTriF] = useState<{ cle: string; sens: 1 | -1 }>({ cle: "numero", sens: 1 });
+  const [triP, setTriP] = useState<{ cle: string; sens: 1 | -1 }>({ cle: "numero", sens: 1 });
+  const trier = <T,>(liste: T[], tri: { cle: string; sens: 1 | -1 }) =>
+    [...liste].sort((a, b) => {
+      const va = (a as Record<string, unknown>)[tri.cle];
+      const vb = (b as Record<string, unknown>)[tri.cle];
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * tri.sens;
+      return String(va ?? "").localeCompare(String(vb ?? ""), "fr", { numeric: true }) * tri.sens;
+    });
+  const forfaitsTries = useMemo(() => trier(forfaits, triF), [forfaits, triF]); // eslint-disable-line react-hooks/exhaustive-deps
+  const prestationsTriees = useMemo(() => trier(prestations, triP), [prestations, triP]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const totalForfaits = forfaits.reduce((t, f) => t + f.montant, 0);
-  const totalPrestations = prestations.reduce((t, p) => t + p.montant, 0);
   const nonFacturables = prestations.filter((p) => !p.facturable);
+  const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);
+  // le total « à facturer » des PE / PI N'INCLUT PAS les lignes non facturables
+  const totalPrestations = prestations.filter((p) => p.facturable).reduce((t, p) => t + p.montant, 0);
+  const sansLouxor = [
+    ...forfaits.filter((f) => louxorManquant(f.statut, f.arc)).map((f) => f.numero),
+    ...prestations.filter((p) => louxorManquant(p.statutCommande, p.arc)).map((p) => p.numero),
+  ].filter((v, i, t) => t.indexOf(v) === i);
   const libMois = `${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
 
-  function exporter() {
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(
-        forfaits.map((f) => ({
-          "N° CBE": f.numero,
-          "N° ARC Louxor": f.arc ?? "",
-          Client: f.client ?? "",
-          Imputation: f.imputation ?? "",
-          Désignation: f.designation ?? "",
-          "Livrée le": f.livraison,
-          "Montant (€)": f.montant,
-        }))
-      ),
-      "Forfaits"
-    );
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(
-        prestations.map((p) => ({
-          "N° CBE": p.numero,
-          "N° ARC Louxor": p.arc ?? "",
-          Client: p.client ?? "",
-          Imputation: p.imputation ?? "",
-          Personne: p.personne,
-          Quantité: Math.round(p.quantite * 100) / 100,
-          Unité: p.unite === "JOUR" ? "jours" : "heures",
-          Taux: p.taux ?? "",
-          "Montant (€)": p.montant,
-          "Statut commande": p.statutCommande ?? "",
-          Facturable: p.facturable ? "oui" : "NON : commande pas reçue",
-          "Mois clôturé": p.cloture ? "oui" : "non",
-        }))
-      ),
-      "PE-PI"
-    );
-    XLSX.writeFile(wb, `Facturation_${mois}.xlsx`);
+  async function exporter() {
+    const statutF = (f: LigneForfait) => (f.statutBase && f.statutBase !== f.statut ? `${f.statut} (commande : ${f.statutBase})` : f.statut ?? "");
+    await exporterExcelPolynov(`Facturation_${mois}`, [
+      {
+        nom: "Forfaits",
+        titre: `Facturation ${libMois} — forfaits livrés`,
+        sousTitre: "Lignes « Livrée » du Suivi d'affaire BE dont la date de livraison tombe dans le mois. En jaune : n° ARC Louxor manquant.",
+        colonnes: [
+          { titre: "N° CBE", cle: "numero", largeur: 14 },
+          { titre: "N° ARC Louxor", cle: "arc", largeur: 16 },
+          { titre: "Client", cle: "client", largeur: 18 },
+          { titre: "Imputation", cle: "imputation", largeur: 12 },
+          { titre: "Désignation", cle: "designation", largeur: 40 },
+          { titre: "Statut Suivi d'affaire", cle: "statut", largeur: 26 },
+          { titre: "Livrée le", cle: "livraison", format: "date", largeur: 12 },
+          { titre: "Montant", cle: "montant", format: "euros", largeur: 15, total: true },
+          { titre: "Alerte", cle: "alerte", largeur: 26 },
+        ],
+        lignes: forfaitsTries.map((f) => ({
+          ...f,
+          statut: statutF(f),
+          alerte: louxorManquant(f.statut, f.arc) ? "N° Louxor manquant" : "",
+        })),
+        alerte: (l) => l.alerte !== "",
+        libelleTotal: "Total forfaits",
+      },
+      {
+        nom: "PE-PI",
+        titre: `Facturation ${libMois} — PE / PI du relevé`,
+        sousTitre: "Le total ne compte QUE les lignes facturables. En jaune : non facturable (commande ni reçue ni livrée) ou n° Louxor manquant.",
+        colonnes: [
+          { titre: "N° CBE", cle: "numero", largeur: 14 },
+          { titre: "N° ARC Louxor", cle: "arc", largeur: 16 },
+          { titre: "Client", cle: "client", largeur: 18 },
+          { titre: "Imputation", cle: "imputation", largeur: 12 },
+          { titre: "Personne", cle: "personne", largeur: 10 },
+          { titre: "Quantité", cle: "quantite", format: "nombre", largeur: 10 },
+          { titre: "Unité", cle: "unite", largeur: 8 },
+          { titre: "Taux", cle: "taux", format: "euros", largeur: 12 },
+          { titre: "Montant facturable", cle: "montantFacturable", format: "euros", largeur: 17, total: true },
+          { titre: "Montant non facturable", cle: "montantNon", format: "euros", largeur: 18, total: true },
+          { titre: "Statut Suivi d'affaire", cle: "statut", largeur: 22 },
+          { titre: "Mois clôturé", cle: "cloture", largeur: 12 },
+          { titre: "Alerte", cle: "alerte", largeur: 34 },
+        ],
+        lignes: prestationsTriees.map((p) => ({
+          numero: p.numero,
+          arc: p.arc,
+          client: p.client,
+          imputation: p.imputation,
+          personne: p.personne,
+          quantite: Math.round(p.quantite * 100) / 100,
+          unite: p.unite === "JOUR" ? "jours" : "heures",
+          taux: p.taux,
+          montantFacturable: p.facturable ? p.montant : null,
+          montantNon: p.facturable ? null : p.montant,
+          statut: p.statutCommande ?? "pas de commande",
+          cloture: p.cloture ? "oui" : "non",
+          alerte: [p.facturable ? "" : "NON FACTURABLE", louxorManquant(p.statutCommande, p.arc) ? "N° Louxor manquant" : ""].filter(Boolean).join(" · "),
+        })),
+        alerte: (l) => l.alerte !== "",
+        libelleTotal: "Totaux",
+      },
+      {
+        nom: "Synthèse",
+        titre: `Facturation ${libMois} — synthèse`,
+        colonnes: [
+          { titre: "Poste", cle: "poste", largeur: 46 },
+          { titre: "Montant", cle: "montant", format: "euros", largeur: 16 },
+          { titre: "Lignes", cle: "lignes", format: "nombre", largeur: 10 },
+        ],
+        lignes: [
+          { poste: "Forfaits livrés", montant: totalForfaits, lignes: forfaits.length },
+          { poste: "PE / PI facturables", montant: totalPrestations, lignes: prestations.length - nonFacturables.length },
+          { poste: "TOTAL À FACTURER (hors non facturable)", montant: totalForfaits + totalPrestations, lignes: forfaits.length + prestations.length - nonFacturables.length },
+          { poste: "Non facturable (NON compté dans le total)", montant: totalNonFacturable, lignes: nonFacturables.length },
+        ],
+        alerte: (l) => String(l.poste).startsWith("Non facturable") && Number(l.montant) > 0,
+        notes: sansLouxor.length > 0 ? [`N° ARC Louxor manquant (commande reçue ou livrée) : ${sansLouxor.join(", ")}`] : [],
+      },
+    ]);
   }
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap" };
   const thD: CSSProperties = { ...th, textAlign: "right" };
   const td: CSSProperties = { ...page.td, padding: "8px 8px" };
   const tdD: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+  const EnteteTri = ({ cle, libelle, tri, setTri, droite }: { cle: string; libelle: string; tri: { cle: string; sens: 1 | -1 }; setTri: (t: { cle: string; sens: 1 | -1 }) => void; droite?: boolean }) => (
+    <th style={droite ? thD : th} aria-sort={tri.cle === cle ? (tri.sens === 1 ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={() => setTri({ cle, sens: tri.cle === cle ? (tri.sens === 1 ? -1 : 1) : 1 })}
+        title="Trier"
+        style={{ all: "unset", cursor: "pointer", fontWeight: 800 }}
+      >
+        {libelle} <span style={{ color: tri.cle === cle ? C.rouge : "#b3b9c0" }}>{tri.cle === cle ? (tri.sens === 1 ? "▲" : "▼") : "↕"}</span>
+      </button>
+    </th>
+  );
+  const celluleLouxor = (arc: string | null, statut: string | null) =>
+    arc ? arc : louxorManquant(statut, arc) ? <span style={{ color: "#b3261e", fontWeight: 800 }}>⚠ manquant</span> : <span style={{ color: C.gris }}>—</span>;
 
   return (
     <main style={page.fond}>
@@ -286,7 +381,7 @@ function FacturationContenu() {
             <button type="button" style={page.btnSecondaire} onClick={() => setMois((m) => decaler(m, -1))} aria-label="Mois précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 140, textAlign: "center" }}>{libMois}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setMois((m) => decaler(m, 1))} aria-label="Mois suivant">▶</button>
-            <button type="button" style={page.btnPrimaire} onClick={exporter} disabled={chargement}>Exporter en Excel</button>
+            <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
           </div>
         </div>
 
@@ -296,16 +391,23 @@ function FacturationContenu() {
         {!chargement && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <Tuile libelle="À facturer" valeur={euros(totalForfaits + totalPrestations)} sous={`${forfaits.length + prestations.length} lignes`} />
+              <Tuile libelle="À facturer" valeur={euros(totalForfaits + totalPrestations)} sous="forfaits + PE / PI facturables · sans le non facturable" />
               <Tuile libelle="Forfaits livrés" valeur={euros(totalForfaits)} sous={`${forfaits.length} lignes`} />
-              <Tuile libelle="PE / PI" valeur={euros(totalPrestations)} sous={`${prestations.length} lignes`} />
+              <Tuile libelle="PE / PI facturables" valeur={euros(totalPrestations)} sous={`${prestations.length - nonFacturables.length} lignes`} />
               <Tuile
                 libelle="Non facturable"
-                valeur={euros(nonFacturables.reduce((t, p) => t + p.montant, 0))}
-                sous={`${nonFacturables.length} PE / PI sans commande reçue`}
+                valeur={euros(totalNonFacturable)}
+                sous={`${nonFacturables.length} PE / PI · NON compté dans « À facturer »`}
                 accent={nonFacturables.length > 0}
               />
             </div>
+
+            {sansLouxor.length > 0 && (
+              <Message genre="erreur">
+                <strong>N° ARC Louxor manquant</strong> alors que la commande est reçue ou livrée : {sansLouxor.join(", ")}. À renseigner dans le Suivi
+                d’affaire BE avant de facturer.
+              </Message>
+            )}
 
             {nonFacturables.length > 0 && (
               <Message genre="erreur">
@@ -323,29 +425,34 @@ function FacturationContenu() {
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                   <thead>
                     <tr>
-                      <th style={th}>N° CBE</th>
-                      <th style={th}>N° ARC Louxor</th>
-                      <th style={th}>Client</th>
-                      <th style={th}>Imputation</th>
-                      <th style={th}>Désignation</th>
-                      <th style={th}>Livrée le</th>
-                      <th style={thD}>Montant</th>
+                      <EnteteTri cle="numero" libelle="N° CBE" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="arc" libelle="N° ARC Louxor" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="client" libelle="Client" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="imputation" libelle="Imputation" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="designation" libelle="Désignation" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="statut" libelle="Statut Suivi d’affaire" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="livraison" libelle="Livrée le" tri={triF} setTri={setTriF} />
+                      <EnteteTri cle="montant" libelle="Montant" tri={triF} setTri={setTriF} droite />
                     </tr>
                   </thead>
                   <tbody>
-                    {forfaits.map((f) => (
-                      <tr key={f.numero}>
+                    {forfaitsTries.map((f) => (
+                      <tr key={f.numero} style={louxorManquant(f.statut, f.arc) ? { background: "#fff7c2" } : undefined}>
                         <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{f.numero}</td>
-                        <td style={{ ...td, fontWeight: 700 }}>{f.arc ?? <span style={{ color: "#a33a3a" }}>manquant</span>}</td>
+                        <td style={{ ...td, fontWeight: 700 }}>{celluleLouxor(f.arc, f.statut)}</td>
                         <td style={td}>{f.client ?? "—"}</td>
                         <td style={td}>{f.imputation ?? "—"}</td>
                         <td style={td}>{f.designation}</td>
+                        <td style={td}>
+                          {f.statut ?? "—"}
+                          {f.statutBase && f.statutBase !== f.statut && <div style={{ fontSize: 12, color: C.gris }}>commande : {f.statutBase}</div>}
+                        </td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{new Date(`${f.livraison}T00:00:00`).toLocaleDateString("fr-FR")}</td>
                         <td style={{ ...tdD, fontWeight: 800 }}>{euros(f.montant)}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td colSpan={6} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total forfaits</td>
+                      <td colSpan={7} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total forfaits</td>
                       <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalForfaits)}</td>
                     </tr>
                   </tbody>
@@ -364,24 +471,24 @@ function FacturationContenu() {
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                   <thead>
                     <tr>
-                      <th style={th}>N° CBE</th>
-                      <th style={th}>N° ARC Louxor</th>
-                      <th style={th}>Client</th>
-                      <th style={th}>Imputation</th>
-                      <th style={th}>Pers.</th>
-                      <th style={thD}>Quantité</th>
-                      <th style={thD}>Taux</th>
-                      <th style={thD}>Montant</th>
-                      <th style={th}>Commande</th>
+                      <EnteteTri cle="numero" libelle="N° CBE" tri={triP} setTri={setTriP} />
+                      <EnteteTri cle="arc" libelle="N° ARC Louxor" tri={triP} setTri={setTriP} />
+                      <EnteteTri cle="client" libelle="Client" tri={triP} setTri={setTriP} />
+                      <EnteteTri cle="imputation" libelle="Imputation" tri={triP} setTri={setTriP} />
+                      <EnteteTri cle="personne" libelle="Pers." tri={triP} setTri={setTriP} />
+                      <EnteteTri cle="quantite" libelle="Quantité" tri={triP} setTri={setTriP} droite />
+                      <EnteteTri cle="taux" libelle="Taux" tri={triP} setTri={setTriP} droite />
+                      <EnteteTri cle="montant" libelle="Montant" tri={triP} setTri={setTriP} droite />
+                      <EnteteTri cle="statutCommande" libelle="Statut Suivi d’affaire" tri={triP} setTri={setTriP} />
                     </tr>
                   </thead>
                   <tbody>
-                    {prestations.map((p, i) => (
-                      <tr key={i} style={p.facturable ? undefined : { background: "#fff7c2" }}>
+                    {prestationsTriees.map((p, i) => (
+                      <tr key={i} style={p.facturable && !louxorManquant(p.statutCommande, p.arc) ? undefined : { background: "#fff7c2" }}>
                         <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>
                           <span style={p.facturable ? undefined : { background: "#ffe94d", padding: "0 4px", borderRadius: 3 }}>{p.numero}</span>
                         </td>
-                        <td style={{ ...td, fontWeight: 700 }}>{p.arc ?? <span style={{ color: "#a33a3a" }}>manquant</span>}</td>
+                        <td style={{ ...td, fontWeight: 700 }}>{celluleLouxor(p.arc, p.statutCommande)}</td>
                         <td style={td}>{p.client ?? "—"}</td>
                         <td style={td}>{p.imputation ?? "—"}</td>
                         <td style={{ ...td, fontWeight: 800 }}>{p.personne}</td>
@@ -390,7 +497,9 @@ function FacturationContenu() {
                         </td>
                         <td style={tdD}>{p.taux !== null ? `${nombre(p.taux)} €/${p.unite === "JOUR" ? "j" : "h"}` : "—"}</td>
                         <td style={{ ...tdD, fontWeight: 800 }}>
-                          {euros(p.montant)}
+                          <span style={p.facturable ? undefined : { textDecoration: "line-through", color: C.gris }} title={p.facturable ? undefined : "Non compté dans le total à facturer"}>
+                            {euros(p.montant)}
+                          </span>
                           {p.cloture && <span title="Mois clôturé : montant figé"> 🔒</span>}
                         </td>
                         <td style={{ ...td, fontWeight: p.facturable ? 400 : 800, color: p.facturable ? undefined : "#7a3e00" }}>
@@ -399,10 +508,17 @@ function FacturationContenu() {
                       </tr>
                     ))}
                     <tr>
-                      <td colSpan={7} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total PE / PI</td>
+                      <td colSpan={7} style={{ ...td, fontWeight: 800, textAlign: "right" }}>Total PE / PI facturable</td>
                       <td style={{ ...tdD, fontWeight: 800 }}>{euros(totalPrestations)}</td>
                       <td style={td} />
                     </tr>
+                    {nonFacturables.length > 0 && (
+                      <tr>
+                        <td colSpan={7} style={{ ...td, textAlign: "right", color: "#7a3e00" }}>Non facturable — NON compté ci-dessus</td>
+                        <td style={{ ...tdD, color: "#7a3e00", textDecoration: "line-through" }}>{euros(totalNonFacturable)}</td>
+                        <td style={td} />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               )}
