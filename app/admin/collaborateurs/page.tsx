@@ -13,7 +13,9 @@ import { ROLES, libelleRole, normaliserRole } from "@/lib/droits";
    L'équipe et, à part,
    les ACCÈS DIRECTION : Président, adjoint… en lecture seule (Finances,
    Indicateurs, Charge). Une fiche Direction n'a ni rythme, ni droits RH,
-   ni feuille d'heures, et n'entre pas dans les statistiques.
+   ni feuille d'heures, et n'entre pas dans les statistiques. Elle est
+   INVISIBLE partout ailleurs (la base la masque, SQL 56) : cette page la
+   lit et la modifie par polynov_acces_direction / polynov_gerer_direction.
    Une adresse hors @polynov.fr doit être invitée comme « utilisateur
    externe » dans Microsoft Entra pour pouvoir se connecter.
 ================================================================ */
@@ -164,7 +166,7 @@ export default function CollaborateursPage() {
       profilsResult,
       basesResult,
       historiqueResult,
-      _droitsInutilises,
+      directionResult,
     ] = await Promise.all([
       supabase
         .from("collaborateurs")
@@ -188,7 +190,9 @@ export default function CollaborateursPage() {
         .select("*")
         .order("date_debut", { ascending: false }),
 
-      Promise.resolve({ data: [], error: null }),
+      // ACCES_DIRECTION_INVISIBLE : les fiches Direction sont masquées partout par la base ;
+      // seule cette page les relit, par une fonction réservée aux administrateurs
+      supabase.rpc("polynov_acces_direction"),
     ]);
 
     /* -----------------------------------------------------------
@@ -236,7 +240,13 @@ export default function CollaborateursPage() {
       setErreur("Impossible de charger l'historique des rythmes.");
     }
 
-    setCollaborateurs(collaborateursResult.data || []);
+    {
+      // l'équipe (lue normalement) + les accès Direction (fonction réservée aux administrateurs)
+      const equipeLue = (collaborateursResult.data || []) as Collaborateur[];
+      const directionLue = ((directionResult as { data: Collaborateur[] | null }).data || []) as Collaborateur[];
+      const ids = new Set(equipeLue.map((c) => c.id));
+      setCollaborateurs([...equipeLue, ...directionLue.filter((c) => !ids.has(c.id))]);
+    }
     setProfils(profilsResult.data || []);
     setBases(basesResult.data || []);
     setHistorique(historiqueResult.data || []);
@@ -553,10 +563,12 @@ const { data: profil, error: erreurProfil } = await supabase
     setActionDesactivation(c.id);
     setErreur("");
 
-    const { error } = await supabase
-      .from("collaborateurs")
-      .update({ actif: false, updated_at: new Date().toISOString() })
-      .eq("id", c.id);
+    const { error } = estDirection(c.role)
+      ? await supabase.rpc("polynov_gerer_direction", { p_id: c.id, p_action: "COUPER" })
+      : await supabase
+          .from("collaborateurs")
+          .update({ actif: false, updated_at: new Date().toISOString() })
+          .eq("id", c.id);
 
     if (error) {
       console.error(error);
@@ -588,9 +600,11 @@ const { data: profil, error: erreurProfil } = await supabase
     setActionSuppression(c.id);
     setErreur("");
 
-    const { error } = await supabase.rpc("supprimer_collaborateur", {
-      p_collaborateur_id: c.id,
-    });
+    const { error } = estDirection(c.role)
+      ? await supabase.rpc("polynov_gerer_direction", { p_id: c.id, p_action: "SUPPRIMER" })
+      : await supabase.rpc("supprimer_collaborateur", {
+          p_collaborateur_id: c.id,
+        });
 
     setActionSuppression(null);
 
@@ -610,7 +624,9 @@ const { data: profil, error: erreurProfil } = await supabase
     if (!window.confirm(`Réactiver ${nom} ?\n\nLe collaborateur réapparaîtra dans la liste des collaborateurs actifs.`)) return;
     setActionReactivation(c.id);
     setErreur("");
-    const { error } = await supabase.from("collaborateurs").update({ actif: true, updated_at: new Date().toISOString() }).eq("id", c.id);
+    const { error } = estDirection(c.role)
+      ? await supabase.rpc("polynov_gerer_direction", { p_id: c.id, p_action: "RETABLIR" })
+      : await supabase.from("collaborateurs").update({ actif: true, updated_at: new Date().toISOString() }).eq("id", c.id);
     if (error) {
       console.error(error);
       setErreur(`Impossible de réactiver ${nom} : ${error.message}`);
@@ -690,7 +706,16 @@ const { data: profil, error: erreurProfil } = await supabase
 
     setEditEnCours(true);
 
-    const { error } = await supabase
+    const { error } = estDirection(editModal.role)
+      ? await supabase.rpc("polynov_gerer_direction", {
+          p_id: editModal.id,
+          p_action: "MODIFIER",
+          p_prenom: prenomSaisi,
+          p_nom: nomSaisi,
+          p_trigramme: trigrammeSaisi,
+          p_role: editForm.role,
+        })
+      : await supabase
       .from("collaborateurs")
       .update({
         prenom: prenomSaisi,
