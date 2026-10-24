@@ -4099,7 +4099,79 @@ function StatLine({
    GRAPHIQUE CHARGE
 ========================================================= */
 
+/* HISTOGRAMME_MENSUEL : par mois (par défaut) ou par semaine */
 function ChargeTimeline({
+  semaines,
+}: {
+  semaines: SemaineConsolidee[];
+}) {
+  const [regroupement, setRegroupement] = useState<"MOIS" | "SEMAINE">("MOIS");
+
+  const colonnes = useMemo(() => {
+    if (regroupement === "SEMAINE") return semaines;
+
+    const parMois = new Map<string, SemaineConsolidee & { libelle: string }>();
+    for (const s of [...semaines].sort((a, b) => a.annee - b.annee || a.semaine - b.semaine)) {
+      const lundi = lundiSemaine(s.annee, s.semaine);
+      const annee = lundi.getUTCFullYear();
+      const mois = lundi.getUTCMonth();
+      const cle = `${annee}-${String(mois + 1).padStart(2, "0")}`;
+      const m = parMois.get(cle) ?? {
+        ...s,
+        annee,
+        semaine: 100 + mois, // sert seulement de clé
+        libelle: `${MOIS_COURTS[mois]} ${String(annee).slice(2)}`,
+        capacite: 0,
+        cbe: 0,
+        dbe: 0,
+        ni: 0,
+        cn: 0,
+        formation: 0,
+        autres: 0,
+        ignorees: 0,
+        affairesSansType: 0,
+        heuresAbsence: 0,
+        totalTravaille: 0,
+        nonExplique: 0,
+        collaborateurs: {},
+      };
+      m.capacite += s.capacite;
+      m.cbe += s.cbe;
+      m.dbe += s.dbe;
+      m.ni += s.ni;
+      m.cn += s.cn;
+      m.formation += s.formation;
+      m.autres += s.autres;
+      m.ignorees += s.ignorees;
+      m.affairesSansType += s.affairesSansType;
+      m.heuresAbsence += s.heuresAbsence;
+      m.totalTravaille += s.totalTravaille;
+      m.nonExplique += s.nonExplique;
+      parMois.set(cle, m);
+    }
+    return [...parMois.values()];
+  }, [semaines, regroupement]);
+
+  return (
+    <>
+      <div style={{ ...styles.periodButtons, marginTop: 18, marginBottom: -8 }}>
+        {(["MOIS", "SEMAINE"] as const).map((valeur) => (
+          <button
+            key={valeur}
+            type="button"
+            onClick={() => setRegroupement(valeur)}
+            style={{ ...styles.periodButton, ...(regroupement === valeur ? styles.periodButtonActive : {}) }}
+          >
+            {valeur === "MOIS" ? "Barres par mois" : "Barres par semaine"}
+          </button>
+        ))}
+      </div>
+      <ChargeTimelineBrut semaines={colonnes} />
+    </>
+  );
+}
+
+function ChargeTimelineBrut({
   semaines,
 }: {
   semaines: SemaineConsolidee[];
@@ -4129,8 +4201,7 @@ function ChargeTimeline({
               styles.cardTitle
             }
           >
-            Chaque semaine = 100 % de
-            capacité
+            Chaque barre = 100 % de capacité
           </h2>
 
           <p
@@ -4414,10 +4485,7 @@ function ChargeTimeline({
                           styles.chartWeek
                         }
                       >
-                        S
-                        {
-                          s.semaine
-                        }
+                        {(s as SemaineConsolidee & { libelle?: string }).libelle ?? `S${s.semaine}`}
                       </div>
 
                       <div
