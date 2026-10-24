@@ -7,6 +7,7 @@ import GardeAcces from "@/components/GardeAcces";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 
 /* ===============================================================
    MA FEUILLE DE ROUTE
@@ -32,6 +33,8 @@ type LigneRoute = {
   libelle: string | null;
   heures: number | string;
 };
+
+type Devis = { affaire_id: string; numero: string; designation: string | null; date_debut: string | null; echeance: string | null };
 
 type Conge = { type_demande: string; date_debut: string; date_fin: string; statut: string; duree_jours: number | null };
 
@@ -65,6 +68,8 @@ function FeuilleDeRouteContenu() {
   const [nbSemaines, setNbSemaines] = useState(4);
   const [lignes, setLignes] = useState<LigneRoute[]>([]);
   const [conges, setConges] = useState<Conge[]>([]);
+  // DEVIS_A_REDIGER : DBE en cours dont la personne est responsable, jusqu'à l'envoi du devis
+  const [devis, setDevis] = useState<Devis[]>([]);
   const [activites, setActivites] = useState<Map<string, string>>(new Map());
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
@@ -108,12 +113,14 @@ function FeuilleDeRouteContenu() {
         .in("statut", ["VALIDEE", "ENVOYEE_RH", "EN_ATTENTE"])
         .lte("date_debut", fin)
         .gte("date_fin", lundi),
+      supabase.rpc("ma_feuille_de_route_devis", { p_collaborateur_id: cible }),
     ])
-      .then(([r, c]) => {
+      .then(([r, c, d]) => {
         if (!actif) return;
         if (r.error) throw new Error(r.error.message);
         setLignes((r.data ?? []) as LigneRoute[]);
         setConges(((c.data ?? []) as Conge[]) || []);
+        setDevis(d.error ? [] : ((d.data ?? []) as Devis[]));
       })
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement impossible."))
       .finally(() => actif && setChargement(false));
@@ -143,9 +150,11 @@ function FeuilleDeRouteContenu() {
       const congesJour = jours.map((j) => conges.find((c) => c.date_debut <= j && c.date_fin >= j));
       const lignesSemaine = [...parAffaire.values()].sort((a, b) => b.total - a.total);
       const totalJour = jours.map((_, i) => lignesSemaine.reduce((t, l) => t + l.parJour[i], 0));
-      return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0) };
+      // devis à rendre cette semaine (ou déjà en retard, sur la semaine en cours)
+      const aRendre = devis.filter((d) => d.echeance && ((d.echeance >= debut && d.echeance <= plus(debut, 6)) || (k === 0 && d.echeance < debut)));
+      return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0), aRendre };
     });
-  }, [lignes, conges, activites, lundi, nbSemaines]);
+  }, [lignes, conges, activites, lundi, nbSemaines, devis]);
 
   const nomCible = cible === moi?.id ? "moi" : (() => {
     const c = equipe.find((x) => x.id === cible);
@@ -159,6 +168,7 @@ function FeuilleDeRouteContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Ma feuille de route" />
+      {consultant && <OngletsPilotage actif="feuilles-route" />}
       <div style={{ ...page.contenu, maxWidth: 1100 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
           <div>
@@ -189,6 +199,35 @@ function FeuilleDeRouteContenu() {
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {chargement && !erreur && <Message genre="info">Chargement…</Message>}
 
+        {!chargement && !erreur && devis.length > 0 && (
+          <section style={{ ...page.carte, padding: 14, marginBottom: 14, borderLeft: "5px solid #dc4f84" }}>
+            <strong style={{ fontSize: 17 }}>📝 Devis à rédiger</strong>
+            <span style={{ marginLeft: 8, fontSize: 13, color: C.gris }}>jusqu’à l’envoi du devis</span>
+            <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, display: "grid", gap: 6 }}>
+              {devis.map((d) => {
+                const jours = d.echeance ? Math.round((new Date(`${d.echeance}T00:00:00`).getTime() - new Date(`${iso(new Date())}T00:00:00`).getTime()) / 86400000) : null;
+                return (
+                  <li key={d.affaire_id} style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "baseline" }}>
+                    <strong style={{ color: "#a3245a" }}>DBE {d.numero}</strong>
+                    <span>{d.designation}</span>
+                    <span
+                      style={{
+                        marginLeft: "auto",
+                        fontWeight: 800,
+                        color: jours === null ? C.gris : jours < 0 ? "#b3261e" : jours <= 3 ? "#c76500" : "#1b5e20",
+                      }}
+                    >
+                      {d.echeance
+                        ? `à rendre le ${dateCourte(d.echeance)}${jours !== null ? (jours < 0 ? ` · en retard de ${-jours} j` : jours === 0 ? " · aujourd’hui" : ` · dans ${jours} j`) : ""}`
+                        : "sans date de rendu"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         {!chargement &&
           !erreur &&
           semaines.map((s, k) => (
@@ -211,7 +250,7 @@ function FeuilleDeRouteContenu() {
                 )}
               </div>
 
-              {s.lignes.length === 0 && s.congesJour.every((c) => !c) ? (
+              {s.lignes.length === 0 && s.congesJour.every((c) => !c) && s.aRendre.length === 0 ? (
                 <p style={{ margin: 0, color: C.gris }}>Rien de prévu au planning pour l’instant.</p>
               ) : (
                 <div style={{ overflowX: "auto" }}>
@@ -242,6 +281,23 @@ function FeuilleDeRouteContenu() {
                             </td>
                           ))}
                           <td style={{ ...td, textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>{h(l.total)}</td>
+                        </tr>
+                      ))}
+                      {s.aRendre.map((d) => (
+                        <tr key={`devis-${d.affaire_id}`}>
+                          <td style={td}>
+                            <strong style={{ color: "#a3245a" }}>📝 DBE {d.numero}</strong>
+                            <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>devis à rendre</span>
+                            {d.designation && <div style={{ fontSize: 13 }}>{d.designation}</div>}
+                          </td>
+                          {s.jours.map((j) => (
+                            <td key={j} style={{ ...tdJour, background: d.echeance === j ? "#fbe3ee" : undefined, color: "#a3245a", fontWeight: 800 }}>
+                              {d.echeance === j ? "📌 rendu" : ""}
+                            </td>
+                          ))}
+                          <td style={{ ...td, textAlign: "right", fontSize: 12, color: d.echeance && d.echeance < s.debut ? "#b3261e" : C.gris, whiteSpace: "nowrap" }}>
+                            {d.echeance && d.echeance < s.debut ? `en retard (${dateCourte(d.echeance)})` : ""}
+                          </td>
                         </tr>
                       ))}
                       {s.congesJour.some(Boolean) && (

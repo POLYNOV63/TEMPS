@@ -520,7 +520,7 @@ function PortefeuilleContenu() {
     const nbColonnes = 10;
     return (
       <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-        <thead>
+        <thead className="portefeuille-entete">
           <tr>
             <EnTeteTri col="numero" libelle="N°" />
             <EnTeteTri col="designation" libelle="Descriptif" />
@@ -679,6 +679,16 @@ function PortefeuilleContenu() {
     <main style={page.fond}>
       <EnTetePage section="Pilotage BE" />
       <OngletsPilotage actif="portefeuille" />
+      {/* l'en-tête du tableau reste visible, juste sous les onglets (49 px) */}
+      <style>{`
+        .portefeuille-entete th {
+          position: sticky;
+          top: 49px;
+          z-index: 5;
+          background: #f4f5f7;
+          box-shadow: inset 0 -2px 0 #d5d9de;
+        }
+      `}</style>
 
       <div style={page.contenu}>
         <div

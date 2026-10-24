@@ -15,12 +15,13 @@ const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Dro
   { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
   { cle: "ressources-planning", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "chargeRessources" },
   { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
+  { cle: "feuilles-route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
 ];
 
 export default function OngletsPilotage({
   actif,
 }: {
-  actif: "portefeuille" | "affaires" | "ressources" | "ressources-planning" | "prestations" | "indicateurs";
+  actif: "portefeuille" | "affaires" | "ressources" | "ressources-planning" | "prestations" | "indicateurs" | "feuilles-route";
 }) {
   const [role, setRole] = useState<string | null | undefined>(undefined);
 
