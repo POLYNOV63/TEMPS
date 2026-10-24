@@ -222,7 +222,6 @@ export function etatAffaire(
     return { genre: "crit", texte: `Dépassement de ${formatHeures(t.depassement)}` };
   }
 
-  if (a.statut === "LIVREE") return { genre: "info", texte: "Livrée" };
   if (a.statut === "EN_ATTENTE") return { genre: "info", texte: "En attente" };
 
   // En cours
