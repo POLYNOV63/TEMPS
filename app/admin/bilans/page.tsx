@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import OngletsCharge from "@/components/analyse/OngletsCharge";
 
 /* =========================================================
    TYPES
@@ -2820,6 +2821,7 @@ feuilles.forEach((f) => {
       ================================================= */}
 
       <EnTetePage section="Bilans & pilotage" />
+      <OngletsCharge actif="collaborateurs" />
 
       <main style={styles.main}>
         {/* =================================================

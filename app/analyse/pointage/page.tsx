@@ -5,6 +5,7 @@ import Link from "next/link";
 import * as XLSX from "xlsx";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import OngletsCharge from "@/components/analyse/OngletsCharge";
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerActivites, chargerAffaires, chargerAnnuaire, chargerCharges, chargerRealise, chargerTout, type AffaireP, type ReferentielActivites } from "@/lib/pilotageDonnees";
@@ -230,6 +231,7 @@ function PointageContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse technique" />
+      <OngletsCharge actif="affaires" />
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
           <div>

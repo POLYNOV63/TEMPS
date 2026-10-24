@@ -1042,8 +1042,7 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
       <div style={stylesV2.grille}>
         <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
-        <CarteCompacte icone="🎯" titre="Charge & pointage" description="Pointé face au chiffré, par affaire et par activité, dépassements" onClick={() => aller("/analyse/pointage")} />
-        <CarteCompacte icone="👥" titre="Analyse de charge" description="Heures et taux d'occupation de chaque collaborateur" onClick={() => aller("/admin/bilans")} />
+        <CarteCompacte icone="🎯" titre="Charge & pointage" description="Par affaire : pointé face au chiffré · par collaborateur : heures et taux d'occupation" onClick={() => aller("/analyse/pointage")} />
       </div>
     </Groupe>
   );
