@@ -330,7 +330,7 @@ function FicheContenu() {
     }
 
     setModal("");
-    setInfo("Échéance modifiée et historisée.");
+    setInfo(affaire.type === "DBE" ? "Date de rendu modifiée et historisée." : "Délai modifié et historisé."); // FICHE_DELAI
     await charger();
   }
 
@@ -695,7 +695,7 @@ function FicheContenu() {
         <section style={{ ...page.carte, marginTop: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 20 }}>Affectations</h2>
-            <Link href="/pilotage/planning" style={{ fontWeight: 700, color: C.rougeFonce }}>
+            <Link href={`/pilotage/affaires?ouvrir=${affaire.id}`} style={{ fontWeight: 700, color: C.rougeFonce }}>
               Voir le planning →
             </Link>
           </div>
@@ -766,13 +766,6 @@ function FicheContenu() {
           </section>
         )}
 
-        {peutModifier && affaire.type === "DBE" && (
-          <div style={{ marginTop: 16 }}>
-            <Link href={`/pilotage/nouvelle?origine=${affaire.id}`} style={page.btnSecondaire}>
-              Créer le CBE de ce DBE
-            </Link>
-          </div>
-        )}
 
         {/* Historique */}
         <section style={{ ...page.carte, marginTop: 20 }}>

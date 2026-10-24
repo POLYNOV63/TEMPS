@@ -1582,10 +1582,10 @@ function PlanningAffairesContenu() {
           {/* jalon : livraison souhaitée / remise */}
           {!prestation && idxLivraison >= 0 && (
             <div
-              title={`${affaire.type === "DBE" ? "Remise de l’offre" : "Livraison souhaitée"} : ${formatDate(affaire.echeance)}`}
+              title={`${affaire.type === "DBE" ? `Rendu du devis par ${nomCollab(annuaire.find((c) => c.id === affaire.responsable_id))}` : "Livraison souhaitée"} : ${formatDate(affaire.echeance)}`}
               style={{ gridColumn: col(idxLivraison), gridRow: 1, alignSelf: "center", justifySelf: "end", fontSize: 16, fontWeight: 800, color: affaire.type === "DBE" ? "#8a3a5d" : C.rougeFonce, zIndex: 2, pointerEvents: "none" }}
             >
-              {affaire.type === "DBE" ? "◆" : "⚑"}
+              {/* RENDU_DBE_EPINGLE */}{affaire.type === "DBE" ? "📌" : "⚑"}
             </div>
           )}
 
@@ -2114,7 +2114,7 @@ function PlanningAffairesContenu() {
               <span>
                 <strong>Double-clic</strong> sur une ligne vide d’une affaire : affecter quelqu’un à cette date · <strong>✓ Livrée</strong> : range l’affaire en bas
               </span>
-              <span>▸ replié · ⚑ livraison souhaitée · ◆ remise d’un DBE</span>
+              <span>▸ replié · ⚑ livraison souhaitée · 📌 rendu d’un devis (DBE)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#7b8189", border: "1px solid #4b5057" }} />événement hors affaire (salon, formation, absence connue…)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : la partie foncée est le chiffré déjà affecté (verte quand tout est affecté)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
