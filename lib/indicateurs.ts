@@ -124,7 +124,9 @@ export function syntheseDevis(emis: LigneInd[]): SyntheseDevis {
   for (const l of emis) {
     ajouter(total, l);
     ajouter(parIssue[issueDevis(l)], l);
-    if (l.date_ouverture && l.date_envoi) {
+    // DELAI_SANS_AVENANTS : un avenant (souvent ouvert et envoyé le même jour) ne mesure pas
+    // le temps de réponse à une demande : seuls les devis et les commandes de base comptent
+    if (l.genre !== "AVENANT" && l.date_ouverture && l.date_envoi) {
       const d = joursEntre(l.date_ouverture, l.date_envoi);
       if (d >= 0 && d < 730) delais.push(d);
     }
