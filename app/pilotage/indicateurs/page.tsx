@@ -667,7 +667,7 @@ function IndicateursContenu() {
               <Tuile
                 libelle="Délai de réponse"
                 valeur={s.delaiMedian === null ? "—" : `${s.delaiMedian} j`}
-                sous={`médian, de l’ouverture à l’envoi${s.delaiMoyen !== null ? ` · moyen ${Math.round(s.delaiMoyen)} j` : ""}`}
+                sous={`médian, de l’ouverture à l’envoi${s.delaiMoyen !== null ? ` · moyen ${Math.round(s.delaiMoyen)} j` : ""}${s.partJourMeme !== null ? ` · ${Math.round(s.partJourMeme * 100)} % envoyés le jour même` : ""}`}
               />
               <Tuile
                 libelle="Prise de commande"

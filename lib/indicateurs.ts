@@ -114,6 +114,7 @@ export type SyntheseDevis = {
   tauxMontant: number | null;
   delaiMedian: number | null; // jours
   delaiMoyen: number | null;
+  partJourMeme: number | null; // part des devis envoyés le jour de leur ouverture (0 à 1)
 };
 
 export function syntheseDevis(emis: LigneInd[]): SyntheseDevis {
@@ -142,6 +143,7 @@ export function syntheseDevis(emis: LigneInd[]): SyntheseDevis {
     tauxMontant: g.montant + p.montant > 0 ? g.montant / (g.montant + p.montant) : null,
     delaiMedian: mediane(delais),
     delaiMoyen: delais.length ? delais.reduce((t, x) => t + x, 0) / delais.length : null,
+    partJourMeme: delais.length ? delais.filter((x) => x === 0).length / delais.length : null,
   };
 }
 
