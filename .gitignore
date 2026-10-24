@@ -43,3 +43,6 @@ next-env.d.ts
    *.bak
    audit-projet.txt
    pages-projet.txt
+# copies de sauvegarde des scripts
+*.bak
+*.bak2
