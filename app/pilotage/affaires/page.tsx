@@ -640,9 +640,10 @@ function PlanningAffairesContenu() {
         .filter(garderType)
         .sort(
           (a, b) =>
+            // ORDRE_PAR_NUMERO : plus anciennes d'abord, avenant juste sous sa commande de base
             rangGroupe(a) - rangGroupe(b) ||
-            (a.echeance ?? "9999").localeCompare(b.echeance ?? "9999") ||
-            b.numero.localeCompare(a.numero, "fr", { numeric: true })
+            (a.type === b.type ? 0 : a.type === "CBE" ? -1 : 1) ||
+            a.numero.localeCompare(b.numero, "fr", { numeric: true })
         ),
     [affaires, garderType]
   );
