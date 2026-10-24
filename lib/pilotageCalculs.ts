@@ -214,7 +214,10 @@ export function etatAffaire(
 ): { genre: Genre; texte: string } {
   if (a.statut === "ABANDONNEE") return { genre: "info", texte: "Abandonnée" };
 
-  // Contrôle de dépassement : valable aussi pour une affaire livrée
+  /* LIVREE_SANS_ALERTE : une affaire livrée est terminée, plus d'alerte (ses chiffres restent
+     dans le Bilan affaire et dans Charge & pointage) */
+  if (a.statut === "LIVREE") return { genre: "info", texte: "Livrée" };
+
   if (t.chiffre > 0 && t.depassement > 0) {
     return { genre: "crit", texte: `Dépassement de ${formatHeures(t.depassement)}` };
   }
@@ -226,14 +229,14 @@ export function etatAffaire(
   if (a.echeance && a.echeance < aujourdhui) {
     return {
       genre: "crit",
-      texte: a.type === "DBE" ? "Remise dépassée" : "Objectif dépassé",
+      texte: a.type === "DBE" ? "Remise dépassée" : "Délai dépassé",
     };
   }
 
   if (planning && planning.planningActif) {
     // Affectations qui se terminent après la date attendue
     if (a.type === "CBE" && planning.chargeObligatoire && a.echeance && planning.fin && planning.fin > a.echeance) {
-      return { genre: "crit", texte: "Affectations finies après l’objectif" };
+      return { genre: "crit", texte: "Affectations finies après le délai" };
     }
   }
 
@@ -276,7 +279,7 @@ export function etatAffaire(
   }
 
   if (!a.echeance) {
-    return { genre: "warn", texte: a.type === "DBE" ? "Sans date de remise" : "Sans date objectif" };
+    return { genre: "warn", texte: a.type === "DBE" ? "Sans date de remise" : "Sans délai" };
   }
 
   if (a.type === "CBE" && t.chiffre === 0 && (!planning || planning.chargeObligatoire)) {
