@@ -5,6 +5,7 @@ import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
+import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
@@ -510,11 +511,6 @@ function BilanContenu() {
                 )}
                 <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
                 {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
-                {pilotage && (
-                  <Link href={`/pilotage/affaire/${pilotage.id}`} style={{ marginLeft: "auto", fontWeight: 700, color: C.rougeFonce }}>
-                    Fiche dans le Pilotage →
-                  </Link>
-                )}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 10, fontSize: 14, color: "#3b4046" }}>
                 {client && <span>Client : <strong>{client}</strong></span>}
@@ -526,6 +522,9 @@ function BilanContenu() {
                 {echeance && <span>Délai : <strong>{formatDate(echeance)}</strong></span>}
               </div>
             </section>
+
+            {/* FICHE_FUSIONNEE : responsable, délai et historique, affectations (ancienne fiche du Pilotage) */}
+            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
 
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
               <Message genre="info">
