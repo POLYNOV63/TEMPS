@@ -596,54 +596,16 @@ function PortefeuilleContenu() {
                   <td style={{ ...page.td, padding: "10px 8px" }}>{affaire.designation}</td>
                   <td style={{ ...page.td, padding: "10px 8px", maxWidth: 140 }}>{client ?? gris("—")}</td>
                   <td style={tdCourt}>
-                    {edDbe?.id === affaire.id ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 170 }}>
-                        <select
-                          aria-label="Rédacteur du devis"
-                          value={edDbe.resp}
-                          onChange={(e) => setEdDbe({ ...edDbe, resp: e.target.value })}
-                          style={{ ...page.entrees, minHeight: 34, padding: "0 6px" }}
-                        >
-                          {[...annuaire]
-                            .sort((x, y) => nomCollab(x).localeCompare(nomCollab(y), "fr"))
-                            .map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
-                              </option>
-                            ))}
-                        </select>
-                        <label style={{ fontSize: 12, color: C.gris }}>
-                          à rendre le
-                          <input
-                            type="date"
-                            value={edDbe.date}
-                            onChange={(e) => setEdDbe({ ...edDbe, date: e.target.value })}
-                            style={{ ...page.entrees, minHeight: 34, padding: "0 6px", marginTop: 2 }}
-                          />
-                        </label>
-                        <div style={{ display: "flex", gap: 4 }}>
-                          <button type="button" onClick={() => void enregistrerDbe()} disabled={enregDbe} style={{ ...page.btnPrimaire, minHeight: 32, padding: "0 12px" }}>
-                            {enregDbe ? "…" : "OK"}
-                          </button>
-                          <button type="button" onClick={() => setEdDbe(null)} style={{ ...page.btnSecondaire, minHeight: 32, padding: "0 10px" }}>
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
-                        {affaire.type === "DBE" && !estInactive(affaire) && (
-                          <button
-                            type="button"
-                            title="Choisir le rédacteur du devis et sa date cible de rendu"
-                            onClick={() => setEdDbe({ id: affaire.id, resp: affaire.responsable_id, date: affaire.echeance ?? "" })}
-                            style={{ all: "unset", cursor: "pointer", display: "block", fontSize: 12, fontWeight: 700, color: C.rougeFonce, marginTop: 2 }}
-                          >
-                            ✏️ affecter
-                          </button>
-                        )}
-                      </>
+                    <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
+                    {affaire.type === "DBE" && !estInactive(affaire) && edDbe?.id !== affaire.id && (
+                      <button
+                        type="button"
+                        title="Choisir le rédacteur du devis et sa date cible de rendu"
+                        onClick={() => setEdDbe({ id: affaire.id, resp: affaire.responsable_id, date: affaire.echeance ?? "" })}
+                        style={{ all: "unset", cursor: "pointer", display: "block", fontSize: 12, fontWeight: 700, color: C.rougeFonce, marginTop: 2 }}
+                      >
+                        ✏️ affecter
+                      </button>
                     )}
                   </td>
                   <td style={tdCourt}>
@@ -697,6 +659,47 @@ function PortefeuilleContenu() {
                     <Pastille genre={etat.genre}>{etat.texte}</Pastille>
                   </td>
                 </tr>
+                {/* AFFECTER_DBE_V2 : le formulaire s'ouvre sur une ligne à part, sous le devis */}
+                {edDbe?.id === affaire.id && (
+                  <tr>
+                    <td colSpan={nbColonnes} style={{ ...page.td, background: "#fff6fa", padding: "10px 16px 12px 40px" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 12 }}>
+                        <strong style={{ alignSelf: "center", color: "#a3245a" }}>DBE {affaire.numero} :</strong>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
+                          Rédacteur
+                          <select
+                            value={edDbe.resp}
+                            onChange={(e) => setEdDbe({ ...edDbe, resp: e.target.value })}
+                            style={{ ...page.entrees, minHeight: 38, width: 240 }}
+                          >
+                            {[...annuaire]
+                              .sort((x, y) => nomCollab(x).localeCompare(nomCollab(y), "fr"))
+                              .map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
+                          À rendre le
+                          <input
+                            type="date"
+                            value={edDbe.date}
+                            onChange={(e) => setEdDbe({ ...edDbe, date: e.target.value })}
+                            style={{ ...page.entrees, minHeight: 38, width: 170 }}
+                          />
+                        </label>
+                        <button type="button" onClick={() => void enregistrerDbe()} disabled={enregDbe} style={{ ...page.btnPrimaire, minHeight: 38 }}>
+                          {enregDbe ? "Enregistrement…" : "Enregistrer"}
+                        </button>
+                        <button type="button" onClick={() => setEdDbe(null)} style={{ ...page.btnSecondaire, minHeight: 38 }}>
+                          Annuler
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {ouverte && (
                   <tr>
                     <td colSpan={nbColonnes} style={{ ...page.td, background: "#fafbfc", padding: "10px 16px 14px 40px" }}>
