@@ -394,15 +394,14 @@ function PortefeuilleContenu() {
       dbe: enCours.length - cbeEnCours.length,
       enAttente: lignes.filter((l) => l.affaire.statut === "EN_ATTENTE").length,
       reste: cbeEnCours.reduce((t, l) => t + l.totaux.reste, 0),
-      depassements: lignes.filter((l) => l.affaire.statut !== "ABANDONNEE" && l.totaux.depassement > 0).length,
+      depassements: lignes.filter((l) => (l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE") && l.totaux.depassement > 0).length,
     };
   }, [lignes]);
 
   const alertes = useMemo(() => {
     // Une affaire hors planning n'est pas encore pilotée : pas d'alerte de planning pour elle.
-    const actives = lignes.filter(
-      (l) => l.affaire.statut === "EN_COURS" || l.totaux.depassement > 0
-    );
+    // seulement les affaires actives : une affaire livrée ou abandonnée n'alerte plus
+    const actives = lignes.filter((l) => l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE");
 
     return {
       critiques: actives.filter((l) => l.etat.genre === "crit"),
@@ -721,7 +720,7 @@ function PortefeuilleContenu() {
               <Tuile
                 libelle="Dépassements"
                 valeur={String(synthese.depassements)}
-                sous="réalisé supérieur au chiffré"
+                sous="affaires actives : réalisé supérieur au chiffré"
                 accent={synthese.depassements > 0}
               />
             </div>
