@@ -5,6 +5,7 @@ import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
+import SousDossiersAffaire from "@/components/SousDossiersAffaire";
 import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
@@ -629,6 +630,9 @@ function BilanContenu() {
                 </p>
               )}
             </section>
+
+            {/* ---------- heures par sous-dossier (saisi dans les feuilles d'heures) ---------- */}
+            <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
 
             {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
             {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
