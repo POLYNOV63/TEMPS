@@ -549,6 +549,17 @@ function FacturationContenu() {
                 À facturer en {libMois}{" "}
                 <Link href="/pilotage/prestations" style={{ fontSize: 14, fontWeight: 700, color: C.rougeFonce }}>ouvrir le relevé PE / PI →</Link>
               </h2>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12.5, color: C.gris, margin: "-4px 0 10px" }}>
+                {[
+                  ["#e8f6ea", "livrée"],
+                  ["#f3f7ff", "prévue (pas encore livrée)"],
+                  ["#fff7c2", "à corriger : non facturable ou n° Louxor manquant"],
+                ].map(([fond, texte]) => (
+                  <span key={texte} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <i style={{ display: "inline-block", width: 14, height: 12, borderRadius: 3, background: fond, border: "1px solid #d5d9de" }} /> {texte}
+                  </span>
+                ))}
+              </div>
               {lignes.length === 0 ? (
                 <p style={{ color: C.gris }}>Rien à facturer ce mois-ci.</p>
               ) : (
@@ -571,7 +582,16 @@ function FacturationContenu() {
                   </thead>
                   <tbody>
                     {lignesTriees.map((l, i) => (
-                      <tr key={`${l.type}-${l.numero}-${l.personne}-${i}`} style={!l.facturable || l.alerteLouxor ? { background: "#fff7c2" } : l.prevu ? { background: "#f3f7ff", fontStyle: "italic" } : undefined}>
+                      <tr key={`${l.type}-${l.numero}-${l.personne}-${i}`} style={
+                          // jaune : à corriger (non facturable, n° Louxor manquant) ; vert : livrée ; bleu : prévue
+                          !l.facturable || l.alerteLouxor
+                            ? { background: "#fff7c2" }
+                            : l.statut === "Livrée"
+                              ? { background: "#e8f6ea" }
+                              : l.prevu
+                                ? { background: "#f3f7ff", fontStyle: "italic" }
+                                : undefined
+                        }>
                         <td style={{ ...td, fontWeight: 700 }}>{l.client || "—"}</td>
                         <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{l.numero}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{l.dbe || "—"}</td>
