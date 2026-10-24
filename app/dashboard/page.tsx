@@ -836,6 +836,12 @@ function BlocMonEspace({
           onClick={() => aller("/ma-semaine")}
         />
         <CarteCompacte
+          icone="🗺️"
+          titre="Ma feuille de route"
+          description="Ce qui est prévu pour moi au planning, semaine par semaine"
+          onClick={() => aller("/ma-feuille-de-route")}
+        />
+        <CarteCompacte
           icone="📄"
           titre="Mes feuilles"
           description="Mes feuilles de temps enregistrées"
@@ -1015,6 +1021,7 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
           {ok ? "✓ complète" : statut === "incomplete" ? "⚠ à compléter" : "⚠ non saisie"}
         </span>
       </button>
+      <button type="button" onClick={() => aller("/ma-feuille-de-route")} style={bouton}>🗺️ Ma feuille de route</button>
       <button type="button" onClick={() => aller("/mes-feuilles")} style={bouton}>📄 Mes feuilles</button>
       <button type="button" onClick={() => aller("/RH")} style={bouton}>🧑‍💼 Mes demandes RH</button>
     </section>
