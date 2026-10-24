@@ -126,10 +126,19 @@ function PortefeuilleContenu() {
     }
     setEnregDbe(true);
     setErreurPlanning("");
-    const { error } = await supabase
-      .from("pilotage_affaires")
-      .update({ responsable_id: edDbe.resp, echeance: edDbe.date })
-      .eq("id", edDbe.id);
+    // DELAI_PAR_FONCTION : le rédacteur d'abord ; la date passe par la fonction des délais,
+    // qui garde l'historique (motif obligatoire, rempli automatiquement)
+    let { error } = await supabase.from("pilotage_affaires").update({ responsable_id: edDbe.resp }).eq("id", edDbe.id);
+    if (!error) {
+      const avant = affaires.find((a) => a.id === edDbe.id)?.echeance ?? null;
+      if (avant !== edDbe.date) {
+        ({ error } = await supabase.rpc("pilotage_changer_echeance", {
+          p_affaire_id: edDbe.id,
+          p_nouvelle_date: edDbe.date,
+          p_motif: "Date de rendu du devis fixée depuis le portefeuille",
+        }));
+      }
+    }
     setEnregDbe(false);
     if (error) {
       setErreurPlanning(`Affectation du devis impossible : ${error.message}`);
@@ -552,7 +561,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="designation" libelle="Descriptif" />
             <EnTeteTri col="client" libelle="Client" />
             <EnTeteTri col="resp" libelle="Resp." />
-            <EnTeteTri col="echeance" libelle="Échéance" />
+            <EnTeteTri col="echeance" libelle="Délai" />
             <EnTeteTri col="chiffre" libelle="Chiffré" num />
             <EnTeteTri col="realise" libelle="Réalisé" num />
             <EnTeteTri col="reste" libelle="Reste" num />

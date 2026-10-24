@@ -697,6 +697,8 @@ function PortefeuilleContenu() {
                           Annuler
                         </button>
                       </div>
+                      {/* ERREUR_DBE_VISIBLE */}
+                      {erreurPlanning && <div role="alert" style={{ color: "#b3261e", fontWeight: 700, marginTop: 8 }}>{erreurPlanning}</div>}
                     </td>
                   </tr>
                 )}
