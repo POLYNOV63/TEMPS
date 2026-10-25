@@ -415,9 +415,15 @@ function FacturationContenu() {
         quantite: Math.round(p.quantite * 100) / 100,
         unite: p.unite === "JOUR" ? "j" : "h",
         enveloppe: (() => {
-          // le Suivi d'affaire compte une journée vendue pour 7 h (« Total heures » = jours × 7) ;
-          // le consommé, lui, se ramène en jours avec la base horaire de la ligne (7 h ou 7,5 h)
-          const commande = p.commandeH === null ? null : p.unite === "JOUR" ? p.commandeH / 7 : p.commandeH;
+          // « Total heures » du Suivi d'affaire = jours vendus × 7 h OU × 7,5 h selon la commande :
+          // on garde la base qui donne un nombre rond de jours (à la demi-journée), celle de la ligne d'abord
+          const joursVendus = (h: number) => {
+            const rond = (b: number) => Math.abs(h / b - Math.round((h / b) * 2) / 2) < 0.01;
+            const autre = p.baseHoraire === 7.5 ? 7 : 7.5;
+            const base = rond(p.baseHoraire) ? p.baseHoraire : rond(autre) ? autre : p.baseHoraire;
+            return h / base;
+          };
+          const commande = p.commandeH === null ? null : p.unite === "JOUR" ? joursVendus(p.commandeH) : p.commandeH;
           const consomme = p.unite === "JOUR" ? p.consommeH / p.baseHoraire : p.consommeH;
           return { commande, consomme, reste: commande === null ? null : commande - consomme };
         })(),
