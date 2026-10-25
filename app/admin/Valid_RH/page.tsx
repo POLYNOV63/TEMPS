@@ -45,9 +45,17 @@ export default function ValidRHPage(){
  const [demandes,setDemandes]=useState<Demande[]>([]);const [filtre,setFiltre]=useState("EN_ATTENTE");const [filtreTransmission,setFiltreTransmission]=useState("TOUTES");const [chargement,setChargement]=useState(true);const [erreur,setErreur]=useState("");const [selection,setSelection]=useState<Demande|null>(null);const [motif,setMotif]=useState("");const [emailRH,setEmailRH]=useState(ADRESSES_PAR_DEFAUT);const [action,setAction]=useState("");const [me,setMe]=useState<any>(null);const [infosAnnulation,setInfosAnnulation]=useState<any>(null);
  // Transmission de la décision dès la validation (ou le refus), à l'adresse libre de la fenêtre
  const [emailEnvoi,setEmailEnvoi]=useState("");
+ // ouverture directe d'une demande depuis la cloche du tableau de bord (?demande=<id>), une seule fois
+ const ouvertureFaite=React.useRef(false);
  useEffect(()=>{setEmailEnvoi(emailRH);},[selection?.id]); // eslint-disable-line react-hooks/exhaustive-deps
  async function verifierAdmin(){const {data:{user}}=await supabase.auth.getUser();if(!user){window.location.href="/login";return null;}const {data:c,error}=await supabase.from("collaborateurs").select("id,role,trigramme,prenom,nom").eq("auth_user_id",user.id).single();const tri=String(c?.trigramme||"").toUpperCase();if(error||!c||String(c.role).toUpperCase()!=="ADMIN"||!(["PLG","AMA"].includes(tri))){window.location.href="/dashboard";return null;}setMe(c);return c;}
- async function charger(){setChargement(true);setErreur("");try{const admin=await verifierAdmin();if(!admin)return;const {data,error}=await supabase.from("rh_demandes_admin").select("*").order("created_at",{ascending:false});if(error)throw error;setDemandes((data||[]) as Demande[]);}catch(e:any){setErreur(e?.message||"Impossible de charger les demandes RH.");}finally{setChargement(false);}}
+ async function charger(){setChargement(true);setErreur("");try{const admin=await verifierAdmin();if(!admin)return;const {data,error}=await supabase.from("rh_demandes_admin").select("*").order("created_at",{ascending:false});if(error)throw error;setDemandes((data||[]) as Demande[]);
+  if(!ouvertureFaite.current){
+   ouvertureFaite.current=true;
+   const voulu=new URLSearchParams(window.location.search).get("demande");
+   const d=voulu?((data||[]) as Demande[]).find(x=>x.id===voulu):undefined;
+   if(d){setSelection(d);if(d.statut!=="EN_ATTENTE")setFiltre("TOUTES");window.history.replaceState(null,"","/admin/Valid_RH");}
+  }}catch(e:any){setErreur(e?.message||"Impossible de charger les demandes RH.");}finally{setChargement(false);}}
  useEffect(()=>{charger();},[]);
  useEffect(()=>{
    setInfosAnnulation(null);
@@ -164,8 +172,34 @@ export default function ValidRHPage(){
     titre="Validation RH"
     description="Les demandes sont conservées et classées automatiquement par année puis par mois."
   />
+  {/* VALID_RH_MOBILE : affichage téléphone */}
+  <style>{`
+@media (max-width: 760px) {
+  .vr-outils > label, .vr-outils input, .vr-outils select { width: 100% !important; min-width: 0 !important; box-sizing: border-box; }
+  .vr-table, .vr-table tbody, .vr-table tr, .vr-table td { display: block; width: 100%; box-sizing: border-box; }
+  .vr-table thead { display: none; }
+  .vr-table tr { border-bottom: 6px solid #f1f3f5; padding: 8px 12px; text-align: left; }
+  .vr-table td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 0; text-align: right; }
+  .vr-table td::before { font-weight: 700; color: #777; font-size: 13px; text-align: left; }
+  .vr-table td:nth-child(2)::before { content: "Demande"; }
+  .vr-table td:nth-child(3)::before { content: "Date"; }
+  .vr-table td:nth-child(4)::before { content: "Durée"; }
+  .vr-table td:nth-child(5)::before { content: "Créée le"; }
+  .vr-table td:nth-child(6)::before { content: "Statut"; }
+  .vr-table td:nth-child(7)::before { content: "Validateur"; }
+  .vr-table td:nth-child(8)::before { content: "Transmission"; }
+  .vr-table td:nth-child(1) { font-size: 16px; justify-content: flex-start; text-align: left; }
+  .vr-table td:nth-child(9) button { min-height: 46px; flex: 1; font-size: 15px; }
+  .vr-fond { padding: 0 !important; align-items: stretch !important; }
+  .vr-modal { width: 100% !important; max-height: 100vh !important; min-height: 100vh; border-radius: 0 !important; padding: 16px !important; box-sizing: border-box; }
+  .vr-grille { grid-template-columns: 1fr !important; }
+  .vr-actions { flex-direction: column; }
+  .vr-actions > button, .vr-actions > input { width: 100% !important; min-height: 50px; font-size: 16px; box-sizing: border-box; }
+  .vr-actions .vr-valider { order: -1; }
+}
+`}</style>
   {erreur&&<div style={styles.alert}>{erreur}</div>}
-  <section style={styles.toolbar}><label><strong>Statut</strong><select value={filtre} onChange={e=>setFiltre(e.target.value)} style={styles.input}><option value="EN_ATTENTE">En attente</option><option value="VALIDEE">Validées</option><option value="REFUSEE">Refusées</option><option value="ANNULEE">Annulées</option><option value="TOUTES">Toutes</option></select></label><label><strong>Transmission RH</strong><select value={filtreTransmission} onChange={e=>setFiltreTransmission(e.target.value)} style={styles.input}><option value="TOUTES">Toutes</option><option value="NON_TRANSMISE">Non transmises</option><option value="TRANSMISE">Transmises</option></select></label><label><strong>Adresses d’envoi par défaut</strong><input style={{...styles.input,minWidth:320}} value={emailRH} onChange={e=>setEmailRH(e.target.value)} placeholder="séparées par une virgule"/></label><button style={styles.refresh} onClick={charger}>↻ Actualiser</button></section>
+  <section className="vr-outils" style={styles.toolbar}><label><strong>Statut</strong><select value={filtre} onChange={e=>setFiltre(e.target.value)} style={styles.input}><option value="EN_ATTENTE">En attente</option><option value="VALIDEE">Validées</option><option value="REFUSEE">Refusées</option><option value="ANNULEE">Annulées</option><option value="TOUTES">Toutes</option></select></label><label><strong>Transmission RH</strong><select value={filtreTransmission} onChange={e=>setFiltreTransmission(e.target.value)} style={styles.input}><option value="TOUTES">Toutes</option><option value="NON_TRANSMISE">Non transmises</option><option value="TRANSMISE">Transmises</option></select></label><label><strong>Adresses d’envoi par défaut</strong><input style={{...styles.input,minWidth:320}} value={emailRH} onChange={e=>setEmailRH(e.target.value)} placeholder="séparées par une virgule"/></label><button style={styles.refresh} onClick={charger}>↻ Actualiser</button></section>
   {chargement?<div style={styles.card}>Chargement…</div>:
   <div>
    {liste.length===0 ? <div style={styles.card}><div style={styles.empty}>Aucune demande dans ce filtre.</div></div> :
@@ -180,7 +214,7 @@ export default function ValidRHPage(){
           <details key={`${g.annee}-${mois}`} open={g.annee===new Date().getFullYear() && mois===new Date().getMonth()+1} style={styles.archiveMonth}>
            <summary style={styles.archiveMonthSummary}>📂 {moisFR(mois)} <span style={styles.archiveCount}>{ds.length}</span></summary>
            <div style={{overflowX:"auto"}}>
-            <table style={styles.table}>
+            <table className="vr-table" style={styles.table}>
              <thead><tr><th>Collaborateur</th><th>Demande</th><th>Date / semaine</th><th>Durée</th><th>Créée le</th><th>Statut</th><th>Validateur</th><th>Transmission RH</th><th>Actions</th></tr></thead>
              <tbody>{ds.map(d=>{const b=badge(d.statut);return <tr key={d.id}>
               <td><strong>{d.prenom} {d.nom}</strong><br/><small>{d.trigramme}</small></td>
@@ -201,8 +235,8 @@ export default function ValidRHPage(){
       </details>
     )}
   </div>}
-   {selection&&<div style={styles.overlay}><div style={styles.modal}><div style={styles.modalHead}><div><div style={styles.kicker}>DEMANDE RH</div><h2 style={{margin:"3px 0"}}>{selection.prenom} {selection.nom}</h2><div style={styles.muted}>{selection.trigramme} · {type(selection.type_demande)}</div></div><button style={styles.close} onClick={()=>setSelection(null)}>×</button></div>
-   <div style={styles.detailGrid}><Info l="Type" v={type(selection.type_demande)}/><Info l="Date" v={dateFR(selection.date_debut)}/><Info l="Durée" v={selection.type_demande==="RE"?`${selection.heures_re} h`:`${selection.duree_jours} jour(s)`}/><Info l="Envoi prévu à" v={emailEnvoi||emailRH}/></div>
+   {selection&&<div className="vr-fond" style={styles.overlay}><div className="vr-modal" style={styles.modal}><div style={styles.modalHead}><div><div style={styles.kicker}>DEMANDE RH</div><h2 style={{margin:"3px 0"}}>{selection.prenom} {selection.nom}</h2><div style={styles.muted}>{selection.trigramme} · {type(selection.type_demande)}</div></div><button style={styles.close} onClick={()=>setSelection(null)}>×</button></div>
+   <div className="vr-grille" style={styles.detailGrid}><Info l="Type" v={type(selection.type_demande)}/><Info l="Date" v={dateFR(selection.date_debut)}/><Info l="Durée" v={selection.type_demande==="RE"?`${selection.heures_re} h`:`${selection.duree_jours} jour(s)`}/><Info l="Envoi prévu à" v={emailEnvoi||emailRH}/></div>
    <div style={styles.signature}><strong>Signature du demandeur</strong><br/>{selection.signature_demandeur||`${selection.prenom||""} ${selection.nom||""}`}</div>
    {selection.validateur_id&&<div style={styles.signature}><strong>Signature du validateur</strong><br/>{selection.signature_validateur||`${selection.validateur_prenom||""} ${selection.validateur_nom||""}`}<br/><small>{selection.date_validation?new Date(selection.date_validation).toLocaleString("fr-FR"):""}</small></div>}
    {selection.commentaire&&<div style={styles.note}><strong>Commentaire</strong><br/>{selection.commentaire}</div>}{selection.justificatif_nom&&<div style={styles.note}><strong>Justificatif</strong><br/>{selection.justificatif_nom}</div>}{selection.motif_refus&&<div style={styles.alert}><strong>Motif du refus</strong><br/>{selection.motif_refus}</div>}{selection.statut==="ANNULEE"&&<div style={styles.note}><strong>Demande annulée</strong><br/>{infosAnnulation?.annulee_le?`Le ${new Date(infosAnnulation.annulee_le).toLocaleString("fr-FR")}`:""}{infosAnnulation?.statut_avant_annulation?` · statut avant annulation : ${infosAnnulation.statut_avant_annulation==="EN_ATTENTE"?"en attente":infosAnnulation.statut_avant_annulation==="REFUSEE"?"refusée":"validée"}`:""}{infosAnnulation?.motif_annulation?<><br/>Motif : {infosAnnulation.motif_annulation}</>:null}{infosAnnulation?.annulation_feuilles_a_corriger?<><br/><strong>À corriger :</strong> feuilles déjà validées des semaines du {infosAnnulation.annulation_feuilles_a_corriger}</>:null}</div>}
@@ -212,7 +246,7 @@ export default function ValidRHPage(){
      <small style={{color:"#555"}}>En copie : {selection.prenom} {selection.nom}{selection.collaborateur_email?` (${selection.collaborateur_email})`:""}, PLG et AMA.</small>
     </div>
     <label style={styles.label}>Motif si refus</label><textarea style={{...styles.input,width:"100%",minHeight:70}} value={motif} onChange={e=>setMotif(e.target.value)} placeholder="Obligatoire en cas de refus"/></div>}
-   <div style={styles.actions}>{selection.statut==="EN_ATTENTE"&&<><button style={styles.danger} disabled={!!action} onClick={()=>refuser(selection)}>Refuser</button><button style={styles.primary} disabled={!!action} onClick={()=>valider(selection)}>Valider pour moi</button></>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<input style={{...styles.input,marginTop:0,minWidth:240}} value={emailEnvoi} onChange={e=>setEmailEnvoi(e.target.value)} aria-label="Adresse d’envoi" placeholder="adresse e-mail"/>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<button style={styles.primary} disabled={!!action} onClick={()=>envoyerRH(selection)}>{action==="email"?"Envoi…":selection.statut==="VALIDEE"?"Transmettre l’accord":"Transmettre le refus"}</button>}{selection.rh_transmise&&<div style={{...styles.note,background:"#eaf7ee",color:"#176f3a"}}>✓ Demande transmise au RH{selection.rh_transmise_le?` le ${new Date(selection.rh_transmise_le).toLocaleString("fr-FR")}`:""}</div>}{["EN_ATTENTE","VALIDEE","ENVOYEE_RH","REFUSEE"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>{action==="annulation"?"Annulation…":"Annuler la demande"}</button>}<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>
+   <div className="vr-actions" style={styles.actions}>{selection.statut==="EN_ATTENTE"&&<><button style={styles.danger} disabled={!!action} onClick={()=>refuser(selection)}>Refuser</button><button className="vr-valider" style={styles.primary} disabled={!!action} onClick={()=>valider(selection)}>Valider pour moi</button></>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<input style={{...styles.input,marginTop:0,minWidth:240}} value={emailEnvoi} onChange={e=>setEmailEnvoi(e.target.value)} aria-label="Adresse d’envoi" placeholder="adresse e-mail"/>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<button style={styles.primary} disabled={!!action} onClick={()=>envoyerRH(selection)}>{action==="email"?"Envoi…":selection.statut==="VALIDEE"?"Transmettre l’accord":"Transmettre le refus"}</button>}{selection.rh_transmise&&<div style={{...styles.note,background:"#eaf7ee",color:"#176f3a"}}>✓ Demande transmise au RH{selection.rh_transmise_le?` le ${new Date(selection.rh_transmise_le).toLocaleString("fr-FR")}`:""}</div>}{["EN_ATTENTE","VALIDEE","ENVOYEE_RH","REFUSEE"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>{action==="annulation"?"Annulation…":"Annuler la demande"}</button>}<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>
   </div></div>}
  </main>;
 }

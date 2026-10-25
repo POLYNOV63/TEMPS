@@ -373,7 +373,7 @@ export default function DashboardPage() {
         cloche={role === "ADMIN" ? <ClocheDemandesRH nombre={nombreDemandesRH} demandes={demandesCloche} onAller={aller} /> : null}
       />
 
-      <div style={{ ...styles.container, padding: "14px 30px 32px 30px" }}>
+      <div className="db-contenu" style={{ ...styles.container, padding: "14px 30px 32px 30px" }}>
         <div style={stylesV2.accueil}>
           <div>
             <h1 style={stylesV2.bonjour}>
@@ -387,7 +387,7 @@ export default function DashboardPage() {
           </div>
 
           {role === "ADMIN" && (
-            <div style={stylesV2.chips} title={`Feuilles de la semaine du ${formaterDateLongue(semaineCourante)}`}>
+            <div className="db-chips" style={stylesV2.chips} title={`Feuilles de la semaine du ${formaterDateLongue(semaineCourante)}`}>
               <ChipSuivi icone="👥" valeur={String(statistiques.collaborateurs)} label="actifs" />
               <ChipSuivi
                 icone="✓"
@@ -444,16 +444,32 @@ export default function DashboardPage() {
   );
 }
 
+/* MOBILE_NIVEAU_2 : tableau de bord sur téléphone */
+const CSS_TELEPHONE = `
+@media (max-width: 640px) {
+  .db-entete { padding: 14px 14px 16px !important; }
+  .db-logo { font-size: 24px !important; }
+  .db-contenu { padding: 10px 12px 28px !important; }
+  .db-chips { flex-wrap: nowrap !important; overflow-x: auto; width: 100%; padding-bottom: 4px; }
+  .db-chips > * { flex: 0 0 auto; }
+  .db-bandeau > button { flex: 1 1 45%; justify-content: center; min-height: 46px !important; }
+  .db-bandeau > span { width: 100%; }
+  .db-cloche-panneau { position: fixed !important; left: 8px !important; right: 8px !important; top: 72px !important; width: auto !important; max-width: none !important; }
+  .db-cloche-ligne { min-height: 52px; justify-content: center; }
+}
+`;
+
 /* ===============================================================
    EN-TÊTE ROUGE
 ================================================================ */
 
 function EnTete({ role, cloche }: { role: string; cloche?: ReactNode }) {
   return (
-    <header style={styles.header}>
+    <header className="db-entete" style={styles.header}>
+      <style>{CSS_TELEPHONE}</style>
       <div style={styles.headerInner}>
         <div>
-          <div style={styles.logo}>POLYNOV</div>
+          <div className="db-logo" style={styles.logo}>POLYNOV</div>
           <div style={styles.headerSubtitle}>Tableau de bord</div>
         </div>
 
@@ -659,13 +675,30 @@ function ClocheDemandesRH({
       </button>
 
       {ouverte && (
-        <div role="dialog" aria-label="Demandes RH à valider" style={stylesV2.clochePanneau}>
+        <div className="db-cloche-panneau" role="dialog" aria-label="Demandes RH à valider" style={stylesV2.clochePanneau}>
           <div style={stylesV2.clocheTitre}>
             {nombre > 0 ? `Demandes RH à valider (${nombre})` : "Aucune demande RH en attente ✓"}
           </div>
 
           {demandes.map((d) => (
-            <div key={d.id} style={stylesV2.clocheLigne}>
+            <div
+              key={d.id}
+              className="db-cloche-ligne"
+              role="button"
+              tabIndex={0}
+              title="Ouvrir cette demande"
+              onClick={() => {
+                setOuverte(false);
+                onAller(`/admin/Valid_RH?demande=${d.id}`);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setOuverte(false);
+                  onAller(`/admin/Valid_RH?demande=${d.id}`);
+                }
+              }}
+              style={{ ...stylesV2.clocheLigne, cursor: "pointer" }}
+            >
               <strong>{[d.prenom, d.nom].filter(Boolean).join(" ") || d.trigramme || "—"}</strong>
               <span style={{ color: "#666666", fontSize: 12.5 }}>
                 {LIBELLES_DEMANDE[String(d.type_demande ?? "")] ?? d.type_demande ?? "Demande"}
@@ -869,6 +902,12 @@ function BlocMonEspace({
           description="Mes demandes de congés, RTT et récupération"
           onClick={() => aller("/RH")}
         />
+        <CarteCompacte
+          icone="📘"
+          titre="Guide"
+          description="Comment fonctionne l’Espace POLYNOV, pas à pas"
+          onClick={() => aller("/guide")}
+        />
       </div>
     </Groupe>
   );
@@ -1013,7 +1052,7 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
   };
   const ok = statut === "complete";
   return (
-    <section aria-label="Mon espace" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "4px 0 18px" }}>
+    <section className="db-bandeau" aria-label="Mon espace" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "4px 0 18px" }}>
       <span style={{ fontWeight: 800, fontSize: 13, color: "#6b7076", textTransform: "uppercase", letterSpacing: ".4px", marginRight: 4 }}>Mon espace</span>
       <button type="button" title={libelle} onClick={() => aller("/ma-semaine")} style={{ ...bouton, borderColor: ok ? "#9fd4a7" : "#e9b877", background: ok ? "#f2faf3" : "#fff7ea" }}>
         📅 Ma semaine
@@ -1024,6 +1063,7 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
       <button type="button" onClick={() => aller("/ma-feuille-de-route")} style={bouton}>🗺️ Ma feuille de route</button>
       <button type="button" onClick={() => aller("/mes-feuilles")} style={bouton}>📄 Mes feuilles</button>
       <button type="button" onClick={() => aller("/RH")} style={bouton}>🧑‍💼 Mes demandes RH</button>
+      <button type="button" onClick={() => aller("/guide")} style={bouton}>📘 Guide</button>
     </section>
   );
 }
