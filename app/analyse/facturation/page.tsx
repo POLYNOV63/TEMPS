@@ -88,6 +88,9 @@ type LignePrestation = {
      confondues, jusqu'à la fin du mois affiché ; en heures */
   commandeH: number | null; // « Total heures » du Suivi d'affaire
   dateLivraison: string | null; // date de livraison (= clôture de la PE / PI) dans le Suivi d'affaire
+  /* RESTE_CLASSEUR : commande initiale et reste du classeur Suivi des prestations (unité de la ligne) ; il fait foi */
+  commandeClasseur: number | null;
+  resteClasseur: number | null;
   consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)
   baseHoraire: number;
 };
@@ -117,7 +120,7 @@ type LigneFacturation = {
   quantite: number | null;
   unite: string;
   taux: number | null;
-  enveloppe: { commande: number | null; consomme: number; reste: number | null } | null; // dans l'unité de la ligne
+  enveloppe: { commande: number | null; consomme: number; reste: number | null; classeur: boolean; ecart: number | null } | null; // dans l'unité de la ligne
   livraison: string;
   montant: number;
   statut: string;
@@ -186,7 +189,7 @@ function FacturationContenu() {
     (async () => {
       try {
         const [pm, lp, pa, co, sa, pmTous, saTous] = await Promise.all([
-          supabase.from("prestation_mois").select("ligne_id,valide,reporte,report_sortant,hs_refacturer,heures_fige,montant_fige,montant_import").eq("mois", debut),
+          supabase.from("prestation_mois").select("ligne_id,valide,reporte,report_sortant,hs_refacturer,heures_fige,montant_fige,montant_import,commande_import,reste_import").eq("mois", debut),
           supabase.from("prestation_lignes").select("id,affaire_id,collaborateur_id,unite,taux,base_horaire"),
           supabase.from("pilotage_affaires").select("id,numero,statut,imputation,designation"),
           supabase.from("collaborateurs").select("id,trigramme"),
@@ -208,7 +211,7 @@ function FacturationContenu() {
         const trig = new Map(((co.data ?? []) as { id: string; trigramme: string | null }[]).map((c) => [c.id, c.trigramme ?? "?"]));
         const heures = new Map<string, number>();
         for (const s of sa) heures.set(s.ligne_id, (heures.get(s.ligne_id) ?? 0) + (Number(s.heures) || 0));
-        const moisLignes = new Map(((pm.data ?? []) as { ligne_id: string; valide: boolean; reporte: boolean; report_sortant: number | null; hs_refacturer: number | null; heures_fige: number | null; montant_fige: number | null; montant_import: number | null }[]).map((m) => [m.ligne_id, m]));
+        const moisLignes = new Map(((pm.data ?? []) as { ligne_id: string; valide: boolean; reporte: boolean; report_sortant: number | null; hs_refacturer: number | null; heures_fige: number | null; montant_fige: number | null; montant_import: number | null; commande_import: number | string | null; reste_import: number | string | null }[]).map((m) => [m.ligne_id, m]));
 
         /* consommé de chaque commande : mois clôturé = heures facturées (figées) ; mois ouvert = heures saisies */
         const valides = new Map<string, number>(); // « ligne|AAAA-MM » -> heures figées
@@ -266,6 +269,8 @@ function FacturationContenu() {
             cloture: Boolean(m?.valide),
             commandeH: sl && Number(sl.heures_total) > 0 ? Number(sl.heures_total) : null,
             dateLivraison: sl?.date_livraison ?? null,
+            commandeClasseur: m?.commande_import === null || m?.commande_import === undefined ? null : Number(m.commande_import),
+            resteClasseur: m?.reste_import === null || m?.reste_import === undefined ? null : Number(m.reste_import),
             consommeH: consommeAffaire.get(l.affaire_id) ?? 0,
             baseHoraire: Number(l.base_horaire) || 7,
           });
@@ -423,9 +428,21 @@ function FacturationContenu() {
             const base = rond(p.baseHoraire) ? p.baseHoraire : rond(autre) ? autre : p.baseHoraire;
             return h / base;
           };
-          const commande = p.commandeH === null ? null : p.unite === "JOUR" ? joursVendus(p.commandeH) : p.commandeH;
-          const consomme = p.unite === "JOUR" ? p.consommeH / p.baseHoraire : p.consommeH;
-          return { commande, consomme, reste: commande === null ? null : commande - consomme };
+          const commandeCalc = p.commandeH === null ? null : p.unite === "JOUR" ? joursVendus(p.commandeH) : p.commandeH;
+          const consommeCalc = p.unite === "JOUR" ? p.consommeH / p.baseHoraire : p.consommeH;
+          const resteCalc = commandeCalc === null ? null : commandeCalc - consommeCalc;
+          // le classeur fait foi ; le calcul de l'application ne sert plus que de contrôle
+          if (p.resteClasseur !== null) {
+            const commande = p.commandeClasseur ?? commandeCalc;
+            return {
+              commande,
+              consomme: commande === null ? consommeCalc : commande - p.resteClasseur,
+              reste: p.resteClasseur,
+              classeur: true,
+              ecart: resteCalc === null ? null : resteCalc - p.resteClasseur,
+            };
+          }
+          return { commande: commandeCalc, consomme: consommeCalc, reste: resteCalc, classeur: false, ecart: null };
         })(),
         taux: p.taux,
         livraison: p.dateLivraison ?? "",
@@ -708,6 +725,13 @@ function FacturationContenu() {
                               {l.enveloppe.reste !== null && (
                                 <div style={{ fontWeight: 800 }}>
                                   {l.enveloppe.reste >= 0 ? `reste ${nombre(l.enveloppe.reste)} ${l.unite}` : `dépassé de ${nombre(-l.enveloppe.reste)} ${l.unite}`}
+                                  {l.enveloppe.classeur && <span style={{ fontWeight: 400 }}> (classeur)</span>}
+                                </div>
+                              )}
+                              {l.enveloppe.ecart !== null && Math.abs(l.enveloppe.ecart) > 0.5 && (
+                                <div title="Le reste calculé par l’application (commande − heures du relevé) ne tombe pas sur celui du classeur : vérifiez la commande ou les heures saisies" style={{ color: "#c76500", fontWeight: 800 }}>
+                                  ⚠ écart {l.enveloppe.ecart > 0 ? "+" : ""}
+                                  {nombre(l.enveloppe.ecart)} {l.unite}
                                 </div>
                               )}
                             </div>
