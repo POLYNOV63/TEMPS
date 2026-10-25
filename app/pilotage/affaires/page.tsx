@@ -1521,7 +1521,7 @@ function PlanningAffairesContenu() {
                 )}
                 {/* Livrée / Reprendre : seulement pour les affaires déclarées à la main.
                     Une affaire venue d'Excel suit le statut du classeur (Excel fait foi). */}
-                {peutAgir && !(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
+                {peutAgir && affaire.type !== "DBE" && !(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
                   <button
                     type="button"
                     disabled={livraisonEnCours === affaire.id}
@@ -1843,7 +1843,15 @@ function PlanningAffairesContenu() {
                     {m.libelle}
                   </span>
                 ))}
-                <span title="Aujourd’hui" style={{ position: "absolute", left: `${(26 / nbPas) * 100}%`, top: -4, width: 2, height: 18, background: C.rouge }} />
+                <button
+                  type="button"
+                  title="Revenir à aujourd’hui"
+                  aria-label="Revenir à aujourd’hui"
+                  onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
+                  style={{ position: "absolute", left: `calc(${(26 / nbPas) * 100}% - 6px)`, top: -6, width: 14, height: 22, padding: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", justifyContent: "center" }}
+                >
+                  <span aria-hidden="true" style={{ width: 2, height: "100%", background: C.rouge }} />
+                </button>
               </div>
             </div>
           );
@@ -1982,7 +1990,21 @@ function PlanningAffairesContenu() {
                 {colonnes.map((j, i) => (
                   <div key={j} style={{ gridColumn: col(i), gridRow: 3, textAlign: "center", padding: "3px 0", background: estFerie(j) ? "#e3e6ea" : j === aujourdhui ? "#fff4f4" : "#ffffff", borderBottom: `1px solid ${C.ligne}`, fontSize: nbSemaines > 12 ? 9 : 11, lineHeight: 1.1, color: C.gris, fontWeight: 700 }}>
                     {nbSemaines > 12 ? "" : JOURS_COURTS[jourSemaine(j) - 1]}
-                    <div style={{ color: j === aujourdhui ? C.rougeFonce : C.encre }}>{nbSemaines > 12 ? "" : Number(j.slice(8))}</div>
+                    {/* AUJOURDHUI_ENTOURE */}
+                    <div style={{ color: j === aujourdhui ? C.rougeFonce : C.encre }}>
+                      {nbSemaines > 12 ? (
+                        ""
+                      ) : j === aujourdhui ? (
+                        <span
+                          title="Aujourd’hui"
+                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: "50%", border: `2px solid ${C.rouge}`, boxSizing: "border-box", fontWeight: 800 }}
+                        >
+                          {Number(j.slice(8))}
+                        </span>
+                      ) : (
+                        Number(j.slice(8))
+                      )}
+                    </div>
                   </div>
                 ))}
                 <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 8px 6px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
