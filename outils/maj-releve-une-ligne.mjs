@@ -1,9 +1,9 @@
 /* ===============================================================
    Relevé PE / PI (app/pilotage/prestations/page.tsx) : UNE LIGNE par
-   commande × personne, comme le Suivi des prestations (version 5 : « à staffer » en haut, jours étroits, n° de semaine, un seul ascenseur, taux de vente moyen PE / PI ; la
+   commande × personne, comme le Suivi des prestations (version 6 : flèches du mois fixes, « à staffer » en haut, jours étroits, n° de semaine, un seul ascenseur, taux de vente moyen PE / PI ; la
    commande, le mois, le montant, le reste et les réglages à gauche ; le
    calendrier à droite, avec des week-ends étroits).
-   Marche aussi par-dessus les versions 1 à 4.
+   Marche aussi par-dessus les versions 1 à 5.
    - le calendrier du mois en en-tête, fixe quand on descend ;
    - la commande et la personne fixes à gauche, le mois (en jours ou en
      heures), le montant et le reste fixes à droite ;
@@ -27,11 +27,11 @@ if (!existsSync(chemin) || !existsSync(bloc)) {
   process.exit(1);
 }
 let texte = readFileSync(chemin, "utf8").replace(/\r\n/g, "\n");
-if (texte.includes("RELEVE_UNE_LIGNE_V5")) {
+if (texte.includes("RELEVE_UNE_LIGNE_V6")) {
   console.log("✓ Déjà à jour : rien à faire.");
   process.exit(0);
 }
-// version 1 à 4 déjà installée : le tableau change (et le taux moyen s'ajoute)
+// version 1 à 5 déjà installée : le tableau change (et le taux moyen s'ajoute)
 const dejaV1 = texte.includes("RELEVE_UNE_LIGNE");
 const nouveauBloc = readFileSync(bloc, "utf8").replace(/\r\n/g, "\n");
 let erreurs = 0;
@@ -143,9 +143,13 @@ toujours(
               <section style={{ ...page.carte, padding: 14, flex: "1 1 420px" }}>`
 );
 
-const debutBloc = dejaV1
-  ? `        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {`
-  : `        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (`;
+const debutsPossibles = dejaV1
+  ? [
+      `        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {`,
+      `        {(blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {`,
+    ]
+  : [`        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (`];
+const debutBloc = debutsPossibles.find((d) => texte.includes(d)) ?? debutsPossibles[0];
 const finBloc = `        {!chargement && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 14 }}>`;
 const i = texte.indexOf(debutBloc);
@@ -155,7 +159,7 @@ if (i < 0 || j < 0 || j < i || texte.split(debutBloc).length !== 2) {
   erreurs++;
 } else {
   texte = texte.slice(0, i) + nouveauBloc + texte.slice(j);
-  console.log("✓ Tableau : « à staffer » en haut, jours étroits");
+  console.log("✓ Tableau : flèches du mois fixes dans l’en-tête");
 }
 
 if (erreurs > 0) {

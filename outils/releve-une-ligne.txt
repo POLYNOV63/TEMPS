@@ -1,5 +1,5 @@
-        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE_V5 : « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
+        {(blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
+          /* RELEVE_UNE_LIGNE_V6 : flèches du mois fixes dans l’en-tête (le tableau reste affiché pendant le chargement, la page ne remonte pas) ; « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
           const L_CMD = 180;
@@ -42,7 +42,7 @@
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
           const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
           return (
-            <div style={{ background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none", width: largeurTableau + 2, boxSizing: "border-box" }}>
+            <div style={{ background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none", width: largeurTableau + 2, boxSizing: "border-box", opacity: chargement ? 0.55 : 1, transition: "opacity .15s" }}>
               <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: largeurTableau }}>
                 <colgroup>
                   {[L_CMD, L_PERS, L_MOIS, L_MONTANT, L_RESTE, L_OUTILS].map((w, i) => (
@@ -54,7 +54,20 @@
                 </colgroup>
                 <thead>
                   <tr>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left", padding: "2px 4px" }}>
+                      {/* changer de mois sans quitter la ligne regardée */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                        <button type="button" onClick={() => setMois(decalerMois(mois, -1))} aria-label="Mois précédent" title="Mois précédent" style={{ ...outil, minWidth: 26, height: 26, padding: 0, color: C.rougeFonce, fontSize: 12 }}>
+                          ◀
+                        </button>
+                        <span style={{ flex: 1, textAlign: "center", fontWeight: 800, fontSize: 12, textTransform: "capitalize", color: C.rougeFonce, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {nomMois}
+                        </span>
+                        <button type="button" onClick={() => setMois(decalerMois(mois, 1))} aria-label="Mois suivant" title="Mois suivant" style={{ ...outil, minWidth: 26, height: 26, padding: 0, color: C.rougeFonce, fontSize: 12 }}>
+                          ▶
+                        </button>
+                      </div>
+                    </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Pers.</th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
                       Mois
