@@ -1004,32 +1004,42 @@ function PrestationsContenu() {
         {!chargement && mots.length > 0 && nbTrouves === 0 && <Message genre="info">Aucune ligne ne correspond à « {recherche} ».</Message>}
 
         {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE_V2 : tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
+          /* RELEVE_UNE_LIGNE_V3 : colonnes à largeur fixe, au plus juste ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
-          const L_CMD = 180;
-          const L_PERS = 62;
-          const L_MOIS = 72;
-          const L_MONTANT = 84;
-          const L_RESTE = 92;
-          const L_OUTILS = 112;
+          const L_CMD = 165;
+          const L_PERS = 58;
+          const L_MOIS = 62;
+          const L_MONTANT = 74;
+          const L_RESTE = 76;
+          const L_OUTILS = 94;
           const X_MOIS = L_CMD + L_PERS;
           const X_MONTANT = X_MOIS + L_MOIS;
           const X_RESTE = X_MONTANT + L_MONTANT;
           const X_OUTILS = X_RESTE + L_RESTE;
           // calendrier mince : jours ouvrés 32 px, week-ends et fériés 14 px
-          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 14 : 32);
+          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 12 : 30);
+          const largeurTableau = X_OUTILS + L_OUTILS + jours.reduce((t, j) => t + largeurJour(j), 0);
+          const petitOutil: CSSProperties = { ...outil, minWidth: 28, height: 30, padding: "0 4px", fontSize: 14 };
           const nbCol = 2 + jours.length + 4;
           const fondFixe = "#ffffff";
-          const entete: CSSProperties = { ...th, position: "sticky", top: 0, zIndex: 3, background: "#f1f2f4", padding: "6px 6px", fontSize: 12 };
+          const entete: CSSProperties = { ...th, position: "sticky", top: 0, zIndex: 3, background: "#f1f2f4", padding: "5px 4px", fontSize: 11 };
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
-          const cellule: CSSProperties = { ...td, padding: "4px 6px", fontSize: 14, borderBottom: `1px solid ${C.ligne}` };
+          const cellule: CSSProperties = { ...td, padding: "3px 4px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
           const enUnite = (l: Ligne, heures: number) =>
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
           const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
           return (
             <div style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
-              <table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: "100%" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: largeurTableau }}>
+                <colgroup>
+                  {[L_CMD, L_PERS, L_MOIS, L_MONTANT, L_RESTE, L_OUTILS].map((w, i) => (
+                    <col key={`g${i}`} style={{ width: w }} />
+                  ))}
+                  {jours.map((j) => (
+                    <col key={`c${j.date}`} style={{ width: largeurJour(j) }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr>
                     <th style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
@@ -1169,22 +1179,22 @@ function PrestationsContenu() {
                                       })
                                     }
                                     title="Réglages de la ligne : personne, activité, unité, taux, base, intergroupe, report, heures sup"
-                                    style={{ ...outil, ...(l.taux === null ? { borderColor: "#e9b877", background: "#fff7ea" } : {}), ...(ouvert ? { borderColor: C.rouge } : {}) }}
+                                    style={{ ...petitOutil, ...(l.taux === null ? { borderColor: "#e9b877", background: "#fff7ea" } : {}), ...(ouvert ? { borderColor: C.rouge } : {}) }}
                                   >
                                     ⚙
                                   </button>
                                   {!verrou &&
                                     (planDispo ? (
-                                      <button type="button" style={outil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>
+                                      <button type="button" style={petitOutil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>
                                         📅
                                       </button>
                                     ) : (
-                                      <button type="button" style={outil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
+                                      <button type="button" style={petitOutil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
                                         ⤓
                                       </button>
                                     ))}
                                   {!verrou && (
-                                    <button type="button" style={outil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>
+                                    <button type="button" style={petitOutil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>
                                       ✕
                                     </button>
                                   )}
@@ -1247,7 +1257,7 @@ function PrestationsContenu() {
                                         fontWeight: 700,
                                         color: s?.code ? "#7a3e00" : C.encre,
                                         fontFamily: "inherit",
-                                        padding: "9px 0",
+                                        padding: "7px 0",
                                         cursor: verrou ? "default" : "cell",
                                       }}
                                     />

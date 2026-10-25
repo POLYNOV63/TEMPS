@@ -1,9 +1,9 @@
 /* ===============================================================
    Relevé PE / PI (app/pilotage/prestations/page.tsx) : UNE LIGNE par
-   commande × personne, comme le Suivi des prestations (version 2 : la
+   commande × personne, comme le Suivi des prestations (version 3 : colonnes au plus juste ; la
    commande, le mois, le montant, le reste et les réglages à gauche ; le
    calendrier à droite, avec des week-ends étroits).
-   Marche aussi par-dessus la version 1.
+   Marche aussi par-dessus les versions 1 et 2.
    - le calendrier du mois en en-tête, fixe quand on descend ;
    - la commande et la personne fixes à gauche, le mois (en jours ou en
      heures), le montant et le reste fixes à droite ;
@@ -27,11 +27,11 @@ if (!existsSync(chemin) || !existsSync(bloc)) {
   process.exit(1);
 }
 let texte = readFileSync(chemin, "utf8").replace(/\r\n/g, "\n");
-if (texte.includes("RELEVE_UNE_LIGNE_V2")) {
+if (texte.includes("RELEVE_UNE_LIGNE_V3")) {
   console.log("✓ Déjà à jour : rien à faire.");
   process.exit(0);
 }
-// version 1 déjà installée : seul le tableau change
+// version 1 ou 2 déjà installée : seul le tableau change
 const dejaV1 = texte.includes("RELEVE_UNE_LIGNE");
 const nouveauBloc = readFileSync(bloc, "utf8").replace(/\r\n/g, "\n");
 let erreurs = 0;
@@ -94,7 +94,7 @@ if (i < 0 || j < 0 || j < i || texte.split(debutBloc).length !== 2) {
   erreurs++;
 } else {
   texte = texte.slice(0, i) + nouveauBloc + texte.slice(j);
-  console.log("✓ Tableau : tout à gauche, calendrier mince à droite");
+  console.log("✓ Tableau : colonnes au plus juste, calendrier mince à droite");
 }
 
 if (erreurs > 0) {
