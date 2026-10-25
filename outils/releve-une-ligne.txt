@@ -1,61 +1,88 @@
         {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE_V3 : colonnes à largeur fixe, au plus juste ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
+          /* RELEVE_UNE_LIGNE_V4 : n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
-          const L_CMD = 165;
-          const L_PERS = 58;
-          const L_MOIS = 62;
-          const L_MONTANT = 74;
-          const L_RESTE = 76;
-          const L_OUTILS = 94;
+          const L_CMD = 180;
+          const L_PERS = 62;
+          const L_MOIS = 66;
+          const L_MONTANT = 80;
+          const L_RESTE = 84;
+          const L_OUTILS = 98;
           const X_MOIS = L_CMD + L_PERS;
           const X_MONTANT = X_MOIS + L_MOIS;
           const X_RESTE = X_MONTANT + L_MONTANT;
           const X_OUTILS = X_RESTE + L_RESTE;
-          // calendrier mince : jours ouvrés 32 px, week-ends et fériés 14 px
+          // calendrier : week-ends et fériés 12 px ; les jours ouvrés se partagent le reste de la largeur
+          // (30 px au minimum : sur un écran de portable, la page défile de côté, la partie gauche reste en place)
           const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 12 : 30);
           const largeurTableau = X_OUTILS + L_OUTILS + jours.reduce((t, j) => t + largeurJour(j), 0);
+          // l'en-tête reste visible sous les onglets du Pilotage (49 px) ; deux rangées : semaines, puis jours
+          const HAUT = 49;
+          const H_SEMAINES = 18;
+          const semaineIso = (date: string) => {
+            const d = new Date(`${date}T00:00:00Z`);
+            const n = d.getUTCDay() || 7;
+            d.setUTCDate(d.getUTCDate() + 4 - n);
+            return Math.ceil(((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+          };
+          const semainesMois: { numero: number; nb: number }[] = [];
+          for (const j of jours) {
+            const n = semaineIso(j.date);
+            const der = semainesMois[semainesMois.length - 1];
+            if (der && der.numero === n) der.nb++;
+            else semainesMois.push({ numero: n, nb: 1 });
+          }
           const petitOutil: CSSProperties = { ...outil, minWidth: 28, height: 30, padding: "0 4px", fontSize: 14 };
           const nbCol = 2 + jours.length + 4;
           const fondFixe = "#ffffff";
-          const entete: CSSProperties = { ...th, position: "sticky", top: 0, zIndex: 3, background: "#f1f2f4", padding: "5px 4px", fontSize: 11 };
+          const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "5px 4px", fontSize: 11 };
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
           const cellule: CSSProperties = { ...td, padding: "3px 4px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
           const enUnite = (l: Ligne, heures: number) =>
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
           const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
           return (
-            <div style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
-              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: largeurTableau }}>
+            <div style={{ background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none", width: `max(100%, ${largeurTableau}px)`, boxSizing: "border-box" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: "100%", minWidth: largeurTableau }}>
                 <colgroup>
                   {[L_CMD, L_PERS, L_MOIS, L_MONTANT, L_RESTE, L_OUTILS].map((w, i) => (
                     <col key={`g${i}`} style={{ width: w }} />
                   ))}
                   {jours.map((j) => (
-                    <col key={`c${j.date}`} style={{ width: largeurJour(j) }} />
+                    <col key={`c${j.date}`} style={j.weekend || j.ferie ? { width: largeurJour(j) } : undefined} />
                   ))}
                 </colgroup>
                 <thead>
                   <tr>
-                    <th style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
-                    <th style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Pers.</th>
-                    <th style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Pers.</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
                       Mois
                     </th>
-                    <th style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
-                    <th style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
                       Reste
                     </th>
-                    <th style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
+                    {semainesMois.map((w) => (
+                      <th
+                        key={`s${w.numero}`}
+                        colSpan={w.nb}
+                        style={{ ...entete, height: H_SEMAINES, padding: "1px 0", textAlign: "center", fontSize: w.nb >= 3 ? 11 : 9, color: C.rougeFonce, borderLeft: `2px solid ${C.ligne}`, borderBottom: `1px solid ${C.ligne}` }}
+                      >
+                        S{w.numero}
+                      </th>
+                    ))}
+                  </tr>
+                  <tr>
                     {jours.map((j) => (
                       <th
                         key={j.date}
                         style={{
                           ...entete,
-                          minWidth: largeurJour(j),
-                          width: largeurJour(j),
-                          maxWidth: largeurJour(j),
+                          top: HAUT + H_SEMAINES + 2,
                           padding: "3px 0",
+                          borderLeft: j.js === 1 ? `2px solid ${C.ligne}` : undefined,
                           textAlign: "center",
                           background: j.weekend || j.ferie ? "#e3e6ea" : "#f1f2f4",
                           color: j.weekend || j.ferie ? "#8a9097" : C.encre,
@@ -216,11 +243,8 @@
                                     style={{
                                       ...bordHaut,
                                       padding: 0,
-                                      minWidth: largeurJour(j),
-                                      width: largeurJour(j),
-                                      maxWidth: largeurJour(j),
                                       borderBottom: `1px solid ${C.ligne}`,
-                                      borderLeft: "1px solid #eef0f3",
+                                      borderLeft: j.js === 1 ? `2px solid ${C.ligne}` : "1px solid #eef0f3",
                                       background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
                                       backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
                                       outline: choisi ? "1px solid #e0b400" : undefined,

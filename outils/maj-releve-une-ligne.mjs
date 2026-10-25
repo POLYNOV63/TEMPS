@@ -1,9 +1,9 @@
 /* ===============================================================
    Relevé PE / PI (app/pilotage/prestations/page.tsx) : UNE LIGNE par
-   commande × personne, comme le Suivi des prestations (version 3 : colonnes au plus juste ; la
+   commande × personne, comme le Suivi des prestations (version 4 : n° de semaine, un seul ascenseur, taux de vente moyen PE / PI ; la
    commande, le mois, le montant, le reste et les réglages à gauche ; le
    calendrier à droite, avec des week-ends étroits).
-   Marche aussi par-dessus les versions 1 et 2.
+   Marche aussi par-dessus les versions 1, 2 et 3.
    - le calendrier du mois en en-tête, fixe quand on descend ;
    - la commande et la personne fixes à gauche, le mois (en jours ou en
      heures), le montant et le reste fixes à droite ;
@@ -27,11 +27,11 @@ if (!existsSync(chemin) || !existsSync(bloc)) {
   process.exit(1);
 }
 let texte = readFileSync(chemin, "utf8").replace(/\r\n/g, "\n");
-if (texte.includes("RELEVE_UNE_LIGNE_V3")) {
+if (texte.includes("RELEVE_UNE_LIGNE_V4")) {
   console.log("✓ Déjà à jour : rien à faire.");
   process.exit(0);
 }
-// version 1 ou 2 déjà installée : seul le tableau change
+// version 1, 2 ou 3 déjà installée : le tableau change (et le taux moyen s'ajoute)
 const dejaV1 = texte.includes("RELEVE_UNE_LIGNE");
 const nouveauBloc = readFileSync(bloc, "utf8").replace(/\r\n/g, "\n");
 let erreurs = 0;
@@ -82,6 +82,67 @@ remplacer(
   const [details, setDetails] = useState<Set<string>>(new Set());`
 );
 
+/* ---- taux de vente moyen PE / PI (total du mois) ---- */
+const dejaTaux = texte.includes("TAUX_MOYEN_PEPI");
+function toujours(nom, cherche, remplace) {
+  if (dejaTaux) return;
+  const nb = texte.split(cherche).length - 1;
+  if (nb !== 1) {
+    console.error(`✗ ${nom} : passage trouvé ${nb} fois (attendu 1)`);
+    erreurs++;
+    return;
+  }
+  texte = texte.replace(cherche, remplace);
+  console.log(`✓ ${nom}`);
+}
+toujours(
+  "Taux moyen : calcul",
+  `    return { montant, heures, parActivite };
+  }, [lignes, calcul, nomsActivites]);`,
+  `    // TAUX_MOYEN_PEPI : montant ÷ heures (et ÷ jours) facturées, par catégorie, lignes avec un taux
+    const parCategorie = new Map<string, { montant: number; heures: number; jours: number }>();
+    for (const l of lignes.filter((x) => x.actif && x.taux !== null)) {
+      const c = calcul(l);
+      if (c.reporte || c.montant === null || c.facturables <= 0) continue;
+      const k = categorie(l);
+      const v = parCategorie.get(k) ?? { montant: 0, heures: 0, jours: 0 };
+      v.montant += c.montant;
+      v.heures += c.facturables;
+      v.jours += c.facturables / l.base_horaire;
+      parCategorie.set(k, v);
+    }
+    return { montant, heures, parActivite, parCategorie };
+  }, [lignes, calcul, nomsActivites, categorie]);`
+);
+toujours(
+  "Taux moyen : affichage",
+  `              </section>
+            )}
+
+            {peutAgir && (
+              <section style={{ ...page.carte, padding: 14, flex: "1 1 420px" }}>`,
+  `                {totaux.parCategorie.size > 0 && (
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: \`1px solid \${C.ligne}\`, fontSize: 14 }}>
+                    <strong>Taux de vente moyen du mois</strong>
+                    {(["PE", "PI", "IG"] as const)
+                      .filter((k) => totaux.parCategorie.has(k))
+                      .map((k) => {
+                        const v = totaux.parCategorie.get(k)!;
+                        return (
+                          <div key={k} title={\`\${euros(v.montant)} pour \${formatHeures(v.heures)} facturées\`}>
+                            {k === "IG" ? "Intergroupe" : k} : <strong>{euros(v.montant / v.heures)} / h</strong> · {euros(v.montant / v.jours)} / jour
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {peutAgir && (
+              <section style={{ ...page.carte, padding: 14, flex: "1 1 420px" }}>`
+);
+
 const debutBloc = dejaV1
   ? `        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {`
   : `        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (`;
@@ -94,7 +155,7 @@ if (i < 0 || j < 0 || j < i || texte.split(debutBloc).length !== 2) {
   erreurs++;
 } else {
   texte = texte.slice(0, i) + nouveauBloc + texte.slice(j);
-  console.log("✓ Tableau : colonnes au plus juste, calendrier mince à droite");
+  console.log("✓ Tableau : n° de semaine, un seul ascenseur");
 }
 
 if (erreurs > 0) {
