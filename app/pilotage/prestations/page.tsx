@@ -1016,7 +1016,7 @@ function PrestationsContenu() {
         {!chargement && mots.length > 0 && nbTrouves === 0 && <Message genre="info">Aucune ligne ne correspond à « {recherche} ».</Message>}
 
         {(blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE_V6 : flèches du mois fixes dans l’en-tête (le tableau reste affiché pendant le chargement, la page ne remonte pas) ; « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
+          /* RELEVE_UNE_LIGNE_V7 : n° d’une affaire à staffer cliquable ; flèches du mois fixes dans l’en-tête (le tableau reste affiché pendant le chargement, la page ne remonte pas) ; « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
           const L_CMD = 180;
@@ -1140,7 +1140,13 @@ function PrestationsContenu() {
                       <td style={{ ...cellule, ...fixeG(0, L_CMD), whiteSpace: "normal" }} title={a.designation}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                           <BadgeType type={a.type} />
-                          <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
+                          <Link
+                            href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`}
+                            title="Ouvrir la fiche de l’affaire (bilan et pilotage)"
+                            style={{ fontWeight: 800, color: C.rougeFonce }}
+                          >
+                            {numeroFacture(a).numero}
+                          </Link>
                           {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                         </span>
                       </td>
