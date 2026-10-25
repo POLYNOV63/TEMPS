@@ -413,9 +413,10 @@ function FacturationContenu() {
         quantite: Math.round(p.quantite * 100) / 100,
         unite: p.unite === "JOUR" ? "j" : "h",
         enveloppe: (() => {
-          const k = p.unite === "JOUR" ? p.baseHoraire : 1;
-          const commande = p.commandeH === null ? null : p.commandeH / k;
-          const consomme = p.consommeH / k;
+          // le Suivi d'affaire compte une journée vendue pour 7 h (« Total heures » = jours × 7) ;
+          // le consommé, lui, se ramène en jours avec la base horaire de la ligne (7 h ou 7,5 h)
+          const commande = p.commandeH === null ? null : p.unite === "JOUR" ? p.commandeH / 7 : p.commandeH;
+          const consomme = p.unite === "JOUR" ? p.consommeH / p.baseHoraire : p.consommeH;
           return { commande, consomme, reste: commande === null ? null : commande - consomme };
         })(),
         taux: p.taux,
