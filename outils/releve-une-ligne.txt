@@ -1,0 +1,437 @@
+        {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
+          /* RELEVE_UNE_LIGNE : une ligne par commande × personne, comme le Suivi des prestations.
+             Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
+             (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
+          const L_CMD = 200;
+          const L_PERS = 66;
+          const R_OUTILS = 104;
+          const R_RESTE = 104;
+          const R_MONTANT = 92;
+          const R_MOIS = 84;
+          const nbCol = 2 + jours.length + 4;
+          const fondFixe = "#ffffff";
+          const entete: CSSProperties = { ...th, position: "sticky", top: 0, zIndex: 3, background: "#f1f2f4", padding: "6px 6px", fontSize: 12 };
+          const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
+          const fixeD = (right: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", right, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
+          const cellule: CSSProperties = { ...td, padding: "4px 6px", fontSize: 14, borderBottom: `1px solid ${C.ligne}` };
+          const enUnite = (l: Ligne, heures: number) =>
+            l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
+          const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
+          return (
+            <div style={{ overflow: "auto", maxHeight: "calc(100vh - 230px)", background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
+                    <th style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left", borderRight: `2px solid ${C.ligne}` }}>Pers.</th>
+                    {jours.map((j) => (
+                      <th
+                        key={j.date}
+                        style={{
+                          ...entete,
+                          minWidth: 38,
+                          width: 38,
+                          padding: "3px 0",
+                          textAlign: "center",
+                          background: j.weekend || j.ferie ? "#e3e6ea" : "#f1f2f4",
+                          color: j.weekend || j.ferie ? "#8a9097" : C.encre,
+                        }}
+                      >
+                        <div style={{ fontSize: 10, fontWeight: 700, lineHeight: "11px" }}>{LETTRES[j.js]}</div>
+                        <div style={{ fontSize: 13, lineHeight: "15px" }}>{j.jour}</div>
+                      </th>
+                    ))}
+                    <th style={{ ...entete, ...fixeD(R_OUTILS + R_RESTE + R_MONTANT, R_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right", borderLeft: `2px solid ${C.ligne}` }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
+                      Mois
+                    </th>
+                    <th style={{ ...entete, ...fixeD(R_OUTILS + R_RESTE, R_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
+                    <th style={{ ...entete, ...fixeD(R_OUTILS, R_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
+                      Reste
+                    </th>
+                    <th style={{ ...entete, ...fixeD(0, R_OUTILS, "#f1f2f4"), zIndex: 5 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {blocsAffiches.map((b) => (
+                    <Fragment key={b.cle}>
+                      <tr>
+                        <td colSpan={nbCol} style={{ ...cellule, background: "#eef0f3", padding: 0 }}>
+                          <div style={{ position: "sticky", left: 0, display: "inline-block", padding: "6px 8px", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                            {b.titre}
+                          </div>
+                        </td>
+                      </tr>
+                      {b.lignes.map((l, k) => {
+                        const a = affairesParId.get(l.affaire_id);
+                        const c = calcul(l);
+                        const env = enveloppes.get(l.affaire_id);
+                        const premiere = k === 0 || b.lignes[k - 1].affaire_id !== l.affaire_id;
+                        const verrou = !peutAgir || c.valide;
+                        const vide = !jours.some((j) => saisieParCle.has(`${l.id}|${j.date}`));
+                        const planDispo = vide && jours.some((j) => (planParCle.get(`${l.affaire_id}|${l.collaborateur_id}|${j.date}`) ?? 0) > 0);
+                        const ecart = Math.abs(c.heures - c.heuresReel) > 0.01;
+                        const nf = a ? numeroFacture(a) : null;
+                        const ouvert = details.has(l.id);
+                        const ml = moisLignes.get(l.id);
+                        const nonFacturable = a ? !(a.statut === "EN_COURS" || a.statut === "LIVREE") : false;
+                        // reste : celui du classeur (Suivi des prestations) s'il est connu, sinon le calcul
+                        const resteClasseur = ml?.reste_import ?? null;
+                        const resteCalcul = env && env.commande > 0 ? env.reste : null;
+                        const bordHaut: CSSProperties = premiere ? { borderTop: `2px solid ${C.ligne}` } : {};
+                        return (
+                          <Fragment key={l.id}>
+                            <tr>
+                              {/* ---------- commande (fixe à gauche) ---------- */}
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(0, L_CMD), whiteSpace: "normal" }}>
+                                {premiere && a ? (
+                                  <>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                                      <BadgeType type={a.type} />
+                                      <Link
+                                        href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`}
+                                        title={nonFacturable ? "Commande pas encore reçue : NON FACTURABLE en l’état" : undefined}
+                                        style={{ fontWeight: 800, color: C.rougeFonce, ...(nonFacturable ? { background: "#ffe94d", padding: "0 4px", borderRadius: 3 } : {}) }}
+                                      >
+                                        {nf?.numero}
+                                      </Link>
+                                      {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                                    </span>
+                                    <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${a.designation}${nf?.client ? ` · ${nf.client}` : ""}`}>
+                                      {nf?.client ? <strong>{nf.client}</strong> : null}
+                                      {nf?.client ? " · " : ""}
+                                      {a.designation}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span style={{ fontSize: 12, color: C.gris }}>↳ même commande</span>
+                                )}
+                              </td>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(L_CMD, L_PERS), fontWeight: 800, borderRight: `2px solid ${C.ligne}` }}>
+                                {nomCollab(collabs.get(l.collaborateur_id))}
+                                {l.activite_id && <div style={{ fontSize: 10, color: C.gris, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{nomsActivites.get(l.activite_id)}</div>}
+                              </td>
+
+                              {/* ---------- les jours du mois ---------- */}
+                              {jours.map((j) => {
+                                const s = saisieParCle.get(`${l.id}|${j.date}`);
+                                const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
+                                const factureH = s?.heures ?? 0;
+                                const r = reelDe(l, j.date);
+                                const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
+                                const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
+                                const ferme = j.weekend || j.ferie;
+                                // congé validé (Validation RH) : proposé en grisé, on peut toujours forcer une autre valeur
+                                const conge = !s && absent(l.collaborateur_id, j.date);
+                                return (
+                                  <td
+                                    key={j.date}
+                                    onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
+                                    onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
+                                    title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
+                                    style={{
+                                      ...bordHaut,
+                                      padding: 0,
+                                      minWidth: 38,
+                                      width: 38,
+                                      borderBottom: `1px solid ${C.ligne}`,
+                                      borderLeft: "1px solid #eef0f3",
+                                      background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
+                                      backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
+                                      outline: choisi ? "1px solid #e0b400" : undefined,
+                                    }}
+                                  >
+                                    <input
+                                      ref={(el) => {
+                                        const cle = `${l.id}|${j.date}`;
+                                        if (el) champs.current.set(cle, el);
+                                        else champs.current.delete(cle);
+                                      }}
+                                      key={`${l.id}-${j.date}-${texte}`}
+                                      disabled={verrou}
+                                      defaultValue={texte}
+                                      placeholder={conge ? "CP" : undefined}
+                                      aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
+                                      onFocus={(e) => e.currentTarget.select()}
+                                      onKeyDown={(e) => surTouche(e, l, j.date)}
+                                      onBlur={(e) => {
+                                        if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
+                                      }}
+                                      style={{
+                                        width: "100%",
+                                        boxSizing: "border-box",
+                                        border: "none",
+                                        background: "transparent",
+                                        textAlign: "center",
+                                        fontSize: 14,
+                                        fontWeight: 700,
+                                        color: s?.code ? "#7a3e00" : C.encre,
+                                        fontFamily: "inherit",
+                                        padding: "9px 0",
+                                        cursor: verrou ? "default" : "cell",
+                                      }}
+                                    />
+                                  </td>
+                                );
+                              })}
+
+                              {/* ---------- le mois, le montant, le reste (fixes à droite) ---------- */}
+                              <td
+                                style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS + R_RESTE + R_MONTANT, R_MOIS), textAlign: "right", fontWeight: 800, borderLeft: `2px solid ${C.ligne}` }}
+                                title={`Saisi ${formatHeures(c.heures)} · feuilles d’heures ${formatHeures(c.heuresReel)}${c.reportEntrant > 0 ? ` · + ${formatHeures(c.reportEntrant)} reportées` : ""}${c.sortant > 0 ? ` · ${formatHeures(c.sortant)} envoyées au mois suivant` : ""}`}
+                              >
+                                {c.reporte ? <span style={{ color: "#7a3e00", fontSize: 12 }}>↪ reporté</span> : enUnite(l, c.facturables)}
+                                {ecart && <div style={{ fontSize: 10, color: "#b35c00" }}>feuilles {enUnite(l, c.heuresReel)}</div>}
+                                {!c.reporte && (c.reportEntrant > 0 || c.sortant > 0) && (
+                                  <div style={{ fontSize: 10, color: "#7a3e00" }}>
+                                    {c.reportEntrant > 0 ? `+${enUnite(l, c.reportEntrant)}` : ""}
+                                    {c.sortant > 0 ? ` ↪${enUnite(l, c.sortant)}` : ""}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS + R_RESTE, R_MONTANT), textAlign: "right", fontWeight: 800 }}>
+                                {c.montant === null ? <span style={{ color: "#7a3e00", fontWeight: 600 }}>taux ?</span> : euros(c.montant)}
+                                {c.valide && <span title="Mois clôturé : montant figé"> 🔒</span>}
+                              </td>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS, R_RESTE), textAlign: "right" }}>
+                                {premiere && resteClasseur !== null ? (
+                                  <span title={`Reste d’après le Suivi des prestations${ml?.commande_import ? ` (commande ${texteHeures(ml.commande_import)} ${l.unite === "JOUR" ? "j" : "h"})` : ""}${resteCalcul !== null ? ` · calcul de l’application : ${enUnite(l, Math.max(0, resteCalcul))}` : ""}`}>
+                                    <Pastille genre={resteClasseur <= 0 ? "crit" : ml?.commande_import && resteClasseur / ml.commande_import < 0.2 ? "warn" : "ok"}>
+                                      {texteHeures(resteClasseur)} {l.unite === "JOUR" ? "j" : "h"}
+                                    </Pastille>
+                                  </span>
+                                ) : premiere && env && resteCalcul !== null ? (
+                                  <span title={`Commandé ${formatHeures(env.commande)} · facturé avant ${formatHeures(env.avant)} · ce mois ${formatHeures(env.mois)}`}>
+                                    <Pastille genre={env.reste <= 0 ? "crit" : env.reste / env.commande < 0.2 ? "warn" : "ok"}>{enUnite(l, Math.max(0, env.reste))}</Pastille>
+                                  </span>
+                                ) : premiere ? (
+                                  <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
+                                ) : null}
+                              </td>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeD(0, R_OUTILS), whiteSpace: "nowrap" }}>
+                                <span style={{ display: "inline-flex", gap: 3 }}>
+                                  <button
+                                    type="button"
+                                    aria-expanded={ouvert}
+                                    onClick={() =>
+                                      setDetails((d) => {
+                                        const n = new Set(d);
+                                        if (n.has(l.id)) n.delete(l.id);
+                                        else n.add(l.id);
+                                        return n;
+                                      })
+                                    }
+                                    title="Réglages de la ligne : personne, activité, unité, taux, base, intergroupe, report, heures sup"
+                                    style={{ ...outil, ...(l.taux === null ? { borderColor: "#e9b877", background: "#fff7ea" } : {}), ...(ouvert ? { borderColor: C.rouge } : {}) }}
+                                  >
+                                    ⚙
+                                  </button>
+                                  {!verrou &&
+                                    (planDispo ? (
+                                      <button type="button" style={outil} title="Reprendre les heures déjà prévues au planning ce mois-ci" onClick={() => remplirLigne(l, "PLANNING")}>
+                                        📅
+                                      </button>
+                                    ) : (
+                                      <button type="button" style={outil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
+                                        ⤓
+                                      </button>
+                                    ))}
+                                  {!verrou && (
+                                    <button type="button" style={outil} title="Vider le mois de cette ligne" onClick={() => viderLigne(l)}>
+                                      ✕
+                                    </button>
+                                  )}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {/* ---------- réglages de la ligne (⚙) ---------- */}
+                            {ouvert && (
+                              <tr>
+                                <td colSpan={nbCol} style={{ ...cellule, background: "#fafbfc", padding: 0 }}>
+                                  <div style={{ position: "sticky", left: 0, display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 12, padding: "10px 12px", maxWidth: "min(100vw - 80px, 1300px)", boxSizing: "border-box" }}>
+                                    <label style={{ ...etiquette, width: 110 }}>
+                                      Personne
+                                      <select disabled={verrou} value={l.collaborateur_id} onChange={(e) => void changerPersonne(l, e.target.value)} style={champ}>
+                                        {annuaire.map((p) => (
+                                          <option key={p.id} value={p.id}>
+                                            {nomCollab(p)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label style={{ ...etiquette, width: 160 }}>
+                                      Activité
+                                      <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={champ}>
+                                        <option value="">—</option>
+                                        {(referentiel?.activites ?? []).filter((x) => x.actif || x.id === l.activite_id).map((x) => (
+                                          <option key={x.id} value={x.id}>
+                                            {x.nom}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label style={{ ...etiquette, width: 90 }}>
+                                      Unité
+                                      <select disabled={verrou} value={l.unite} onChange={(e) => void modifierLigne(l, { unite: e.target.value as Ligne["unite"] })} style={champ}>
+                                        <option value="JOUR">€/jour</option>
+                                        <option value="HEURE">€/h</option>
+                                      </select>
+                                    </label>
+                                    <label style={{ ...etiquette, width: 90 }}>
+                                      Taux
+                                      <input
+                                        key={`t-${l.id}-${l.taux}`}
+                                        disabled={verrou}
+                                        defaultValue={l.taux ?? ""}
+                                        inputMode="decimal"
+                                        placeholder="taux"
+                                        onBlur={(e) => {
+                                          const v = e.target.value.trim().replace(",", ".");
+                                          const n = v === "" ? null : Number(v);
+                                          if (n !== l.taux && (n === null || Number.isFinite(n))) void modifierLigne(l, { taux: n });
+                                        }}
+                                        style={{ ...champ, textAlign: "right", borderColor: l.taux === null ? "#e9b877" : "#c9cdd2" }}
+                                      />
+                                    </label>
+                                    <label style={{ ...etiquette, width: 70 }} title="Base horaire vendue (heures par jour)">
+                                      Base
+                                      <input
+                                        key={`b-${l.id}-${l.base_horaire}`}
+                                        disabled={verrou}
+                                        defaultValue={texteHeures(l.base_horaire)}
+                                        inputMode="decimal"
+                                        onBlur={(e) => {
+                                          const n = Number(e.target.value.replace(",", "."));
+                                          if (Number.isFinite(n) && n > 0 && n <= 12 && n !== l.base_horaire) void modifierLigne(l, { base_horaire: n });
+                                        }}
+                                        style={{ ...champ, textAlign: "right" }}
+                                      />
+                                    </label>
+                                    <label style={{ ...etiquette, flexDirection: "row", alignItems: "center", gap: 6, minHeight: 38 }} title="Facturée à une société du groupe">
+                                      <input type="checkbox" disabled={verrou} checked={l.intergroupe} onChange={(e) => void modifierLigne(l, { intergroupe: e.target.checked })} style={{ width: 18, height: 18 }} />
+                                      Intergroupe
+                                    </label>
+                                    <label style={{ ...etiquette, width: 90 }} title="Heures sup refacturées à 125 %">
+                                      HS 125 %
+                                      <input
+                                        key={`hs-${l.id}-${c.hs}`}
+                                        disabled={verrou}
+                                        defaultValue={c.hs ? texteHeures(c.hs) : ""}
+                                        inputMode="decimal"
+                                        onBlur={(e) => {
+                                          if ((Number(e.target.value.replace(",", ".")) || 0) !== c.hs) void modifierHs(l, e.target.value);
+                                        }}
+                                        style={{ ...champ, textAlign: "right" }}
+                                      />
+                                    </label>
+                                    <div style={{ ...etiquette, width: 230 }}>
+                                      Report
+                                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                        {!c.reporte && (c.reportEntrant > 0 || c.reportDisponible > 0 || (ml?.report_heures ?? null) !== null) && (
+                                          <button
+                                            type="button"
+                                            disabled={verrou}
+                                            onClick={() => ouvrirReport(l)}
+                                            title={`Reçu des mois précédents (${formatHeures(c.reportDisponible)} en attente). Cliquer pour choisir combien et où les placer.`}
+                                            style={{ ...outil, color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}
+                                          >
+                                            +{formatHeures(c.reportEntrant)}
+                                            {ml?.report_ligne_separee ? " ⧉" : ""}
+                                          </button>
+                                        )}
+                                        <span aria-hidden="true" style={{ color: "#7a3e00", fontWeight: 800 }}>↪</span>
+                                        {c.reporte ? (
+                                          <button type="button" disabled={verrou} onClick={() => void basculerReport(l)} title="Tout le mois est reporté. Cliquer pour facturer ce mois-ci." style={{ ...outil, color: "#7a3e00", borderColor: "#e9b877", background: "#fff7ea", fontWeight: 800 }}>
+                                            tout le mois
+                                          </button>
+                                        ) : (
+                                          <>
+                                            <input
+                                              key={`rs-${l.id}-${c.sortant}`}
+                                              disabled={verrou}
+                                              defaultValue={c.sortant > 0 ? texteHeures(l.unite === "JOUR" ? c.sortant / l.base_horaire : c.sortant) : ""}
+                                              placeholder={l.unite === "JOUR" ? "j" : "h"}
+                                              inputMode="decimal"
+                                              aria-label="À reporter sur le mois suivant"
+                                              onBlur={(e) => {
+                                                const actuel = c.sortant > 0 ? texteHeures(l.unite === "JOUR" ? c.sortant / l.base_horaire : c.sortant) : "";
+                                                if (e.target.value.trim() !== actuel) void enregistrerSortant(l, e.target.value);
+                                              }}
+                                              style={{ ...champ, width: 70, textAlign: "right" }}
+                                            />
+                                            {!verrou && (
+                                              <button type="button" onClick={() => void basculerReport(l)} title="Reporter tout le mois" style={{ ...outil, color: C.gris, fontSize: 12 }}>
+                                                tout
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div style={{ ...etiquette, color: C.encre, fontWeight: 400, fontSize: 13 }}>
+                                      <span>
+                                        Saisi <strong>{formatHeures(c.heures)}</strong> · feuilles d’heures{" "}
+                                        <strong style={{ color: ecart ? "#b35c00" : undefined }}>{formatHeures(c.heuresReel)}</strong>
+                                      </span>
+                                      <span>
+                                        Facturé <strong>{formatHeures(c.facturables)}</strong> · {(Math.round((c.facturables / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                  {aStafferAffiches.length > 0 && (
+                    <tr>
+                      <td colSpan={nbCol} style={{ ...cellule, background: "#fff7ea", padding: 0 }}>
+                        <div style={{ position: "sticky", left: 0, display: "inline-block", padding: "6px 8px", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
+                          PE / PI à staffer — choisissez la personne
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {aStafferAffiches.map((a) => (
+                    <tr key={`s-${a.id}`}>
+                      <td style={{ ...cellule, ...fixeG(0, L_CMD), whiteSpace: "normal" }} title={a.designation}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <BadgeType type={a.type} />
+                          <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
+                          {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                        </span>
+                      </td>
+                      <td colSpan={nbCol - 1} style={cellule}>
+                        <div style={{ position: "sticky", left: L_CMD, display: "inline-flex", alignItems: "center", gap: 10 }}>
+                          {peutAgir ? (
+                            <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 120 }} aria-label={`Personne pour ${a.numero}`}>
+                              <option value="">Personne…</option>
+                              {annuaire.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {nomCollab(p)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            "—"
+                          )}
+                          <span style={{ color: C.gris, fontSize: 13 }}>
+                            {a.imputation} · {a.designation}
+                            {(() => {
+                              const e = enveloppes.get(a.id);
+                              return e && e.commande > 0 ? ` · ${formatHeures(e.commande)} commandées` : "";
+                            })()}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
+
