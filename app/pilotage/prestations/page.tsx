@@ -1004,20 +1004,25 @@ function PrestationsContenu() {
         {!chargement && mots.length > 0 && nbTrouves === 0 && <Message genre="info">Aucune ligne ne correspond à « {recherche} ».</Message>}
 
         {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE : une ligne par commande × personne, comme le Suivi des prestations.
+          /* RELEVE_UNE_LIGNE_V2 : tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
-          const L_CMD = 200;
-          const L_PERS = 66;
-          const R_OUTILS = 104;
-          const R_RESTE = 104;
-          const R_MONTANT = 92;
-          const R_MOIS = 84;
+          const L_CMD = 180;
+          const L_PERS = 62;
+          const L_MOIS = 72;
+          const L_MONTANT = 84;
+          const L_RESTE = 92;
+          const L_OUTILS = 112;
+          const X_MOIS = L_CMD + L_PERS;
+          const X_MONTANT = X_MOIS + L_MOIS;
+          const X_RESTE = X_MONTANT + L_MONTANT;
+          const X_OUTILS = X_RESTE + L_RESTE;
+          // calendrier mince : jours ouvrés 32 px, week-ends et fériés 14 px
+          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 14 : 32);
           const nbCol = 2 + jours.length + 4;
           const fondFixe = "#ffffff";
           const entete: CSSProperties = { ...th, position: "sticky", top: 0, zIndex: 3, background: "#f1f2f4", padding: "6px 6px", fontSize: 12 };
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
-          const fixeD = (right: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", right, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
           const cellule: CSSProperties = { ...td, padding: "4px 6px", fontSize: 14, borderBottom: `1px solid ${C.ligne}` };
           const enUnite = (l: Ligne, heures: number) =>
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
@@ -1028,32 +1033,33 @@ function PrestationsContenu() {
                 <thead>
                   <tr>
                     <th style={{ ...entete, ...fixeG(0, L_CMD, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Commande</th>
-                    <th style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left", borderRight: `2px solid ${C.ligne}` }}>Pers.</th>
+                    <th style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Pers.</th>
+                    <th style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
+                      Mois
+                    </th>
+                    <th style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
+                    <th style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
+                      Reste
+                    </th>
+                    <th style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
                     {jours.map((j) => (
                       <th
                         key={j.date}
                         style={{
                           ...entete,
-                          minWidth: 38,
-                          width: 38,
+                          minWidth: largeurJour(j),
+                          width: largeurJour(j),
+                          maxWidth: largeurJour(j),
                           padding: "3px 0",
                           textAlign: "center",
                           background: j.weekend || j.ferie ? "#e3e6ea" : "#f1f2f4",
                           color: j.weekend || j.ferie ? "#8a9097" : C.encre,
                         }}
                       >
-                        <div style={{ fontSize: 10, fontWeight: 700, lineHeight: "11px" }}>{LETTRES[j.js]}</div>
-                        <div style={{ fontSize: 13, lineHeight: "15px" }}>{j.jour}</div>
+                        <div style={{ fontSize: j.weekend || j.ferie ? 8 : 10, fontWeight: 700, lineHeight: "11px" }}>{LETTRES[j.js]}</div>
+                        <div style={{ fontSize: j.weekend || j.ferie ? 9 : 12, lineHeight: "15px" }}>{j.jour}</div>
                       </th>
                     ))}
-                    <th style={{ ...entete, ...fixeD(R_OUTILS + R_RESTE + R_MONTANT, R_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right", borderLeft: `2px solid ${C.ligne}` }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
-                      Mois
-                    </th>
-                    <th style={{ ...entete, ...fixeD(R_OUTILS + R_RESTE, R_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
-                    <th style={{ ...entete, ...fixeD(R_OUTILS, R_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
-                      Reste
-                    </th>
-                    <th style={{ ...entete, ...fixeD(0, R_OUTILS, "#f1f2f4"), zIndex: 5 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -1111,77 +1117,14 @@ function PrestationsContenu() {
                                   <span style={{ fontSize: 12, color: C.gris }}>↳ même commande</span>
                                 )}
                               </td>
-                              <td style={{ ...cellule, ...bordHaut, ...fixeG(L_CMD, L_PERS), fontWeight: 800, borderRight: `2px solid ${C.ligne}` }}>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(L_CMD, L_PERS), fontWeight: 800 }}>
                                 {nomCollab(collabs.get(l.collaborateur_id))}
                                 {l.activite_id && <div style={{ fontSize: 10, color: C.gris, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>{nomsActivites.get(l.activite_id)}</div>}
                               </td>
 
-                              {/* ---------- les jours du mois ---------- */}
-                              {jours.map((j) => {
-                                const s = saisieParCle.get(`${l.id}|${j.date}`);
-                                const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
-                                const factureH = s?.heures ?? 0;
-                                const r = reelDe(l, j.date);
-                                const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
-                                const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
-                                const ferme = j.weekend || j.ferie;
-                                // congé validé (Validation RH) : proposé en grisé, on peut toujours forcer une autre valeur
-                                const conge = !s && absent(l.collaborateur_id, j.date);
-                                return (
-                                  <td
-                                    key={j.date}
-                                    onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
-                                    onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
-                                    title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
-                                    style={{
-                                      ...bordHaut,
-                                      padding: 0,
-                                      minWidth: 38,
-                                      width: 38,
-                                      borderBottom: `1px solid ${C.ligne}`,
-                                      borderLeft: "1px solid #eef0f3",
-                                      background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
-                                      backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
-                                      outline: choisi ? "1px solid #e0b400" : undefined,
-                                    }}
-                                  >
-                                    <input
-                                      ref={(el) => {
-                                        const cle = `${l.id}|${j.date}`;
-                                        if (el) champs.current.set(cle, el);
-                                        else champs.current.delete(cle);
-                                      }}
-                                      key={`${l.id}-${j.date}-${texte}`}
-                                      disabled={verrou}
-                                      defaultValue={texte}
-                                      placeholder={conge ? "CP" : undefined}
-                                      aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
-                                      onFocus={(e) => e.currentTarget.select()}
-                                      onKeyDown={(e) => surTouche(e, l, j.date)}
-                                      onBlur={(e) => {
-                                        if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
-                                      }}
-                                      style={{
-                                        width: "100%",
-                                        boxSizing: "border-box",
-                                        border: "none",
-                                        background: "transparent",
-                                        textAlign: "center",
-                                        fontSize: 14,
-                                        fontWeight: 700,
-                                        color: s?.code ? "#7a3e00" : C.encre,
-                                        fontFamily: "inherit",
-                                        padding: "9px 0",
-                                        cursor: verrou ? "default" : "cell",
-                                      }}
-                                    />
-                                  </td>
-                                );
-                              })}
-
-                              {/* ---------- le mois, le montant, le reste (fixes à droite) ---------- */}
+                              {/* ---------- le mois, le montant, le reste, les réglages (fixes à gauche) ---------- */}
                               <td
-                                style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS + R_RESTE + R_MONTANT, R_MOIS), textAlign: "right", fontWeight: 800, borderLeft: `2px solid ${C.ligne}` }}
+                                style={{ ...cellule, ...bordHaut, ...fixeG(X_MOIS, L_MOIS), textAlign: "right", fontWeight: 800 }}
                                 title={`Saisi ${formatHeures(c.heures)} · feuilles d’heures ${formatHeures(c.heuresReel)}${c.reportEntrant > 0 ? ` · + ${formatHeures(c.reportEntrant)} reportées` : ""}${c.sortant > 0 ? ` · ${formatHeures(c.sortant)} envoyées au mois suivant` : ""}`}
                               >
                                 {c.reporte ? <span style={{ color: "#7a3e00", fontSize: 12 }}>↪ reporté</span> : enUnite(l, c.facturables)}
@@ -1193,11 +1136,11 @@ function PrestationsContenu() {
                                   </div>
                                 )}
                               </td>
-                              <td style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS + R_RESTE, R_MONTANT), textAlign: "right", fontWeight: 800 }}>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(X_MONTANT, L_MONTANT), textAlign: "right", fontWeight: 800 }}>
                                 {c.montant === null ? <span style={{ color: "#7a3e00", fontWeight: 600 }}>taux ?</span> : euros(c.montant)}
                                 {c.valide && <span title="Mois clôturé : montant figé"> 🔒</span>}
                               </td>
-                              <td style={{ ...cellule, ...bordHaut, ...fixeD(R_OUTILS, R_RESTE), textAlign: "right" }}>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(X_RESTE, L_RESTE), textAlign: "right" }}>
                                 {premiere && resteClasseur !== null ? (
                                   <span title={`Reste d’après le Suivi des prestations${ml?.commande_import ? ` (commande ${texteHeures(ml.commande_import)} ${l.unite === "JOUR" ? "j" : "h"})` : ""}${resteCalcul !== null ? ` · calcul de l’application : ${enUnite(l, Math.max(0, resteCalcul))}` : ""}`}>
                                     <Pastille genre={resteClasseur <= 0 ? "crit" : ml?.commande_import && resteClasseur / ml.commande_import < 0.2 ? "warn" : "ok"}>
@@ -1212,8 +1155,8 @@ function PrestationsContenu() {
                                   <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
                                 ) : null}
                               </td>
-                              <td style={{ ...cellule, ...bordHaut, ...fixeD(0, R_OUTILS), whiteSpace: "nowrap" }}>
-                                <span style={{ display: "inline-flex", gap: 3 }}>
+                              <td style={{ ...cellule, ...bordHaut, ...fixeG(X_OUTILS, L_OUTILS), whiteSpace: "nowrap", borderRight: `2px solid ${C.ligne}` }}>
+                                <span style={{ display: "inline-flex", gap: 2 }}>
                                   <button
                                     type="button"
                                     aria-expanded={ouvert}
@@ -1247,6 +1190,71 @@ function PrestationsContenu() {
                                   )}
                                 </span>
                               </td>
+
+                              {/* ---------- les jours du mois ---------- */}
+                              {jours.map((j) => {
+                                const s = saisieParCle.get(`${l.id}|${j.date}`);
+                                const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : "") : "";
+                                const factureH = s?.heures ?? 0;
+                                const r = reelDe(l, j.date);
+                                const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
+                                const choisi = selection?.ligne === l.id && selection.jours.has(j.date);
+                                const ferme = j.weekend || j.ferie;
+                                // congé validé (Validation RH) : proposé en grisé, on peut toujours forcer une autre valeur
+                                const conge = !s && absent(l.collaborateur_id, j.date);
+                                return (
+                                  <td
+                                    key={j.date}
+                                    onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
+                                    onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
+                                    title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
+                                    style={{
+                                      ...bordHaut,
+                                      padding: 0,
+                                      minWidth: largeurJour(j),
+                                      width: largeurJour(j),
+                                      maxWidth: largeurJour(j),
+                                      borderBottom: `1px solid ${C.ligne}`,
+                                      borderLeft: "1px solid #eef0f3",
+                                      background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
+                                      backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
+                                      outline: choisi ? "1px solid #e0b400" : undefined,
+                                    }}
+                                  >
+                                    <input
+                                      ref={(el) => {
+                                        const cle = `${l.id}|${j.date}`;
+                                        if (el) champs.current.set(cle, el);
+                                        else champs.current.delete(cle);
+                                      }}
+                                      key={`${l.id}-${j.date}-${texte}`}
+                                      disabled={verrou}
+                                      defaultValue={texte}
+                                      placeholder={conge ? "CP" : undefined}
+                                      aria-label={`${nomCollab(collabs.get(l.collaborateur_id))} le ${j.jour}`}
+                                      onFocus={(e) => e.currentTarget.select()}
+                                      onKeyDown={(e) => surTouche(e, l, j.date)}
+                                      onBlur={(e) => {
+                                        if (e.currentTarget.value.trim() !== texte) void ecrire(l, [{ jour: j.date, valeur: lireValeur(e.currentTarget.value) }]);
+                                      }}
+                                      style={{
+                                        width: "100%",
+                                        boxSizing: "border-box",
+                                        border: "none",
+                                        background: "transparent",
+                                        textAlign: "center",
+                                        fontSize: ferme ? 10 : 13,
+                                        fontWeight: 700,
+                                        color: s?.code ? "#7a3e00" : C.encre,
+                                        fontFamily: "inherit",
+                                        padding: "9px 0",
+                                        cursor: verrou ? "default" : "cell",
+                                      }}
+                                    />
+                                  </td>
+                                );
+                              })}
+
                             </tr>
 
                             {/* ---------- réglages de la ligne (⚙) ---------- */}
