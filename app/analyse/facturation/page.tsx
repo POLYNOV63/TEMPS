@@ -117,6 +117,7 @@ type LigneFacturation = {
   facturable: boolean;
   cloture: boolean;
   alerteLouxor: boolean;
+  sansDate: boolean; // « Livrée » dans le Suivi d'affaire mais sans date de livraison
 };
 const decaler = (m: string, k: number) => {
   const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + k, 1));
@@ -325,6 +326,17 @@ function FacturationContenu() {
   const louxorManquant = (statut: string | null, arc: string | null) =>
     !arc?.trim() && (statut === "Commande reçue" || statut === "Livrée");
 
+  /* « Livrée » sans date de livraison dans le Suivi d'affaire (forfaits ET PE / PI) */
+  const numerosLivreesSansDate = useMemo(
+    () =>
+      new Set(
+        suivi
+          .filter((l) => !l.disparue && l.statut === "Livrée" && !l.date_livraison && ["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre))
+          .map((l) => (l.genre === "BASE" || l.genre === "AVENANT" ? l.numero_affaire ?? l.cle : l.cle).toUpperCase())
+      ),
+    [suivi]
+  );
+
   /* un seul tableau : forfaits et PE / PI, trié par client (puis n°) par défaut */
   const lignes = useMemo<LigneFacturation[]>(
     () => [
@@ -349,6 +361,7 @@ function FacturationContenu() {
         facturable: true,
         cloture: false,
         alerteLouxor: louxorManquant(f.statut, f.arc),
+        sansDate: false,
       })),
       ...prestations.map((p) => ({
         type: "PE / PI" as const,
@@ -371,9 +384,10 @@ function FacturationContenu() {
         facturable: p.facturable,
         cloture: p.cloture,
         alerteLouxor: louxorManquant(p.statutCommande, p.arc),
+        sansDate: p.statutCommande === "Livrée" && numerosLivreesSansDate.has(p.numero.toUpperCase()),
       })),
     ],
-    [forfaits, prestations] // eslint-disable-line react-hooks/exhaustive-deps
+    [forfaits, prestations, numerosLivreesSansDate] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const [tri, setTri] = useState<{ cle: keyof LigneFacturation; sens: 1 | -1 }>({ cle: "client", sens: 1 });
@@ -417,8 +431,7 @@ function FacturationContenu() {
         !l.disparue &&
         l.statut === "Livrée" &&
         !l.date_livraison &&
-        ["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre) &&
-        !prestation(baseDe(l).imputation ?? l.imputation)
+        ["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre)
     )
     .map((l) => ({
       numero: l.genre === "BASE" || l.genre === "AVENANT" ? l.numero_affaire ?? l.cle : l.cle,
@@ -472,7 +485,7 @@ function FacturationContenu() {
           montantFacturable: l.facturable && !l.prevu ? l.montant : null,
           montantPrevu: l.prevu ? l.montant : null,
           montantNon: l.facturable ? null : l.montant,
-          alerte: [l.facturable ? "" : "NON FACTURABLE", l.alerteLouxor ? "N° Louxor manquant" : ""].filter(Boolean).join(" · "),
+          alerte: [l.facturable ? "" : "NON FACTURABLE", l.alerteLouxor ? "N° Louxor manquant" : "", l.sansDate ? "Date de livraison manquante" : ""].filter(Boolean).join(" · "),
         })),
         alerte: (l) => l.alerte !== "",
         libelleTotal: "Totaux",
@@ -553,7 +566,7 @@ function FacturationContenu() {
               <Message genre="erreur">
                 <strong>Livrée sans date de livraison</strong> ({livreesSansDate.length}) :{" "}
                 {livreesSansDate.map((l) => `${l.numero}${l.sansLouxor ? " (et sans n° Louxor)" : ""}`).join(", ")}. Ces forfaits ne tombent dans
-                aucun mois et <strong>n’apparaissent donc pas dans ce tableau</strong> : renseignez la date de livraison (et le n° ARC Louxor) dans
+                aucun mois (les forfaits n’apparaissent donc pas dans ce tableau ; les PE / PI y sont, en jaune) : renseignez la date de livraison (et le n° ARC Louxor) dans
                 le Suivi d’affaire BE.
               </Message>
             )}
@@ -613,7 +626,7 @@ function FacturationContenu() {
                     {lignesTriees.map((l, i) => (
                       <tr key={`${l.type}-${l.numero}-${l.personne}-${i}`} style={
                           // jaune : à corriger (non facturable, n° Louxor manquant) ; vert : livrée ; bleu : prévue
-                          !l.facturable || l.alerteLouxor
+                          !l.facturable || l.alerteLouxor || l.sansDate
                             ? { background: "#fff7c2" }
                             : l.statut === "Livrée"
                               ? { background: "#e8f6ea" }
@@ -632,6 +645,7 @@ function FacturationContenu() {
                         <td style={tdD}>{l.taux !== null ? `${nombre(l.taux)} €/${l.unite}` : ""}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>
                           {l.livraison ? new Date(`${l.livraison}T00:00:00`).toLocaleDateString("fr-FR") : ""}
+                          {l.sansDate && <div style={{ fontSize: 11, color: "#b3261e", fontStyle: "normal", fontWeight: 800 }}>⚠ date manquante</div>}
                           {l.prevu && <div style={{ fontSize: 11, color: l.retard ? "#b3261e" : "#2455a4", fontStyle: "normal", fontWeight: 700 }}>{l.retard ? "estimée, dépassée" : "estimée"}</div>}
                         </td>
                         <td style={{ ...td, fontWeight: l.facturable ? 400 : 800, color: l.facturable ? undefined : "#7a3e00" }}>
