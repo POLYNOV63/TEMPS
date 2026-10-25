@@ -50,6 +50,7 @@ type LigneSuivi = {
   numero_arc_louxor: string | null;
   base_devis: string | null;
   disparue: boolean;
+  heures_total: number | string | null;
 };
 
 type LigneForfait = {
@@ -83,6 +84,11 @@ type LignePrestation = {
   statutCommande: string | null;
   facturable: boolean;
   cloture: boolean;
+  /* ENVELOPPE_PEPI : la commande (base ou avenant) dans son ensemble, toutes personnes
+     confondues, jusqu'à la fin du mois affiché ; en heures */
+  commandeH: number | null; // « Total heures » du Suivi d'affaire
+  consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)
+  baseHoraire: number;
 };
 
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -110,6 +116,7 @@ type LigneFacturation = {
   quantite: number | null;
   unite: string;
   taux: number | null;
+  enveloppe: { commande: number | null; consomme: number; reste: number | null } | null; // dans l'unité de la ligne
   livraison: string;
   montant: number;
   statut: string;
@@ -140,7 +147,7 @@ function FacturationContenu() {
       chargerTout<LigneSuivi>((a, b) =>
         supabase
           .from("suivi_lignes")
-          .select("id,cle,genre,parent_cle,base_affaire,numero_affaire,statut,imputation,designation,client_id,date_livraison,date_livraison_estimee,numero_arc_louxor,base_devis,disparue")
+          .select("id,cle,genre,parent_cle,base_affaire,numero_affaire,statut,imputation,designation,client_id,date_livraison,date_livraison_estimee,numero_arc_louxor,base_devis,disparue,heures_total")
           .order("cle")
           .range(a, b)
       ),
@@ -177,13 +184,19 @@ function FacturationContenu() {
     const fin = new Date(Date.UTC(Number(mois.slice(0, 4)), Number(mois.slice(5, 7)), 0)).toISOString().slice(0, 10);
     (async () => {
       try {
-        const [pm, lp, pa, co, sa] = await Promise.all([
+        const [pm, lp, pa, co, sa, pmTous, saTous] = await Promise.all([
           supabase.from("prestation_mois").select("ligne_id,valide,reporte,report_sortant,hs_refacturer,heures_fige,montant_fige,montant_import").eq("mois", debut),
           supabase.from("prestation_lignes").select("id,affaire_id,collaborateur_id,unite,taux,base_horaire"),
           supabase.from("pilotage_affaires").select("id,numero,statut,imputation,designation"),
           supabase.from("collaborateurs").select("id,trigramme"),
           chargerTout<{ ligne_id: string; heures: number | string | null }>((a, b) =>
             supabase.from("prestation_saisies").select("ligne_id,heures").gte("jour", debut).lte("jour", fin).order("ligne_id").range(a, b)
+          ),
+          chargerTout<{ ligne_id: string; mois: string; valide: boolean; heures_fige: number | string | null }>((a, b) =>
+            supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige").lte("mois", debut).order("ligne_id").range(a, b)
+          ),
+          chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>
+            supabase.from("prestation_saisies").select("ligne_id,jour,heures").lte("jour", fin).order("ligne_id").range(a, b)
           ),
         ]);
         for (const r of [pm, lp, pa, co]) if (r.error) throw new Error(r.error.message);
@@ -195,6 +208,25 @@ function FacturationContenu() {
         const heures = new Map<string, number>();
         for (const s of sa) heures.set(s.ligne_id, (heures.get(s.ligne_id) ?? 0) + (Number(s.heures) || 0));
         const moisLignes = new Map(((pm.data ?? []) as { ligne_id: string; valide: boolean; reporte: boolean; report_sortant: number | null; hs_refacturer: number | null; heures_fige: number | null; montant_fige: number | null; montant_import: number | null }[]).map((m) => [m.ligne_id, m]));
+
+        /* consommé de chaque commande : mois clôturé = heures facturées (figées) ; mois ouvert = heures saisies */
+        const valides = new Map<string, number>(); // « ligne|AAAA-MM » -> heures figées
+        for (const x of pmTous) if (x.valide) valides.set(`${x.ligne_id}|${x.mois.slice(0, 7)}`, Number(x.heures_fige) || 0);
+        const consommeLigne = new Map<string, number>();
+        const moisVus = new Set<string>();
+        for (const x of saTous) {
+          const k = `${x.ligne_id}|${x.jour.slice(0, 7)}`;
+          if (valides.has(k)) continue;
+          consommeLigne.set(x.ligne_id, (consommeLigne.get(x.ligne_id) ?? 0) + (Number(x.heures) || 0));
+        }
+        for (const [k, h] of valides) {
+          if (moisVus.has(k)) continue;
+          moisVus.add(k);
+          const id = k.split("|")[0];
+          consommeLigne.set(id, (consommeLigne.get(id) ?? 0) + h);
+        }
+        const consommeAffaire = new Map<string, number>();
+        for (const [id, l] of lignesP) consommeAffaire.set(l.affaire_id, (consommeAffaire.get(l.affaire_id) ?? 0) + (consommeLigne.get(id) ?? 0));
 
         const res: LignePrestation[] = [];
         for (const [id, l] of lignesP) {
@@ -231,6 +263,9 @@ function FacturationContenu() {
             statutCommande: sl?.statut ?? null,
             facturable: a.statut === "EN_COURS" || a.statut === "LIVREE",
             cloture: Boolean(m?.valide),
+            commandeH: sl && Number(sl.heures_total) > 0 ? Number(sl.heures_total) : null,
+            consommeH: consommeAffaire.get(l.affaire_id) ?? 0,
+            baseHoraire: Number(l.base_horaire) || 7,
           });
         }
         res.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }) || x.personne.localeCompare(y.personne));
@@ -352,6 +387,7 @@ function FacturationContenu() {
         designation: f.designation ?? "",
         personne: "",
         quantite: null,
+        enveloppe: null,
         unite: "",
         taux: null,
         livraison: f.livraison,
@@ -376,6 +412,12 @@ function FacturationContenu() {
         personne: p.personne,
         quantite: Math.round(p.quantite * 100) / 100,
         unite: p.unite === "JOUR" ? "j" : "h",
+        enveloppe: (() => {
+          const k = p.unite === "JOUR" ? p.baseHoraire : 1;
+          const commande = p.commandeH === null ? null : p.commandeH / k;
+          const consomme = p.consommeH / k;
+          return { commande, consomme, reste: commande === null ? null : commande - consomme };
+        })(),
         taux: p.taux,
         livraison: "",
         montant: p.montant,
@@ -461,6 +503,7 @@ function FacturationContenu() {
           { titre: "Désignation", cle: "designation", largeur: 36 },
           { titre: "Pers.", cle: "personne", largeur: 7 },
           { titre: "Quantité", cle: "quantiteTexte", largeur: 10 },
+          { titre: "Consommé / commandé", cle: "enveloppeTexte", largeur: 26 },
           { titre: "Taux", cle: "taux", format: "euros", largeur: 11 },
           { titre: "Livrée le", cle: "livraison", format: "date", largeur: 11 },
           { titre: "Statut Suivi d'affaire", cle: "statutTexte", largeur: 24 },
@@ -479,6 +522,9 @@ function FacturationContenu() {
           designation: l.designation,
           personne: l.personne,
           quantiteTexte: l.quantite === null ? "" : `${String(l.quantite).replace(".", ",")} ${l.unite}`,
+          enveloppeTexte: l.enveloppe
+            ? `${nombre(l.enveloppe.consomme)}${l.enveloppe.commande !== null ? ` / ${nombre(l.enveloppe.commande)}` : ""} ${l.unite}${l.enveloppe.reste !== null ? ` · reste ${nombre(l.enveloppe.reste)} ${l.unite}` : ""}`
+            : "",
           taux: l.taux,
           livraison: l.livraison,
           statutTexte: l.statutBase ? `${l.statut} (commande : ${l.statutBase})` : l.statut,
@@ -641,7 +687,23 @@ function FacturationContenu() {
                         <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{l.type}</td>
                         <td style={{ ...td, maxWidth: 240, fontSize: 13 }}>{l.designation}</td>
                         <td style={{ ...td, fontWeight: 800 }}>{l.personne}</td>
-                        <td style={tdD}>{l.quantite === null ? "" : `${nombre(l.quantite)} ${l.unite}`}</td>
+                        <td style={tdD}>
+                          {l.quantite === null ? "" : `${nombre(l.quantite)} ${l.unite}`}
+                          {l.enveloppe && (
+                            <div
+                              title="Toute la commande (toutes personnes), jusqu’à la fin du mois affiché : consommé / commandé, et ce qu’il reste"
+                              style={{ fontSize: 11, lineHeight: 1.3, marginTop: 2, color: l.enveloppe.reste !== null && l.enveloppe.reste < 0 ? "#b3261e" : C.gris, whiteSpace: "nowrap" }}
+                            >
+                              {nombre(l.enveloppe.consomme)}
+                              {l.enveloppe.commande !== null ? ` / ${nombre(l.enveloppe.commande)} ${l.unite}` : ` ${l.unite} consommés`}
+                              {l.enveloppe.reste !== null && (
+                                <div style={{ fontWeight: 800 }}>
+                                  {l.enveloppe.reste >= 0 ? `reste ${nombre(l.enveloppe.reste)} ${l.unite}` : `dépassé de ${nombre(-l.enveloppe.reste)} ${l.unite}`}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td style={tdD}>{l.taux !== null ? `${nombre(l.taux)} €/${l.unite}` : ""}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>
                           {l.livraison ? new Date(`${l.livraison}T00:00:00`).toLocaleDateString("fr-FR") : ""}
