@@ -768,7 +768,16 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
     return () => window.removeEventListener("resize", maj);
   }, [largeurRequise]);
 
-  const rangees = useMemo(() => regrouperParAffaire(jours, ajoutees), [jours, ajoutees]);
+  /* ORDRE_FIXE : chaque affaire garde sa place pendant la saisie ; une nouvelle se met en bas.
+     L'ordre est retenu pour la semaine affichée, et repart de zéro sur une autre semaine. */
+  const ordre = useRef<{ semaine: string; cles: string[] }>({ semaine: "", cles: [] });
+  const rangeesBrutes = useMemo(() => regrouperParAffaire(jours, ajoutees), [jours, ajoutees]);
+  const rangees = useMemo(() => {
+    if (ordre.current.semaine !== cleSemaine) ordre.current = { semaine: cleSemaine, cles: [] };
+    const cles = ordre.current.cles;
+    for (const r of rangeesBrutes) if (!cles.includes(r.cle)) cles.push(r.cle);
+    return [...rangeesBrutes].sort((a, b) => cles.indexOf(a.cle) - cles.indexOf(b.cle));
+  }, [rangeesBrutes, cleSemaine]);
   const alertes = alertesSemaine(jours, props.activitesEtCodes);
 
   // Les alertes n'apparaissent qu'après une tentative d'enregistrer ou de valider, et disparaissent
