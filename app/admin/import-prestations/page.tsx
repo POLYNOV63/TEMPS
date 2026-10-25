@@ -203,6 +203,19 @@ function ImportContenu() {
             ...(activite ? { activite_id: activite } : {}),
           };
           if (ligneId && c.valides.has(`${ligneId}|${m.slice(0, 7)}`)) {
+            // mois validé : seuls la commande et le reste du classeur sont mis à jour (ni heures, ni montant)
+            const idValide = ligneId;
+            const { error: er } = await reessayer(() =>
+              supabase
+                .from("prestation_mois")
+                .update({
+                  commande_import: g.source.find((l) => l.commande_initiale !== null)?.commande_initiale ?? null,
+                  reste_import: g.source.find((l) => l.reste_commande !== null)?.reste_commande ?? null,
+                })
+                .eq("ligne_id", idValide)
+                .eq("mois", m)
+            );
+            if (er) throw new Error(er.message);
             bilan.verrouilles++;
             aSynchroniser.push({ ligneId, mois: m }); // ses heures ne bougent pas, mais son planning est remis d'aplomb
             continue; // mois validé dans l'application : intouchable
@@ -256,6 +269,8 @@ function ImportContenu() {
               valide_le: passe ? new Date().toISOString() : null,
               heures_fige: passe ? Math.round(heures * 100) / 100 : null,
               montant_fige: passe ? montant : null,
+              commande_import: g.source.find((l) => l.commande_initiale !== null)?.commande_initiale ?? null,
+              reste_import: g.source.find((l) => l.reste_commande !== null)?.reste_commande ?? null,
             },
             { onConflict: "ligne_id,mois" }
           ));

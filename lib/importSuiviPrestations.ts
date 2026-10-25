@@ -54,6 +54,8 @@ export type LigneHisto = {
   montant_calcul: number;
   montant_elec: number;
   montant: number; // total facturé de la ligne = Méca + Calcul + Elec (heures sup comprises)
+  commande_initiale: number | null; // « Jours/heures en commande initiale » (unité du bloc)
+  reste_commande: number | null; // « Jours/heures restant sur la commande » (unité du bloc)
   reclassee: boolean; // rangée d'office dans une autre catégorie que son bloc
   jours: (number | string | null)[]; // heures (ou code CP, ML…) du 1er au dernier jour du mois
 };
@@ -110,6 +112,8 @@ function colonnes(entete: unknown[]) {
     else if (t === "meca" && c.meca === undefined) c.meca = i;
     else if (t === "calcul" && c.calcul === undefined) c.calcul = i;
     else if (t === "elec" && c.elec === undefined) c.elec = i;
+    else if (t.startsWith("jours/heures en commande")) c.commande = i;
+    else if (t.startsWith("jours/heures restant")) c.reste = i;
   });
   return c;
 }
@@ -230,6 +234,8 @@ export function lireSuiviPrestations(feuilles: Record<string, unknown[][]>): Res
         montant_calcul: calcul,
         montant_elec: elec,
         montant: meca + calcul + elec,
+        commande_initiale: v(r, "commande"),
+        reste_commande: v(r, "reste"),
         reclassee,
         jours: Array.from({ length: nbJours }, (_, j) => {
           if (colJour1 < 0) return null;
