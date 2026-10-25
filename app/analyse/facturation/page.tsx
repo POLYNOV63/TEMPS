@@ -87,6 +87,7 @@ type LignePrestation = {
   /* ENVELOPPE_PEPI : la commande (base ou avenant) dans son ensemble, toutes personnes
      confondues, jusqu'à la fin du mois affiché ; en heures */
   commandeH: number | null; // « Total heures » du Suivi d'affaire
+  dateLivraison: string | null; // date de livraison (= clôture de la PE / PI) dans le Suivi d'affaire
   consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)
   baseHoraire: number;
 };
@@ -264,6 +265,7 @@ function FacturationContenu() {
             facturable: a.statut === "EN_COURS" || a.statut === "LIVREE",
             cloture: Boolean(m?.valide),
             commandeH: sl && Number(sl.heures_total) > 0 ? Number(sl.heures_total) : null,
+            dateLivraison: sl?.date_livraison ?? null,
             consommeH: consommeAffaire.get(l.affaire_id) ?? 0,
             baseHoraire: Number(l.base_horaire) || 7,
           });
@@ -420,7 +422,7 @@ function FacturationContenu() {
           return { commande, consomme, reste: commande === null ? null : commande - consomme };
         })(),
         taux: p.taux,
-        livraison: "",
+        livraison: p.dateLivraison ?? "",
         montant: p.montant,
         statut: p.statutCommande ?? "pas de commande",
         statutBase: "",
