@@ -1016,7 +1016,7 @@ function PrestationsContenu() {
         {!chargement && mots.length > 0 && nbTrouves === 0 && <Message genre="info">Aucune ligne ne correspond à « {recherche} ».</Message>}
 
         {!chargement && (blocsAffiches.length > 0 || aStafferAffiches.length > 0) && (() => {
-          /* RELEVE_UNE_LIGNE_V4 : n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
+          /* RELEVE_UNE_LIGNE_V5 : « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
           const L_CMD = 180;
@@ -1029,9 +1029,9 @@ function PrestationsContenu() {
           const X_MONTANT = X_MOIS + L_MOIS;
           const X_RESTE = X_MONTANT + L_MONTANT;
           const X_OUTILS = X_RESTE + L_RESTE;
-          // calendrier : week-ends et fériés 12 px ; les jours ouvrés se partagent le reste de la largeur
-          // (30 px au minimum : sur un écran de portable, la page défile de côté, la partie gauche reste en place)
-          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 12 : 30);
+          // calendrier étroit : jours ouvrés 26 px, week-ends et fériés 10 px (s'il manque de la place,
+          // la page défile de côté et la partie gauche reste en place)
+          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 10 : 26);
           const largeurTableau = X_OUTILS + L_OUTILS + jours.reduce((t, j) => t + largeurJour(j), 0);
           // l'en-tête reste visible sous les onglets du Pilotage (49 px) ; deux rangées : semaines, puis jours
           const HAUT = 49;
@@ -1059,14 +1059,14 @@ function PrestationsContenu() {
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
           const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
           return (
-            <div style={{ background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none", width: `max(100%, ${largeurTableau}px)`, boxSizing: "border-box" }}>
-              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: "100%", minWidth: largeurTableau }}>
+            <div style={{ background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, userSelect: "none", width: largeurTableau + 2, boxSizing: "border-box" }}>
+              <table style={{ borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", width: largeurTableau }}>
                 <colgroup>
                   {[L_CMD, L_PERS, L_MOIS, L_MONTANT, L_RESTE, L_OUTILS].map((w, i) => (
                     <col key={`g${i}`} style={{ width: w }} />
                   ))}
                   {jours.map((j) => (
-                    <col key={`c${j.date}`} style={j.weekend || j.ferie ? { width: largeurJour(j) } : undefined} />
+                    <col key={`c${j.date}`} style={{ width: largeurJour(j) }} />
                   ))}
                 </colgroup>
                 <thead>
@@ -1106,12 +1106,56 @@ function PrestationsContenu() {
                         }}
                       >
                         <div style={{ fontSize: j.weekend || j.ferie ? 8 : 10, fontWeight: 700, lineHeight: "11px" }}>{LETTRES[j.js]}</div>
-                        <div style={{ fontSize: j.weekend || j.ferie ? 9 : 12, lineHeight: "15px" }}>{j.jour}</div>
+                        <div style={{ fontSize: j.weekend || j.ferie ? 8 : 11, lineHeight: "15px" }}>{j.jour}</div>
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
+                  {/* PE / PI à staffer : en tête, pour ne pas les oublier */}
+                  {aStafferAffiches.length > 0 && (
+                    <tr>
+                      <td colSpan={nbCol} style={{ ...cellule, background: "#fff7ea", padding: 0 }}>
+                        <div style={{ position: "sticky", left: 0, display: "inline-block", padding: "6px 8px", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
+                          PE / PI à staffer — choisissez la personne
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {aStafferAffiches.map((a) => (
+                    <tr key={`s-${a.id}`}>
+                      <td style={{ ...cellule, ...fixeG(0, L_CMD), whiteSpace: "normal" }} title={a.designation}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <BadgeType type={a.type} />
+                          <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
+                          {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                        </span>
+                      </td>
+                      <td colSpan={nbCol - 1} style={cellule}>
+                        <div style={{ position: "sticky", left: L_CMD, display: "inline-flex", alignItems: "center", gap: 10 }}>
+                          {peutAgir ? (
+                            <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 120 }} aria-label={`Personne pour ${a.numero}`}>
+                              <option value="">Personne…</option>
+                              {annuaire.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {nomCollab(p)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            "—"
+                          )}
+                          <span style={{ color: C.gris, fontSize: 13 }}>
+                            {a.imputation} · {a.designation}
+                            {(() => {
+                              const e = enveloppes.get(a.id);
+                              return e && e.commande > 0 ? ` · ${formatHeures(e.commande)} commandées` : "";
+                            })()}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                   {blocsAffiches.map((b) => (
                     <Fragment key={b.cle}>
                       <tr>
@@ -1289,7 +1333,7 @@ function PrestationsContenu() {
                                         border: "none",
                                         background: "transparent",
                                         textAlign: "center",
-                                        fontSize: ferme ? 10 : 13,
+                                        fontSize: ferme ? 9 : 12,
                                         fontWeight: 700,
                                         color: s?.code ? "#7a3e00" : C.encre,
                                         fontFamily: "inherit",
@@ -1444,49 +1488,6 @@ function PrestationsContenu() {
                         );
                       })}
                     </Fragment>
-                  ))}
-                  {aStafferAffiches.length > 0 && (
-                    <tr>
-                      <td colSpan={nbCol} style={{ ...cellule, background: "#fff7ea", padding: 0 }}>
-                        <div style={{ position: "sticky", left: 0, display: "inline-block", padding: "6px 8px", fontWeight: 800, fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px", color: "#7a3e00" }}>
-                          PE / PI à staffer — choisissez la personne
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  {aStafferAffiches.map((a) => (
-                    <tr key={`s-${a.id}`}>
-                      <td style={{ ...cellule, ...fixeG(0, L_CMD), whiteSpace: "normal" }} title={a.designation}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <BadgeType type={a.type} />
-                          <strong style={{ color: C.rougeFonce }}>{numeroFacture(a).numero}</strong>
-                          {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
-                        </span>
-                      </td>
-                      <td colSpan={nbCol - 1} style={cellule}>
-                        <div style={{ position: "sticky", left: L_CMD, display: "inline-flex", alignItems: "center", gap: 10 }}>
-                          {peutAgir ? (
-                            <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 120 }} aria-label={`Personne pour ${a.numero}`}>
-                              <option value="">Personne…</option>
-                              {annuaire.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {nomCollab(p)}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            "—"
-                          )}
-                          <span style={{ color: C.gris, fontSize: 13 }}>
-                            {a.imputation} · {a.designation}
-                            {(() => {
-                              const e = enveloppes.get(a.id);
-                              return e && e.commande > 0 ? ` · ${formatHeures(e.commande)} commandées` : "";
-                            })()}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
                   ))}
                 </tbody>
               </table>
