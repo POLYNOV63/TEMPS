@@ -1,59 +1,50 @@
-# POLYNOV-TEMPS - Contexte du projet
+# Espace POLYNOV (ex POLYNOV-TEMPS) - Contexte du projet
 
-Application interne de POLYNOV (bureau d'études) : feuilles de temps hebdomadaires,
-imputations par affaire / activité, espace RH (congés, RTT, récupération) et bilans.
-Interface en français.
+Application interne de POLYNOV (bureau d'études) : feuilles de temps hebdomadaires, imputations par affaire / activité,
+espace RH (congés, RTT, récupération), pilotage des affaires du BE (planning, portefeuille, devis), prestations PE / PI,
+facturation, finances et bilans. Interface en français. Mis à jour le 25/10/2026.
+
+## Qui travaille dessus, et comment
+
+- **PLG** (responsable technique, administrateur Office 365, double casquette technique et chiffre d'affaires) pilote le
+  projet. **Il ne code pas** : explications pas à pas, niveau débutant, une commande PowerShell à la fois.
+- **Livraison des modifications** : un zip à décompresser à la racine du projet (`C:\Users\plgaufier\TEMPS` ou
+  `C:\Users\zoul\Documents\POLYNOV\polynov-temps`, deux PC : toujours `git pull` avant). Quand un fichier existe déjà chez
+  lui et risque d'avoir bougé, préférer un **script `outils/maj-xxx.mjs`** (lancé par `node outils/maj-xxx.mjs`) qui
+  remplace des passages exacts : il vérifie tout avant d'écrire (« tout ou rien »), affiche une ligne ✓ par changement,
+  pose un marqueur pour être relancé sans risque, et dit « copiez ce message à Claude » en cas d'échec. Les retours à la
+  ligne Windows (CRLF) sont normalisés. Ne plus créer de `.bak` (ignorés par `.gitignore`, ménage fait).
+- **SQL** : scripts numérotés `sql/NN_objet.sql`, lancés à la main dans Supabase > SQL Editor, relançables sans risque
+  (`create or replace`, `if not exists`). Dernier numéro utilisé : **63**. Toujours dire l'ordre : SQL avant le code
+  qui en dépend.
+- **Mise en ligne** : `npm run build` (doit passer : TypeScript strict, c'est ce qui bloque Vercel), puis
+  `git add -A`, `git commit -m "…"`, `git push` ; Vercel déploie la branche main. Dépendance à installer une fois par
+  PC : `npm install exceljs`.
+- **Export IA** (`/admin/Export-IA`) : produit ce contexte. Mode complet ≈ 1,1 Mo : les grosses pages n'y sont que
+  résumées ; demander à PLG le fichier exact avant de le modifier.
 
 ## Stack technique
 
-- Next.js (App Router, TypeScript), composants client, styles en ligne
-  (Tailwind sur quelques pages seulement). Charte : rouge `#c00000`, police Calibri.
-- Supabase : Postgres, Auth, RLS. Déploiement Vercel.
-- Connexion Microsoft 365 uniquement (provider `azure`). Le callback `/auth/callback`
-  rattache le compte Microsoft à la fiche `collaborateurs` par **email** (premier
-  login). Un collaborateur désactivé (`actif = false`) ne peut plus se connecter.
-- Excel : `xlsx` / `xlsx-js-style` (export hebdomadaire, import de l'historique).
+- Next.js 16 (App Router, TypeScript, Turbopack), composants client, styles en ligne. Charte : rouge `#c00000`,
+  police Calibri. Composants communs : `components/EnTetePage.tsx`, `components/GardeAcces.tsx`,
+  `components/pilotage/ui.tsx` (C, page, Message, Pastille, Tuile, Modal, BadgeType), `lib/excelPolynov.ts` (export
+  Excel aux couleurs POLYNOV, exceljs).
+- Supabase (plan gratuit, **aucune sauvegarde automatique**) : Postgres, Auth, RLS, Edge Functions, pg_cron + pg_net.
+  Déploiement Vercel.
+- Connexion Microsoft 365 uniquement (provider `azure`), rattachement à `collaborateurs` par e-mail au premier login.
 
 ## Rôles et droits
 
-Source unique côté interface : `lib/droits.ts` (fonction `peut(role, droit)`).
-La protection réelle est la RLS Supabase (fonctions `rh_est_admin()`,
-`polynov_est_exporteur()`, `rh_est_validateur()`, `polynov_mon_collaborateur_id()`).
+Source côté interface : `lib/droits.ts` (`peut(role, droit)`). Protection réelle : RLS et fonctions SQL
+(`rh_est_admin()`, `polynov_est_exporteur()`, `polynov_peut_piloter()`, `polynov_peut_voir_pilotage()`,
+`polynov_mon_collaborateur_id()`).
 
-| Niveau | Rôle (`collaborateurs.role`) | Accès |
+| Rôle | Qui | Accès |
 |---|---|---|
-| 0 | COLLABORATEUR | Ses feuilles (Ma semaine, Mes feuilles), son espace RH, Bilan affaire, Mon bilan |
-| 1 | RESPONSABLE | Niveau 0 + Suivi des feuilles et Ma semaine d'un autre collaborateur en consultation, Bilan RH mensuel, Export Excel |
-| 2 | ADMIN | Tout : modification de n'importe quelle feuille, collaborateurs, profils horaires, codes, activités, bilans, imports, validation RH, Export IA |
-
-Les validateurs RH sont les administrateurs AMA et PLG (notifications e-mail des demandes).
-Le niveau 1 lit toutes les feuilles (policies SELECT via `polynov_est_exporteur()`) mais
-n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
-
-## Modèle de données (résumé)
-
-- `collaborateurs` : fiche + compte (email = identifiant Microsoft, `auth_user_id`, `role`,
-  `actif`, `trigramme`, `profil_horaire_id`, `date_entree`, `date_sortie`,
-  `compteur_recuperation`).
-- `profils_horaires` (heures théoriques du lundi au vendredi), `historique_profils_horaires`
-  (rythme applicable par période), `bases_horaires`, `affectations_bases_horaires`.
-- `feuilles_heures` : une feuille par collaborateur et par semaine (`semaine_debut`,
-  `statut` BROUILLON / A_TRAITER, `verrouillee`, `total_heures`, `total_theorique`,
-  `heures_supplementaires`, `total_re`, `compteur_avant`, `compteur_apres`, et pour la
-  clôture mensuelle `cloture_mensuelle`, `heures_supplementaires_a_repartir`,
-  `heures_supplementaires_compteur`, `heures_supplementaires_payees`).
-  `feuilles_heures_jours` (présence, absence, durées, heures RE, ticket restaurant) et
-  `feuilles_heures_imputations` (`type_affaire`, `numero_affaire`, `code`, `activite_id`,
-  `description`, `heures`).
-- `codes_imputation` (catégories dont ABSENCE et HORS_BILAN), `activites`, `activites_codes` :
-  référentiels d'imputation.
-- `rh_droits` : droits d'un collaborateur **par exercice** (CP reportés, acquis, ancienneté,
-  exceptionnels, RTT acquis, compteur de récupération initial, période CP). Saisis par
-  l'ADMIN dans Collaborateurs > Droits RH : c'est la référence des soldes.
-- `rh_demandes` : demandes CP / RTT / récupération (statuts EN_ATTENTE, VALIDEE, ENVOYEE_RH,
-  REFUSEE), validation par AMA / PLG. Vue `rh_demandes_admin`.
-- `historique_imputations`, `historique_presence` : historique importé depuis Excel
-  (`source`), lu par les bilans. `v_historique_affaires` : vue par affaire.
+| COLLABORATEUR | l'équipe | Ma semaine, Mes feuilles, Ma feuille de route, RH, Guide, planning et Bilan affaire en lecture |
+| RESPONSABLE | FVI, MMO | + Pilotage BE (planning des forfaits, portefeuille, DBE, feuilles de route), Feuilles collaborateurs, Bilan RH mensuel, Export Excel ; partie « responsables » du Guide |
+| ADMIN | PLG, AMA | Tout ; validation RH réservée à PLG et AMA ; relevé PE / PI, Finances, Facturation, Paramétrage |
+| DIRECTION | Président, adjoint | Lecture : Finances, Facturation, Indicateurs, Charge, planning. Fiche DIRECTION invisible partout (SQL 56), gérée dans « Accès Direction » de Collaborateurs |
 
 ## Feuille de temps (Ma semaine)
 
@@ -85,7 +76,7 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   jour du mois : lundi à jeudi -> vendredi suivant ; vendredi -> ce jour ; week-end ->
   vendredi précédent). Le cumul part de la semaine suivant la clôture précédente et ne
   compte que les feuilles A_TRAITER.
-- **Compteur de récupération** : borné de -30 h à +30 h (validation refusée au-delà).
+- **Compteur de récupération** : plus de plafond haut (SQL 53 et 54) ; au-delà de +30 h, simple avertissement.
   `compteur_avant` = `compteur_apres` de la dernière feuille A_TRAITER précédente, sinon
   `rh_droits.compteur_recuperation_initial` de l'exercice, sinon
   `collaborateurs.compteur_recuperation`. À la validation, les feuilles A_TRAITER suivantes
@@ -114,7 +105,7 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
 - **Soldes CP / RTT** = droits `rh_droits` de l'exercice - demandes validées ou transmises
   - demandes en attente (demandes de l'exercice uniquement).
 - Types de demande : CP, RTT, RE (0,5 à 7,5 h), CP exceptionnel avec ou sans justificatif.
-  Pas de demi-journée un vendredi. Jours ouvrés : fériés français exclus.
+  Pas de demi-journée un vendredi. Une demi-journée de CP ou de RTT fait entre 3 h et 4,5 h (alerte dès la saisie). Jours ouvrés : fériés français exclus.
 - **Bilan activités** : seules les heures CBE / DBE rattachées à une activité sont réparties ;
   capacité légale de référence de 35 h par semaine et par feuille.
 - **Collaborateurs** : désactiver conserve l'historique et bloque la connexion ; supprimer
@@ -173,38 +164,22 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
 - **Ligne des jours fixe** : la ligne des jours et les cartes « Objectif » restent collées en haut de l'écran quand on fait
   défiler (`position: sticky`), avec un rappel « S42 · 12/10 → 16/10 » dans sa première case. Dans une fenêtre étroite (moins de
   1164 px, ou 1504 px avec le week-end affiché) la grille défile dans son cadre, dans les deux sens, pour que la ligne reste fixe.
-- **En-tête compact (ordinateur)** : `app/ma-semaine/EnteteSemaineCompact.tsx` réunit, sur ordinateur seulement, le titre, la carte de
-  la semaine, la ligne du week-end, les quatre grandes cartes de totaux ET la barre « Reprendre les affaires / Aide » dans UNE
-  carte : navigation, semaine S42, totaux saisies / heures sup / récupération / tickets, statut d'enregistrement, bouton du
-  week-end, puis « Reprendre / Aide » (et la proposition de congés) juste dessous. Les explications (cumul mensuel, clôture,
-  début de semaine) sont dans des pastilles « i » (éléments `details`). La zone de saisie démarre vers 320 px du haut au lieu de
-  700 px. Le téléphone garde l'affichage d'origine (`actif={false}` : le composant ne dessine que ses enfants).
-  Installé par `scripts/patch-ma-semaine-compact.mjs` (version 2) : modifie `MaSemaineContent.tsx` (marqueur
-  `MA_SEMAINE_COMPACT_V2`) et `AssistantSaisie.tsx` (option `integre` du bandeau : sans cadre propre), sauvegardes `*.bak-compact`,
-  tout ou rien, met à jour la version 1. A relancer après tout nouveau passage du script de la grille.
 - **Ligne d'affaire** : description modifiable directement, croix pour retirer l'affaire (confirmation s'il y a des heures),
   croix par ligne d'imputation ; le « + » de la colonne Affaire propose d'abord les affaires de la semaine précédente.
 - **Téléphone (< 760 px)** : un jour à la fois (barre du bas de la page), mêmes lignes en pleine largeur.
 - **Fichiers** : `lib/grilleSemaine.ts` (logique pure testée), `app/ma-semaine/GrilleSemaine.tsx` (composant, sans accès aux
   données), `app/ma-semaine/grille-demo/page.tsx` (essai avec fausses données, `/ma-semaine/grille-demo`).
-- **Branchement (version 5)** : `scripts/patch-ma-semaine-grille.mjs` (tout ou rien, sauvegardes `*.bak-grille`, repart des
-  fichiers d'origine si une version précédente est installée) insère dans `MaSemaineContent.tsx` un adaptateur et un compteur de tentatives d'enregistrement / validation (marqueur
-  `GRILLE_SEMAINE_V5`) branché sur les fonctions existantes (`modifierJour`, `modifierImputation`, `changerAbsence`,
-  `changerDureeRTT`…) et affiche la grille ; l'ancien tableau est masqué (code conservé, inutilisé). Il ajoute au bandeau de
-  `AssistantSaisie.tsx` les options `collant` et `sansPuces`. Calcul, enregistrement, validation et heures supplémentaires ne
-  sont pas modifiés. Le presse-papiers de blocs de l'ancien affichage n'est pas repris.
-
 ## Compteur de récupération
 
 - **Chaîne de feuille en feuille** : le compteur avant d'une feuille = compteur après de la dernière feuille validée précédente
   (statut `A_TRAITER`) ; compteur après = compteur avant - heures de récupération (RE) prises + part des heures supplémentaires
   affectée au compteur **à la clôture mensuelle seulement**. Les heures supplémentaires de la période s'accumulent sans toucher le
-  compteur jusqu'à la décision de fin de mois (compteur ou heures payées). Le compteur reste entre -30 h et +30 h.
-- **Point de départ** : « Compteur récupération initial » des Droits RH (page Collaborateurs, par exercice, l'exercice commence en
+  compteur jusqu'à la décision de fin de mois (compteur ou heures payées). Pas de plafond haut (avertissement au-delà de +30 h).
+- **Point de départ** : « Compteur récupération initial » des Droits RH (page Suivi RH, par exercice, l'exercice commence en
   novembre), utilisé **uniquement** pour la première feuille d'une personne ; à défaut l'ancienne valeur de la fiche collaborateur.
   Modifier ce champ après coup ne change donc rien aux feuilles déjà créées.
 - **Affichage** : l'espace RH montre le compteur après de la dernière feuille (un brouillon reprend le compteur de départ).
-- **Ajustement forcé** (script SQL 17, page `/admin/compteurs`, ADMIN) : un administrateur ajoute ou retire des heures avec un
+- **Ajustement forcé** (script SQL 17, page Suivi RH `/admin/suivi-rh`, ADMIN ; l'ancienne `/admin/compteurs` existe encore) : un administrateur ajoute ou retire des heures avec un
   **motif obligatoire** ; l'ajustement s'ajoute à la dernière feuille validée (colonne `feuilles_heures.compteur_regularisation`),
   décale les brouillons postérieurs, ou modifie le compteur initial des Droits RH s'il n'existe aucune feuille validée. Tracé dans
   `rh_compteur_regularisations` (date, avant, après, motif, auteur). Fonction `rh_regulariser_compteur`.
@@ -227,124 +202,128 @@ n'écrit rien ; les écritures sensibles sont réservées à `rh_est_admin()`.
   taux ; leur bloc d'affichage a été retiré de la page Bilans.
 - Le détail par code indique les heures, le nombre de personnes et le nombre de semaines (ex. ML).
 
-## Organisation du tableau de bord
 
-Cartes compactes, rangées par priorité d'usage (une page ADMIN tient sur un écran d'environ 900 px sans défiler). Installé par
-`scripts/patch-dashboard-priorites.mjs` (version 2, marqueur `MA_DASHBOARD_PRIORITES_V2`, sauvegarde `page.tsx.bak-dashboard`, met à
-jour la version 1) ; il ne touche pas au chargement des données, seulement à l'affichage, et retire les `alert()` et `console.log` de
-mise au point.
+## Tableau de bord (`app/dashboard/page.tsx`)
 
-- **ADMIN, de haut en bas** : 1. **Pilotage BE** : planning des affaires, nouvelle affaire, **bilan affaire** (Portefeuille et Charge par
-  ressource ne sont plus sur le tableau de bord : onglets en haut du planning) ; 2. **Validations RH** : validation RH (avec le nombre
-  de demandes en attente), compteurs de récupération, feuilles à relancer ; 3. **Mon espace** : Ma semaine (avec son état), Mes
-  feuilles, RH ; 4. **Analyse** : analyse de charge, bilan activités, bilan RH mensuel, export Excel, feuilles collaborateurs ;
-  5. **Paramétrage de l'application**, replié par défaut (toute la ligne est cliquable, bouton sombre « Afficher les 7 réglages »),
-  choix mémorisé dans le navigateur : codes, activités, collaborateurs, rythmes horaires, imputations des affaires, export IA, import.
-- **Cloche** (ADMIN) dans l'en-tête, à côté du rôle : badge avec le nombre de demandes RH en attente (`rh_demandes`, statut
-  `EN_ATTENTE`) ; un clic liste les 5 plus proches (`rh_demandes_admin`) avec un bouton vers Validation RH. Actualisée chaque minute et
-  au retour sur l'onglet.
-- Le « suivi rapide » est une ligne de pastilles à côté du bonjour ; « À traiter » est devenu la carte « Feuilles à relancer »
-  (feuilles de la semaine dernière non validées, nombre exact).
-- **RESPONSABLE** : Mon espace, Pilotage BE (avec Bilan affaire), Suivi des équipes. **COLLABORATEUR** : Mon espace seulement (avec
-  Bilan affaire).
-- « Mon bilan » n'est plus proposé aux collaborateurs (un NI élevé peut stresser) : la page est réservée aux ADMIN en attente d'une
-  décision.
+- **ADMIN** : bandeau « Mon espace » (Ma semaine avec son état, Ma feuille de route, Mes feuilles, Mes demandes RH,
+  Guide), puis **Bureau d'études** (Planning des affaires, Portefeuille, Relevé PE / PI, Bilan affaire), **Analyses**
+  (Finances, Indicateurs commerciaux, Charge & pointage), **RH** (Validation RH, Suivi RH, Feuilles collaborateurs),
+  **Exports** (Facturation du mois, Bilan RH mensuel, Export récapitulatif d'heures), **Paramétrage** replié.
+- Vignette **Feuilles collaborateurs** : semaine EN COURS, compteurs transmises / à valider / incomplètes / non saisies,
+  noms à relancer. **Cloche** : demandes RH en attente ; chaque ligne ouvre la demande (`/admin/Valid_RH?demande=<id>`).
+- RESPONSABLE / COLLABORATEUR : Mon espace (avec Ma feuille de route, Guide), Pilotage BE pour les responsables.
+  DIRECTION : blocs de consultation. Affichage téléphone (CSS `@media`), aussi pour Validation RH et Mes feuilles.
 
-## Mon bilan (page personnelle, réservée aux ADMIN pour le moment)
+## Suivi d'affaire BE (classeur Excel) : il fait foi
 
-- Page `/mon-bilan` : ma répartition du temps (CBE vendus, DBE, CN, Divers de production, NI, Formation FI / FO,
-  non expliqué) sur la période choisie (mois, exercice, année, 12 derniers mois), mes affaires, l'évolution mois
-  par mois. Seules les données de la personne connectée sont lues.
-- Mêmes définitions que Bilans : classement dans `lib/categoriesBilan.ts` (la page Bilans conserve sa propre copie
-  de ces règles ; toute évolution des définitions doit être faite aux deux endroits, ou unifiée).
-- Ne reprend pas : saisie et compteur (Ma semaine), liste des feuilles (Mes feuilles), congés et RTT (RH).
-- Une personne exclue des statistiques (encadrement) voit ses heures sans capacité ni taux.
+- Classeur stratégique sur le serveur de l'entreprise (pas de connexion directe à Internet). Lecture par
+  `lib/suiviAffaires.ts` (colonnes autorisées seulement : jamais de commentaires ni de données client hors nom abrégé et
+  n° client) et la fonction Edge `synchroniser-suivi-affaires`, depuis `/admin/synchro-suivi-affaires`. Tables
+  `suivi_lignes`, `suivi_lignes_montants`, `suivi_clients`, `suivi_synchronisations`, `suivi_correspondance_activites`,
+  `suivi_exclusions` (DBE2618 ignoré pour toujours). Périmètre : devis ouverts depuis le 01/11/2024.
+- Numérotation : DBExxxx = devis ; CBExxxx = commande, `R1`, `R2` = avenants, `ECH` / `LOT` = découpages du montant
+  (acomptes, livraison, solde), jamais additionnés. ARC Louxor = n° de l'ERP du siège, propre à chaque ligne.
+- `suivi_maj_pilotage` crée / met à jour `pilotage_affaires` : **une ligne par commande** (base et chaque avenant),
+  Commande reçue → EN_COURS, Intention de commande → EN_ATTENTE, Livrée → LIVREE ; chiffré par activité depuis les heures
+  par discipline (correspondance des activités) ; repère `suivi_maj_le` (« XLS »). Statut, délai, chiffré et
+  désignation se modifient dans Excel ; dans l'application : le responsable, les affectations (et le délai par
+  `pilotage_changer_echeance`, avec motif).
+- **DBE** (SQL 59, trigger `zz_pilotage_dbe_suivi` sur `suivi_lignes`) : un « Devis ouvert » crée son DBE au Pilotage
+  (responsable = rédacteur, début = ouverture, remise = colonne Délai sinon ouverture + 10 jours ouvrés) ; devis envoyé
+  ou devenu commande → LIVREE ; perdu sans envoi → ABANDONNEE. Responsable et date de remise jamais écrasés ensuite.
+  Pas de DBE créé pour l'historique (envoyés / perdus).
+- La synchronisation est encore lancée à la main : **à faire, un agent sur le serveur** (toutes les 5 min).
 
-## Pilotage BE (module en construction)
+## Pilotage BE
 
-On pilote les AFFAIRES ; le planning individuel et la charge des ressources en découlent. Exploite les données existantes
-sans les copier. Maquettes : canevas « Pilotage BE — maquettes des écrans ».
+- **Onglets** (`components/pilotage/OngletsPilotage.tsx`) : Portefeuille, Planning des affaires, Charge par ressource
+  (ADMIN), Planning par ressource (consultation), Prestations PE / PI (ADMIN), Feuilles de route (responsables).
+- **Planning des affaires** (`/pilotage/affaires`) : toute commande EN_COURS / EN_ATTENTE au planning d'office ; groupes
+  Affaires (CBE puis DBE), PI, PE ; **tri par numéro croissant**, avenant sous sa base. PE / PI : seulement les avenants
+  s'il y en a. Barre de l'affaire = pointé (foncé) + planifié (clair) sur le chiffré ; colonne « reste à planifier ». On
+  affecte par double-clic, glisser une personne, « + Affecter » ; une barre se glisse, s'étire, Suppr la supprime.
+  ⚑ livraison souhaitée, 📌 rendu d'un devis. « 👁 Voir une personne » : focus et charge jour par jour. Hors affaire
+  (salons, formations). Dépassement du chiffré toujours permis. Livrées rangées en bas. Mois au-dessus des semaines.
+- **PE / PI** : le relevé des prestations fait foi ; les barres des ressources en viennent
+  (`prestation_synchroniser_planning`), non glissables au planning.
+- **Portefeuille** (`/pilotage`) : une ligne par commande, réalisé de la famille porté par la base ; alertes et tuile
+  Dépassements sur les affaires ACTIVES seulement (une livrée n'alerte plus) ; colonne « Délai » (« Délai dépassé ») ;
+  en-tête du tableau fixe. DBE : « ✏️ affecter » (rédacteur + date cible de rendu, via `pilotage_changer_echeance`, motif
+  automatique), formulaire sur une ligne à part.
+- **Règle des délais** : une date ne s'écrit jamais en direct dans `pilotage_affaires.echeance` (trigger : motif
+  obligatoire) ; toujours `pilotage_changer_echeance(p_affaire_id, p_nouvelle_date, p_motif, p_commentaire)` qui historise
+  dans `pilotage_echeances_historique`. Vocabulaire voulu : **« délai »**, pas « échéance ».
+- **Une page par affaire = Bilan affaire** (`/affaires/bilan?affaire=CBE1604&commande=1604R2`) : chiffré / pointé par
+  activité, par personne, par mois, négoce (vendu / acheté, ADMIN-RESPONSABLE-DIRECTION), n° DBE, bilan financier, **par
+  sous-dossier** (SQL 63), et panneau **Pilotage** (`components/pilotage/PanneauPilotageAffaire.tsx` : responsable,
+  délai et historique, affectations, suppression ADMIN ; une pastille par commande de la famille). L'ancienne fiche
+  `/pilotage/affaire/[id]` redirige vers ce bilan.
+- **Ma feuille de route** (`/ma-feuille-de-route`, SQL 60 `ma_feuille_de_route`, SQL 61 `ma_feuille_de_route_devis`) :
+  ce que le planning prévoit pour la personne, semaine par semaine (affaires × jours, congés, total), devis à rédiger
+  jusqu'à l'envoi ; 4 semaines / 2 mois / 3 mois ; responsables et ADMIN choisissent un collègue.
+- **Charge & pointage** : deux onglets (`components/analyse/OngletsCharge.tsx`) : Par affaire (`/analyse/pointage`,
+  pointé face au chiffré) et Par collaborateur (`/admin/bilans`, capacité et taux ; histogramme par mois par défaut).
 
-- **Accès** : réservé aux ADMIN et aux RESPONSABLE (droit `piloterBE`, fonctions SQL `polynov_peut_piloter()` et
-  `polynov_peut_voir_pilotage()`). Suppression d'une affaire et gestion des imputations : ADMIN seulement.
-- **1. Déclarer une affaire** (`/pilotage/nouvelle`) : on commence par l'**imputation** (BE / PE / PI / Scan / Négoce / IG, liste
-  gérée dans Administration > Imputations des affaires), qui décide du reste. Descriptif sans nom de client ; numéro en chiffres.
-  - **Prestation (PE, PI : imputation « heures chiffrées non obligatoires »)** : **une ou plusieurs personnes** (ou « plus
-    tard »), chacune avec son % de temps ; une date de début ; puis **date de fin, nombre d'heures ou nombre de jours**. La case
-    **« Cette durée comprend déjà les congés et jours fériés »** (décochée par défaut) choisit : décochée = congés et fériés ne
-    sont pas travaillés et **repoussent la fin** ; cochée = ils sont **comptés dans la durée**, la fin ne bouge pas (fonction
-    `remplirCalendrier`). Le résultat s'affiche par personne avant de valider ; on peut **affecter tout de suite**.
-    L'affaire mémorise ses **bornes théoriques** : `date_debut`, fin théorique = `echeance` (la plus tardive des personnes), et la
-    quantité vendue (`prestation_quantite`, `prestation_unite`, `prestation_comprend_conges`).
-  - **Autres imputations** : heures chiffrées par activité (sans code) + date de livraison souhaitée ; elles apparaissent dans le
-    planning (« Besoins » par activité) pour affecter les ressources.
-  - **DBE** : date de remise obligatoire, code DT, heures de rédaction facultatives.
-  - La notion de priorité a été supprimée des écrans.
-- **2. Planning des affaires** (`/pilotage/affaires`) : vue sur 2, 4, 8, 12 ou 26 semaines ; **PE en haut, PI ensuite, le reste dessous** ;
-  une ligne par affaire. Les affaires non prestations se déplient et montrent leurs « Besoins » par activité (heures affectées /
-  chiffrées) ; on y affecte des personnes en les glissant depuis le panneau « Ressources » (classées par disponibilité) ou avec
-  « + Affecter » : date de début + durée en **jours, demi-journées ou heures** (+ % du temps). Un bloc se déplace (glisser) et se
-  redimensionne (étirer les bords) ; un clic le modifie. Les heures se calculent (horaire du profil moins congés validés et jours
-  fériés ; la fin est repoussée d'autant) et sont comparées au chiffré : alerte, ou bloc limité au chiffré si « me contenir » est
-  activé (réglage mémorisé dans le navigateur). Congé / férié dans un bloc : signalés.
-- **Prestations (PE, PI) dans le planning** : toujours dépliées, avec **une barre pointillée pour l'affaire** (début et fin
-  théoriques, ses « bornes ») et **une barre pleine par ressource**. Les barres sont **indépendantes** (étirer l'affaire ne déplace pas
-  les ressources, et inversement) ; chacune se **glisse** (décaler) et s'**étire** (début ou fin), un **clic** ouvre sa fiche. Pas
-  d'historique des décalages. Congés et fériés apparaissent en hachuré sur la barre d'une ressource et sont sautés. Une ressource qui
-  dépasse les bornes est hachurée en rouge, signalée dans la ligne (« dépasse la prestation ») et la fiche propose d'**étirer l'affaire**.
-  - **Fiche d'une ressource** (`FicheRessourceDialog`) : début, fin, **personne** (changer = la barre passe à une autre personne),
-    % de son temps, note ; ajout d'une ressource (« + Affecter » ou glisser une personne) ; retrait.
-  - **Fiche de l'affaire** (`FicheAffaireDialog`) : début, fin, quantité vendue, unité, case « comprend déjà les congés et jours
-    fériés », calcul d'une fin théorique (jours fériés seulement). Écriture par `pilotage_modifier_prestation` (sans motif).
-  - Une affaire sans bornes propose « Définir le début et la fin de la prestation » ; les anciennes prestations prennent
-    l'étendue de leurs ressources.
-- **PE** : la personne est chez le client : **non affectable ailleurs** (grisée dans le panneau ; un chevauchement avec une autre PE
-  de la même personne est refusé), mais sa barre se modifie librement. Une PE est le plus souvent une seule ressource ; une PI en a
-  souvent plusieurs.
-- **3. Charge par ressource** (`/pilotage/ressources`) : charge de chaque personne sur 12 semaines avec, en bas du tableau, le
-  **taux de charge de l'équipe (hors encadrement)** par semaine = heures affectées ÷ capacité ; détail d'une semaine avec
-  déplacement d'heures. Le détail précis par activité se fait au bilan, avec les feuilles d'heures.
-- **Définitions** : Chiffré = heures chiffrées ; Réalisé = heures imputées sur le numéro (feuilles + historique) ;
-  Affecté = heures planifiées ; Capacité = horaire du profil - fériés - absences validées (rh_demandes VALIDEE) ;
-  Taux de charge = affecté ÷ capacité de l'équipe.
-- **Tables** (SQL 08 à 16) : `pilotage_affaires` (+ bornes de prestation, script 16), `pilotage_charges`, `pilotage_affectations`
-  (+ `_jours`, une ligne par jour), `pilotage_echeances_historique` (motif obligatoire pour une échéance ordinaire),
-  `pilotage_imputations` (colonne `charge_obligatoire`).
-- **Code** : `lib/pilotageCalculs.ts`, `lib/pilotagePlanning.ts` (moteur testé : fériés, capacités, répartition, durée qui comprend
-  ou exclut les congés, fin théorique, blocs, position et glisser des barres, dépassement des bornes, PE chez le client, taux de
-  charge), `lib/pilotageDonnees.ts`, `components/pilotage/*` (`usePrestation` : plusieurs personnes, `FicheRessourceDialog`,
-  `FicheAffaireDialog`, `AffecterDialog` pour les autres affaires).
-- **Ancien planning par ressource** : remplacé (`/pilotage/planning` redirige) ; `AffectationDialog.tsx` n'est plus utilisé.
-- **A venir** : détournement d'une PI avec fin décalée ou non, bilans par imputation (% PE / PI / BE par personne),
-  « Ma feuille de route ».
+## Prestations PE / PI (temps passé)
 
-## Envoi des e-mails RH (Microsoft 365)
+- Relevé mensuel `/pilotage/prestations` (ADMIN) : tables `prestation_lignes` (affaire, personne, unité JOUR / HEURE,
+  taux, base horaire), `prestation_mois` (valide = mois clôturé = facturé, `montant_fige`, `montant_import`, report,
+  heures sup à refacturer), `prestation_saisies` (heures par jour), `prestation_historique`.
+- **Le classeur « Suivi des prestations » (Excel) fait foi** : import `/admin/import-prestations` (par défaut mois en cours
+  et suivants ; case « Tout importer » pour les mois passés, qui arrivent validés). Ligne CAS = ancienne désignation.
+- Montant d'un mois : figé si clôturé, sinon montant importé du classeur, sinon (heures − report + HS × 125 %) × taux.
+  Facturable si l'affaire du Pilotage est EN_COURS ou LIVREE (une intention n'est pas facturable).
 
-- **Trois fonctions Edge Supabase** (`supabase/functions/`) envoient les e-mails de la rubrique RH, par **Microsoft Graph** (`sendMail`),
-  sans service externe : `notifier-demande-rh` (prévient AMA et PLG d'une nouvelle demande), `notifier-reponse-rh` (informe le
-  collaborateur d'une validation ou d'un refus), `envoyer-demande-rh` (transmet au service RH, avec le collaborateur et l'autre
-  approbateur en copie). Elles renvoient `{ ok: false, error }` avec le vrai motif, affiché par la page Validation RH.
-- **Secrets Supabase** (Edge Functions > Secrets) : `M365_TENANT_ID` (ID de l'annuaire), `M365_CLIENT_ID` (ID de l'application),
-  `M365_CLIENT_SECRET` (valeur du secret client, **expire au plus tard au bout de 24 mois : à renouveler**), `M365_EXPEDITEUR`
-  (adresse de la boîte d'envoi). L'ancien service Resend (`RESEND_API_KEY`, `RH_EMAIL_FROM`) n'est plus utilisé.
-- **Côté Microsoft 365** : une **boîte aux lettres partagée** sert d'expéditeur (sans licence) ; une application Entra
-  (« POLYNOV Mailer ») s'authentifie avec un secret client ; son droit d'envoyer est **limité à cette seule boîte** par
-  *Exchange Online RBAC for Applications* (rôle `Application Mail.Send` + étendue de gestion sur l'adresse), et **aucune permission
-  Graph n'est accordée dans Entra** (elle serait valable pour toutes les boîtes). Changement de droits : 30 min à 2 h avant effet.
-- En cas d'échec, la vraie cause est écrite dans les **logs de la fonction** (Supabase > Edge Functions > fonction > Logs), ligne
-  « nom-de-la-fonction : message » ; la page n'affiche qu'un message général aux collaborateurs.
-- La demande n'est marquée « transmise au RH » qu'après un envoi réussi. Le texte des e-mails est protégé contre l'injection de HTML.
+## Facturation et finances
 
-## Conventions de code
+- **Facturation du mois** (`/analyse/facturation`, calcul partagé `lib/facturationMois.ts`) : un tableau trié par client
+  (N° DBE, ARC Louxor de chaque ligne, statut). Forfaits **livrés** dans le mois (montant − découpages) et **prévus**
+  (commande reçue / intention, date de livraison estimée dans le mois ; dépassée → mois en cours) ; PE / PI du relevé.
+  Trois chiffres : **Total facturable**, **Facturé** (forfaits livrés + PE / PI clôturées), **Reste à facturer**. Couleurs :
+  vert livrée, bleu prévue, jaune à corriger (non facturable, ARC Louxor manquant). Export Excel.
+- **Finances** (`/analyse/finances`, `lib/finances.ts`, ADMIN et DIRECTION) : CA de l'exercice mois par mois, réalisé
+  (livraisons, échéances, relevé validé, historique) + attendu (forfait à sa date de livraison estimée, dépassée → mois en
+  cours, sans date → « à dater » ; PE / PI par `prestation_montants_prevus`, SQL 58 : le classeur fait foi) =
+  atterrissage, face au prévisionnel (`finances_previsionnel`) ; coût de structure `indicateurs_couts`. Montants
+  cliquables (`components/finances/DetailMontant.tsx`) ; un clic sur l'Atterrissage = **rapprochement avec la
+  Facturation** affaire par affaire (écarts attendus : PE / PI non facturables, lignes non rattachées).
+- **Indicateurs commerciaux** (`/pilotage/indicateurs`, `lib/indicateurs.ts`) : devis, transformation, prise de
+  commande, top clients, carnet ; délai de réponse médian **sans les avenants**, avec la part envoyée le jour même ; devis
+  perdus comptés en nombre seulement.
 
-- Chaque page de `app/` est un composant client avec ses styles dans `const styles`.
-- En-tête commun : `components/EnTetePage.tsx` (Précédent + Tableau de bord).
-- Contrôle d'accès de page : `components/GardeAcces.tsx` + `lib/droits.ts`.
-- Les pages importent le client Supabase depuis `@/lib/supabase`.
-- Scripts SQL de référence : dossier `sql/` (à exécuter dans l'éditeur SQL Supabase).
+## RH
 
-## A compléter (règles non déduites du code)
+- **Suivi RH** (`/admin/suivi-rh`) : page unique (CP, RTT, compteurs, historique, droits de l'exercice, ajustement du
+  compteur, CP exceptionnels). Collaborateurs = la fiche seulement.
+- **Validation RH** (`/admin/Valid_RH`, PLG et AMA) : le premier qui valide clôt ; décision transmise par mail aux
+  services du siège (adresses modifiables), collaborateur et PLG / AMA en copie.
+- Fin de mois (responsables) : **Bilan RH mensuel** et **export Excel** des feuilles envoyés aux **services du siège**.
 
-- Transmission à la RH externe et rôle exact du service RH.
-- Liste officielle des types d'affaire, des codes d'absence et des activités.
-- Règles de paiement des heures supplémentaires.
+## E-mails et tâches planifiées
+
+- Microsoft Graph via la boîte partagée et l'application Entra « POLYNOV Mailer » (secrets `M365_TENANT_ID`,
+  `M365_CLIENT_ID`, `M365_CLIENT_SECRET`, **à renouveler avant le 14/10/2028**, `M365_EXPEDITEUR`). Fonctions Edge :
+  `notifier-demande-rh`, `notifier-reponse-rh`, `envoyer-demande-rh`, `rappel-feuilles`.
+- **Rappel du vendredi** (SQL 57) : pg_cron `rappel-feuilles-vendredi`, `0 9 * * 5` (10 h l'hiver, 11 h l'été) appelle
+  `rappel-feuilles` (en-tête `x-rappel-secret` = secret `RAPPEL_SECRET` ; `APP_URL` facultatif) : un mail personnalisé à
+  chaque actif hors DIRECTION dont la semaine n'est pas validée (sauf congé toute la semaine). Corps `{"test": "<adresse>"}`
+  = un seul mail d'essai ; `{"tous": true}` = à tous.
+
+## Sauvegarde
+
+- `/admin/sauvegarde` : toutes les tables (liste lue par `polynov_tables_sauvegarde`, 38 tables au 25/10/2026) dans un
+  ZIP (CSV + JSON). Ne contient pas les justificatifs RH (stockage), le code des fonctions, pg_cron ni les secrets.
+- **À faire** : sauvegarde automatique nocturne sur le serveur (même agent que la synchronisation).
+
+## Guide
+
+- `/guide` : guide du collaborateur dans l'application (connexion, Ma semaine, feuille de route, RH, planning) ; partie
+  « Pour les responsables » (rendez-vous de la semaine et du mois, fonctionnement, devis pas à pas) visible des rôles
+  RESPONSABLE et ADMIN. Texte en dur dans la page.
+
+## À venir
+
+- Agent serveur : synchronisation du Suivi d'affaire toutes les 5 min et sauvegarde nocturne.
+- Téléphone niveau 3 (toutes les pages) ; rendre le planning par ressource modifiable si l'essai convainc.
+- Vérifier l'adresse exacte de l'application et la connexion dans le Guide.
+- Règles non écrites : paiement des heures supplémentaires, liste officielle des codes d'absence.
