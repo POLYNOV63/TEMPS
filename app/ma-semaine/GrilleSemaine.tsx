@@ -196,6 +196,27 @@ function CarteObjectif({ jour, mobile }: { jour: JourGrille; mobile: boolean }) 
   );
 }
 
+/* SAISIE_MOBILE_V2 : sur téléphone, l'objectif du jour tient sur une ligne */
+function LigneObjectif({ jour }: { jour: JourGrille }) {
+  const { manque, supplementaires } = ecartJour(jour);
+  const fige = jour.etat === "FERIE" || jour.etat === "ABSENT";
+  const couleur = fige ? "#4b5057" : jour.etat === "COMPLET" ? "#14532d" : "#7a3e00";
+  const fond = fige ? "#f1f2f4" : jour.etat === "COMPLET" ? "#e3f4e6" : "#fff7ea";
+  const texte = fige
+    ? jour.etat === "FERIE"
+      ? "Férié"
+      : jour.note || "Absent"
+    : `${formaterHeures(jour.saisi)} / ${formaterHeures(jour.objectif)} h${
+        manque > 0 ? ` · manque ${formaterHeures(manque)} h` : supplementaires > 0 ? ` · +${formaterHeures(supplementaires)} h` : " ✓"
+      }`;
+  return (
+    <div role="status" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: fond, color: couleur, fontWeight: 800, fontSize: 15 }}>
+      <span>{jour.libelleLong}</span>
+      <span style={{ fontSize: 14, textAlign: "right" }}>{texte}</span>
+    </div>
+  );
+}
+
 /* ------------------------------ une ligne d'imputation ------------------------------ */
 
 const rouge: CSSProperties = { border: `2px solid ${C.alerte}`, background: "#fff4f4" };
@@ -220,7 +241,9 @@ function Entree({
   sousDossier,
   onSousDossier,
   onSupprimer,
+  compact = false,
 }: {
+  compact?: boolean;
   jour: JourGrille;
   ligne: LigneGrille;
   brouillon: boolean;
@@ -250,7 +273,11 @@ function Entree({
   const activiteInconnue = !divers && ligne.activiteId !== null && !groupes.some((g) => g.activiteId === ligne.activiteId);
   const sansActivite = !divers && !ligne.activiteId;
   const titre = problemes.length > 0 ? `À corriger : ${problemes.join(", ")}` : undefined;
-  const masque: CSSProperties = replie ? { display: "none" } : {};
+  // téléphone : activité et code repliés en une ligne « Méca · ET ✎ », dépliés d'un appui
+  const [detail, setDetail] = useState(false);
+  const cacher = compact && !detail && !pbActivite && !pbCode;
+  const masque: CSSProperties = replie || cacher ? { display: "none" } : {};
+  const resume = `${divers ? "" : groupe?.nom ?? "Activité ?"}${divers ? ligne.code || "Code ?" : ligne.code ? ` · ${ligne.code}` : " · code ?"}`;
 
   return (
     <div style={replie ? undefined : { marginBottom: 8, paddingBottom: 6, borderBottom: `1px dotted ${problemes.length > 0 ? "#e5a3a3" : "#d5d9de"}` }}>
@@ -288,6 +315,17 @@ function Entree({
       )}
 
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        {cacher && (
+          <button
+            type="button"
+            onClick={() => setDetail(true)}
+            disabled={lectureSeule}
+            title="Changer l’activité ou le code"
+            style={{ all: "unset", flex: 1, minWidth: 0, minHeight: 44, display: "flex", alignItems: "center", fontSize: 14, color: sansActivite || !ligne.code ? "#7a3e00" : "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}
+          >
+            {resume} {!lectureSeule && "✎"}
+          </button>
+        )}
         <select
           aria-label={`Code, ${nom}, ${jour.libelle}`}
           aria-invalid={pbCode}
@@ -317,10 +355,12 @@ function Entree({
           onChange={(e) => onHeures(e.target.value.replace(/[^0-9.,]/g, ""))}
           style={{
             ...champ(mobile),
-            flex: 1,
+            flex: compact ? "none" : 1,
+            width: compact ? 88 : undefined,
             minWidth: 0,
             padding: "0 8px",
             textAlign: "right",
+            ...(compact ? { fontSize: 19 } : {}),
             fontWeight: 700,
             fontVariantNumeric: "tabular-nums",
             ...(replie ? { borderColor: "#e3e6ea", background: "#fbfbfc", minHeight: mobile ? 46 : 34 } : {}),
@@ -341,7 +381,12 @@ function Entree({
         )}
       </div>
 
-      {!replie && !brouillon && !divers && (
+      {compact && detail && (
+        <button type="button" onClick={() => setDetail(false)} style={{ all: "unset", fontSize: 13, fontWeight: 700, color: "#1f4e99", padding: "6px 2px", cursor: "pointer" }}>
+          ▴ Replier
+        </button>
+      )}
+      {!replie && !cacher && !brouillon && !divers && (
         <input
           aria-label={`Sous-dossier, ${nom}, ${jour.libelle}`}
           title="Sous-dossier de l'affaire sur lequel vous avez travaillé (facultatif)"
@@ -444,7 +489,8 @@ function CelluleJour({
           ligne={ligne}
           brouillon={brouillon}
           montrerAlertes={montrerAlertes}
-          replie={brouillon && !actif}
+          replie={brouillon && !actif && !mobile}
+          compact={mobile}
           indication={indication}
           nom={nom}
           groupes={groupes}
@@ -496,6 +542,7 @@ const Puce = ({ children }: { children: ReactNode }) => (
 
 /* En-tête d'une affaire : type, numéro, croix, description modifiable directement */
 function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: RangeeAffaire; props: GrilleSemaineProps; mobile: boolean; montrerAlertes: boolean }) {
+  const [editer, setEditer] = useState(false);
   const divers = estDiversType(rangee.typeAffaire);
   const lectureSeule = Boolean(props.lectureSeule);
   const nom = nomAffaire(rangee);
@@ -522,6 +569,55 @@ function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: Rang
     }
 
     props.onRetirerAffaire(rangee);
+  }
+
+  // téléphone : tout sur une ligne ; la description s'ouvre d'un appui
+  if (mobile) {
+    const montrerDescription = editer || descriptionManquante || (divers && !rangee.description.trim());
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ ...badge, fontSize: 11, padding: "2px 6px" }}>{divers ? "Divers" : rangee.typeAffaire}</span>
+          {!divers && <strong style={{ fontSize: 16 }}>{rangee.numeroAffaire || "—"}</strong>}
+          <button
+            type="button"
+            onClick={() => setEditer((v) => !v)}
+            disabled={lectureSeule}
+            title="Modifier la description"
+            style={{ all: "unset", flex: 1, minWidth: 0, minHeight: 36, display: "flex", alignItems: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, color: "#3b4046", cursor: "pointer" }}
+          >
+            {rangee.description || (divers ? "" : "")}
+          </button>
+          {numeroInvalide && <Puce>4 chiffres</Puce>}
+          {numeroInconnu && (
+            <span title="Ce numéro n'existe ni dans le Pilotage ni dans le Suivi d'affaire : vérifiez-le." style={{ color: "#7a3e00", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
+              n° inconnu
+            </span>
+          )}
+          {prevu > 0 && (
+            <span title="Heures prévues pour vous au planning cette semaine" style={{ fontSize: 11, fontWeight: 700, color: "#34506b", whiteSpace: "nowrap" }}>
+              📅 {formaterHeures(prevu)} h
+            </span>
+          )}
+          {!lectureSeule && (
+            <button type="button" aria-label={`Retirer ${nom} de la semaine`} onClick={retirer} style={{ flex: "none", width: 36, height: 36, border: "none", background: "transparent", color: C.gris, fontSize: 20, lineHeight: 1, cursor: "pointer" }}>
+              ×
+            </button>
+          )}
+        </div>
+        {montrerDescription && (
+          <input
+            aria-label={`Description de ${nom}`}
+            aria-invalid={descriptionManquante}
+            placeholder={divers ? "Description (obligatoire)" : "Description (facultative)"}
+            value={rangee.description}
+            disabled={lectureSeule}
+            onChange={(e) => props.onChangerDescription(rangee, e.target.value)}
+            style={{ ...champ(true), width: "100%", minHeight: 40, fontSize: 15, marginTop: 4, padding: "0 8px", ...(descriptionManquante ? rouge : {}) }}
+          />
+        )}
+      </div>
+    );
   }
 
   return (
@@ -847,7 +943,7 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
         onChange={(e) => props.onChangerTicket(jour.date, e.target.checked)}
         style={{ width: 22, height: 22, margin: 0 }}
       />
-      <span style={{ fontSize: 14 }}>Ticket restaurant</span>
+      <span style={{ fontSize: 14 }}>{mobile ? "Ticket" : "Ticket restaurant"}</span>
     </label>
   );
 
@@ -877,7 +973,7 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
     if (!courant) return null;
 
     return (
-      <section aria-label="Saisie de la semaine" style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 130 }}>
+      <section aria-label="Saisie de la semaine" style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 16 }}>
         {!props.masquerNavigationJour && (
           <div style={{ display: "grid", gridTemplateColumns: "48px minmax(0,1fr) 48px", alignItems: "center", gap: 8 }}>
             <button type="button" aria-label="Jour précédent" disabled={index <= 0} onClick={() => choisirJour(jours[index - 1].date)} style={{ ...champ(true), height: 48, fontSize: 18, fontWeight: 800, color: C.rougeFonce, opacity: index <= 0 ? 0.35 : 1 }}>◀</button>
@@ -888,16 +984,42 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
 
         {encadreAlertes}
 
-        <CarteObjectif jour={courant} mobile />
+        <LigneObjectif jour={courant} />
 
-        {rangees.map((r) => (
-          <div key={r.cle} style={{ border: `1.5px solid ${C.ligne}`, borderRadius: 12, padding: 12, background: "#ffffff" }}>
-            <EnteteAffaire rangee={r} props={propsInternes} mobile montrerAlertes={montrerAlertes} />
-            <div style={{ marginTop: 8 }}>
+        {/* la journée : présence, absence et ticket, en haut et sur une ligne */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          <div style={{ flex: "1 1 120px", minWidth: 0 }}>
+            <MenuPresence jour={courant} mobile lectureSeule={lectureSeule} onChange={(p) => props.onChangerPresence(courant.date, p)} />
+          </div>
+          <div style={{ flex: "1 1 150px", minWidth: 0 }}>
+            <select
+              aria-label={`Absence du ${courant.libelleLong}`}
+              value={courant.absence}
+              disabled={lectureSeule}
+              onChange={(e) => props.onChangerAbsence(courant.date, e.target.value)}
+              style={{ ...champ(true), width: "100%", minHeight: 44, padding: "0 8px", fontSize: 15, fontWeight: 700 }}
+            >
+              <option value="">Pas d’absence</option>
+              {props.codesAbsence.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} — {c.libelle}
+                </option>
+              ))}
+            </select>
+          </div>
+          {ticket(courant)}
+        </div>
+        {props.renderDetailAbsence?.(courant.date)}
+
+        <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, background: "#ffffff" }}>
+          {rangees.map((r, k) => (
+            <div key={r.cle} style={{ padding: "6px 10px", borderTop: k > 0 ? `1px solid ${C.ligne}` : undefined }}>
+              <EnteteAffaire rangee={r} props={propsInternes} mobile montrerAlertes={montrerAlertes} />
               <CelluleJour rangee={r} jour={courant} mobile props={propsInternes} groupes={props.activitesEtCodes(r.typeAffaire)} activiteParDefaut={activitePar(r)} montrerAlertes={montrerAlertes} />
             </div>
-          </div>
-        ))}
+          ))}
+          {rangees.length === 0 && <div style={{ padding: 12, color: C.gris, fontSize: 14 }}>Aucune affaire cette semaine : ajoutez-en une.</div>}
+        </div>
 
         {!lectureSeule && (
           <div>
@@ -911,17 +1033,6 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
           </div>
         )}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, border: `1.5px solid ${C.ligne}`, borderRadius: 12, background: "#ffffff" }}>
-          <div>
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>Absence</div>
-            {optionsAbsence(courant)}
-          </div>
-          <div>
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>Présence</div>
-            <MenuPresence jour={courant} mobile lectureSeule={lectureSeule} onChange={(p) => props.onChangerPresence(courant.date, p)} />
-          </div>
-          {ticket(courant)}
-        </div>
       </section>
     );
   }

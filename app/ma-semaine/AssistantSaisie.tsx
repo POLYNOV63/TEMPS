@@ -80,7 +80,7 @@ export function BandeauSemaine({
   integre?: boolean;
 }) {
   return (
-    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: "static" as const }), ...(integre ? styles.bandeauIntegre : {}) }}>
+    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: "static" as const }), ...(integre ? styles.bandeauIntegre : {}), ...(compact ? { padding: "6px 8px", gap: 6, margin: "0 0 8px", fontSize: 12 } : {}) }}>
       <div style={{ ...styles.ligne, ...(sansPuces ? { display: "none" as const } : {}) }}>
         <div style={compact ? styles.pucesCompact : styles.puces}>
           {jours.map((jour) => (
@@ -134,7 +134,7 @@ export function BandeauSemaine({
             opacity: desactive || repriseEnCours ? 0.5 : 1,
           }}
         >
-          {repriseEnCours ? "Reprise en cours…" : "↺ Reprendre les affaires de la semaine précédente"}
+          {repriseEnCours ? "Reprise en cours…" : compact ? "↺ Reprendre la sem. préc." : "↺ Reprendre les affaires de la semaine précédente"}
         </button>
 
         <span
@@ -330,9 +330,9 @@ const styles: Record<string, CSSProperties> = {
   },
 
   puceCompact: {
-    flex: "0 0 auto",
-    minWidth: 66,
-    padding: "6px 8px",
+    flex: "1 1 0",
+    minWidth: 52,
+    padding: "5px 2px",
   },
 
   puce: {

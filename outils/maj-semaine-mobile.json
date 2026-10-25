@@ -1,0 +1,133 @@
+[
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne objectif compacte (téléphone)",
+  "cherche": "/* ------------------------------ une ligne d'imputation ------------------------------ */",
+  "remplace": "/* SAISIE_MOBILE_V2 : sur téléphone, l'objectif du jour tient sur une ligne */\nfunction LigneObjectif({ jour }: { jour: JourGrille }) {\n  const { manque, supplementaires } = ecartJour(jour);\n  const fige = jour.etat === \"FERIE\" || jour.etat === \"ABSENT\";\n  const couleur = fige ? \"#4b5057\" : jour.etat === \"COMPLET\" ? \"#14532d\" : \"#7a3e00\";\n  const fond = fige ? \"#f1f2f4\" : jour.etat === \"COMPLET\" ? \"#e3f4e6\" : \"#fff7ea\";\n  const texte = fige\n    ? jour.etat === \"FERIE\"\n      ? \"Férié\"\n      : jour.note || \"Absent\"\n    : `${formaterHeures(jour.saisi)} / ${formaterHeures(jour.objectif)} h${\n        manque > 0 ? ` · manque ${formaterHeures(manque)} h` : supplementaires > 0 ? ` · +${formaterHeures(supplementaires)} h` : \" ✓\"\n      }`;\n  return (\n    <div role=\"status\" style={{ display: \"flex\", justifyContent: \"space-between\", alignItems: \"center\", gap: 8, padding: \"8px 10px\", borderRadius: 8, background: fond, color: couleur, fontWeight: 800, fontSize: 15 }}>\n      <span>{jour.libelleLong}</span>\n      <span style={{ fontSize: 14, textAlign: \"right\" }}>{texte}</span>\n    </div>\n  );\n}\n\n/* ------------------------------ une ligne d'imputation ------------------------------ */"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne d'imputation : paramètre téléphone",
+  "cherche": "  onSousDossier,\n  onSupprimer,\n}: {\n  jour: JourGrille;",
+  "remplace": "  onSousDossier,\n  onSupprimer,\n  compact = false,\n}: {\n  compact?: boolean;\n  jour: JourGrille;"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne d'imputation : activité et code repliés sur téléphone",
+  "cherche": "  const titre = problemes.length > 0 ? `À corriger : ${problemes.join(\", \")}` : undefined;\n  const masque: CSSProperties = replie ? { display: \"none\" } : {};",
+  "remplace": "  const titre = problemes.length > 0 ? `À corriger : ${problemes.join(\", \")}` : undefined;\n  // téléphone : activité et code repliés en une ligne « Méca · ET ✎ », dépliés d'un appui\n  const [detail, setDetail] = useState(false);\n  const cacher = compact && !detail && !pbActivite && !pbCode;\n  const masque: CSSProperties = replie || cacher ? { display: \"none\" } : {};\n  const resume = `${divers ? \"\" : groupe?.nom ?? \"Activité ?\"}${divers ? ligne.code || \"Code ?\" : ligne.code ? ` · ${ligne.code}` : \" · code ?\"}`;"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne d'imputation : résumé à toucher",
+  "cherche": "      <div style={{ display: \"flex\", gap: 4, alignItems: \"center\" }}>\n        <select\n          aria-label={`Code, ${nom}, ${jour.libelle}`}",
+  "remplace": "      <div style={{ display: \"flex\", gap: 4, alignItems: \"center\" }}>\n        {cacher && (\n          <button\n            type=\"button\"\n            onClick={() => setDetail(true)}\n            disabled={lectureSeule}\n            title=\"Changer l’activité ou le code\"\n            style={{ all: \"unset\", flex: 1, minWidth: 0, minHeight: 44, display: \"flex\", alignItems: \"center\", fontSize: 14, color: sansActivite || !ligne.code ? \"#7a3e00\" : \"#3b4046\", overflow: \"hidden\", textOverflow: \"ellipsis\", whiteSpace: \"nowrap\", cursor: \"pointer\" }}\n          >\n            {resume} {!lectureSeule && \"✎\"}\n          </button>\n        )}\n        <select\n          aria-label={`Code, ${nom}, ${jour.libelle}`}"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne d'imputation : grand champ d'heures sur téléphone",
+  "cherche": "          style={{\n            ...champ(mobile),\n            flex: 1,\n            minWidth: 0,\n            padding: \"0 8px\",\n            textAlign: \"right\",",
+  "remplace": "          style={{\n            ...champ(mobile),\n            flex: compact ? \"none\" : 1,\n            width: compact ? 88 : undefined,\n            minWidth: 0,\n            padding: \"0 8px\",\n            textAlign: \"right\",\n            ...(compact ? { fontSize: 19 } : {}),"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Ligne d'imputation : sous-dossier replié avec le reste",
+  "cherche": "      {!replie && !brouillon && !divers && (\n        <input\n          aria-label={`Sous-dossier, ${nom}, ${jour.libelle}`}",
+  "remplace": "      {compact && detail && (\n        <button type=\"button\" onClick={() => setDetail(false)} style={{ all: \"unset\", fontSize: 13, fontWeight: 700, color: \"#1f4e99\", padding: \"6px 2px\", cursor: \"pointer\" }}>\n          ▴ Replier\n        </button>\n      )}\n      {!replie && !cacher && !brouillon && !divers && (\n        <input\n          aria-label={`Sous-dossier, ${nom}, ${jour.libelle}`}"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Case du jour : téléphone sans repli au focus",
+  "cherche": "          replie={brouillon && !actif}",
+  "remplace": "          replie={brouillon && !actif && !mobile}\n          compact={mobile}"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "En-tête d'affaire : une ligne sur téléphone (état)",
+  "cherche": "function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: RangeeAffaire; props: GrilleSemaineProps; mobile: boolean; montrerAlertes: boolean }) {\n  const divers = estDiversType(rangee.typeAffaire);",
+  "remplace": "function EnteteAffaire({ rangee, props, mobile, montrerAlertes }: { rangee: RangeeAffaire; props: GrilleSemaineProps; mobile: boolean; montrerAlertes: boolean }) {\n  const [editer, setEditer] = useState(false);\n  const divers = estDiversType(rangee.typeAffaire);"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "En-tête d'affaire : une ligne sur téléphone",
+  "cherche": "  function retirer() {\n    if (rangee.total > 0 || rangee.lignesParDate.size > 0) {\n      if (!window.confirm(`Retirer ${nom} de cette semaine ? Les heures saisies sur cette affaire seront supprimées.`)) return;\n    }\n\n    props.onRetirerAffaire(rangee);\n  }\n",
+  "remplace": "  function retirer() {\n    if (rangee.total > 0 || rangee.lignesParDate.size > 0) {\n      if (!window.confirm(`Retirer ${nom} de cette semaine ? Les heures saisies sur cette affaire seront supprimées.`)) return;\n    }\n\n    props.onRetirerAffaire(rangee);\n  }\n\n  // téléphone : tout sur une ligne ; la description s'ouvre d'un appui\n  if (mobile) {\n    const montrerDescription = editer || descriptionManquante || (divers && !rangee.description.trim());\n    return (\n      <div style={{ minWidth: 0 }}>\n        <div style={{ display: \"flex\", alignItems: \"center\", gap: 6 }}>\n          <span style={{ ...badge, fontSize: 11, padding: \"2px 6px\" }}>{divers ? \"Divers\" : rangee.typeAffaire}</span>\n          {!divers && <strong style={{ fontSize: 16 }}>{rangee.numeroAffaire || \"—\"}</strong>}\n          <button\n            type=\"button\"\n            onClick={() => setEditer((v) => !v)}\n            disabled={lectureSeule}\n            title=\"Modifier la description\"\n            style={{ all: \"unset\", flex: 1, minWidth: 0, minHeight: 36, display: \"flex\", alignItems: \"center\", overflow: \"hidden\", textOverflow: \"ellipsis\", whiteSpace: \"nowrap\", fontSize: 13, color: \"#3b4046\", cursor: \"pointer\" }}\n          >\n            {rangee.description || (divers ? \"\" : \"\")}\n          </button>\n          {numeroInvalide && <Puce>4 chiffres</Puce>}\n          {numeroInconnu && (\n            <span title=\"Ce numéro n'existe ni dans le Pilotage ni dans le Suivi d'affaire : vérifiez-le.\" style={{ color: \"#7a3e00\", fontSize: 11, fontWeight: 800, whiteSpace: \"nowrap\" }}>\n              n° inconnu\n            </span>\n          )}\n          {prevu > 0 && (\n            <span title=\"Heures prévues pour vous au planning cette semaine\" style={{ fontSize: 11, fontWeight: 700, color: \"#34506b\", whiteSpace: \"nowrap\" }}>\n              📅 {formaterHeures(prevu)} h\n            </span>\n          )}\n          {!lectureSeule && (\n            <button type=\"button\" aria-label={`Retirer ${nom} de la semaine`} onClick={retirer} style={{ flex: \"none\", width: 36, height: 36, border: \"none\", background: \"transparent\", color: C.gris, fontSize: 20, lineHeight: 1, cursor: \"pointer\" }}>\n              ×\n            </button>\n          )}\n        </div>\n        {montrerDescription && (\n          <input\n            aria-label={`Description de ${nom}`}\n            aria-invalid={descriptionManquante}\n            placeholder={divers ? \"Description (obligatoire)\" : \"Description (facultative)\"}\n            value={rangee.description}\n            disabled={lectureSeule}\n            onChange={(e) => props.onChangerDescription(rangee, e.target.value)}\n            style={{ ...champ(true), width: \"100%\", minHeight: 40, fontSize: 15, marginTop: 4, padding: \"0 8px\", ...(descriptionManquante ? rouge : {}) }}\n          />\n        )}\n      </div>\n    );\n  }\n"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Téléphone : objectif en une ligne, la journée en haut, les affaires en liste",
+  "cherche": "        {encadreAlertes}\n\n        <CarteObjectif jour={courant} mobile />\n\n        {rangees.map((r) => (\n          <div key={r.cle} style={{ border: `1.5px solid ${C.ligne}`, borderRadius: 12, padding: 12, background: \"#ffffff\" }}>\n            <EnteteAffaire rangee={r} props={propsInternes} mobile montrerAlertes={montrerAlertes} />\n            <div style={{ marginTop: 8 }}>\n              <CelluleJour rangee={r} jour={courant} mobile props={propsInternes} groupes={props.activitesEtCodes(r.typeAffaire)} activiteParDefaut={activitePar(r)} montrerAlertes={montrerAlertes} />\n            </div>\n          </div>\n        ))}\n",
+  "remplace": "        {encadreAlertes}\n\n        <LigneObjectif jour={courant} />\n\n        {/* la journée : présence, absence et ticket, en haut et sur une ligne */}\n        <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 6, alignItems: \"center\" }}>\n          <div style={{ flex: \"1 1 120px\", minWidth: 0 }}>\n            <MenuPresence jour={courant} mobile lectureSeule={lectureSeule} onChange={(p) => props.onChangerPresence(courant.date, p)} />\n          </div>\n          <div style={{ flex: \"1 1 150px\", minWidth: 0 }}>\n            <select\n              aria-label={`Absence du ${courant.libelleLong}`}\n              value={courant.absence}\n              disabled={lectureSeule}\n              onChange={(e) => props.onChangerAbsence(courant.date, e.target.value)}\n              style={{ ...champ(true), width: \"100%\", minHeight: 44, padding: \"0 8px\", fontSize: 15, fontWeight: 700 }}\n            >\n              <option value=\"\">Pas d’absence</option>\n              {props.codesAbsence.map((c) => (\n                <option key={c.code} value={c.code}>\n                  {c.code} — {c.libelle}\n                </option>\n              ))}\n            </select>\n          </div>\n          {ticket(courant)}\n        </div>\n        {props.renderDetailAbsence?.(courant.date)}\n\n        <div style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, background: \"#ffffff\" }}>\n          {rangees.map((r, k) => (\n            <div key={r.cle} style={{ padding: \"6px 10px\", borderTop: k > 0 ? `1px solid ${C.ligne}` : undefined }}>\n              <EnteteAffaire rangee={r} props={propsInternes} mobile montrerAlertes={montrerAlertes} />\n              <CelluleJour rangee={r} jour={courant} mobile props={propsInternes} groupes={props.activitesEtCodes(r.typeAffaire)} activiteParDefaut={activitePar(r)} montrerAlertes={montrerAlertes} />\n            </div>\n          ))}\n          {rangees.length === 0 && <div style={{ padding: 12, color: C.gris, fontSize: 14 }}>Aucune affaire cette semaine : ajoutez-en une.</div>}\n        </div>\n"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Téléphone : plus de bloc journée en bas",
+  "cherche": "        <div style={{ display: \"flex\", flexDirection: \"column\", gap: 10, padding: 12, border: `1.5px solid ${C.ligne}`, borderRadius: 12, background: \"#ffffff\" }}>\n          <div>\n            <div style={{ fontWeight: 800, marginBottom: 4 }}>Absence</div>\n            {optionsAbsence(courant)}\n          </div>\n          <div>\n            <div style={{ fontWeight: 800, marginBottom: 4 }}>Présence</div>\n            <MenuPresence jour={courant} mobile lectureSeule={lectureSeule} onChange={(p) => props.onChangerPresence(courant.date, p)} />\n          </div>\n          {ticket(courant)}\n        </div>\n      </section>",
+  "remplace": "      </section>"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Téléphone : moins d'espace perdu",
+  "cherche": "      <section aria-label=\"Saisie de la semaine\" style={{ display: \"flex\", flexDirection: \"column\", gap: 12, paddingBottom: 130 }}>",
+  "remplace": "      <section aria-label=\"Saisie de la semaine\" style={{ display: \"flex\", flexDirection: \"column\", gap: 8, paddingBottom: 16 }}>"
+ },
+ {
+  "fichier": "GrilleSemaine.tsx",
+  "nom": "Téléphone : ticket compact",
+  "cherche": "      <span style={{ fontSize: 14 }}>Ticket restaurant</span>",
+  "remplace": "      <span style={{ fontSize: 14 }}>{mobile ? \"Ticket\" : \"Ticket restaurant\"}</span>"
+ },
+ {
+  "fichier": "MaSemaineContent.tsx",
+  "nom": "Téléphone : la semaine sur une ligne (au lieu du titre et de la grande carte)",
+  "cherche": "@@DEBUT@@        {estMobile && (\n          <>\n        {/* ====================================================\n            INTRODUCTION@@FIN@@        {/* ====================================================\n            COMPTEURS",
+  "remplace": "        {/* SAISIE_MOBILE_V2 : sur téléphone, la semaine tient sur une ligne */}\n        {estMobile && (\n          <div style={{ display: \"grid\", gridTemplateColumns: \"44px minmax(0,1fr) 44px\", alignItems: \"center\", gap: 6, background: \"#ffffff\", border: \"1px solid #e3e3e3\", borderRadius: 10, padding: \"6px 8px\", marginBottom: 8 }}>\n            <button type=\"button\" onClick={semainePrecedente} aria-label=\"Semaine précédente\" style={{ height: 40, border: \"1px solid #cfcfcf\", borderRadius: 8, background: \"#ffffff\", color: \"#c00000\", fontWeight: 800, fontSize: 16, fontFamily: \"inherit\" }}>\n              ◀\n            </button>\n            <div style={{ textAlign: \"center\", lineHeight: 1.2 }}>\n              <div>\n                <strong style={{ color: \"#c00000\", fontSize: 18 }}>\n                  S{String(numeroSemaine(new Date(`${semaine[0].date}T00:00:00`))).padStart(2, \"0\")}\n                </strong>{\" \"}\n                <span style={{ fontSize: 14, fontWeight: 700 }}>\n                  {formatHeures(totalHeuresSemaine)} / {formatHeures(totalHeuresTheoriques)} h\n                </span>\n              </div>\n              <div style={{ fontSize: 11, fontWeight: 800, color: semaineModifiee ? \"#a05a00\" : semaineValidee ? \"#138113\" : \"#777777\" }}>\n                {semaineModifiee ? \"● non enregistrée\" : semaineValidee ? \"✓ validée, transmise\" : semaineEnregistree ? \"✓ brouillon enregistré\" : \"○ non enregistrée\"}\n              </div>\n            </div>\n            <button type=\"button\" onClick={semaineSuivante} aria-label=\"Semaine suivante\" style={{ height: 40, border: \"1px solid #cfcfcf\", borderRadius: 8, background: \"#ffffff\", color: \"#c00000\", fontWeight: 800, fontSize: 16, fontFamily: \"inherit\" }}>\n              ▶\n            </button>\n          </div>\n        )}\n        {estMobile && semaineEstClotureMensuelle && (\n          <div style={{ marginBottom: 8, padding: \"7px 10px\", borderRadius: 8, border: \"1px solid #d9b45f\", background: \"#fff9e9\", color: \"#6b5100\", fontSize: 12, lineHeight: 1.35 }}>\n            <strong>Clôture mensuelle — {libellePeriodeMensuelle}</strong> : la répartition des heures sup se fait à la validation.\n          </div>\n        )}\n\n"
+ },
+ {
+  "fichier": "MaSemaineContent.tsx",
+  "nom": "Téléphone : bouton week-end déplacé dans le résumé",
+  "cherche": "@@DEBUT@@        {estMobile && (\n          <>\n        {/* GRILLE_SEMAINE_V5 : la saisie se fait en grille ; seul le week-end est à afficher à la demande */}@@FIN@@        <fieldset",
+  "remplace": ""
+ },
+ {
+  "fichier": "MaSemaineContent.tsx",
+  "nom": "Téléphone : les 4 cartes remplacées par un résumé repliable",
+  "cherche": "@@DEBUT@@          {estMobile && (\n            <>\n          {/* HEURES SAISIES */}@@FIN@@        </div>\n\n        {/* ====================================================\n            ACTIONS — juste au-dessus de l'en-tête du tableau",
+  "remplace": "          {estMobile && (\n            <details style={{ gridColumn: \"1 / -1\", background: \"#ffffff\", border: \"1px solid #e3e3e3\", borderRadius: 10, padding: \"4px 10px\", fontSize: 13 }}>\n              <summary style={{ cursor: \"pointer\", fontWeight: 700, minHeight: 34, display: \"flex\", alignItems: \"center\", gap: 12, flexWrap: \"wrap\" }}>\n                <span>\n                  HS{\" \"}\n                  <strong style={{ color: heuresSupplementaires > 0.01 ? \"#138113\" : \"#333333\" }}>\n                    {heuresSupplementaires > 0.01 ? \"+\" : \"\"}\n                    {formatHeures(heuresSupplementaires)} h\n                  </strong>\n                </span>\n                <span>\n                  Récup.{\" \"}\n                  <strong style={{ color: totalCompteurChoisi > 30.01 || totalCompteurChoisi < -30 ? \"#c00000\" : \"#333333\" }}>{formatHeures(totalCompteurChoisi)} h</strong>\n                </span>\n                <span>\n                  Tickets <strong>{totalTickets}</strong>\n                </span>\n                <span style={{ marginLeft: \"auto\", color: \"#1f4e99\" }}>plus ▾</span>\n              </summary>\n              <div style={{ margin: \"4px 0 6px\", color: \"#555555\", lineHeight: 1.45 }}>\n                Compteur en début de semaine : <strong>{formatHeures(compteurBaseSemaine)} h</strong>\n                {totalRE > 0.01 && <> · − {formatHeures(totalRE)} h de récupération</>}\n                {totalHeuresSupMensuelles > 0.01 && (\n                  <div>\n                    Heures sup du mois : <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong>\n                    {semaineEstClotureMensuelle ? \" (à répartir à la validation)\" : \" (réparties à la clôture du mois)\"}\n                  </div>\n                )}\n                <button\n                  type=\"button\"\n                  onClick={() => setWeekendOuvert((valeur) => !valeur)}\n                  style={{ marginTop: 8, minHeight: 38, padding: \"0 12px\", border: \"1px solid #cfcfcf\", borderRadius: 7, background: \"#ffffff\", fontWeight: 700, fontFamily: \"inherit\", fontSize: 13 }}\n                >\n                  {weekendOuvert ? \"Masquer le week-end\" : \"Afficher le week-end\"}\n                </button>\n              </div>\n            </details>\n          )}\n"
+ },
+ {
+  "fichier": "MaSemaineContent.tsx",
+  "nom": "Téléphone : marges réduites",
+  "cherche": "    container: { ...base.container, padding: \"12px 10px 130px\" },",
+  "remplace": "    container: { ...base.container, padding: \"8px 8px 96px\" },"
+ },
+ {
+  "fichier": "MaSemaineContent.tsx",
+  "nom": "Téléphone : résumé sur toute la largeur",
+  "cherche": "    cards: { ...base.cards, gridTemplateColumns: \"repeat(2, minmax(0, 1fr))\" },",
+  "remplace": "    cards: { ...base.cards, gridTemplateColumns: \"minmax(0, 1fr)\", marginBottom: 8 },"
+ },
+ {
+  "fichier": "AssistantSaisie.tsx",
+  "nom": "Téléphone : les 5 jours tiennent sans défiler",
+  "cherche": "  puceCompact: {\n    flex: \"0 0 auto\",\n    minWidth: 66,\n    padding: \"6px 8px\",\n  },",
+  "remplace": "  puceCompact: {\n    flex: \"1 1 0\",\n    minWidth: 52,\n    padding: \"5px 2px\",\n  },"
+ },
+ {
+  "fichier": "AssistantSaisie.tsx",
+  "nom": "Téléphone : bouton « Reprendre » plus court",
+  "cherche": "{repriseEnCours ? \"Reprise en cours…\" : \"↺ Reprendre les affaires de la semaine précédente\"}",
+  "remplace": "{repriseEnCours ? \"Reprise en cours…\" : compact ? \"↺ Reprendre la sem. préc.\" : \"↺ Reprendre les affaires de la semaine précédente\"}"
+ },
+ {
+  "fichier": "AssistantSaisie.tsx",
+  "nom": "Téléphone : bandeau plus fin",
+  "cherche": "    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: \"static\" as const }), ...(integre ? styles.bandeauIntegre : {}) }}>",
+  "remplace": "    <div style={{ ...styles.bandeau, ...(collant ? {} : { position: \"static\" as const }), ...(integre ? styles.bandeauIntegre : {}), ...(compact ? { padding: \"6px 8px\", gap: 6, margin: \"0 0 8px\", fontSize: 12 } : {}) }}>"
+ },
+ {
+  "fichier": "SaisieMobile.tsx",
+  "nom": "Barre du bas sur une ligne",
+  "ecrire": "\"use client\";\n\nimport type { CSSProperties } from \"react\";\n\n/* ===============================================================\n   MA SEMAINE - SAISIE SUR TELEPHONE (SAISIE_MOBILE_V2)\n\n   Barre fixe en bas de l'écran (téléphone seulement), sur UNE ligne :\n   jour précédent · Enregistrer · Valider · jour suivant. Le jour affiché\n   se choisit aussi dans la barre des jours, en haut.\n\n   La logique (enregistrement, validation, contrôles) reste dans\n   MaSemaineContent.tsx : cette barre déclenche les mêmes actions que les\n   boutons de la version ordinateur.\n================================================================ */\n\nexport function BarreActionsMobile({\n  jourLibelle,\n  peutPrecedent,\n  peutSuivant,\n  onPrecedent,\n  onSuivant,\n  onEnregistrer,\n  onValider,\n  enregistrement,\n  boutonsBloques,\n  validationBloquee,\n  validee,\n  modifiee,\n}: {\n  jourLibelle: string;\n  peutPrecedent: boolean;\n  peutSuivant: boolean;\n  onPrecedent: () => void;\n  onSuivant: () => void;\n  onEnregistrer: () => void;\n  onValider: () => void;\n  enregistrement: boolean;\n  boutonsBloques: boolean;\n  validationBloquee: boolean;\n  validee: boolean;\n  modifiee: boolean;\n}) {\n  return (\n    <div style={styles.barre} role=\"toolbar\" aria-label=\"Jour et actions de la feuille\">\n      <button\n        type=\"button\"\n        onClick={onPrecedent}\n        disabled={!peutPrecedent}\n        style={{ ...styles.fleche, opacity: peutPrecedent ? 1 : 0.35 }}\n        aria-label={`Jour précédent (affiché : ${jourLibelle})`}\n      >\n        ◀\n      </button>\n\n      <button\n        type=\"button\"\n        onClick={onEnregistrer}\n        disabled={boutonsBloques}\n        style={{ ...styles.brouillon, opacity: boutonsBloques ? 0.5 : 1, ...(modifiee ? styles.aEnregistrer : {}) }}\n      >\n        {enregistrement ? \"…\" : modifiee ? \"● Enregistrer\" : \"Enregistrer\"}\n      </button>\n\n      <button\n        type=\"button\"\n        onClick={onValider}\n        disabled={validationBloquee}\n        style={{ ...styles.valider, opacity: validationBloquee ? 0.5 : 1 }}\n      >\n        {validee ? \"✓ Validée\" : \"✓ Valider\"}\n      </button>\n\n      <button\n        type=\"button\"\n        onClick={onSuivant}\n        disabled={!peutSuivant}\n        style={{ ...styles.fleche, opacity: peutSuivant ? 1 : 0.35 }}\n        aria-label={`Jour suivant (affiché : ${jourLibelle})`}\n      >\n        ▶\n      </button>\n    </div>\n  );\n}\n\nconst styles: Record<string, CSSProperties> = {\n  barre: {\n    position: \"fixed\",\n    left: 0,\n    right: 0,\n    bottom: 0,\n    zIndex: 60,\n    background: \"#ffffff\",\n    borderTop: \"1px solid #d8d8d8\",\n    boxShadow: \"0 -4px 14px rgba(0,0,0,.12)\",\n    padding: \"8px 10px calc(8px + env(safe-area-inset-bottom, 0px))\",\n    display: \"grid\",\n    gridTemplateColumns: \"48px 1fr 1fr 48px\",\n    gap: 8,\n    fontFamily: \"Calibri, Arial, sans-serif\",\n  },\n\n  fleche: {\n    height: 46,\n    border: \"1px solid #cfcfcf\",\n    borderRadius: 10,\n    background: \"#fff\",\n    color: \"#c00000\",\n    fontSize: 18,\n    fontWeight: 800,\n    fontFamily: \"inherit\",\n  },\n\n  brouillon: {\n    height: 46,\n    border: \"1px solid #cfcfcf\",\n    borderRadius: 10,\n    background: \"#fff\",\n    color: \"#333\",\n    fontSize: 15,\n    fontWeight: 800,\n    fontFamily: \"inherit\",\n  },\n\n  aEnregistrer: {\n    borderColor: \"#e9b877\",\n    background: \"#fff7ea\",\n    color: \"#7a3e00\",\n  },\n\n  valider: {\n    height: 46,\n    border: \"none\",\n    borderRadius: 10,\n    background: \"#138113\",\n    color: \"#fff\",\n    fontSize: 15,\n    fontWeight: 800,\n    fontFamily: \"inherit\",\n  },\n};\n"
+ }
+]

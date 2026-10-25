@@ -5008,165 +5008,34 @@ export default function MaSemainePage() {
       </EnTetePage>
 
       <div style={styles.container}>
+        {/* SAISIE_MOBILE_V2 : sur téléphone, la semaine tient sur une ligne */}
         {estMobile && (
-          <>
-        {/* ====================================================
-            INTRODUCTION
-        ==================================================== */}
-
-        <div style={styles.intro}>
-          <div
-            style={styles.eyebrow}
-          >
-            FEUILLE D'HEURES
+          <div style={{ display: "grid", gridTemplateColumns: "44px minmax(0,1fr) 44px", alignItems: "center", gap: 6, background: "#ffffff", border: "1px solid #e3e3e3", borderRadius: 10, padding: "6px 8px", marginBottom: 8 }}>
+            <button type="button" onClick={semainePrecedente} aria-label="Semaine précédente" style={{ height: 40, border: "1px solid #cfcfcf", borderRadius: 8, background: "#ffffff", color: "#c00000", fontWeight: 800, fontSize: 16, fontFamily: "inherit" }}>
+              ◀
+            </button>
+            <div style={{ textAlign: "center", lineHeight: 1.2 }}>
+              <div>
+                <strong style={{ color: "#c00000", fontSize: 18 }}>
+                  S{String(numeroSemaine(new Date(`${semaine[0].date}T00:00:00`))).padStart(2, "0")}
+                </strong>{" "}
+                <span style={{ fontSize: 14, fontWeight: 700 }}>
+                  {formatHeures(totalHeuresSemaine)} / {formatHeures(totalHeuresTheoriques)} h
+                </span>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: semaineModifiee ? "#a05a00" : semaineValidee ? "#138113" : "#777777" }}>
+                {semaineModifiee ? "● non enregistrée" : semaineValidee ? "✓ validée, transmise" : semaineEnregistree ? "✓ brouillon enregistré" : "○ non enregistrée"}
+              </div>
+            </div>
+            <button type="button" onClick={semaineSuivante} aria-label="Semaine suivante" style={{ height: 40, border: "1px solid #cfcfcf", borderRadius: 8, background: "#ffffff", color: "#c00000", fontWeight: 800, fontSize: 16, fontFamily: "inherit" }}>
+              ▶
+            </button>
           </div>
-
-          <h1 style={styles.pageTitle}>
-            Ma semaine
-          </h1>
-
-          <p style={styles.pageDescription}>
-            Saisissez vos heures,
-            vos absences et vos
-            imputations d'affaires
-            pour la semaine.
-          </p>
-
-          {semaineEstClotureMensuelle && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: "11px 14px",
-                borderRadius: 9,
-                border: "1px solid #d9b45f",
-                background: "#fff9e9",
-                color: "#6b5100",
-                lineHeight: 1.45,
-                fontSize: 13,
-              }}
-            >
-              <strong>Clôture mensuelle — {libellePeriodeMensuelle}</strong>
-              <br />
-              Cette semaine permet de répartir les heures supplémentaires cumulées sur la période entre le compteur de récupération et les heures payées.
-            </div>
-          )}
-        </div>
-
-        {/* ====================================================
-            NAVIGATION
-        ==================================================== */}
-
-        <div
-          style={styles.navigation}
-        >
-          <button
-            onClick={
-              semainePrecedente
-            }
-            style={
-              styles.buttonSecondary
-            }
-          >
-            ← Semaine précédente
-          </button>
-
-          <div
-            style={
-              styles.navigationCenter
-            }
-          >
-            <div
-              style={
-                styles.weekBadge
-              }
-            >
-              S
-              {String(
-                numeroSemaine(
-                  new Date(
-                    `${semaine[0].date}T00:00:00`
-                  )
-                )
-              ).padStart(2, "0")}
-            </div>
-
-            <div
-              style={
-                styles.navigationDates
-              }
-            >
-              Du{" "}
-              {new Date(
-                `${semaine[0].date}T00:00:00`
-              ).toLocaleDateString(
-                "fr-FR"
-              )}{" "}
-              au{" "}
-              {new Date(
-                `${semaine[6].date}T00:00:00`
-              ).toLocaleDateString(
-                "fr-FR"
-              )}
-            </div>
-
-            <div
-              style={
-                styles.navigationSummary
-              }
-            >
-              {formatHeures(
-                totalHeuresSemaine
-              )}{" "}
-              h saisies{" "}
-              <span>/</span>{" "}
-              {formatHeures(
-                totalHeuresTheoriques
-              )}{" "}
-              h prévues
-              {heuresSupplementaires > 0.01 && (
-                <>
-                  {" "}·{" "}
-                  <strong style={{ color: "#138113" }}>
-                    +{formatHeures(heuresSupplementaires)} h sup
-                  </strong>
-                </>
-              )}
-            </div>
-
-            <div
-              style={
-                semaineModifiee
-                  ? styles.unsavedStatus
-                  : semaineValidee
-                    ? styles.validatedStatus
-                    : semaineEnregistree
-                      ? styles.savedStatus
-                      : styles.notSavedStatus
-              }
-            >
-              {semaineModifiee
-                ? "● Modifications non enregistrées"
-                : semaineValidee
-                  ? "✓ Semaine validée — transmise"
-                  : semaineEnregistree
-                    ? "✓ Brouillon enregistré"
-                    : "○ Semaine non enregistrée"}
-            </div>
+        )}
+        {estMobile && semaineEstClotureMensuelle && (
+          <div style={{ marginBottom: 8, padding: "7px 10px", borderRadius: 8, border: "1px solid #d9b45f", background: "#fff9e9", color: "#6b5100", fontSize: 12, lineHeight: 1.35 }}>
+            <strong>Clôture mensuelle — {libellePeriodeMensuelle}</strong> : la répartition des heures sup se fait à la validation.
           </div>
-
-          <button
-            onClick={
-              semaineSuivante
-            }
-            style={
-              styles.buttonSecondary
-            }
-          >
-            Semaine suivante →
-          </button>
-        </div>
-
-          </>
         )}
 
         {/* ====================================================
@@ -5239,32 +5108,6 @@ export default function MaSemainePage() {
           />
         </EnteteSemaineCompact>
 
-        {estMobile && (
-          <>
-        {/* GRILLE_SEMAINE_V5 : la saisie se fait en grille ; seul le week-end est à afficher à la demande */}
-        <div style={{ display: "flex", justifyContent: "flex-end", margin: "0 0 10px" }}>
-          <button
-            type="button"
-            onClick={() => setWeekendOuvert((valeur) => !valeur)}
-            style={{
-              minHeight: 40,
-              padding: "0 14px",
-              borderRadius: 7,
-              border: "1.5px solid #cfcfcf",
-              background: "#ffffff",
-              color: "#333333",
-              fontWeight: 700,
-              fontSize: 13,
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            {weekendOuvert ? "Masquer le week-end" : "Afficher le week-end"}
-          </button>
-        </div>
-          </>
-        )}
-
         <fieldset
           disabled={
             modeConsultationGestionnaire ||
@@ -5316,164 +5159,42 @@ export default function MaSemainePage() {
           )}
 
           {estMobile && (
-            <>
-          {/* HEURES SAISIES */}
-
-          <div style={styles.card}>
-            <div
-              style={styles.cardLabel}
-            >
-              HEURES SAISIES
-            </div>
-
-            <div
-              style={styles.cardValue}
-            >
-              {formatHeures(
-                totalHeuresSemaine
-              )}{" "}
-              h
-            </div>
-
-            <div
-              style={styles.cardHint}
-            >
-              Total des heures
-              imputées sur la semaine.
-            </div>
-          </div>
-
-          {/* HEURES SUPPLEMENTAIRES */}
-
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>
-              HEURES SUPPLÉMENTAIRES
-            </div>
-
-            <div
-              style={{
-                ...styles.cardValue,
-                color: heuresSupplementaires > 0 ? "#138113" : "#333",
-              }}
-            >
-              {heuresSupplementaires > 0 ? "+" : ""}
-              {formatHeures(heuresSupplementaires)} h
-            </div>
-
-            <div style={styles.cardHint}>
-              Heures supplémentaires de la semaine, calculées jour par jour.
-              Elles sont conservées dans le cumul mensuel jusqu'à la clôture.
-            </div>
-
-            {totalHeuresSupMensuelles > 0.01 && semaineEstClotureMensuelle ? (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: "11px 12px",
-                  borderRadius: 8,
-                  border: "1px solid #d8b56a",
-                  background: "#fffaf0",
-                  fontSize: 12,
-                  lineHeight: 1.45,
-                }}
-              >
-                <strong>
-                  ⚠ Clôture mensuelle — {libellePeriodeMensuelle}
-                </strong>
-                <div style={{ marginTop: 4 }}>
-                  Total à répartir : <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong>
-                </div>
-                <div style={{ marginTop: 3, color: "#666" }}>
-                  {repartitionCompteurMensuelle !== null
-                    ? `${formatHeures(repartitionCompteurMensuelle)} h au compteur · ${formatHeures(repartitionPayeeMensuelle ?? 0)} h payées`
-                    : "La répartition compteur / heures payées doit être choisie avant la validation."}
-                </div>
+            <details style={{ gridColumn: "1 / -1", background: "#ffffff", border: "1px solid #e3e3e3", borderRadius: 10, padding: "4px 10px", fontSize: 13 }}>
+              <summary style={{ cursor: "pointer", fontWeight: 700, minHeight: 34, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span>
+                  HS{" "}
+                  <strong style={{ color: heuresSupplementaires > 0.01 ? "#138113" : "#333333" }}>
+                    {heuresSupplementaires > 0.01 ? "+" : ""}
+                    {formatHeures(heuresSupplementaires)} h
+                  </strong>
+                </span>
+                <span>
+                  Récup.{" "}
+                  <strong style={{ color: totalCompteurChoisi > 30.01 || totalCompteurChoisi < -30 ? "#c00000" : "#333333" }}>{formatHeures(totalCompteurChoisi)} h</strong>
+                </span>
+                <span>
+                  Tickets <strong>{totalTickets}</strong>
+                </span>
+                <span style={{ marginLeft: "auto", color: "#1f4e99" }}>plus ▾</span>
+              </summary>
+              <div style={{ margin: "4px 0 6px", color: "#555555", lineHeight: 1.45 }}>
+                Compteur en début de semaine : <strong>{formatHeures(compteurBaseSemaine)} h</strong>
+                {totalRE > 0.01 && <> · − {formatHeures(totalRE)} h de récupération</>}
+                {totalHeuresSupMensuelles > 0.01 && (
+                  <div>
+                    Heures sup du mois : <strong>+{formatHeures(totalHeuresSupMensuelles)} h</strong>
+                    {semaineEstClotureMensuelle ? " (à répartir à la validation)" : " (réparties à la clôture du mois)"}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setWeekendOuvert((valeur) => !valeur)}
+                  style={{ marginTop: 8, minHeight: 38, padding: "0 12px", border: "1px solid #cfcfcf", borderRadius: 7, background: "#ffffff", fontWeight: 700, fontFamily: "inherit", fontSize: 13 }}
+                >
+                  {weekendOuvert ? "Masquer le week-end" : "Afficher le week-end"}
+                </button>
               </div>
-            ) : totalHeuresSupMensuelles > 0.01 ? (
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: "9px 11px",
-                  borderRadius: 8,
-                  border: "1px solid #d7d7d7",
-                  background: "#fafafa",
-                  fontSize: 12,
-                  lineHeight: 1.4,
-                }}
-              >
-                Cumul provisoire sur la période mensuelle :
-                <strong> +{formatHeures(totalHeuresSupMensuelles)} h</strong>.
-                <br />La répartition compteur / heures payées sera demandée lors de la semaine de clôture.
-              </div>
-            ) : null}
-          </div>
-
-          {/* COMPTEUR DE RÉCUPÉRATION */}
-
-          <div style={styles.card}>
-            <div style={styles.cardLabel}>
-              COMPTEUR DE RÉCUPÉRATION
-            </div>
-
-            <div
-              style={{
-                ...styles.cardValue,
-                color:
-                  totalCompteurChoisi > 30.01 || totalCompteurChoisi < -30
-                    ? "#c00000"
-                    : "#333",
-              }}
-            >
-              {formatHeures(totalCompteurChoisi)} h
-            </div>
-
-            <div style={styles.cardHint}>
-              Début de semaine : <strong>{formatHeures(compteurBaseSemaine)} h</strong>
-              {totalRE > 0.01 && (
-                <>
-                  <br />− {formatHeures(totalRE)} h de récupération saisie
-                </>
-              )}
-              {semaineEstClotureMensuelle && repartitionCompteurMensuelle !== null && (
-                <>
-                  <br />+ {formatHeures(repartitionCompteurMensuelle)} h affectées au compteur ce mois-ci
-                </>
-              )}
-              {!semaineEstClotureMensuelle && totalHeuresSupMensuelles > 0.01 && (
-                <>
-                  <br />+ {formatHeures(totalHeuresSupMensuelles)} h en cours d'accumulation mensuelle
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* TICKETS */}
-
-          <div style={styles.card}>
-            <div
-              style={styles.cardLabel}
-            >
-              TICKETS RESTAURANT
-            </div>
-
-            <div
-              style={{
-                ...styles.cardValue,
-                fontSize: 28,
-                color: "#222",
-              }}
-            >
-              {totalTickets}
-            </div>
-
-            <div
-              style={styles.cardHint}
-            >
-              Nombre de tickets
-              prévus pour la semaine.
-            </div>
-          </div>
-            </>
+            </details>
           )}
         </div>
 
@@ -8235,7 +7956,7 @@ function stylesMobile(
   return {
     ...base,
 
-    container: { ...base.container, padding: "12px 10px 130px" },
+    container: { ...base.container, padding: "8px 8px 96px" },
 
     navigation: {
       ...base.navigation,
@@ -8246,7 +7967,7 @@ function stylesMobile(
 
     navigationCenter: { ...base.navigationCenter, minWidth: 0 },
 
-    cards: { ...base.cards, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" },
+    cards: { ...base.cards, gridTemplateColumns: "minmax(0, 1fr)", marginBottom: 8 },
 
     tableHeader: { ...base.tableHeader, display: "none" },
 
