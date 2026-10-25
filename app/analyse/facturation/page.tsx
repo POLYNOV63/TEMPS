@@ -409,6 +409,23 @@ function FacturationContenu() {
   const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);
   // le total « à facturer » des PE / PI N'INCLUT PAS les lignes non facturables
   const totalPrestations = prestations.filter((p) => p.facturable).reduce((t, p) => t + p.montant, 0);
+  /* LIVREE_SANS_DATE : forfaits « Livrée » dans le Suivi d'affaire mais sans date de livraison :
+     ils ne tombent dans aucun mois, donc n'apparaissent pas dans le tableau (à dater dans Excel) */
+  const livreesSansDate = suivi
+    .filter(
+      (l) =>
+        !l.disparue &&
+        l.statut === "Livrée" &&
+        !l.date_livraison &&
+        ["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre) &&
+        !prestation(baseDe(l).imputation ?? l.imputation)
+    )
+    .map((l) => ({
+      numero: l.genre === "BASE" || l.genre === "AVENANT" ? l.numero_affaire ?? l.cle : l.cle,
+      sansLouxor: !l.numero_arc_louxor?.trim(),
+    }))
+    .sort((a, b) => a.numero.localeCompare(b.numero, "fr", { numeric: true }));
+
   const sansLouxor = [
     ...forfaits.filter((f) => louxorManquant(f.statut, f.arc)).map((f) => f.numero),
     ...prestations.filter((p) => louxorManquant(p.statutCommande, p.arc)).map((p) => p.numero),
@@ -475,7 +492,10 @@ function FacturationContenu() {
           { poste: "Non facturable (compté nulle part)", montant: totalNonFacturable, lignes: nonFacturables.length },
         ],
         alerte: (l) => String(l.poste).startsWith("Non facturable") && Number(l.montant) > 0,
-        notes: sansLouxor.length > 0 ? [`N° ARC Louxor manquant (commande reçue ou livrée) : ${sansLouxor.join(", ")}`] : [],
+        notes: [
+          ...(sansLouxor.length > 0 ? [`N° ARC Louxor manquant (commande reçue ou livrée) : ${sansLouxor.join(", ")}`] : []),
+          ...(livreesSansDate.length > 0 ? [`Livrées sans date de livraison (absentes du tableau) : ${livreesSansDate.map((l) => l.numero).join(", ")}`] : []),
+        ],
       },
     ]);
   }
@@ -528,6 +548,15 @@ function FacturationContenu() {
               <Tuile libelle="Facturé" valeur={euros(totalFacture)} sous="forfaits livrés + PE / PI des mois clôturés" />
               <Tuile libelle="Reste à facturer" valeur={euros(resteAFacturer)} sous="forfaits prévus + PE / PI non clôturés" accent={resteAFacturer > 0.5} />
             </div>
+
+            {livreesSansDate.length > 0 && (
+              <Message genre="erreur">
+                <strong>Livrée sans date de livraison</strong> ({livreesSansDate.length}) :{" "}
+                {livreesSansDate.map((l) => `${l.numero}${l.sansLouxor ? " (et sans n° Louxor)" : ""}`).join(", ")}. Ces forfaits ne tombent dans
+                aucun mois et <strong>n’apparaissent donc pas dans ce tableau</strong> : renseignez la date de livraison (et le n° ARC Louxor) dans
+                le Suivi d’affaire BE.
+              </Message>
+            )}
 
             {sansLouxor.length > 0 && (
               <Message genre="erreur">
