@@ -54,7 +54,7 @@ const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", curr
 const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).toLocaleString("fr-FR")} k€` : euros(n));
 const pct = (x: number | null) => (x === null || !Number.isFinite(x) ? "—" : `${x > 0 ? "+" : ""}${Math.round(x * 100)} %`);
 
-type Releve = { base: string; mois: string; montant: number; groupe: Groupe; imputation: string | null; client: string | null };
+type Releve = { base: string; mois: string; montant: number; groupe: Groupe; imputation: string | null; client: string | null; heures?: number; jours?: number };
 type Historique = {
   mois: string;
   categorie: string;
@@ -149,8 +149,8 @@ function FinancesContenu() {
           chargerRealise().catch(() => []),
           supabase.rpc("realise_par_mois"),
           supabase.from("suivi_correspondance_activites").select("colonne_excel,activite_id"),
-          supabase.from("prestation_lignes").select("id,affaire_id,activite_id"),
-          supabase.from("prestation_mois").select("ligne_id,mois,montant_fige").eq("valide", true),
+          supabase.from("prestation_lignes").select("id,affaire_id,activite_id,base_horaire"),
+          supabase.from("prestation_mois").select("ligne_id,mois,montant_fige,heures_fige").eq("valide", true),
           supabase.from("pilotage_affaires").select("id,numero,imputation").eq("type", "CBE"),
           supabase.from("indicateurs_couts").select("annee,cout_horaire"),
           supabase.from("finances_previsionnel").select("mois,montant"),
@@ -224,11 +224,11 @@ function FinancesContenu() {
         setRealiseMensuel(mm);
 
         const affairesPil = new Map(((pa.data ?? []) as { id: string; numero: string; imputation: string | null }[]).map((a) => [a.id, a]));
-        const lignesPrest = new Map(((pl.data ?? []) as { id: string; affaire_id: string; activite_id: string | null }[]).map((x) => [x.id, x]));
+        const lignesPrest = new Map(((pl.data ?? []) as { id: string; affaire_id: string; activite_id: string | null; base_horaire: number | string | null }[]).map((x) => [x.id, x]));
         const clientDeBase = new Map<string, string | null>();
         for (const l of brutes) if (l.genre === "BASE" && l.base_affaire) clientDeBase.set(l.base_affaire, l.client_id ? noms.get(l.client_id) ?? null : null);
         const rel: Releve[] = [];
-        for (const x of (pm.data ?? []) as { ligne_id: string; mois: string; montant_fige: number | string | null }[]) {
+        for (const x of (pm.data ?? []) as { ligne_id: string; mois: string; montant_fige: number | string | null; heures_fige: number | string | null }[]) {
           const lp = lignesPrest.get(x.ligne_id);
           const a = lp ? affairesPil.get(lp.affaire_id) : undefined;
           if (!lp || !a) continue;
@@ -241,6 +241,8 @@ function FinancesContenu() {
             groupe: (lp.activite_id && groupeActivite.get(lp.activite_id)) || "Non ventilé",
             imputation: a.imputation,
             client: clientDeBase.get(base) ?? null,
+            heures: Number(x.heures_fige) || 0,
+            jours: (Number(x.heures_fige) || 0) / (Number(lp.base_horaire) || 7),
           });
         }
         setReleve(rel);
@@ -437,6 +439,22 @@ function FinancesContenu() {
         : null;
     const heuresRenta = terminees.reduce((t, a) => t + a.heuresRealisees, 0) + listePrest.reduce((t, p) => t + p.heures, 0);
     const caHorsNegoce = caRenta - terminees.reduce((t, a) => t + a.parGroupe["Négoce"], 0);
+    // TAUX_PEPI : taux de vente moyen des PE et des PI = montant facturé ÷ heures (ou jours) facturés, mois clôturés
+    const tauxPEPI = (["PE", "PI"] as const).map((imp) => {
+      const somme = (liste: Releve[]) => ({
+        montant: liste.reduce((t, r) => t + r.montant, 0),
+        heures: liste.reduce((t, r) => t + (r.heures ?? 0), 0),
+        jours: liste.reduce((t, r) => t + (r.jours ?? 0), 0),
+      });
+      const duType = releve.filter((r) => r.imputation === imp && (r.heures ?? 0) > 0);
+      return {
+        imp,
+        parMois: mois.map((m) => somme(duType.filter((r) => r.mois.startsWith(m)))),
+        exercice: somme(duType.filter((r) => r.mois >= debut && r.mois <= fin)),
+        n1: somme(duType.filter((r) => r.mois >= `${moisN1[0]}-01` && r.mois <= `${moisN1[11]}-31`)),
+      };
+    });
+
     const negoce = dansEx.reduce((t, x) => t + x.negoce, 0);
     const achats = dansEx.reduce((t, x) => t + x.achats, 0);
 
@@ -461,6 +479,7 @@ function FinancesContenu() {
       prixObtenu: heuresRenta > 0 ? caHorsNegoce / heuresRenta : null,
       negoce,
       achats,
+      tauxPEPI,
     };
   }, [mouvements, attendus, mois, moisN1, previsionnel, lignesFin, realiseGroupes, couts, releve, realiseMensuel]);
 
@@ -804,6 +823,52 @@ function FinancesContenu() {
               </div>
               )}
             </section>
+
+            {/* ---------- taux de vente moyen des PE / PI ---------- */}
+            {vue.tauxPEPI.some((t) => t.exercice.heures > 0 || t.n1.heures > 0) && (
+              <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
+                <h2 style={{ margin: "0 0 4px", fontSize: 17 }}>Taux de vente moyen des PE / PI</h2>
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
+                  Montant facturé ÷ heures (ou jours) facturées, sur les mois clôturés du relevé des prestations. Le jour se compte avec la base horaire de chaque ligne (7 h ou 7,5 h).
+                </p>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={thG} />
+                      {mois.map((m) => (
+                        <th key={m} style={th}>{libMois(m)}</th>
+                      ))}
+                      <th style={th}>Exercice</th>
+                      <th style={th}>N-1</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vue.tauxPEPI.flatMap((t) =>
+                      (["h", "j"] as const).map((u) => {
+                        const taux = (s: { montant: number; heures: number; jours: number }) => {
+                          const q = u === "h" ? s.heures : s.jours;
+                          return q > 0 ? `${Math.round(s.montant / q).toLocaleString("fr-FR")} €` : "—";
+                        };
+                        return (
+                          <tr key={`${t.imp}-${u}`} style={u === "h" ? { borderTop: `2px solid ${C.ligne}` } : undefined}>
+                            <td style={tdG}>{u === "h" ? `${t.imp} · € / h` : <span style={{ fontWeight: 400, paddingLeft: 12 }}>€ / jour</span>}</td>
+                            {t.parMois.map((s, i) => (
+                              <td key={i} style={{ ...td, fontWeight: u === "h" ? 700 : 400, color: u === "j" ? C.gris : undefined }} title={s.heures > 0 ? `${euros(s.montant)} pour ${formatHeures(s.heures)}` : undefined}>
+                                {taux(s)}
+                              </td>
+                            ))}
+                            <td style={{ ...td, fontWeight: 800 }} title={t.exercice.heures > 0 ? `${euros(t.exercice.montant)} pour ${formatHeures(t.exercice.heures)}` : undefined}>
+                              {taux(t.exercice)}
+                            </td>
+                            <td style={{ ...td, color: C.gris }}>{taux(t.n1)}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </section>
+            )}
 
             {/* ---------- activités × imputations ---------- */}
             <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
