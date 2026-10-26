@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as KeyboardReact } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as KeyboardReact, type ReactNode } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -90,7 +90,7 @@ type MoisLigne = {
   commande_import?: number | null; // Suivi des prestations, unité de la ligne (SQL 64)
   reste_import?: number | null;
 };
-type SuiviLigne = { base_affaire: string | null; base_devis: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null };
+type SuiviLigne = { id?: string; base_affaire: string | null; base_devis: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null; heures_total?: number | string | null; montant?: number };
 
 const LETTRES = ["D", "L", "M", "M", "J", "V", "S"];
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -143,6 +143,11 @@ function PrestationsContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [rechargement, setRechargement] = useState(0);
+  /* PRESENCE_RELEVE : qui d'autre a le relevé ouvert, et modification faite ailleurs */
+  const [moiId, setMoiId] = useState<string | null>(null);
+  const [autres, setAutres] = useState<{ id: string; nom: string }[]>([]);
+  const [modifAilleurs, setModifAilleurs] = useState(false);
+  const derniereAction = useRef(0);
 
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
   const [imputations, setImputations] = useState<Imputation[]>([]);
@@ -176,6 +181,11 @@ function PrestationsContenu() {
   const [decalage, setDecalage] = useState<null | { ligne: Ligne; heures: number; dates: string[] }>(null);
   // lignes dont les réglages (⚙) sont ouverts
   const [details, setDetails] = useState<Set<string>>(new Set());
+  /* FICHE_COMMANDE : réglages de vente de chaque commande (SQL 65), consommé des mois passés par ligne,
+     commande dont la fiche est ouverte */
+  const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
+  const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
+  const [fiche, setFiche] = useState<string | null>(null);
 
   const jours = useMemo(() => joursDuMois(mois), [mois]);
   const debut = jours[0].date;
@@ -191,6 +201,42 @@ function PrestationsContenu() {
     window.addEventListener("mouseup", fin);
     return () => window.removeEventListener("mouseup", fin);
   }, []);
+
+  /* PRESENCE_RELEVE : nos propres enregistrements suivent un clic ou une touche ; ceux qui arrivent sans
+     action de notre part depuis 5 s viennent d'un collègue */
+  useEffect(() => {
+    const action = () => (derniereAction.current = Date.now());
+    window.addEventListener("keydown", action, true);
+    window.addEventListener("mousedown", action, true);
+    return () => {
+      window.removeEventListener("keydown", action, true);
+      window.removeEventListener("mousedown", action, true);
+    };
+  }, []);
+  const nomMoiReleve = annuaire.find((c) => c.id === moiId);
+  useEffect(() => {
+    if (!moiId) return;
+    const canal = supabase.channel("releve-pepi", { config: { presence: { key: moiId } } });
+    const ailleurs = () => {
+      if (Date.now() - derniereAction.current > 5000) setModifAilleurs(true);
+    };
+    canal
+      .on("presence", { event: "sync" }, () => {
+        const etat = canal.presenceState() as Record<string, { id: string; nom: string }[]>;
+        const liste = Object.values(etat)
+          .flat()
+          .filter((p) => p.id !== moiId);
+        setAutres([...new Map(liste.map((p) => [p.id, p])).values()]);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "prestation_saisies" }, ailleurs)
+      .on("postgres_changes", { event: "*", schema: "public", table: "prestation_mois" }, ailleurs)
+      .subscribe(async (statut) => {
+        if (statut === "SUBSCRIBED") await canal.track({ id: moiId, nom: nomMoiReleve ? nomCollab(nomMoiReleve) : "Quelqu’un" });
+      });
+    return () => {
+      void supabase.removeChannel(canal);
+    };
+  }, [moiId, nomMoiReleve]);
 
   /* ------------------------------ chargement ------------------------------ */
 
@@ -243,7 +289,7 @@ function PrestationsContenu() {
           chargerTout<Saisie>((a, b) => supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").lt("jour", debut).order("jour").range(a, b)),
           supabase.from("prestation_mois").select("ligne_id,mois,hs_refacturer,valide,reporte,report_heures,report_jour,report_ligne_separee,report_sortant,heures_fige,montant_fige,commande_import,reste_import").lte("mois", debut),
           chargerTout<SuiviLigne>((a, b) =>
-            supabase.from("suivi_lignes").select("base_affaire,base_devis,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
+            supabase.from("suivi_lignes").select("id,base_affaire,base_devis,numero_affaire,genre,statut,rang_avenant,client_id,date_livraison,heures_total").in("genre", ["BASE", "AVENANT"]).order("cle").range(a, b)
           ).catch(() => [] as SuiviLigne[]),
           chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)).catch(() => []),
         ]);
@@ -279,6 +325,7 @@ function PrestationsContenu() {
         }
 
         setPeutAgir(Boolean(moi?.peutModifier));
+        setMoiId(moi?.id ?? null);
         setAffaires(affPrest);
         setImputations(im);
         setAnnuaire(an);
@@ -299,8 +346,31 @@ function PrestationsContenu() {
         setMoisLignes(new Map(tousMois.filter((x) => x.mois.slice(0, 10) === debut).map((x) => [x.ligne_id, x])));
         setMoisPasses(new Map(tousMois.filter((x) => x.mois.slice(0, 10) < debut).map((x) => [`${x.ligne_id}|${x.mois.slice(0, 7)}`, x])));
         setHeuresMoisPasses(parLigneMois);
+        const parLigne = new Map<string, number>();
+        for (const [k, h] of parLigneMois) parLigne.set(k.split("|")[0], (parLigne.get(k.split("|")[0]) ?? 0) + h);
+        setConsoLigneAvant(parLigne);
         setReel(r);
-        setSuivi({ lignes: sl, clients: new Map(sc.map((c) => [c.id, c.nom_abrege])) });
+        // FICHE_COMMANDE : montant de chaque commande (Suivi d'affaire) et réglages de vente (SQL 65)
+        const [mts, reg] = await Promise.all([
+          chargerTout<{ ligne_id: string; montant: number | string | null }>((a, b) =>
+            supabase.from("suivi_lignes_montants").select("ligne_id,montant").order("ligne_id").range(a, b)
+          ).catch(() => [] as { ligne_id: string; montant: number | string | null }[]),
+          supabase.from("pilotage_affaires").select("id,releve_unite,releve_base_horaire").in("id", [...ids]),
+        ]);
+        if (!actif) return;
+        const montantParLigne = new Map(mts.map((m) => [m.ligne_id, Number(m.montant) || 0]));
+        setSuivi({
+          lignes: sl.map((x) => ({ ...x, montant: x.id ? montantParLigne.get(x.id) ?? 0 : 0 })),
+          clients: new Map(sc.map((c) => [c.id, c.nom_abrege])),
+        });
+        setReglages(
+          new Map(
+            ((reg.data ?? []) as { id: string; releve_unite: string | null; releve_base_horaire: number | string | null }[]).map((x) => [
+              x.id,
+              { unite: x.releve_unite === "JOUR" || x.releve_unite === "HEURE" ? x.releve_unite : null, base: nb(x.releve_base_horaire) },
+            ])
+          )
+        );
       } catch (e) {
         if (actif) setErreur(e instanceof Error ? e.message : "Impossible de charger les prestations.");
       } finally {
@@ -466,7 +536,13 @@ function PrestationsContenu() {
 
   async function staffer(affaireId: string, collaborateurId: string) {
     if (!collaborateurId) return;
-    const { error } = await supabase.from("prestation_lignes").upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true }, { onConflict: "affaire_id,collaborateur_id" });
+    // la ligne prend l'unité, la base et le taux de la commande (fiche commande)
+    const a = affairesParId.get(affaireId);
+    const f = a ? ficheDe(a) : null;
+    const vente = f ? { unite: f.unite, base_horaire: f.base, ...(f.taux !== null ? { taux: Math.round(f.taux * 100) / 100 } : {}) } : {};
+    const { error } = await supabase
+      .from("prestation_lignes")
+      .upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true, ...vente }, { onConflict: "affaire_id,collaborateur_id" });
     if (error) return setErreur(traduireErreur(error.message));
     setRechargement((n) => n + 1);
   }
@@ -630,6 +706,29 @@ function PrestationsContenu() {
     );
   }
 
+  /* ALIGNER_FEUILLES : reprend, jour par jour, les heures pointées dans les feuilles d'heures de la personne
+     (les codes d'absence saisis ne changent pas) */
+  function alignerSurFeuilles(l: Ligne) {
+    const valeurs: { jour: string; valeur: { heures: number | null; code: string | null } | null }[] = [];
+    for (const j of jours) {
+      const s = saisieParCle.get(`${l.id}|${j.date}`);
+      if (s?.code) continue;
+      const r = Math.round(reelDe(l, j.date) * 100) / 100;
+      if (Math.abs(r - (s?.heures ?? 0)) < 0.01) continue;
+      valeurs.push({ jour: j.date, valeur: r > 0 ? { heures: r, code: null } : null });
+    }
+    if (valeurs.length === 0) return setInfo("Cette ligne correspond déjà aux feuilles d’heures.");
+    const c = calcul(l);
+    if (
+      !window.confirm(
+        `Aligner ${affairesParId.get(l.affaire_id)?.numero ?? ""} · ${nomCollab(collabs.get(l.collaborateur_id))} sur les feuilles d’heures ?\n\n${formatHeures(c.heures)} saisies → ${formatHeures(c.heuresReel)} pointées (${valeurs.length} jour(s) modifié(s)). Les absences saisies ne changent pas.`
+      )
+    )
+      return;
+    // troisième paramètre (pas de proposition de décalage) : pris en compte s'il existe
+    void (ecrire as unknown as (x: Ligne, v: typeof valeurs, p?: boolean) => Promise<void>)(l, valeurs, false);
+  }
+
   function toutRemplir() {
     for (const l of lignes.filter((x) => x.actif && !moisLignes.get(x.id)?.valide)) {
       if (jours.some((j) => saisieParCle.has(`${l.id}|${j.date}`))) continue;
@@ -766,9 +865,41 @@ function PrestationsContenu() {
 
   async function validerMois(valider: boolean) {
     if (valider) {
-      const sansTaux = lignes.filter((l) => l.actif && l.taux === null).length;
-      if (sansTaux && !window.confirm(`${sansTaux} ligne(s) sans taux : leur montant sera vide. Valider quand même ?`)) return;
-      if (!window.confirm(`Valider ${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)} ? Les montants seront figés.`)) return;
+      // CONTROLE_CLOTURE : ce qui cloche, avant de figer le mois
+      const actives = lignes.filter((l) => l.actif);
+      const nom = (l: Ligne) => `${affairesParId.get(l.affaire_id)?.numero ?? "?"} ${nomCollab(collabs.get(l.collaborateur_id))}`;
+      const liste = (xs: string[]) => (xs.length > 6 ? `${xs.slice(0, 6).join(", ")}… (+${xs.length - 6})` : xs.join(", "));
+      const points: string[] = [];
+      const sansTaux = actives.filter((l) => l.taux === null);
+      if (sansTaux.length) points.push(`${sansTaux.length} ligne(s) sans taux, montant vide : ${liste(sansTaux.map(nom))}`);
+      const ecarts = actives.filter((l) => {
+        const c = calcul(l);
+        return Math.abs(c.heures - c.heuresReel) > 0.5;
+      });
+      if (ecarts.length)
+        points.push(
+          `${ecarts.length} ligne(s) en écart avec les feuilles d’heures : ${liste(
+            ecarts.map((l) => {
+              const c = calcul(l);
+              return `${nom(l)} (${formatHeures(c.heures)} saisies, ${formatHeures(c.heuresReel)} pointées)`;
+            })
+          )}`
+        );
+      const intentions = actives.filter((l) => {
+        const c = calcul(l);
+        return affairesParId.get(l.affaire_id)?.statut === "EN_ATTENTE" && !c.reporte && c.facturables > 0;
+      });
+      if (intentions.length) points.push(`${intentions.length} ligne(s) facturée(s) sans commande reçue (intention) : ${liste(intentions.map(nom))}`);
+      const depassees = [...new Set(actives.map((l) => l.affaire_id))]
+        .map((id) => affairesParId.get(id))
+        .filter((a): a is AffaireP => Boolean(a))
+        .filter((a) => {
+          const f = ficheDe(a);
+          return f.reste !== null && f.reste < -0.01;
+        });
+      if (depassees.length) points.push(`${depassees.length} commande(s) dépassée(s) : ${liste(depassees.map((a) => a.numero))}`);
+      const question = `Clôturer ${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)} ? Les heures et les montants seront figés.`;
+      if (!window.confirm(points.length ? `Avant de clôturer, à vérifier :\n\n• ${points.join("\n• ")}\n\n${question}` : question)) return;
     } else if (!window.confirm("Rouvrir ce mois ? Les heures et les montants pourront de nouveau changer.")) return;
 
     setEnCours("validation");
@@ -872,6 +1003,74 @@ function PrestationsContenu() {
     },
     [suivi]
   );
+
+  /* FICHE_COMMANDE : ce que prévoit la commande (Suivi d'affaire : montant et total d'heures), sa vente
+     (unité, base, taux = montant ÷ quantité) et où on en est (consommé : heures saisies au relevé, tous
+     mois et toutes personnes confondus ; en euros, au taux de chaque ligne). */
+  const ficheDe = useCallback(
+    (a: AffaireP) => {
+      const sl = suivi.lignes.find((s) => (s.numero_affaire ?? "").replace(/^CBE/i, "").toUpperCase() === a.numero.toUpperCase());
+      const lignesCmd = lignes.filter((l) => l.affaire_id === a.id);
+      const reg = reglages.get(a.id);
+      const unite: "JOUR" | "HEURE" = reg?.unite ?? lignesCmd[0]?.unite ?? (a.imputation === "PE" ? "JOUR" : "HEURE");
+      const base = reg?.base ?? lignesCmd[0]?.base_horaire ?? 7;
+      const montant = sl?.montant ?? 0;
+      const heuresCmd = Number(sl?.heures_total) || 0;
+      const k = unite === "JOUR" ? base : 1;
+      const quantite = heuresCmd > 0 ? heuresCmd / k : null;
+      const taux = quantite && montant > 0 ? montant / quantite : null;
+      let consoH = 0;
+      let consoE = 0;
+      let sansTaux = false;
+      const personnes = lignesCmd.map((l) => {
+        const h = (consoLigneAvant.get(l.id) ?? 0) + calcul(l).heures;
+        const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+        consoH += h;
+        if (tauxH === null) sansTaux = true;
+        else consoE += h * tauxH;
+        // taux de la ligne ramené dans l'unité de la commande, pour le comparer
+        const tauxUnite = l.taux === null ? null : l.unite === unite ? l.taux : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux * base;
+        return { ligne: l, heures: h, propre: taux !== null && tauxUnite !== null && Math.abs(tauxUnite - taux) / taux > 0.01 };
+      });
+      return {
+        montant,
+        heuresCmd,
+        unite,
+        base,
+        quantite,
+        taux,
+        consomme: consoH / k,
+        consoE,
+        reste: quantite === null ? null : quantite - consoH / k,
+        resteE: montant > 0 && !sansTaux ? montant - consoE : null,
+        personnes,
+      };
+    },
+    [suivi, lignes, reglages, consoLigneAvant, calcul]
+  );
+
+  /* Unité ou base de la commande : ses lignes suivent ; le taux de chaque ligne est converti si l'unité change */
+  async function reglerCommande(a: AffaireP, patch: { unite?: "JOUR" | "HEURE"; base?: number }) {
+    const f = ficheDe(a);
+    const unite = patch.unite ?? f.unite;
+    const base = patch.base ?? f.base;
+    setErreur("");
+    const { error } = await supabase.from("pilotage_affaires").update({ releve_unite: unite, releve_base_horaire: base }).eq("id", a.id);
+    if (error) return setErreur(traduireErreur(error.message));
+    const misesAJour = lignes
+      .filter((l) => l.affaire_id === a.id)
+      .map((l) => {
+        let taux = l.taux;
+        if (taux !== null && l.unite !== unite) taux = Math.round((unite === "HEURE" ? taux / l.base_horaire : taux * base) * 100) / 100;
+        return { l, patch: { unite, base_horaire: base, taux } };
+      });
+    for (const m of misesAJour) {
+      const { error: el } = await supabase.from("prestation_lignes").update(m.patch).eq("id", m.l.id);
+      if (el) return setErreur(traduireErreur(el.message));
+    }
+    setReglages((r) => new Map(r).set(a.id, { unite, base }));
+    setLignes((ls) => ls.map((l) => misesAJour.find((m) => m.l.id === l.id) ? { ...l, ...misesAJour.find((m) => m.l.id === l.id)!.patch } : l));
+  }
 
   async function exporter() {
     setErreur("");
@@ -1057,6 +1256,68 @@ function PrestationsContenu() {
         {info && <Message genre="ok">{info}</Message>}
         {chargement && <Message genre="info">Chargement…</Message>}
         {moisValide && <Message genre="ok">Mois validé : heures et montants figés 🔒. « Rouvrir le mois » pour corriger.</Message>}
+
+        {/* PRESENCE_RELEVE : collègues sur la page, modification faite ailleurs */}
+        {autres.length > 0 && (
+          <Message genre="info">
+            👥 <strong>{autres.map((x) => x.nom).join(", ")}</strong> {autres.length > 1 ? "ont" : "a"} aussi le relevé ouvert : si vous modifiez la même case, la dernière saisie
+            l’emporte.
+          </Message>
+        )}
+        {modifAilleurs && (
+          <Message genre="info">
+            Le relevé vient d’être modifié par quelqu’un d’autre.{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setModifAilleurs(false);
+                setRechargement((n) => n + 1);
+              }}
+              style={{ ...page.btnSecondaire, minHeight: 32, marginLeft: 6 }}
+            >
+              ↻ Actualiser
+            </button>
+          </Message>
+        )}
+
+        {/* ALERTES_RELEVE : commandes épuisées ou bientôt épuisées (moins de 20 % de reste) */}
+        {!chargement &&
+          (() => {
+            const vues = new Set<string>();
+            const alertes: { a: AffaireP; texte: string; crit: boolean }[] = [];
+            for (const l of lignes) {
+              if (!l.actif || vues.has(l.affaire_id)) continue;
+              vues.add(l.affaire_id);
+              const a = affairesParId.get(l.affaire_id);
+              if (!a || a.statut === "LIVREE") continue;
+              const f = ficheDe(a);
+              if (f.reste === null || !f.quantite) continue;
+              const u = f.unite === "JOUR" ? "j" : "h";
+              if (f.reste <= 0.01) alertes.push({ a, crit: true, texte: f.reste < -0.01 ? `dépassée de ${texteHeures(Math.round(-f.reste * 10) / 10)} ${u}` : "épuisée" });
+              else if (f.reste / f.quantite < 0.2) alertes.push({ a, crit: false, texte: `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u} (${Math.round((f.reste / f.quantite) * 100)} %)` });
+            }
+            if (alertes.length === 0) return null;
+            alertes.sort((x, y) => Number(y.crit) - Number(x.crit) || x.a.numero.localeCompare(y.a.numero, "fr", { numeric: true }));
+            return (
+              <Message genre={alertes.some((x) => x.crit) ? "erreur" : "info"}>
+                <strong>Avenant à prévoir</strong> ({alertes.length}) :{" "}
+                {alertes.map((x, i) => (
+                  <span key={x.a.id}>
+                    {i > 0 ? " · " : ""}
+                    <button
+                      type="button"
+                      onClick={() => setFiche(x.a.id)}
+                      title="Ouvrir la fiche commande"
+                      style={{ all: "unset", cursor: "pointer", fontWeight: 800, textDecoration: "underline dotted" }}
+                    >
+                      {x.a.numero}
+                    </button>{" "}
+                    {x.texte}
+                  </span>
+                ))}
+              </Message>
+            );
+          })()}
         {!chargement && lignes.length === 0 && (
           <Message genre="info">Aucune prestation ce mois-ci. Ajoutez une ligne (affaire PE / PI × personne) en bas de page.</Message>
         )}
@@ -1227,13 +1488,14 @@ function PrestationsContenu() {
                       <td style={{ ...cellule, ...fixeG(0, L_CMD), whiteSpace: "normal" }} title={a.designation}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                           <BadgeType type={a.type} />
-                          <Link
-                            href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`}
-                            title="Ouvrir la fiche de l’affaire (bilan et pilotage)"
-                            style={{ fontWeight: 800, color: C.rougeFonce }}
+                          <button
+                            type="button"
+                            onClick={() => setFiche(a.id)}
+                            title="Voir la fiche commande : ce qui est commandé, le taux, le montant"
+                            style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textDecoration: "underline dotted" }}
                           >
                             {numeroFacture(a).numero}
-                          </Link>
+                          </button>
                           {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                         </span>
                       </td>
@@ -1254,8 +1516,10 @@ function PrestationsContenu() {
                           <span style={{ color: C.gris, fontSize: 13 }}>
                             {a.imputation} · {a.designation}
                             {(() => {
-                              const e = enveloppes.get(a.id);
-                              return e && e.commande > 0 ? ` · ${formatHeures(e.commande)} commandées` : "";
+                              const f = ficheDe(a);
+                              const u = f.unite === "JOUR" ? "j" : "h";
+                              if (f.quantite === null || f.taux === null) return " · montant ou heures absents du Suivi d’affaire";
+                              return ` · ${texteHeures(Math.round(f.quantite * 100) / 100)} ${u} à ${f.taux.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} € / ${u} = ${euros(f.montant)}`;
                             })()}
                           </span>
                         </div>
@@ -1305,6 +1569,9 @@ function PrestationsContenu() {
                                         {nf?.numero}
                                       </Link>
                                       {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                                      <button type="button" onClick={() => setFiche(a.id)} title="Fiche commande : commandé, taux, consommé, reste" aria-label={`Fiche commande ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 14, color: "#1f4e99", fontWeight: 800 }}>
+                                        ⓘ
+                                      </button>
                                     </span>
                                     <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${a.designation}${nf?.client ? ` · ${nf.client}` : ""}`}>
                                       {nf?.client ? <strong>{nf.client}</strong> : null}
@@ -1327,7 +1594,19 @@ function PrestationsContenu() {
                                 title={`Saisi ${formatHeures(c.heures)} · feuilles d’heures ${formatHeures(c.heuresReel)}${c.reportEntrant > 0 ? ` · + ${formatHeures(c.reportEntrant)} reportées` : ""}${c.sortant > 0 ? ` · ${formatHeures(c.sortant)} envoyées au mois suivant` : ""}`}
                               >
                                 {c.reporte ? <span style={{ color: "#7a3e00", fontSize: 12 }}>↪ reporté</span> : enUnite(l, c.facturables)}
-                                {ecart && <div style={{ fontSize: 10, color: "#b35c00" }}>feuilles {enUnite(l, c.heuresReel)}</div>}
+                                {ecart &&
+                                  (verrou ? (
+                                    <div style={{ fontSize: 10, color: "#b35c00" }}>feuilles {enUnite(l, c.heuresReel)}</div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => alignerSurFeuilles(l)}
+                                      title="Aligner cette ligne sur les heures pointées dans les feuilles d’heures"
+                                      style={{ all: "unset", display: "block", marginLeft: "auto", cursor: "pointer", fontSize: 10, color: "#b35c00", textDecoration: "underline dotted" }}
+                                    >
+                                      feuilles {enUnite(l, c.heuresReel)} ≡
+                                    </button>
+                                  ))}
                                 {!c.reporte && (c.reportEntrant > 0 || c.sortant > 0) && (
                                   <div style={{ fontSize: 10, color: "#7a3e00" }}>
                                     {c.reportEntrant > 0 ? `+${enUnite(l, c.reportEntrant)}` : ""}
@@ -1340,19 +1619,32 @@ function PrestationsContenu() {
                                 {c.valide && <span title="Mois clôturé : montant figé"> 🔒</span>}
                               </td>
                               <td style={{ ...cellule, ...bordHaut, ...fixeG(X_RESTE, L_RESTE), textAlign: "right" }}>
-                                {premiere && resteClasseur !== null ? (
-                                  <span title={`Reste d’après le Suivi des prestations${ml?.commande_import ? ` (commande ${texteHeures(ml.commande_import)} ${l.unite === "JOUR" ? "j" : "h"})` : ""}${resteCalcul !== null ? ` · calcul de l’application : ${enUnite(l, Math.max(0, resteCalcul))}` : ""}`}>
-                                    <Pastille genre={resteClasseur <= 0 ? "crit" : ml?.commande_import && resteClasseur / ml.commande_import < 0.2 ? "warn" : "ok"}>
-                                      {texteHeures(resteClasseur)} {l.unite === "JOUR" ? "j" : "h"}
-                                    </Pastille>
-                                  </span>
-                                ) : premiere && env && resteCalcul !== null ? (
-                                  <span title={`Commandé ${formatHeures(env.commande)} · facturé avant ${formatHeures(env.avant)} · ce mois ${formatHeures(env.mois)}`}>
-                                    <Pastille genre={env.reste <= 0 ? "crit" : env.reste / env.commande < 0.2 ? "warn" : "ok"}>{enUnite(l, Math.max(0, env.reste))}</Pastille>
-                                  </span>
-                                ) : premiere ? (
-                                  <span style={{ color: C.gris, fontSize: 12 }}>non chiffrée</span>
-                                ) : null}
+                                {premiere && a
+                                  ? (() => {
+                                      const f = ficheDe(a);
+                                      const u = f.unite === "JOUR" ? "j" : "h";
+                                      if (f.reste === null)
+                                        return (
+                                          <span style={{ color: C.gris, fontSize: 12 }} title="Montant ou total d’heures absent du Suivi d’affaire">
+                                            non chiffrée
+                                          </span>
+                                        );
+                                      const ecartClasseur = resteClasseur !== null && Math.abs(resteClasseur - f.reste) > 0.5;
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() => setFiche(a.id)}
+                                          title={`Commande ${texteHeures(Math.round((f.quantite ?? 0) * 100) / 100)} ${u} · consommé ${texteHeures(Math.round(f.consomme * 100) / 100)} ${u}${f.resteE !== null ? ` · reste ${euros(f.resteE)}` : ""}${resteClasseur !== null ? ` · Suivi des prestations : ${texteHeures(resteClasseur)} ${u}` : ""}`}
+                                          style={{ all: "unset", cursor: "pointer" }}
+                                        >
+                                          <Pastille genre={f.reste <= 0 ? "crit" : f.quantite && f.reste / f.quantite < 0.2 ? "warn" : "ok"}>
+                                            {texteHeures(Math.round(f.reste * 10) / 10)} {u}
+                                          </Pastille>
+                                          {ecartClasseur && <div style={{ fontSize: 10, color: "#b35c00", fontWeight: 800 }}>⚠ classeur {texteHeures(resteClasseur ?? 0)}</div>}
+                                        </button>
+                                      );
+                                    })()
+                                  : null}
                               </td>
                               <td style={{ ...cellule, ...bordHaut, ...fixeG(X_OUTILS, L_OUTILS), whiteSpace: "nowrap", borderRight: `2px solid ${C.ligne}` }}>
                                 <span style={{ display: "inline-flex", gap: 2 }}>
@@ -1590,6 +1882,11 @@ function PrestationsContenu() {
                                       <span>
                                         Saisi <strong>{formatHeures(c.heures)}</strong> · feuilles d’heures{" "}
                                         <strong style={{ color: ecart ? "#b35c00" : undefined }}>{formatHeures(c.heuresReel)}</strong>
+                                        {ecart && !verrou && (
+                                          <button type="button" onClick={() => alignerSurFeuilles(l)} style={{ ...outil, marginLeft: 8, fontSize: 12, color: "#b35c00", borderColor: "#e9b877" }}>
+                                            ≡ Aligner sur les feuilles
+                                          </button>
+                                        )}
                                       </span>
                                       <span>
                                         Facturé <strong>{formatHeures(c.facturables)}</strong> · {(Math.round((c.facturables / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j
@@ -1692,6 +1989,149 @@ function PrestationsContenu() {
           </button>
         </div>
       )}
+
+      {/* FICHE_COMMANDE : ce qui est commandé, la vente, où on en est (lecture seule, sauf l'unité et la base) */}
+      {fiche &&
+        (() => {
+          const a = affairesParId.get(fiche);
+          if (!a) return null;
+          const f = ficheDe(a);
+          const nf = numeroFacture(a);
+          const u = f.unite === "JOUR" ? "j" : "h";
+          const deux = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+          const info = (libelle: string, valeur: ReactNode, aide?: string) => (
+            <div title={aide} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, fontSize: 14 }}>
+              <span style={{ color: C.gris }}>{libelle}</span>
+              <strong style={{ textAlign: "right" }}>{valeur}</strong>
+            </div>
+          );
+          const titreSection = (t: string) => <div style={{ marginTop: 14, fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>{t}</div>;
+          const tousPropres = f.personnes.length > 0 && f.personnes.every((p) => p.propre);
+          const sansLigne = f.personnes.length === 0;
+          return (
+            <div role="dialog" aria-modal="true" aria-label="Fiche commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setFiche(null)}>
+              <div style={{ ...page.carte, padding: 20, width: 540, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <BadgeType type={a.type} />
+                  <strong style={{ fontSize: 20, color: C.rougeFonce }}>{nf.numero}</strong>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.gris }}>{a.imputation}</span>
+                  {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 12, color: "#7a3e00", fontWeight: 800 }}>Intention de commande</span>}
+                  <span style={{ flex: 1 }} />
+                  <button type="button" onClick={() => setFiche(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ fontSize: 14, color: "#3b4046", marginTop: 2 }}>
+                  {nf.client ? <strong>{nf.client} · </strong> : null}
+                  {a.designation}
+                </div>
+
+                {titreSection("Ce que prévoit la commande (Suivi d’affaire)")}
+                {info("Montant", f.montant > 0 ? euros(f.montant) : <span style={{ color: "#b3261e" }}>absent</span>)}
+                {info("Total d’heures", f.heuresCmd > 0 ? formatHeures(f.heuresCmd) : <span style={{ color: "#b3261e" }}>absent</span>)}
+
+                {titreSection("La vente")}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, alignItems: "flex-end" }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
+                    Vendue
+                    <select disabled={!peutAgir} value={f.unite} onChange={(e) => void reglerCommande(a, { unite: e.target.value as "JOUR" | "HEURE" })} style={{ ...champ, width: 130 }}>
+                      <option value="JOUR">au jour</option>
+                      <option value="HEURE">à l’heure</option>
+                    </select>
+                  </label>
+                  {f.unite === "JOUR" && (
+                    <label title="Base d’une journée vendue : convertit le total d’heures du Suivi d’affaire en jours" style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
+                      Journée de
+                      <select disabled={!peutAgir} value={String(f.base)} onChange={(e) => void reglerCommande(a, { base: Number(e.target.value) })} style={{ ...champ, width: 100 }}>
+                        <option value="7">7 h</option>
+                        <option value="7.5">7,5 h</option>
+                        {![7, 7.5].includes(f.base) && <option value={String(f.base)}>{deux(f.base)} h</option>}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, f.unite === "JOUR" ? `${formatHeures(f.heuresCmd)} ÷ ${deux(f.base)} h` : undefined)}
+                {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Montant ÷ quantité commandée")}
+
+                {titreSection("Où on en est")}
+                {info("Consommé", `${deux(Math.round(f.consomme * 100) / 100)} ${u}${f.consoE > 0 ? ` · ${euros(f.consoE)}` : ""}`, "Heures saisies au relevé, tous mois et toutes personnes confondus")}
+                {info(
+                  "Reste",
+                  f.reste === null ? "—" : (
+                    <span style={{ color: f.reste < 0 ? "#b3261e" : undefined }}>
+                      {f.reste < 0 ? `dépassé de ${deux(-f.reste)} ${u}` : `${deux(Math.round(f.reste * 100) / 100)} ${u}`}
+                      {f.resteE !== null ? ` · ${euros(f.resteE)}` : ""}
+                    </span>
+                  )
+                )}
+
+                {titreSection("Personnes")}
+                {sansLigne ? (
+                  <div style={{ padding: "6px 0", fontSize: 14 }}>
+                    Personne n’est encore staffé.
+                    {peutAgir && (
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (!e.target.value) return;
+                          void staffer(a.id, e.target.value);
+                          setFiche(null);
+                        }}
+                        style={{ ...champ, width: 160, marginLeft: 8 }}
+                        aria-label={`Staffer ${a.numero}`}
+                      >
+                        <option value="">Staffer…</option>
+                        {annuaire.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {nomCollab(p)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {f.taux !== null && <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>La ligne prendra le taux de la commande ({deux(f.taux)} € / {u}), modifiable ensuite dans ⚙.</div>}
+                  </div>
+                ) : (
+                  f.personnes.map((p) => (
+                    <div key={p.ligne.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, fontSize: 14 }}>
+                      <strong>{nomCollab(collabs.get(p.ligne.collaborateur_id))}</strong>
+                      <span>
+                        {formatHeures(p.heures)} ·{" "}
+                        {p.ligne.taux === null ? <span style={{ color: "#7a3e00" }}>taux ?</span> : `${deux(p.ligne.taux)} € / ${p.ligne.unite === "JOUR" ? "j" : "h"}`}
+                        {p.propre && !tousPropres && (
+                          <span title="Taux différent de celui de la commande : profil vendu à un autre prix" style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#34506b", border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px" }}>
+                            taux propre
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))
+                )}
+
+                {(f.montant <= 0 || f.heuresCmd <= 0) && (
+                  <div style={{ marginTop: 12 }}>
+                    <Message genre="erreur">Montant ou total d’heures manquant dans le Suivi d’affaire : complétez le classeur, puis synchronisez.</Message>
+                  </div>
+                )}
+                {tousPropres && (
+                  <div style={{ marginTop: 12 }}>
+                    <Message genre="info">
+                      ⚠ Le taux des lignes ne correspond pas au montant ÷ quantité du Suivi d’affaire ({f.taux !== null ? `${deux(f.taux)} € / ${u}` : "—"}) : vérifiez le montant, le total d’heures, ou la journée de 7 h / 7,5 h.
+                    </Message>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+                  <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+                    Fiche de l’affaire (bilan) →
+                  </Link>
+                  <button type="button" style={page.btnPrimaire} onClick={() => setFiche(null)}>
+                    Fermer
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
       {editeurReport && (
         <div role="dialog" aria-modal="true" aria-label="Heures reportées" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditeurReport(null)}>
