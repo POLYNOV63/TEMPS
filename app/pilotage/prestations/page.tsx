@@ -1190,7 +1190,23 @@ function PrestationsContenu() {
                         }}
                       >
                         <div style={{ fontSize: j.weekend || j.ferie ? 8 : 10, fontWeight: 700, lineHeight: "11px" }}>{LETTRES[j.js]}</div>
-                        <div style={{ fontSize: j.weekend || j.ferie ? 8 : 11, lineHeight: "15px" }}>{j.jour}</div>
+                        {/* AUJOURDHUI_RELEVE : le jour d'aujourd'hui, entouré */}
+                        {(() => {
+                          const d = new Date();
+                          const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                          return j.date === auj ? (
+                            <div style={{ lineHeight: "15px" }}>
+                              <span
+                                title="Aujourd’hui"
+                                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: "50%", border: `2px solid ${C.rouge}`, boxSizing: "border-box", fontSize: 10, fontWeight: 800, color: C.rougeFonce }}
+                              >
+                                {j.jour}
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: j.weekend || j.ferie ? 8 : 11, lineHeight: "15px" }}>{j.jour}</div>
+                          );
+                        })()}
                       </th>
                     ))}
                   </tr>
