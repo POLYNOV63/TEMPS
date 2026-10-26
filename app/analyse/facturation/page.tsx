@@ -634,29 +634,66 @@ function FacturationContenu() {
               <Tuile libelle="Reste à facturer" valeur={euros(resteAFacturer)} sous="forfaits prévus + PE / PI non clôturés" accent={resteAFacturer > 0.5} />
             </div>
 
-            {livreesSansDate.length > 0 && (
-              <Message genre="erreur">
-                <strong>Livrée sans date de livraison</strong> ({livreesSansDate.length}) :{" "}
-                {livreesSansDate.map((l) => `${l.numero}${l.sansLouxor ? " (et sans n° Louxor)" : ""}`).join(", ")}. Ces forfaits ne tombent dans
-                aucun mois (les forfaits n’apparaissent donc pas dans ce tableau ; les PE / PI y sont, en jaune) : renseignez la date de livraison (et le n° ARC Louxor) dans
-                le Suivi d’affaire BE.
-              </Message>
-            )}
-
-            {sansLouxor.length > 0 && (
-              <Message genre="erreur">
-                <strong>N° ARC Louxor manquant</strong> alors que la commande est reçue ou livrée : {sansLouxor.join(", ")}. À renseigner dans le Suivi
-                d’affaire BE avant de facturer.
-              </Message>
-            )}
-
-            {nonFacturables.length > 0 && (
-              <Message genre="erreur">
-                <strong>Attention :</strong> {nonFacturables.map((p) => p.numero).filter((v, i, t) => t.indexOf(v) === i).join(", ")} — commande ni
-                « reçue » ni « livrée » dans le Suivi d’affaire BE : <strong>impossible de facturer</strong> en l’état. Ces lignes sont surlignées en
-                jaune.
-              </Message>
-            )}
+            {/* A_CORRIGER : un seul encadré, une ligne par commande, ce qu'il faut renseigner dans le Suivi d'affaire */}
+            {(() => {
+              const parNumero = new Map<string, { quoi: string[]; pourquoi: string[]; statut: string | null }>();
+              const ajouter = (numero: string, quoi: string, pourquoi: string, statut: string | null = null) => {
+                const e = parNumero.get(numero) ?? { quoi: [], pourquoi: [], statut };
+                if (!e.quoi.includes(quoi)) e.quoi.push(quoi);
+                if (!e.pourquoi.includes(pourquoi)) e.pourquoi.push(pourquoi);
+                e.statut = e.statut ?? statut;
+                parNumero.set(numero, e);
+              };
+              for (const l of livreesSansDate) {
+                ajouter(l.numero, "la date de livraison", "livrée sans date : elle n’entre dans aucun mois", "Livrée");
+                if (l.sansLouxor) ajouter(l.numero, "le n° ARC Louxor", "sans lui, pas de facture", "Livrée");
+              }
+              for (const n of sansLouxor) ajouter(n, "le n° ARC Louxor", "sans lui, pas de facture");
+              for (const p of nonFacturables)
+                ajouter(
+                  p.numero,
+                  "le statut « Commande reçue »",
+                  `statut actuel : ${p.statutCommande ?? "pas de commande"} — ses heures ne sont pas facturables`,
+                  p.statutCommande ?? null
+                );
+              const liste = [...parNumero.entries()].sort(([a], [b]) => a.localeCompare(b, "fr", { numeric: true }));
+              if (liste.length === 0) return null;
+              return (
+                <section style={{ ...page.carte, padding: 16, marginBottom: 14, borderLeft: "5px solid #b3261e" }}>
+                  <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
+                    À compléter dans le Suivi d’affaire BE avant de facturer <span style={{ color: C.gris, fontWeight: 600 }}>({liste.length})</span>
+                  </h2>
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
+                    Une fois le classeur complété et synchronisé, la ligne disparaît d’ici et la commande se facture normalement.
+                  </p>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...page.th, whiteSpace: "nowrap" }}>Commande</th>
+                        <th style={page.th}>À renseigner</th>
+                        <th style={page.th}>Pourquoi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liste.map(([numero, e]) => {
+                        const n = numero.replace(/^CBE/i, "");
+                        return (
+                          <tr key={numero}>
+                            <td style={{ ...page.td, whiteSpace: "nowrap" }}>
+                              <Link href={`/affaires/bilan?affaire=CBE${(n.match(/^\d+/)?.[0] ?? n).replace(/^0+/, "")}&commande=${encodeURIComponent(n)}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                {numero.toUpperCase().startsWith("CBE") ? numero : `CBE${numero}`}
+                              </Link>
+                            </td>
+                            <td style={{ ...page.td, fontWeight: 700 }}>{e.quoi.join(" + ")}</td>
+                            <td style={{ ...page.td, color: "#3b4046" }}>{e.pourquoi.join(" · ")}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              );
+            })()}
 
             <section style={{ ...page.carte, padding: 16, overflowX: "auto" }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>
