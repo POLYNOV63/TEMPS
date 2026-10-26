@@ -172,6 +172,8 @@ function PrestationsContenu() {
   const [recherche, setRecherche] = useState("");
   const [editeurReport, setEditeurReport] = useState<null | { ligne: Ligne; heures: string; jour: string; separee: boolean }>(null);
   const [enCours, setEnCours] = useState("");
+  /* DECALER_JOUR : heures retirées d'une ligne (jour vidé, remplacé par CP…), qu'on propose de décaler à la fin */
+  const [decalage, setDecalage] = useState<null | { ligne: Ligne; heures: number; dates: string[] }>(null);
   // lignes dont les réglages (⚙) sont ouverts
   const [details, setDetails] = useState<Set<string>>(new Set());
 
@@ -516,9 +518,19 @@ function PrestationsContenu() {
     [debut]
   );
 
-  async function ecrire(l: Ligne, valeurs: { jour: string; valeur: { heures: number | null; code: string | null } | null }[]) {
+  async function ecrire(l: Ligne, valeurs: { jour: string; valeur: { heures: number | null; code: string | null } | null }[], proposerDecalage = true) {
     if (!peutAgir || moisLignes.get(l.id)?.valide || valeurs.length === 0) return;
     setErreur("");
+    // heures retirées (jour vidé, remplacé par un code, ou diminué) : on propose de les décaler à la fin
+    if (proposerDecalage) {
+      let retire = 0;
+      for (const v of valeurs) {
+        const avant = saisieParCle.get(`${l.id}|${v.jour}`)?.heures ?? 0;
+        const apres = v.valeur?.heures ?? 0;
+        if (avant > apres) retire += avant - apres;
+      }
+      setDecalage(retire > 0.001 ? { ligne: l, heures: Math.round(retire * 100) / 100, dates: valeurs.map((v) => v.jour) } : null);
+    }
     const aSupprimer = valeurs.filter((v) => v.valeur === null).map((v) => v.jour);
     const aEcrire = valeurs.filter((v) => v.valeur !== null).map((v) => ({ ligne_id: l.id, jour: v.jour, heures: v.valeur!.heures, code: v.valeur!.code }));
 
@@ -557,7 +569,65 @@ function PrestationsContenu() {
 
   function viderLigne(l: Ligne) {
     if (!window.confirm(`Vider le mois de ${nomCollab(collabs.get(l.collaborateur_id))} sur ${affairesParId.get(l.affaire_id)?.numero ?? ""} ?`)) return;
-    void ecrire(l, jours.filter((j) => saisieParCle.has(`${l.id}|${j.date}`)).map((j) => ({ jour: j.date, valeur: null })));
+    void ecrire(l, jours.filter((j) => saisieParCle.has(`${l.id}|${j.date}`)).map((j) => ({ jour: j.date, valeur: null })), false);
+  }
+
+  /* DECALER_JOUR : les heures retirées vont sur les jours ouvrés libres après le dernier jour rempli de la ligne
+     (ni week-end, ni férié, ni congé validé), une base horaire par jour ; s'il n'y a plus de place ce mois-ci,
+     sur le mois suivant, après ce qui y est déjà rempli. */
+  async function decaler(d: { ligne: Ligne; heures: number; dates: string[] }) {
+    const l = d.ligne;
+    let reste = d.heures;
+    setDecalage(null);
+    const parJour = Math.max(0.5, l.base_horaire);
+    const remplis = jours.filter((j) => (saisieParCle.get(`${l.id}|${j.date}`)?.heures ?? 0) > 0).map((j) => j.date);
+    const apresLe = [...remplis, ...d.dates].sort().slice(-1)[0] ?? "";
+    const places: string[] = [];
+
+    const ceMois: { jour: string; valeur: { heures: number; code: null } }[] = [];
+    for (const j of jours) {
+      if (reste <= 0.001) break;
+      if (j.date <= apresLe || j.weekend || j.ferie || absent(l.collaborateur_id, j.date) || saisieParCle.has(`${l.id}|${j.date}`)) continue;
+      const h = Math.min(reste, parJour);
+      ceMois.push({ jour: j.date, valeur: { heures: h, code: null } });
+      places.push(`${texteHeures(h)} h le ${j.jour}`);
+      reste -= h;
+    }
+    if (ceMois.length) await ecrire(l, ceMois, false);
+
+    if (reste > 0.001) {
+      const suivant = decalerMois(mois, 1);
+      const jSuiv = joursDuMois(suivant);
+      const { data, error } = await supabase
+        .from("prestation_saisies")
+        .select("jour")
+        .eq("ligne_id", l.id)
+        .gte("jour", jSuiv[0].date)
+        .lte("jour", jSuiv[jSuiv.length - 1].date);
+      if (error) return setErreur(traduireErreur(error.message));
+      const pris = new Set(((data ?? []) as { jour: string }[]).map((x) => x.jour));
+      const dernierSuiv = [...pris].sort().slice(-1)[0] ?? "";
+      const aInserer: { ligne_id: string; jour: string; heures: number; code: null }[] = [];
+      for (const j of jSuiv) {
+        if (reste <= 0.001) break;
+        if (j.date <= dernierSuiv || j.weekend || j.ferie || pris.has(j.date)) continue;
+        const h = Math.min(reste, parJour);
+        aInserer.push({ ligne_id: l.id, jour: j.date, heures: h, code: null });
+        reste -= h;
+      }
+      if (aInserer.length) {
+        const { error: ei } = await supabase.from("prestation_saisies").insert(aInserer);
+        if (ei) return setErreur(traduireErreur(ei.message));
+        const { error: ep } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: l.id, p_mois: suivant });
+        if (ep) setErreur(`Planning du mois suivant non mis à jour : ${traduireErreur(ep.message)}`);
+        places.push(`${texteHeures(aInserer.reduce((t, x) => t + x.heures, 0))} h en ${NOMS_MOIS[Number(suivant.slice(5, 7)) - 1]} (à partir du ${Number(aInserer[0].jour.slice(8))})`);
+      }
+    }
+    setInfo(
+      places.length
+        ? `${formatHeures(d.heures)} décalées pour ${nomCollab(collabs.get(l.collaborateur_id))} sur ${affairesParId.get(l.affaire_id)?.numero ?? ""} : ${places.join(", ")}.`
+        : "Aucun jour libre pour décaler ces heures."
+    );
   }
 
   function toutRemplir() {
@@ -1577,6 +1647,25 @@ function PrestationsContenu() {
           {imputations.filter((i) => !i.charge_obligatoire).map((i) => i.code).join(", ") || "PE, PI"}.
         </p>
       </div>
+
+      {/* DECALER_JOUR : proposition de décaler les heures retirées */}
+      {decalage && peutAgir && (
+        <div
+          role="status"
+          style={{ position: "fixed", left: "50%", bottom: 18, transform: "translateX(-50%)", zIndex: 90, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", maxWidth: "94vw", padding: "10px 14px", background: "#ffffff", border: "2px solid #1f4e99", borderRadius: 12, boxShadow: "0 8px 24px rgba(0,0,0,.2)", fontSize: 14 }}
+        >
+          <span>
+            <strong>{formatHeures(decalage.heures)}</strong> retirées pour {nomCollab(collabs.get(decalage.ligne.collaborateur_id))} sur{" "}
+            <strong>{affairesParId.get(decalage.ligne.affaire_id)?.numero}</strong>.
+          </span>
+          <button type="button" style={page.btnPrimaire} onClick={() => void decaler(decalage)} title="Les mettre sur les jours ouvrés libres après le dernier jour rempli de la ligne (ou le mois suivant)">
+            ↦ Décaler à la fin
+          </button>
+          <button type="button" style={page.btnSecondaire} onClick={() => setDecalage(null)}>
+            Non
+          </button>
+        </div>
+      )}
 
       {editeurReport && (
         <div role="dialog" aria-modal="true" aria-label="Heures reportées" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditeurReport(null)}>
