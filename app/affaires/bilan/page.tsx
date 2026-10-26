@@ -481,7 +481,20 @@ function BilanContenu() {
             aria-label="Numéro d’affaire"
             placeholder="N° d’affaire, ex. 1533"
             value={saisie}
-            onChange={(e) => setSaisie(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSaisie(v);
+              // numéro choisi dans la liste proposée : on l'ouvre sans passer par le bouton
+              if (suggestions.some((s) => s.cle === v)) {
+                const m = v.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
+                if (m) {
+                  const cible = { type: ((m[1] as TypeAffaire) || type) as TypeAffaire, numero: m[2] };
+                  setType(cible.type);
+                  setAffaire(cible);
+                  window.history.replaceState(null, "", `?affaire=${cible.type}${cible.numero}`);
+                }
+              }
+            }}
             style={{ ...page.entrees, maxWidth: 260 }}
           />
           <datalist id="bilan-affaires">
@@ -492,7 +505,7 @@ function BilanContenu() {
             ))}
           </datalist>
           <button type="submit" style={page.btnPrimaire} disabled={chargement}>
-            {chargement ? "Chargement…" : "Afficher le bilan"}
+            {/* BILAN_RECHERCHE */}{chargement ? "Chargement…" : affaire ? "Ouvrir une autre affaire" : "Ouvrir"}
           </button>
         </form>
 
@@ -517,10 +530,9 @@ function BilanContenu() {
                 {client && <span>Client : <strong>{client}</strong></span>}
                 {devis && <span>Devis : <strong>{devis}</strong></span>}
                 {base?.imputation && <span>Imputation : <strong>{base.imputation}</strong></span>}
-                {pilotage?.responsable_id && <span>Responsable : <strong>{noms.get(pilotage.responsable_id) ?? "—"}</strong></span>}
                 {base?.redacteur && <span>Devis rédigé par : <strong>{base.redacteur}</strong></span>}
                 {base?.date_reception_commande && <span>Commande reçue le <strong>{formatDate(base.date_reception_commande)}</strong></span>}
-                {echeance && <span>Délai : <strong>{formatDate(echeance)}</strong></span>}
+                {echeance && !pilotage && <span>Délai : <strong>{formatDate(echeance)}</strong></span>}
               </div>
             </section>
 
