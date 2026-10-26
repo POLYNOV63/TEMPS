@@ -1101,7 +1101,8 @@ function PrestationsContenu() {
           const X_OUTILS = X_RESTE + L_RESTE;
           // calendrier étroit : jours ouvrés 26 px, week-ends et fériés 10 px (s'il manque de la place,
           // la page défile de côté et la partie gauche reste en place)
-          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 10 : 26);
+          // JOURS_LARGES : jours ouvrés 32 px, week-ends et fériés 13 px
+          const largeurJour = (j: { weekend: boolean; ferie: boolean }) => (j.weekend || j.ferie ? 13 : 32);
           const largeurTableau = X_OUTILS + L_OUTILS + jours.reduce((t, j) => t + largeurJour(j), 0);
           // l'en-tête reste visible sous les onglets du Pilotage (49 px) ; deux rangées : semaines, puis jours
           const HAUT = 49;
@@ -1422,7 +1423,7 @@ function PrestationsContenu() {
                                         border: "none",
                                         background: "transparent",
                                         textAlign: "center",
-                                        fontSize: ferme ? 9 : 12,
+                                        fontSize: ferme ? 10 : 13,
                                         fontWeight: 700,
                                         color: s?.code ? "#7a3e00" : C.encre,
                                         fontFamily: "inherit",
