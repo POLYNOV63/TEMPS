@@ -2126,13 +2126,6 @@ function PrestationsContenu() {
                     <Message genre="erreur">Montant ou total d’heures manquant dans le Suivi d’affaire : complétez le classeur, puis synchronisez.</Message>
                   </div>
                 )}
-                {false && tousPropres && (
-                  <div style={{ marginTop: 12 }}>
-                    <Message genre="info">
-                      ⚠ Le taux des lignes ne correspond pas au montant ÷ quantité du Suivi d’affaire ({f.taux !== null ? `${deux(f.taux)} € / ${u}` : "—"}) : vérifiez le montant, le total d’heures, ou la journée de 7 h / 7,5 h.
-                    </Message>
-                  </div>
-                )}
 
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
                   <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
