@@ -1019,13 +1019,16 @@ function PrestationsContenu() {
       const k = unite === "JOUR" ? base : 1;
       const quantite = heuresCmd > 0 ? heuresCmd / k : null;
       const taux = quantite && montant > 0 ? montant / quantite : null;
+      // FICHE_COMMANDE_V2 : consommé dans l'unité de la commande, avec la base de chaque ligne
       let consoH = 0;
+      let consoU = 0;
       let consoE = 0;
       let sansTaux = false;
       const personnes = lignesCmd.map((l) => {
         const h = (consoLigneAvant.get(l.id) ?? 0) + calcul(l).heures;
         const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
         consoH += h;
+        consoU += unite === "JOUR" ? h / (l.base_horaire || base) : h;
         if (tauxH === null) sansTaux = true;
         else consoE += h * tauxH;
         // taux de la ligne ramené dans l'unité de la commande, pour le comparer
@@ -1039,9 +1042,9 @@ function PrestationsContenu() {
         base,
         quantite,
         taux,
-        consomme: consoH / k,
+        consomme: consoU,
         consoE,
-        reste: quantite === null ? null : quantite - consoH / k,
+        reste: quantite === null ? null : quantite - consoU,
         resteE: montant > 0 && !sansTaux ? montant - consoE : null,
         personnes,
       };
@@ -1061,8 +1064,8 @@ function PrestationsContenu() {
       .filter((l) => l.affaire_id === a.id)
       .map((l) => {
         let taux = l.taux;
-        if (taux !== null && l.unite !== unite) taux = Math.round((unite === "HEURE" ? taux / l.base_horaire : taux * base) * 100) / 100;
-        return { l, patch: { unite, base_horaire: base, taux } };
+        if (taux !== null && l.unite !== unite) taux = Math.round((unite === "HEURE" ? taux / l.base_horaire : taux * l.base_horaire) * 100) / 100;
+        return { l, patch: { unite, taux } };
       });
     for (const m of misesAJour) {
       const { error: el } = await supabase.from("prestation_lignes").update(m.patch).eq("id", m.l.id);
