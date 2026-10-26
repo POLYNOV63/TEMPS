@@ -160,12 +160,13 @@ export default function DashboardPage() {
           error: erreurUtilisateur,
         } = await supabase.auth.getUser();
 
-        if (erreurUtilisateur) throw erreurUtilisateur;
-
-        if (!user) {
+        /* SESSION_EXPIREE : pas (ou plus) de session -> page de connexion, sans message d'erreur */
+        if (!user || (erreurUtilisateur && /session|jwt|token/i.test(erreurUtilisateur.message ?? ""))) {
           router.push("/login");
           return;
         }
+
+        if (erreurUtilisateur) throw erreurUtilisateur;
 
         /* Collaborateur connecté */
         const { data: collaborateur, error: erreurCollaborateur } = await supabase
