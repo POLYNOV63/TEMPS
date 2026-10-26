@@ -21,6 +21,12 @@ import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
    route d'un collègue.
 ================================================================ */
 
+/* LIEN_AFFAIRE : « CBE 1604R2 » -> page de l'affaire (Bilan affaire), sur la bonne commande */
+function lienAffaire(type: string, numero: string): string {
+  const base = (numero.match(/^\d+/)?.[0] ?? numero).replace(/^0+/, "");
+  return `/affaires/bilan?affaire=${type}${base}&commande=${encodeURIComponent(numero)}`;
+}
+
 type LigneRoute = {
   jour: string;
   affaire_id: string | null;
@@ -208,7 +214,9 @@ function FeuilleDeRouteContenu() {
                 const jours = d.echeance ? Math.round((new Date(`${d.echeance}T00:00:00`).getTime() - new Date(`${iso(new Date())}T00:00:00`).getTime()) / 86400000) : null;
                 return (
                   <li key={d.affaire_id} style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "baseline" }}>
-                    <strong style={{ color: "#a3245a" }}>DBE {d.numero}</strong>
+                    <Link href={lienAffaire("DBE", d.numero)} title="Ouvrir la page du devis" style={{ fontWeight: 800, color: "#a3245a" }}>
+                      DBE {d.numero}
+                    </Link>
                     <span>{d.designation}</span>
                     <span
                       style={{
@@ -270,7 +278,16 @@ function FeuilleDeRouteContenu() {
                       {s.lignes.map((l) => (
                         <tr key={l.cle}>
                           <td style={td}>
-                            <strong style={{ color: C.rougeFonce }}>{l.titre}</strong>
+                            {(() => {
+                              const m = l.affaireId ? l.titre.match(/^(CBE|DBE)\s*(\S+)$/i) : null;
+                              return m ? (
+                                <Link href={lienAffaire(m[1].toUpperCase(), m[2])} title="Ouvrir la page de l’affaire" style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                  {l.titre}
+                                </Link>
+                              ) : (
+                                <strong style={{ color: C.rougeFonce }}>{l.titre}</strong>
+                              );
+                            })()}
                             {l.activite && <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>{l.activite}</span>}
                             {l.designation && <div style={{ fontSize: 13 }}>{l.designation}</div>}
                             {l.echeance && <div style={{ fontSize: 12, color: l.echeance < s.debut ? "#b3261e" : C.gris }}>délai : {dateCourte(l.echeance)}/{l.echeance.slice(2, 4)}</div>}
@@ -286,7 +303,9 @@ function FeuilleDeRouteContenu() {
                       {s.aRendre.map((d) => (
                         <tr key={`devis-${d.affaire_id}`}>
                           <td style={td}>
-                            <strong style={{ color: "#a3245a" }}>📝 DBE {d.numero}</strong>
+                            <Link href={lienAffaire("DBE", d.numero)} title="Ouvrir la page du devis" style={{ fontWeight: 800, color: "#a3245a" }}>
+                              📝 DBE {d.numero}
+                            </Link>
                             <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>devis à rendre</span>
                             {d.designation && <div style={{ fontSize: 13 }}>{d.designation}</div>}
                           </td>
