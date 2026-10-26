@@ -30,7 +30,8 @@ if (!texte.includes("FICHE_COMMANDE")) {
 }
 let erreurs = 0;
 function remplacer(nom, cherche, remplace) {
-  const nb = typeof cherche === "string" ? texte.split(cherche).length - 1 : (texte.match(cherche) ?? []).length;
+  // une expression régulière se compte avec le drapeau « g » (sinon ses groupes faussent le compte)
+  const nb = typeof cherche === "string" ? texte.split(cherche).length - 1 : (texte.match(new RegExp(cherche.source, "g")) ?? []).length;
   if (nb !== 1) {
     console.error(`✗ ${nom} : passage trouvé ${nb} fois (attendu 1)`);
     erreurs++;

@@ -1017,8 +1017,19 @@ function PrestationsContenu() {
       const montant = sl?.montant ?? 0;
       const heuresCmd = Number(sl?.heures_total) || 0;
       const k = unite === "JOUR" ? base : 1;
-      const quantite = heuresCmd > 0 ? heuresCmd / k : null;
-      const taux = quantite && montant > 0 ? montant / quantite : null;
+      const quantiteHeures = heuresCmd > 0 ? heuresCmd / k : null;
+      // FICHE_COMMANDE_V3 : la commande est un MONTANT ; quantité = montant ÷ taux des lignes (décimales comprises)
+      const premiere = lignesCmd.find((l) => l.taux !== null);
+      const tauxLignes =
+        premiere && premiere.taux !== null
+          ? premiere.unite === unite
+            ? premiere.taux
+            : premiere.unite === "JOUR"
+              ? premiere.taux / premiere.base_horaire
+              : premiere.taux * premiere.base_horaire
+          : null;
+      const taux = tauxLignes ?? (quantiteHeures && montant > 0 ? montant / quantiteHeures : null);
+      const quantite = montant > 0 && taux ? montant / taux : quantiteHeures;
       // FICHE_COMMANDE_V2 : consommé dans l'unité de la commande, avec la base de chaque ligne
       let consoH = 0;
       let consoU = 0;
@@ -1042,9 +1053,9 @@ function PrestationsContenu() {
         base,
         quantite,
         taux,
-        consomme: consoU,
+        consomme: montant > 0 && taux ? consoE / taux : consoH / k,
         consoE,
-        reste: quantite === null ? null : quantite - consoU,
+        reste: quantite === null ? null : quantite - (montant > 0 && taux ? consoE / taux : consoH / k),
         resteE: montant > 0 && !sansTaux ? montant - consoE : null,
         personnes,
       };
@@ -2053,8 +2064,8 @@ function PrestationsContenu() {
                     </label>
                   )}
                 </div>
-                {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, f.unite === "JOUR" ? `${formatHeures(f.heuresCmd)} ÷ ${deux(f.base)} h` : undefined)}
-                {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Montant ÷ quantité commandée")}
+                {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, "Montant de la commande ÷ taux des lignes")}
+                {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Taux des lignes du relevé (celui de la première, s’il y en a plusieurs)")}
 
                 {titreSection("Où on en est")}
                 {info("Consommé", `${deux(Math.round(f.consomme * 100) / 100)} ${u}${f.consoE > 0 ? ` · ${euros(f.consoE)}` : ""}`, "Heures saisies au relevé, tous mois et toutes personnes confondus")}
@@ -2115,7 +2126,7 @@ function PrestationsContenu() {
                     <Message genre="erreur">Montant ou total d’heures manquant dans le Suivi d’affaire : complétez le classeur, puis synchronisez.</Message>
                   </div>
                 )}
-                {tousPropres && (
+                {false && tousPropres && (
                   <div style={{ marginTop: 12 }}>
                     <Message genre="info">
                       ⚠ Le taux des lignes ne correspond pas au montant ÷ quantité du Suivi d’affaire ({f.taux !== null ? `${deux(f.taux)} € / ${u}` : "—"}) : vérifiez le montant, le total d’heures, ou la journée de 7 h / 7,5 h.
