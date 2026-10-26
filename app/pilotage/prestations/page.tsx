@@ -1412,7 +1412,16 @@ function PrestationsContenu() {
                                       padding: 0,
                                       borderBottom: `1px solid ${C.ligne}`,
                                       borderLeft: j.js === 1 ? `2px solid ${C.ligne}` : "1px solid #eef0f3",
-                                      background: choisi ? "#fff3c4" : ferme ? "#eceef1" : "#ffffff",
+                                      // FOND_ABSENCE : absence saisie ou congé validé en bleu clair, maladie / accident en rose
+                                      background: choisi
+                                        ? "#fff3c4"
+                                        : s?.code || conge
+                                          ? /^(ML|MA|AT|MP)/i.test(s?.code ?? "")
+                                            ? "#fde2e2"
+                                            : "#dbe8fd"
+                                          : ferme
+                                            ? "#eceef1"
+                                            : "#ffffff",
                                       backgroundImage: different ? "linear-gradient(225deg, #e07a00 0, #e07a00 6px, transparent 6px)" : undefined,
                                       outline: choisi ? "1px solid #e0b400" : undefined,
                                     }}
