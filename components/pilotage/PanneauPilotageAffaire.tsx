@@ -166,6 +166,11 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
   }
 
   const dbe = affaire.type === "DBE";
+  /* EXCEL_PILOTE : une affaire venue du Suivi d'affaire BE revient à chaque synchronisation (pas de
+     suppression), et le délai d'une COMMANDE est celui du classeur (il se modifie dans Excel).
+     La date de rendu d'un devis (DBE) reste gérée ici. */
+  const xls = Boolean((affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le);
+  const delaiExcel = xls && !dbe;
   const etiquette: CSSProperties = { fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris };
   const valeur: CSSProperties = { fontSize: 19, fontWeight: 700, marginTop: 2 };
   const lien: CSSProperties = { all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: C.rougeFonce, display: "block", marginTop: 4 };
@@ -267,7 +272,12 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
               changé le {formatDate(historique[0].modifie_le)} — {historique[0].motif}
             </div>
           )}
-          {peutModifier && edition !== "delai" && (
+          {delaiExcel && (
+            <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }} title="La synchronisation reprend le délai du classeur : un changement fait ici serait écrasé">
+              se modifie dans le Suivi d’affaire BE
+            </div>
+          )}
+          {peutModifier && !delaiExcel && edition !== "delai" && (
             <button
               type="button"
               style={lien}
@@ -326,7 +336,7 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
         <button type="button" onClick={() => setVoirHistorique((v) => !v)} style={{ all: "unset", cursor: "pointer", fontWeight: 800 }}>
           {voirHistorique ? "▾" : "▸"} Historique des {dbe ? "dates de rendu" : "délais"} ({historique.length})
         </button>
-        {moi?.estAdmin && (
+        {moi?.estAdmin && !xls && (
           <button type="button" onClick={() => void supprimer()} style={{ all: "unset", cursor: "pointer", marginLeft: "auto", fontSize: 13, color: C.gris, textDecoration: "underline" }}>
             Supprimer du Pilotage
           </button>

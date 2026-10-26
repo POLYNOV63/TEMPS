@@ -174,6 +174,8 @@ function PlanningAffairesContenu() {
   const limiter = false;
   const [drag, setDrag] = useState<DragEtat | null>(null);
   const [dragAffaire, setDragAffaire] = useState<DragEtat | null>(null);
+  // JALON_DBE_GLISSE : 📌 d'un devis en cours de déplacement, et le jour visé
+  const [jalonDrag, setJalonDrag] = useState<{ id: string; jour: string | null } | null>(null);
   const [imputations, setImputations] = useState<Imputation[]>([]);
   const [selection, setSelection] = useState<string | null>(null);
   // FOCUS_PERSONNE : toutes les affectations d'une personne en surbrillance, sa charge jour par jour sous les dates
@@ -1069,6 +1071,42 @@ function PlanningAffairesContenu() {
     window.addEventListener("pointerup", relacher, { once: true });
   }
 
+  /* JALON_DBE_GLISSE : le 📌 d'un devis se glisse jusqu'au jour voulu ; la date de rendu change à la
+     relâche, par la fonction des délais (historisée, motif automatique) */
+  function demarrerJalon(e: PointerReact<HTMLElement>, affaire: Affaire) {
+    const ligne = (e.currentTarget as HTMLElement).closest("[data-ligne]") as HTMLElement | null;
+    if (!ligne || !peutAgir) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let jour: string | null = affaire.echeance;
+    setJalonDrag({ id: affaire.id, jour });
+    const bouger = (ev: PointerEvent) => {
+      const j = jourSousLaSouris(ligne, ev.clientX);
+      if (j && j !== jour) {
+        jour = j;
+        setJalonDrag({ id: affaire.id, jour: j });
+      }
+    };
+    const relacher = async () => {
+      window.removeEventListener("pointermove", bouger);
+      setJalonDrag(null);
+      if (!jour || jour === affaire.echeance) return;
+      const { error } = await supabase.rpc("pilotage_changer_echeance", {
+        p_affaire_id: affaire.id,
+        p_nouvelle_date: jour,
+        p_motif: "Date de rendu du devis déplacée au planning",
+      });
+      if (error) {
+        setErreur(traduireErreur(error.message));
+        return;
+      }
+      setInfo(`DBE ${affaire.numero} : rendu le ${formatDate(jour)}.`);
+      setRechargement((n) => n + 1);
+    };
+    window.addEventListener("pointermove", bouger);
+    window.addEventListener("pointerup", () => void relacher(), { once: true });
+  }
+
   /* Colonne (jour) sous la souris dans une ligne du planning */
   function jourSousLaSouris(ligne: HTMLElement, clientX: number): string | null {
     const rect = ligne.getBoundingClientRect();
@@ -1580,14 +1618,43 @@ function PlanningAffairesContenu() {
             })()}
 
           {/* jalon : livraison souhaitée / remise */}
-          {!prestation && idxLivraison >= 0 && (
-            <div
-              title={`${affaire.type === "DBE" ? `Rendu du devis par ${nomCollab(annuaire.find((c) => c.id === affaire.responsable_id))}` : "Livraison souhaitée"} : ${formatDate(affaire.echeance)}`}
-              style={{ gridColumn: col(idxLivraison), gridRow: 1, alignSelf: "center", justifySelf: "end", fontSize: 16, fontWeight: 800, color: affaire.type === "DBE" ? "#8a3a5d" : C.rougeFonce, zIndex: 2, pointerEvents: "none" }}
-            >
-              {/* RENDU_DBE_EPINGLE */}{affaire.type === "DBE" ? "📌" : "⚑"}
-            </div>
-          )}
+          {!prestation &&
+            (() => {
+              const dbe = affaire.type === "DBE";
+              const deplacable = dbe && peutAgir && affaire.statut !== "LIVREE";
+              const enCoursDeplacement = jalonDrag?.id === affaire.id;
+              const idx = enCoursDeplacement && jalonDrag?.jour ? colonnes.indexOf(jalonDrag.jour) : idxLivraison;
+              if (idx < 0) return null;
+              return (
+                <div
+                  title={
+                    dbe
+                      ? `Rendu du devis par ${nomCollab(annuaire.find((c) => c.id === affaire.responsable_id))} : ${formatDate(enCoursDeplacement ? jalonDrag?.jour ?? null : affaire.echeance)}${deplacable ? "\nGlisser pour changer la date de rendu" : ""}`
+                      : `Délai : ${formatDate(affaire.echeance)}\n(il se modifie dans le Suivi d’affaire BE)`
+                  }
+                  onPointerDown={deplacable ? (e) => demarrerJalon(e, affaire) : undefined}
+                  style={{
+                    gridColumn: col(idx),
+                    gridRow: 1,
+                    alignSelf: "center",
+                    justifySelf: "end",
+                    fontSize: 16,
+                    fontWeight: 800,
+                    color: dbe ? "#8a3a5d" : C.rougeFonce,
+                    zIndex: enCoursDeplacement ? 6 : 2,
+                    pointerEvents: deplacable ? "auto" : "none",
+                    cursor: deplacable ? (enCoursDeplacement ? "grabbing" : "grab") : undefined,
+                    touchAction: "none",
+                    borderRadius: 4,
+                    outline: enCoursDeplacement ? "2px dashed #8a3a5d" : undefined,
+                    background: enCoursDeplacement ? "#fff6fa" : undefined,
+                  }}
+                >
+                  {/* RENDU_DBE_EPINGLE */}
+                  {dbe ? "📌" : "⚑"}
+                </div>
+              );
+            })()}
 
           <div
             style={{
