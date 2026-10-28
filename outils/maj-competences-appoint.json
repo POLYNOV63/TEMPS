@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "États : compétences d’appoint",
+  "cherche": "  const [editPredo, setEditPredo] = useState<Set<string>>(new Set());",
+  "remplace": "  const [editPredo, setEditPredo] = useState<Set<string>>(new Set());\n  // COMPETENCES_APPOINT : ce que la personne sait aussi faire (Scan…), sans que ce soit sa prédominance\n  const [competences, setCompetences] = useState<Map<string, string[]>>(new Map());\n  const [editCompet, setEditCompet] = useState<Set<string>>(new Set());"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Lecture du niveau (principale ou appoint)",
+  "cherche": "        supabase.from(\"collaborateurs_predominances\").select(\"collaborateur_id,activite_id\"),",
+  "remplace": "        supabase.from(\"collaborateurs_predominances\").select(\"collaborateur_id,activite_id,niveau\"),"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Prédominances et compétences rangées à part",
+  "cherche": "      for (const p of (preRes.data ?? []) as { collaborateur_id: string; activite_id: string }[]) m.set(p.collaborateur_id, [...(m.get(p.collaborateur_id) ?? []), p.activite_id]);\n      setPredominances(m);",
+  "remplace": "      const mc = new Map<string, string[]>();\n      for (const p of (preRes.data ?? []) as { collaborateur_id: string; activite_id: string; niveau?: string | null }[]) {\n        const cible = p.niveau === \"COMPETENCE\" ? mc : m;\n        cible.set(p.collaborateur_id, [...(cible.get(p.collaborateur_id) ?? []), p.activite_id]);\n      }\n      setPredominances(m);\n      setCompetences(mc);"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Ouvrir la fiche : compétences actuelles",
+  "cherche": "    setEditPredo(new Set(predominances.get(c.id) ?? []));",
+  "remplace": "    setEditPredo(new Set(predominances.get(c.id) ?? []));\n    setEditCompet(new Set(competences.get(c.id) ?? []));"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Enregistrer : principale et appoint",
+  "cherche": "      if (editPredo.size > 0) {\n        const { error: ei } = await supabase\n          .from(\"collaborateurs_predominances\")\n          .insert([...editPredo].map((activite_id) => ({ collaborateur_id: editModal.id, activite_id })));",
+  "remplace": "      const lignesPredo = [\n        ...[...editPredo].map((activite_id) => ({ collaborateur_id: editModal.id, activite_id, niveau: \"PRINCIPALE\" })),\n        ...[...editCompet].filter((a) => !editPredo.has(a)).map((activite_id) => ({ collaborateur_id: editModal.id, activite_id, niveau: \"COMPETENCE\" })),\n      ];\n      if (lignesPredo.length > 0) {\n        const { error: ei } = await supabase\n          .from(\"collaborateurs_predominances\")\n          .insert(lignesPredo);"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Fiche : libellé de la prédominance",
+  "cherche": "                <label style={{ ...labelStyle, marginTop: 0 }}>Prédominance (une ou plusieurs activités)</label>",
+  "remplace": "                <label style={{ ...labelStyle, marginTop: 0 }}>Prédominance : son activité principale (une, parfois deux)</label>"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Fiche : cases « Sait aussi faire »",
+  "cherche": "                  Sert à l’Analyse des effectifs. La liste suit « Gestion des activités ».\n                </div>",
+  "remplace": "                  Sert à l’Analyse des effectifs. La liste suit « Gestion des activités ».\n                </div>\n\n                <label style={{ ...labelStyle, marginTop: 12 }}>Sait aussi faire, en appoint (facultatif)</label>\n                <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 8 }}>\n                  {activitesDispo\n                    .filter((a) => (a.actif || editCompet.has(a.id)) && !editPredo.has(a.id))\n                    .map((a) => {\n                      const coche = editCompet.has(a.id);\n                      return (\n                        <label\n                          key={a.id}\n                          style={{ display: \"inline-flex\", alignItems: \"center\", gap: 6, padding: \"6px 10px\", borderRadius: 6, cursor: \"pointer\", border: `1.5px dashed ${coche ? \"#5b6168\" : \"#ccc\"}`, background: coche ? \"#f3f4f6\" : \"white\", fontSize: 14, fontWeight: 700 }}\n                        >\n                          <input\n                            type=\"checkbox\"\n                            checked={coche}\n                            onChange={(e) =>\n                              setEditCompet((s) => {\n                                const n = new Set(s);\n                                if (e.target.checked) n.add(a.id);\n                                else n.delete(a.id);\n                                return n;\n                              })\n                            }\n                          />\n                          {a.nom}\n                        </label>\n                      );\n                    })}\n                </div>\n                <div style={{ fontSize: 12, color: \"#777\", marginTop: 4 }}>\n                  Ce qu’il sait faire sans que ce soit son métier principal (le Scan, par exemple) : affiché à part, ne compte pas dans la composition.\n                </div>"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Carte : compétences d’appoint affichées",
+  "cherche": "                        {c.inclus_statistiques === false && (",
+  "remplace": "                        {(competences.get(c.id) ?? []).map((id) => {\n                          const a = activitesDispo.find((x) => x.id === id);\n                          return a ? (\n                            <span key={`c-${id}`} title=\"Sait aussi faire, en appoint\" style={{ background: \"#f3f4f6\", color: \"#5b6168\", border: \"1px dashed #b9bec5\", padding: \"3px 8px\", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>\n                              + {a.nom}\n                            </span>\n                          ) : null;\n                        })}\n\n                        {c.inclus_statistiques === false && ("
+ }
+]

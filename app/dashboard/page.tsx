@@ -923,6 +923,7 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
           <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel, rentabilité" onClick={() => aller("/analyse/finances")} />
           <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
           <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
+          <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
         </div>
       </Groupe>
       <Groupe titre="Charge du bureau d'études" description="Consultation">
@@ -1091,6 +1092,7 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
         <CarteCompacte icone="🎯" titre="Charge & pointage" description="Par affaire : pointé face au chiffré · par collaborateur : heures et taux d'occupation" onClick={() => aller("/analyse/pointage")} />
+        <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
       </div>
     </Groupe>
   );

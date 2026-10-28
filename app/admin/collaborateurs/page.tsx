@@ -119,6 +119,15 @@ export default function CollaborateursPage() {
   });
   const [editEnCours, setEditEnCours] = useState(false);
 
+  /* PREDOMINANCES : activités dominantes de chacun (Analyse des effectifs). La liste vient de
+     « Gestion des activités » : une nouvelle activité y apparaît d'elle-même. */
+  const [activitesDispo, setActivitesDispo] = useState<{ id: string; nom: string; actif: boolean }[]>([]);
+  const [predominances, setPredominances] = useState<Map<string, string[]>>(new Map());
+  const [editPredo, setEditPredo] = useState<Set<string>>(new Set());
+  // COMPETENCES_APPOINT : ce que la personne sait aussi faire (Scan…), sans que ce soit sa prédominance
+  const [competences, setCompetences] = useState<Map<string, string[]>>(new Map());
+  const [editCompet, setEditCompet] = useState<Set<string>>(new Set());
+
   // Formulaire collaborateur
   const [prenom, setPrenom] = useState("");
   const [nom, setNom] = useState("");
@@ -250,6 +259,22 @@ export default function CollaborateursPage() {
     setProfils(profilsResult.data || []);
     setBases(basesResult.data || []);
     setHistorique(historiqueResult.data || []);
+
+    {
+      const [actRes, preRes] = await Promise.all([
+        supabase.from("activites").select("id,nom,actif,ordre_affichage").order("ordre_affichage", { ascending: true }),
+        supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id,niveau"),
+      ]);
+      setActivitesDispo(((actRes.data ?? []) as { id: string; nom: string; actif: boolean }[]).map((a) => ({ id: a.id, nom: a.nom, actif: a.actif })));
+      const m = new Map<string, string[]>();
+      const mc = new Map<string, string[]>();
+      for (const p of (preRes.data ?? []) as { collaborateur_id: string; activite_id: string; niveau?: string | null }[]) {
+        const cible = p.niveau === "COMPETENCE" ? mc : m;
+        cible.set(p.collaborateur_id, [...(cible.get(p.collaborateur_id) ?? []), p.activite_id]);
+      }
+      setPredominances(m);
+      setCompetences(mc);
+    }
 
     setChargement(false);
   }
@@ -648,6 +673,8 @@ const { data: profil, error: erreurProfil } = await supabase
       inclusStatistiques: c.inclus_statistiques !== false,
     });
 
+    setEditPredo(new Set(predominances.get(c.id) ?? []));
+    setEditCompet(new Set(competences.get(c.id) ?? []));
     setEditModal(c);
   }
 
@@ -734,6 +761,28 @@ const { data: profil, error: erreurProfil } = await supabase
       console.error(error);
       setErreur(`Impossible d'enregistrer les modifications : ${error.message}`);
       return;
+    }
+
+    // PREDOMINANCES : on remplace la liste de la personne par celle cochée
+    if (!estDirection(editForm.role)) {
+      const { error: ed } = await supabase.from("collaborateurs_predominances").delete().eq("collaborateur_id", editModal.id);
+      if (ed) {
+        setErreur(`Fiche enregistrée, mais prédominance non enregistrée : ${ed.message}`);
+        return;
+      }
+      const lignesPredo = [
+        ...[...editPredo].map((activite_id) => ({ collaborateur_id: editModal.id, activite_id, niveau: "PRINCIPALE" })),
+        ...[...editCompet].filter((a) => !editPredo.has(a)).map((activite_id) => ({ collaborateur_id: editModal.id, activite_id, niveau: "COMPETENCE" })),
+      ];
+      if (lignesPredo.length > 0) {
+        const { error: ei } = await supabase
+          .from("collaborateurs_predominances")
+          .insert(lignesPredo);
+        if (ei) {
+          setErreur(`Fiche enregistrée, mais prédominance non enregistrée : ${ei.message}`);
+          return;
+        }
+      }
     }
 
     setEditModal(null);
@@ -972,6 +1021,24 @@ const { data: profil, error: erreurProfil } = await supabase
                             {libelleRole(c.role)}
                           </span>
                         )}
+
+                        {(predominances.get(c.id) ?? []).map((id) => {
+                          const a = activitesDispo.find((x) => x.id === id);
+                          return a ? (
+                            <span key={id} title="Prédominance" style={{ background: "#eef4fb", color: "#1f4e79", border: "1px solid #c9d9ec", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>
+                              {a.nom}
+                            </span>
+                          ) : null;
+                        })}
+
+                        {(competences.get(c.id) ?? []).map((id) => {
+                          const a = activitesDispo.find((x) => x.id === id);
+                          return a ? (
+                            <span key={`c-${id}`} title="Sait aussi faire, en appoint" style={{ background: "#f3f4f6", color: "#5b6168", border: "1px dashed #b9bec5", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>
+                              + {a.nom}
+                            </span>
+                          ) : null;
+                        })}
 
                         {c.inclus_statistiques === false && (
                           <span
@@ -1337,6 +1404,74 @@ const { data: profil, error: erreurProfil } = await supabase
                 </option>
               ))}
             </select>
+
+            {!estDirection(editForm.role) && activitesDispo.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Prédominance : son activité principale (une, parfois deux)</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {activitesDispo
+                    .filter((a) => a.actif || editPredo.has(a.id))
+                    .map((a) => {
+                      const coche = editPredo.has(a.id);
+                      return (
+                        <label
+                          key={a.id}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 6, cursor: "pointer", border: `1.5px solid ${coche ? "#1f4e79" : "#ccc"}`, background: coche ? "#eef4fb" : "white", fontSize: 14, fontWeight: 700 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={coche}
+                            onChange={(e) =>
+                              setEditPredo((s) => {
+                                const n = new Set(s);
+                                if (e.target.checked) n.add(a.id);
+                                else n.delete(a.id);
+                                return n;
+                              })
+                            }
+                          />
+                          {a.nom}
+                        </label>
+                      );
+                    })}
+                </div>
+                <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
+                  Sert à l’Analyse des effectifs. La liste suit « Gestion des activités ».
+                </div>
+
+                <label style={{ ...labelStyle, marginTop: 12 }}>Sait aussi faire, en appoint (facultatif)</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {activitesDispo
+                    .filter((a) => (a.actif || editCompet.has(a.id)) && !editPredo.has(a.id))
+                    .map((a) => {
+                      const coche = editCompet.has(a.id);
+                      return (
+                        <label
+                          key={a.id}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 6, cursor: "pointer", border: `1.5px dashed ${coche ? "#5b6168" : "#ccc"}`, background: coche ? "#f3f4f6" : "white", fontSize: 14, fontWeight: 700 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={coche}
+                            onChange={(e) =>
+                              setEditCompet((s) => {
+                                const n = new Set(s);
+                                if (e.target.checked) n.add(a.id);
+                                else n.delete(a.id);
+                                return n;
+                              })
+                            }
+                          />
+                          {a.nom}
+                        </label>
+                      );
+                    })}
+                </div>
+                <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
+                  Ce qu’il sait faire sans que ce soit son métier principal (le Scan, par exemple) : affiché à part, ne compte pas dans la composition.
+                </div>
+              </div>
+            )}
 
             {!estDirection(editForm.role) && (
             <label

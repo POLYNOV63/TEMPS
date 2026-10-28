@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Fiche : états des prédominances",
+  "cherche": "  const [editEnCours, setEditEnCours] = useState(false);",
+  "remplace": "  const [editEnCours, setEditEnCours] = useState(false);\n\n  /* PREDOMINANCES : activités dominantes de chacun (Analyse des effectifs). La liste vient de\n     « Gestion des activités » : une nouvelle activité y apparaît d'elle-même. */\n  const [activitesDispo, setActivitesDispo] = useState<{ id: string; nom: string; actif: boolean }[]>([]);\n  const [predominances, setPredominances] = useState<Map<string, string[]>>(new Map());\n  const [editPredo, setEditPredo] = useState<Set<string>>(new Set());"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Chargement des activités et des prédominances",
+  "cherche": "    setHistorique(historiqueResult.data || []);",
+  "remplace": "    setHistorique(historiqueResult.data || []);\n\n    {\n      const [actRes, preRes] = await Promise.all([\n        supabase.from(\"activites\").select(\"id,nom,actif,ordre_affichage\").order(\"ordre_affichage\", { ascending: true }),\n        supabase.from(\"collaborateurs_predominances\").select(\"collaborateur_id,activite_id\"),\n      ]);\n      setActivitesDispo(((actRes.data ?? []) as { id: string; nom: string; actif: boolean }[]).map((a) => ({ id: a.id, nom: a.nom, actif: a.actif })));\n      const m = new Map<string, string[]>();\n      for (const p of (preRes.data ?? []) as { collaborateur_id: string; activite_id: string }[]) m.set(p.collaborateur_id, [...(m.get(p.collaborateur_id) ?? []), p.activite_id]);\n      setPredominances(m);\n    }"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Ouvrir la fiche : prédominances actuelles",
+  "cherche": "      inclusStatistiques: c.inclus_statistiques !== false,\n    });\n\n    setEditModal(c);",
+  "remplace": "      inclusStatistiques: c.inclus_statistiques !== false,\n    });\n\n    setEditPredo(new Set(predominances.get(c.id) ?? []));\n    setEditModal(c);"
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Enregistrer les prédominances",
+  "cherche": "    setEditModal(null);\n    await chargerDonnees();\n  }\n\n  function ouvrirAjout(",
+  "remplace": "    // PREDOMINANCES : on remplace la liste de la personne par celle cochée\n    if (!estDirection(editForm.role)) {\n      const { error: ed } = await supabase.from(\"collaborateurs_predominances\").delete().eq(\"collaborateur_id\", editModal.id);\n      if (ed) {\n        setErreur(`Fiche enregistrée, mais prédominance non enregistrée : ${ed.message}`);\n        return;\n      }\n      if (editPredo.size > 0) {\n        const { error: ei } = await supabase\n          .from(\"collaborateurs_predominances\")\n          .insert([...editPredo].map((activite_id) => ({ collaborateur_id: editModal.id, activite_id })));\n        if (ei) {\n          setErreur(`Fiche enregistrée, mais prédominance non enregistrée : ${ei.message}`);\n          return;\n        }\n      }\n    }\n\n    setEditModal(null);\n    await chargerDonnees();\n  }\n\n  function ouvrirAjout("
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Fiche : cases « Prédominance »",
+  "cherche": "            {!estDirection(editForm.role) && (\n            <label\n              style={{\n                display: \"flex\",\n                alignItems: \"flex-start\",",
+  "remplace": "            {!estDirection(editForm.role) && activitesDispo.length > 0 && (\n              <div style={{ marginTop: 16 }}>\n                <label style={{ ...labelStyle, marginTop: 0 }}>Prédominance (une ou plusieurs activités)</label>\n                <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 8 }}>\n                  {activitesDispo\n                    .filter((a) => a.actif || editPredo.has(a.id))\n                    .map((a) => {\n                      const coche = editPredo.has(a.id);\n                      return (\n                        <label\n                          key={a.id}\n                          style={{ display: \"inline-flex\", alignItems: \"center\", gap: 6, padding: \"6px 10px\", borderRadius: 6, cursor: \"pointer\", border: `1.5px solid ${coche ? \"#1f4e79\" : \"#ccc\"}`, background: coche ? \"#eef4fb\" : \"white\", fontSize: 14, fontWeight: 700 }}\n                        >\n                          <input\n                            type=\"checkbox\"\n                            checked={coche}\n                            onChange={(e) =>\n                              setEditPredo((s) => {\n                                const n = new Set(s);\n                                if (e.target.checked) n.add(a.id);\n                                else n.delete(a.id);\n                                return n;\n                              })\n                            }\n                          />\n                          {a.nom}\n                        </label>\n                      );\n                    })}\n                </div>\n                <div style={{ fontSize: 12, color: \"#777\", marginTop: 4 }}>\n                  Sert à l’Analyse des effectifs. La liste suit « Gestion des activités ».\n                </div>\n              </div>\n            )}\n\n            {!estDirection(editForm.role) && (\n            <label\n              style={{\n                display: \"flex\",\n                alignItems: \"flex-start\","
+ },
+ {
+  "fichier": "app/admin/collaborateurs/page.tsx",
+  "nom": "Carte : prédominances affichées",
+  "cherche": "                        {c.inclus_statistiques === false && (",
+  "remplace": "                        {(predominances.get(c.id) ?? []).map((id) => {\n                          const a = activitesDispo.find((x) => x.id === id);\n                          return a ? (\n                            <span key={id} title=\"Prédominance\" style={{ background: \"#eef4fb\", color: \"#1f4e79\", border: \"1px solid #c9d9ec\", padding: \"3px 8px\", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>\n                              {a.nom}\n                            </span>\n                          ) : null;\n                        })}\n\n                        {c.inclus_statistiques === false && ("
+ },
+ {
+  "fichier": "app/dashboard/page.tsx",
+  "nom": "Tableau de bord : carte Analyse des effectifs (administration)",
+  "cherche": "        <CarteCompacte icone=\"🎯\" titre=\"Charge & pointage\" description=\"Par affaire : pointé face au chiffré · par collaborateur : heures et taux d'occupation\" onClick={() => aller(\"/analyse/pointage\")} />",
+  "remplace": "        <CarteCompacte icone=\"🎯\" titre=\"Charge & pointage\" description=\"Par affaire : pointé face au chiffré · par collaborateur : heures et taux d'occupation\" onClick={() => aller(\"/analyse/pointage\")} />\n        <CarteCompacte icone=\"🧑‍🔧\" titre=\"Analyse des effectifs\" description=\"Prédominances, activités pointées et méthodes de vente (PE / PI / BE)\" onClick={() => aller(\"/analyse/effectifs\")} />"
+ },
+ {
+  "fichier": "app/dashboard/page.tsx",
+  "nom": "Tableau de bord : carte Analyse des effectifs (Direction)",
+  "cherche": "          <CarteCompacte icone=\"📈\" titre=\"Indicateurs commerciaux\" description=\"Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes\" onClick={() => aller(\"/pilotage/indicateurs\")} />",
+  "remplace": "          <CarteCompacte icone=\"📈\" titre=\"Indicateurs commerciaux\" description=\"Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes\" onClick={() => aller(\"/pilotage/indicateurs\")} />\n          <CarteCompacte icone=\"🧑‍🔧\" titre=\"Analyse des effectifs\" description=\"Prédominances, activités pointées et méthodes de vente (PE / PI / BE)\" onClick={() => aller(\"/analyse/effectifs\")} />"
+ }
+]
