@@ -346,7 +346,7 @@ function SynchroContenu() {
                 .join(", ")}
               .
               {apercu.stats.lignes_hors_perimetre > 0 &&
-                ` ${apercu.stats.lignes_hors_perimetre} ligne(s) antérieures au 01/11/2024 ne sont pas reprises.`}
+                ` ${apercu.stats.lignes_hors_perimetre} ligne(s) antérieures au 01/11/2023 ne sont pas reprises.`}
               {(apercu.stats.dates_texte_converties > 0 || apercu.stats.nombres_texte_convertis > 0) &&
                 ` ${apercu.stats.dates_texte_converties} date(s) et ${apercu.stats.nombres_texte_convertis} nombre(s) écrits en texte ont été convertis.`}
             </p>

@@ -347,7 +347,7 @@ const RE_AFFAIRE = /^CBE(\d{1,8})(?:R(\d{1,3}))?(?:LOT(\d{1,3}))?(?:ECH(\d{1,3})
    Analyse
    --------------------------------------------------------------- */
 export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}): ResultatAnalyse {
-  const dateMin = options.dateMin ?? "2024-11-01";
+  const dateMin = options.dateMin ?? "2023-11-01"; // PERIMETRE_2023
   const imputations = options.imputations ?? IMPUTATIONS_DEFAUT;
   const anomaliesGenerales: Anomalie[] = [];
 
