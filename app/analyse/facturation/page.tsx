@@ -664,6 +664,16 @@ function FacturationContenu() {
               for (const n of sansLouxor) ajouter(n, { bloque: "Pas de n° ARC Louxor", faire: "Renseigner le n° ARC Louxor." });
               const liste = [...parNumero.entries()].sort(([a], [b]) => a.localeCompare(b, "fr", { numeric: true }));
               if (liste.length === 0) return null;
+              // client et description de chaque commande : tableau du mois, sinon Suivi d'affaire
+              const infos = new Map<string, { client: string; designation: string }>();
+              for (const l of lignes) if (!infos.has(l.numero.toUpperCase())) infos.set(l.numero.toUpperCase(), { client: l.client, designation: l.designation });
+              for (const l of suivi) {
+                const num = (l.genre === "BASE" || l.genre === "AVENANT" ? l.numero_affaire ?? l.cle : l.cle).toUpperCase();
+                if (infos.has(num) || !parNumero.has(num)) continue;
+                const base = baseDe(l);
+                const idClient = l.client_id ?? base.client_id;
+                infos.set(num, { client: idClient ? clients.get(idClient) ?? "" : "", designation: base.designation ?? l.designation ?? "" });
+              }
               return (
                 <section style={{ ...page.carte, padding: 16, marginBottom: 14, borderLeft: "5px solid #b3261e" }}>
                   <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
@@ -676,6 +686,8 @@ function FacturationContenu() {
                     <thead>
                       <tr>
                         <th style={{ ...page.th, whiteSpace: "nowrap" }}>Commande</th>
+                        <th style={page.th}>Client</th>
+                        <th style={page.th}>Description</th>
                         <th style={page.th}>Ce qui bloque</th>
                         <th style={page.th}>Que faire</th>
                       </tr>
@@ -690,6 +702,8 @@ function FacturationContenu() {
                                 {numero.toUpperCase().startsWith("CBE") ? numero : `CBE${numero}`}
                               </Link>
                             </td>
+                            <td style={{ ...page.td, fontWeight: 700, verticalAlign: "top" }}>{infos.get(numero.toUpperCase())?.client || "—"}</td>
+                            <td style={{ ...page.td, fontSize: 13, maxWidth: 260, verticalAlign: "top" }}>{infos.get(numero.toUpperCase())?.designation || "—"}</td>
                             <td style={{ ...page.td, fontWeight: 700, verticalAlign: "top" }}>
                               {blocages.map((b) => (
                                 <div key={b.bloque}>{b.bloque}</div>
