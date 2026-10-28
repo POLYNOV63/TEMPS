@@ -1314,21 +1314,34 @@ function PrestationsContenu() {
             alertes.sort((x, y) => Number(y.crit) - Number(x.crit) || x.a.numero.localeCompare(y.a.numero, "fr", { numeric: true }));
             return (
               <Message genre={alertes.some((x) => x.crit) ? "erreur" : "info"}>
-                <strong>Avenant à prévoir</strong> ({alertes.length}) :{" "}
-                {alertes.map((x, i) => (
-                  <span key={x.a.id}>
-                    {i > 0 ? " · " : ""}
-                    <button
-                      type="button"
-                      onClick={() => setFiche(x.a.id)}
-                      title="Ouvrir la fiche commande"
-                      style={{ all: "unset", cursor: "pointer", fontWeight: 800, textDecoration: "underline dotted" }}
-                    >
-                      {x.a.numero}
-                    </button>{" "}
-                    {x.texte}
-                  </span>
-                ))}
+                {/* AVENANT_DETAIL : chaque commande avec son client et sa description */}
+                <strong>Avenant à prévoir</strong> ({alertes.length})
+                <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                  {alertes.map((x) => {
+                    const nf = numeroFacture(x.a);
+                    return (
+                      <li key={x.a.id} style={{ margin: "2px 0" }}>
+                        <button
+                          type="button"
+                          onClick={() => setFiche(x.a.id)}
+                          title="Ouvrir la fiche commande"
+                          style={{ all: "unset", cursor: "pointer", fontWeight: 800, textDecoration: "underline dotted" }}
+                        >
+                          {x.a.numero}
+                        </button>
+                        {nf.client ? (
+                          <>
+                            {" · "}
+                            <strong>{nf.client}</strong>
+                          </>
+                        ) : null}
+                        {x.a.designation ? <span style={{ fontWeight: 400 }}> · {x.a.designation}</span> : null}
+                        {" — "}
+                        <strong>{x.texte}</strong>
+                      </li>
+                    );
+                  })}
+                </ul>
               </Message>
             );
           })()}
