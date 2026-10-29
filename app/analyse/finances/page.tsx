@@ -103,6 +103,17 @@ function FinancesContenu() {
       .catch(() => setEstAdmin(false));
   }, []);
 
+  /* AJUSTEMENTS_CA : montants ajoutés à la main au réalisé d'un mois (écart avec la compta), SQL 70 */
+  const [ajustements, setAjustements] = useState<{ mois: string; montant: number; motif: string }[]>([]);
+  useEffect(() => {
+    supabase
+      .from("finances_ajustements")
+      .select("mois,montant,motif")
+      .then(({ data }) =>
+        setAjustements(((data ?? []) as { mois: string; montant: number | string; motif: string }[]).map((a) => ({ mois: String(a.mois).slice(0, 10), montant: Number(a.montant) || 0, motif: a.motif })))
+      );
+  }, []);
+
   /* ------------------------------ chargement ------------------------------ */
 
   useEffect(() => {
@@ -317,8 +328,13 @@ function FinancesContenu() {
           imputation: h.categorie,
         };
       });
-    return [...mvExcel, ...mvReleve, ...mvHisto];
-  }, [lignesFin, releve, historique]);
+    const mvAjust: MouvementCA[] = ajustements.map((a) => {
+      const g = groupesVides();
+      g["Non ventilé"] = a.montant;
+      return { date: a.mois, base_affaire: "Ajustement", source: "HISTORIQUE", montant: a.montant, parGroupe: g, negoce: 0, achats: 0, client: a.motif, imputation: "Ajustement" };
+    });
+    return [...mvExcel, ...mvReleve, ...mvHisto, ...mvAjust];
+  }, [lignesFin, releve, historique, ajustements]);
 
   /* CA ATTENDU : forfaits non livrés (délai estimé) + PE / PI prévues */
   const attendus = useMemo(() => {
@@ -652,19 +668,29 @@ function FinancesContenu() {
         {!chargement && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <Tuile libelle="Réalisé" valeur={keuros(vue.total)} sous={`N-1 : ${keuros(vue.totalN1)} (${pct(vue.totalN1 > 0 ? vue.total / vue.totalN1 - 1 : null)})`} />
+              {(() => {
+                // N1_MEME_DATE : on compare les mêmes mois écoulés (exercice en cours) ou l'exercice entier
+                const ecoules = mois.filter((m) => m <= moisCourant).length;
+                const nb = ecoules === 0 ? 12 : ecoules;
+                const somme = (v: number[]) => v.slice(0, nb).reduce((t, x) => t + x, 0);
+                const r = somme(vue.realise);
+                const n1 = somme(vue.realiseN1);
+                const evol = n1 > 0 ? r / n1 - 1 : null;
+                return (
+                  <Tuile
+                    libelle="Réalisé"
+                    valeur={keuros(vue.total)}
+                    sous={`${pct(evol)} par rapport à N-1${nb < 12 ? ` (à fin ${libMois(mois[nb - 1])} : ${keuros(n1)})` : ` (${keuros(n1)})`}`}
+                    accent={evol !== null && evol < 0}
+                  />
+                );
+              })()}
               <Tuile libelle="Attendu" valeur={keuros(vue.totalAttendu)} sous="pas encore livré ou facturé, sur l’exercice" />
               <Tuile
                 libelle="Atterrissage"
                 valeur={keuros(totalAtterrissage)}
                 sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
-              />
-              <Tuile
-                libelle="Marge (affaires terminées + PE / PI)"
-                valeur={vue.margeTotale === null ? "—" : keuros(vue.margeTotale)}
-                sous={vue.margeTotale === null || vue.caRenta === 0 ? "coût de structure à saisir" : `${Math.round((vue.margeTotale / vue.caRenta) * 100)} % du CA concerné`}
-                accent={vue.margeTotale !== null && vue.margeTotale < 0}
               />
               <Tuile libelle="Prix de vente obtenu" valeur={vue.prixObtenu === null ? "—" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString("fr-FR")} €/h` : "CA hors négoce ÷ heures passées"} />
               <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
@@ -781,6 +807,40 @@ function FinancesContenu() {
                     <td style={{ ...td, fontWeight: 800, color: totalAtterrissage - vue.totalPrevu < 0 ? C.rougeTexte : "#1b5e20" }}>
                       {vue.totalPrevu > 0 ? `${totalAtterrissage - vue.totalPrevu > 0 ? "+" : ""}${keuros(totalAtterrissage - vue.totalPrevu)}` : "—"}
                     </td>
+                  </tr>
+                  {/* CUMUL_REALISE : réalisé cumulé face au prévisionnel cumulé, jusqu'au mois en cours */}
+                  <tr style={{ background: "#f6f9ff" }}>
+                    <td style={tdG} title="Réalisé cumulé depuis le début de l'exercice, face au prévisionnel cumulé, et l'écart">
+                      Cumul réalisé / prévu
+                    </td>
+                    {(() => {
+                      let r = 0;
+                      let p = 0;
+                      return mois.map((m, i) => {
+                        r += vue.realise[i];
+                        p += vue.prevu[i];
+                        const e = r - p;
+                        return (
+                          <td key={m} style={{ ...td, fontSize: 12 }}>
+                            {m > moisCourant ? (
+                              "—"
+                            ) : (
+                              <>
+                                <strong>{keuros(r)}</strong>
+                                <div style={{ color: C.gris }}>{p > 0 ? keuros(p) : "—"}</div>
+                                {p > 0 && (
+                                  <div style={{ fontWeight: 800, color: e < 0 ? C.rougeTexte : "#1b5e20" }}>
+                                    {e > 0 ? "+" : ""}
+                                    {keuros(e)} ({pct(e / p)})
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </td>
+                        );
+                      });
+                    })()}
+                    <td style={td} />
                   </tr>
                   <tr>
                     <td style={tdG}>Cumul atterrissage / prévu</td>
@@ -1016,6 +1076,10 @@ function FinancesContenu() {
                 <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Autre, Négoce) ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
                 <li><strong>Rentabilité</strong> : affaires au forfait dont toutes les commandes sont livrées dans l’exercice, et mois validés des PE / PI. Coût = heures réellement passées × coût de structure de l’exercice + achats.</li>
                 <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>
+                <li>
+                  <strong>Ajustements</strong> : montants ajoutés à la main au réalisé d’un mois pour coller à la comptabilité, sous l’imputation « Ajustement »
+                  {ajustements.length > 0 ? ` (${ajustements.map((a) => `${libMois(a.mois.slice(0, 7))} ${a.montant > 0 ? "+" : ""}${keuros(a.montant)}`).join(", ")})` : ""}.
+                </li>
               </ul>
             </details>
           </>

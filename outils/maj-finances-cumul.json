@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Ajustements : chargement",
+  "cherche": "  useEffect(() => {\n    chargerMoi()\n      .then((m) => setEstAdmin(Boolean(m?.estAdmin)))\n      .catch(() => setEstAdmin(false));\n  }, []);",
+  "remplace": "  useEffect(() => {\n    chargerMoi()\n      .then((m) => setEstAdmin(Boolean(m?.estAdmin)))\n      .catch(() => setEstAdmin(false));\n  }, []);\n\n  /* AJUSTEMENTS_CA : montants ajoutés à la main au réalisé d'un mois (écart avec la compta), SQL 70 */\n  const [ajustements, setAjustements] = useState<{ mois: string; montant: number; motif: string }[]>([]);\n  useEffect(() => {\n    supabase\n      .from(\"finances_ajustements\")\n      .select(\"mois,montant,motif\")\n      .then(({ data }) =>\n        setAjustements(((data ?? []) as { mois: string; montant: number | string; motif: string }[]).map((a) => ({ mois: String(a.mois).slice(0, 10), montant: Number(a.montant) || 0, motif: a.motif })))\n      );\n  }, []);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Ajustements : comptés dans le réalisé",
+  "cherche": "    return [...mvExcel, ...mvReleve, ...mvHisto];\n  }, [lignesFin, releve, historique]);",
+  "remplace": "    const mvAjust: MouvementCA[] = ajustements.map((a) => {\n      const g = groupesVides();\n      g[\"Non ventilé\"] = a.montant;\n      return { date: a.mois, base_affaire: \"Ajustement\", source: \"HISTORIQUE\", montant: a.montant, parGroupe: g, negoce: 0, achats: 0, client: a.motif, imputation: \"Ajustement\" };\n    });\n    return [...mvExcel, ...mvReleve, ...mvHisto, ...mvAjust];\n  }, [lignesFin, releve, historique, ajustements]);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile Réalisé : évolution face à N-1, à même date",
+  "cherche": "              <Tuile libelle=\"Réalisé\" valeur={keuros(vue.total)} sous={`N-1 : ${keuros(vue.totalN1)} (${pct(vue.totalN1 > 0 ? vue.total / vue.totalN1 - 1 : null)})`} />",
+  "remplace": "              {(() => {\n                // N1_MEME_DATE : on compare les mêmes mois écoulés (exercice en cours) ou l'exercice entier\n                const ecoules = mois.filter((m) => m <= moisCourant).length;\n                const nb = ecoules === 0 ? 12 : ecoules;\n                const somme = (v: number[]) => v.slice(0, nb).reduce((t, x) => t + x, 0);\n                const r = somme(vue.realise);\n                const n1 = somme(vue.realiseN1);\n                const evol = n1 > 0 ? r / n1 - 1 : null;\n                return (\n                  <Tuile\n                    libelle=\"Réalisé\"\n                    valeur={keuros(vue.total)}\n                    sous={`${pct(evol)} par rapport à N-1${nb < 12 ? ` (à fin ${libMois(mois[nb - 1])} : ${keuros(n1)})` : ` (${keuros(n1)})`}`}\n                    accent={evol !== null && evol < 0}\n                  />\n                );\n              })()}"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile Marge retirée",
+  "cherche": "              <Tuile\n                libelle=\"Marge (affaires terminées + PE / PI)\"\n                valeur={vue.margeTotale === null ? \"—\" : keuros(vue.margeTotale)}\n                sous={vue.margeTotale === null || vue.caRenta === 0 ? \"coût de structure à saisir\" : `${Math.round((vue.margeTotale / vue.caRenta) * 100)} % du CA concerné`}\n                accent={vue.margeTotale !== null && vue.margeTotale < 0}\n              />\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Ligne « Cumul réalisé / prévu »",
+  "cherche": "                  <tr>\n                    <td style={tdG}>Cumul atterrissage / prévu</td>",
+  "remplace": "                  {/* CUMUL_REALISE : réalisé cumulé face au prévisionnel cumulé, jusqu'au mois en cours */}\n                  <tr style={{ background: \"#f6f9ff\" }}>\n                    <td style={tdG} title=\"Réalisé cumulé depuis le début de l'exercice, face au prévisionnel cumulé, et l'écart\">\n                      Cumul réalisé / prévu\n                    </td>\n                    {(() => {\n                      let r = 0;\n                      let p = 0;\n                      return mois.map((m, i) => {\n                        r += vue.realise[i];\n                        p += vue.prevu[i];\n                        const e = r - p;\n                        return (\n                          <td key={m} style={{ ...td, fontSize: 12 }}>\n                            {m > moisCourant ? (\n                              \"—\"\n                            ) : (\n                              <>\n                                <strong>{keuros(r)}</strong>\n                                <div style={{ color: C.gris }}>{p > 0 ? keuros(p) : \"—\"}</div>\n                                {p > 0 && (\n                                  <div style={{ fontWeight: 800, color: e < 0 ? C.rougeTexte : \"#1b5e20\" }}>\n                                    {e > 0 ? \"+\" : \"\"}\n                                    {keuros(e)} ({pct(e / p)})\n                                  </div>\n                                )}\n                              </>\n                            )}\n                          </td>\n                        );\n                      });\n                    })()}\n                    <td style={td} />\n                  </tr>\n                  <tr>\n                    <td style={tdG}>Cumul atterrissage / prévu</td>"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Explications : les ajustements",
+  "cherche": "                <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>",
+  "remplace": "                <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>\n                <li>\n                  <strong>Ajustements</strong> : montants ajoutés à la main au réalisé d’un mois pour coller à la comptabilité, sous l’imputation « Ajustement »\n                  {ajustements.length > 0 ? ` (${ajustements.map((a) => `${libMois(a.mois.slice(0, 7))} ${a.montant > 0 ? \"+\" : \"\"}${keuros(a.montant)}`).join(\", \")})` : \"\"}.\n                </li>"
+ }
+]
