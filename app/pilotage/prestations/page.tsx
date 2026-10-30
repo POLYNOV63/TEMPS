@@ -1350,6 +1350,90 @@ function PrestationsContenu() {
           <Message genre="info">Aucune prestation ce mois-ci. Ajoutez une ligne (affaire PE / PI × personne) en bas de page.</Message>
         )}
 
+        {/* REPORTS_RELEVE : ce qui est reporté ce mois-ci, reçu des mois précédents, envoyé au mois suivant */}
+        {!chargement &&
+          (() => {
+            const items = lignes
+              .filter((l) => l.actif)
+              .map((l) => ({ l, c: calcul(l), a: affairesParId.get(l.affaire_id), ml: moisLignes.get(l.id) }))
+              .filter((x) => x.a && ((x.c.reporte && x.c.heures > 0) || x.c.reportDisponible > 0.01 || x.c.reportEntrant > 0.01 || x.c.sortant > 0.01));
+            if (items.length === 0) return null;
+            const tauxH = (l: Ligne) => (l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux);
+            const thR: CSSProperties = { ...page.th, padding: "6px 8px", fontSize: 12, whiteSpace: "nowrap" };
+            const tdR: CSSProperties = { ...page.td, padding: "6px 8px", fontSize: 13 };
+            return (
+              <details open style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 15, color: "#7a3e00" }}>
+                  ↪ Reports de {nomMois} ({items.length})
+                </summary>
+                <div style={{ overflowX: "auto", marginTop: 8 }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th style={thR}>Commande</th>
+                        <th style={thR}>Pers.</th>
+                        <th style={thR}>Ce mois-ci</th>
+                        <th style={{ ...thR, textAlign: "right" }}>Heures</th>
+                        <th style={{ ...thR, textAlign: "right" }}>Montant estimé</th>
+                        <th style={thR} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map(({ l, c, a, ml }) => {
+                        const t = tauxH(l);
+                        const nf = a ? numeroFacture(a) : null;
+                        const lignesTexte: { texte: string; heures: number }[] = [];
+                        if (c.reporte && c.heures > 0)
+                          lignesTexte.push({
+                            texte: ml ? "Mois reporté (à la main) : facturé plus tard" : "Mois reporté : commande pas encore reçue",
+                            heures: c.heures,
+                          });
+                        if (!c.reporte && c.reportEntrant > 0.01) lignesTexte.push({ texte: "Reçu des mois reportés : facturé ce mois-ci", heures: c.reportEntrant });
+                        if (!c.reporte && c.reportDisponible - c.reportEntrant > 0.01)
+                          lignesTexte.push({ texte: "Reçu des mois reportés : encore en attente", heures: c.reportDisponible - c.reportEntrant });
+                        if (!c.reporte && c.sortant > 0.01) lignesTexte.push({ texte: "Envoyé au mois suivant", heures: c.sortant });
+                        return lignesTexte.map((x, k) => (
+                          <tr key={`${l.id}-${k}`}>
+                            <td style={{ ...tdR, fontWeight: 800, whiteSpace: "nowrap" }}>
+                              {k === 0 ? (
+                                <>
+                                  {nf?.numero}
+                                  {nf?.client ? <span style={{ fontWeight: 400, color: C.gris }}> · {nf.client}</span> : null}
+                                </>
+                              ) : null}
+                            </td>
+                            <td style={{ ...tdR, fontWeight: 800 }}>{k === 0 ? nomCollab(collabs.get(l.collaborateur_id)) : ""}</td>
+                            <td style={{ ...tdR, color: "#7a3e00" }}>{x.texte}</td>
+                            <td style={{ ...tdR, textAlign: "right", whiteSpace: "nowrap" }}>{formatHeures(x.heures)}</td>
+                            <td style={{ ...tdR, textAlign: "right", whiteSpace: "nowrap" }}>{t === null ? "taux ?" : euros(x.heures * t)}</td>
+                            <td style={tdR}>
+                              {k === 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDetails((d) => {
+                                      const n = new Set(d);
+                                      n.add(l.id);
+                                      return n;
+                                    })
+                                  }
+                                  title="Ouvrir les réglages de la ligne (⚙), partie Report"
+                                  style={{ ...outil, minHeight: 28, height: 28, fontSize: 12 }}
+                                >
+                                  ⚙ régler
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ));
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            );
+          })()}
+
         {!chargement && (blocs.length > 0 || aStaffer.length > 0) && (
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
             <input
