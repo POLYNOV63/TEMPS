@@ -1,0 +1,26 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Mois précédent connu",
+  "cherche": "            const tauxH = (l: Ligne) => (l.taux === null ? null : l.unite === \"JOUR\" ? l.taux / l.base_horaire : l.taux);",
+  "remplace": "            const tauxH = (l: Ligne) => (l.taux === null ? null : l.unite === \"JOUR\" ? l.taux / l.base_horaire : l.taux);\n            // REPORTS_TITRE : le mois d'où viennent les heures reportées\n            const moisPrecedent = NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12];\n            const nbRecus = items.filter((x) => !x.c.reporte && x.c.reportDisponible > 0.01).length;\n            const nbReportes = items.filter((x) => x.c.reporte && x.c.heures > 0).length;\n            const nbEnvoyes = items.filter((x) => !x.c.reporte && x.c.sortant > 0.01).length;\n            const pluriel = (n: number, s: string) => `${n} ${s}${n > 1 ? \"s\" : \"\"}`;"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Titre de l’encadré",
+  "cherche": "                  ↪ Reports de {nomMois} ({items.length})",
+  "remplace": "                  ↪{\" \"}\n                  {[\n                    nbRecus ? `${pluriel(nbRecus, \"report\")} de ${moisPrecedent}, à facturer` : \"\",\n                    nbReportes ? `${pluriel(nbReportes, \"ligne\")} de ${nomMois.split(\" \")[0]} reportée${nbReportes > 1 ? \"s\" : \"\"} au mois suivant` : \"\",\n                    nbEnvoyes ? `${pluriel(nbEnvoyes, \"ligne\")} envoyée${nbEnvoyes > 1 ? \"s\" : \"\"} en partie au mois suivant` : \"\",\n                  ]\n                    .filter(Boolean)\n                    .join(\" · \")}"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Ligne : reporté du mois précédent, facturé",
+  "cherche": "\"Reçu des mois reportés : facturé ce mois-ci\"",
+  "remplace": "`Reporté de ${moisPrecedent} : facturé ce mois-ci`"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Ligne : reporté du mois précédent, en attente",
+  "cherche": "\"Reçu des mois reportés : encore en attente\"",
+  "remplace": "`Reporté de ${moisPrecedent} : encore en attente`"
+ }
+]

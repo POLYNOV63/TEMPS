@@ -1359,12 +1359,25 @@ function PrestationsContenu() {
               .filter((x) => x.a && ((x.c.reporte && x.c.heures > 0) || x.c.reportDisponible > 0.01 || x.c.reportEntrant > 0.01 || x.c.sortant > 0.01));
             if (items.length === 0) return null;
             const tauxH = (l: Ligne) => (l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux);
+            // REPORTS_TITRE : le mois d'où viennent les heures reportées
+            const moisPrecedent = NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12];
+            const nbRecus = items.filter((x) => !x.c.reporte && x.c.reportDisponible > 0.01).length;
+            const nbReportes = items.filter((x) => x.c.reporte && x.c.heures > 0).length;
+            const nbEnvoyes = items.filter((x) => !x.c.reporte && x.c.sortant > 0.01).length;
+            const pluriel = (n: number, s: string) => `${n} ${s}${n > 1 ? "s" : ""}`;
             const thR: CSSProperties = { ...page.th, padding: "6px 8px", fontSize: 12, whiteSpace: "nowrap" };
             const tdR: CSSProperties = { ...page.td, padding: "6px 8px", fontSize: 13 };
             return (
               <details open style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" }}>
                 <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 15, color: "#7a3e00" }}>
-                  ↪ Reports de {nomMois} ({items.length})
+                  ↪{" "}
+                  {[
+                    nbRecus ? `${pluriel(nbRecus, "report")} de ${moisPrecedent}, à facturer` : "",
+                    nbReportes ? `${pluriel(nbReportes, "ligne")} de ${nomMois.split(" ")[0]} reportée${nbReportes > 1 ? "s" : ""} au mois suivant` : "",
+                    nbEnvoyes ? `${pluriel(nbEnvoyes, "ligne")} envoyée${nbEnvoyes > 1 ? "s" : ""} en partie au mois suivant` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </summary>
                 <div style={{ overflowX: "auto", marginTop: 8 }}>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -1388,9 +1401,9 @@ function PrestationsContenu() {
                             texte: ml ? "Mois reporté (à la main) : facturé plus tard" : "Mois reporté : commande pas encore reçue",
                             heures: c.heures,
                           });
-                        if (!c.reporte && c.reportEntrant > 0.01) lignesTexte.push({ texte: "Reçu des mois reportés : facturé ce mois-ci", heures: c.reportEntrant });
+                        if (!c.reporte && c.reportEntrant > 0.01) lignesTexte.push({ texte: `Reporté de ${moisPrecedent} : facturé ce mois-ci`, heures: c.reportEntrant });
                         if (!c.reporte && c.reportDisponible - c.reportEntrant > 0.01)
-                          lignesTexte.push({ texte: "Reçu des mois reportés : encore en attente", heures: c.reportDisponible - c.reportEntrant });
+                          lignesTexte.push({ texte: `Reporté de ${moisPrecedent} : encore en attente`, heures: c.reportDisponible - c.reportEntrant });
                         if (!c.reporte && c.sortant > 0.01) lignesTexte.push({ texte: "Envoyé au mois suivant", heures: c.sortant });
                         return lignesTexte.map((x, k) => (
                           <tr key={`${l.id}-${k}`}>
