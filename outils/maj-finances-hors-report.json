@@ -1,0 +1,26 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Attendu : ce qui sera facturé plus tard n'y entre plus",
+  "cherche": "      if (!(r.facture && r.factureValide)) {\n        const cible = r.facture ?? moisApres(r.m > moisCourantIso ? r.m : moisCourantIso);\n        correctifs.push({ date: `${cible}-01`, base_affaire: r.numero, source: \"ATTENDU\", montant: r.montant, parGroupe: g(r.montant), negoce: 0, achats: 0, client: null, imputation: r.imputation });\n      }\n",
+  "remplace": "      // HORS_ATTERRISSAGE : le travail facturé plus tard n'entre dans l'attendu d'aucun mois ; il ne compte qu'une fois facturé (mois clôturé)\n      void moisApres;\n"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile : tout ce qui reste à facturer plus tard",
+  "cherche": "  const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && (r.facture === null || r.facture > mois[11])).reduce((t, r) => t + r.montant, 0);",
+  "remplace": "  const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && !(r.facture && r.factureValide)).reduce((t, r) => t + r.montant, 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile : libellé",
+  "cherche": "                  libelle=\"Fait, facturé après le 31/10\"\n                  valeur={keuros(aRapprocher)}\n                  sous={`PE / PI reportées, hors atterrissage · production de l’exercice : ${keuros(totalAtterrissage + aRapprocher)}`}",
+  "remplace": "                  libelle=\"Fait, facturé plus tard\"\n                  valeur={keuros(aRapprocher)}\n                  sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Explications",
+  "cherche": "travail a été fait. Hors réalisé et hors atterrissage, qui restent le facturé ; il compte dans l’attendu du mois où il sera facturé. La\n                  tuile « Fait, facturé après le 31/10 » sert au rapprochement avec la comptabilité (factures à établir).",
+  "remplace": "travail a été fait. Il n’entre ni dans le réalisé, ni dans l’attendu, ni dans l’atterrissage : il n’y compte qu’une fois facturé (mois\n                  clôturé). La tuile « Fait, facturé plus tard » en donne le total, pour le rapprochement avec la comptabilité."
+ }
+]

@@ -461,10 +461,8 @@ function FinancesContenu() {
       if (r.auto) {
         correctifs.push({ date: `${r.m}-01`, base_affaire: r.numero, source: "ATTENDU", montant: -r.montant, parGroupe: g(-r.montant), negoce: 0, achats: 0, client: null, imputation: r.imputation });
       }
-      if (!(r.facture && r.factureValide)) {
-        const cible = r.facture ?? moisApres(r.m > moisCourantIso ? r.m : moisCourantIso);
-        correctifs.push({ date: `${cible}-01`, base_affaire: r.numero, source: "ATTENDU", montant: r.montant, parGroupe: g(r.montant), negoce: 0, achats: 0, client: null, imputation: r.imputation });
-      }
+      // HORS_ATTERRISSAGE : le travail facturé plus tard n'entre dans l'attendu d'aucun mois ; il ne compte qu'une fois facturé (mois clôturé)
+      void moisApres;
     }
     return { mouvements: [...forfaits.mouvements, ...pepi, ...correctifs], aDater: forfaits.aDater, enRetard: forfaits.mouvements.filter((m) => m.retard) };
   }, [lignesFin, releve, prevusReleve, historique, reportsPEPI]);
@@ -719,7 +717,7 @@ function FinancesContenu() {
   // FAIT_PLUS_TARD : travail des PE / PI reporté, au mois où il a été fait (hors réalisé et atterrissage)
   const faitPlusTard = mois.map((m) => reportsPEPI.filter((r) => r.m === m).reduce((t, r) => t + r.montant, 0));
   // à rapprocher : fait dans l'exercice, facturé après sa fin (ou date de facture pas encore connue)
-  const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && (r.facture === null || r.facture > mois[11])).reduce((t, r) => t + r.montant, 0);
+  const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && !(r.facture && r.factureValide)).reduce((t, r) => t + r.montant, 0);
 
   let cumR = 0;
   let cumP = 0;
@@ -802,9 +800,9 @@ function FinancesContenu() {
               />
               {aRapprocher > 0.5 && (
                 <Tuile
-                  libelle="Fait, facturé après le 31/10"
+                  libelle="Fait, facturé plus tard"
                   valeur={keuros(aRapprocher)}
-                  sous={`PE / PI reportées, hors atterrissage · production de l’exercice : ${keuros(totalAtterrissage + aRapprocher)}`}
+                  sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}
                 />
               )}
               <Tuile libelle="Prix de vente obtenu" valeur={vue.prixObtenu === null ? "—" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString("fr-FR")} €/h` : "CA hors négoce ÷ heures passées"} />
@@ -1195,8 +1193,8 @@ function FinancesContenu() {
                 <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>
                 <li>
                   <strong>Fait, facturé plus tard</strong> : PE / PI d’un mois reporté (commande pas encore reçue, ou report du relevé), au mois où le
-                  travail a été fait. Hors réalisé et hors atterrissage, qui restent le facturé ; il compte dans l’attendu du mois où il sera facturé. La
-                  tuile « Fait, facturé après le 31/10 » sert au rapprochement avec la comptabilité (factures à établir).
+                  travail a été fait. Il n’entre ni dans le réalisé, ni dans l’attendu, ni dans l’atterrissage : il n’y compte qu’une fois facturé (mois
+                  clôturé). La tuile « Fait, facturé plus tard » en donne le total, pour le rapprochement avec la comptabilité.
                 </li>
                 <li>
                   <strong>Ajustements</strong> : montants ajoutés à la main au réalisé d’un mois pour coller à la comptabilité, sous l’imputation « Ajustement »
