@@ -430,6 +430,20 @@ function FacturationContenu() {
     [suivi]
   );
 
+  /* LOUXOR_DOUBLONS : un même n° ARC Louxor sur deux commandes différentes (base ou avenant) */
+  const doublonsLouxor = useMemo(() => {
+    const parArc = new Map<string, Set<string>>();
+    for (const l of suivi) {
+      if (l.disparue || !(l.genre === "BASE" || l.genre === "AVENANT")) continue;
+      const arc = l.numero_arc_louxor?.trim().toUpperCase();
+      if (!arc) continue;
+      const s = parArc.get(arc) ?? new Set<string>();
+      s.add((l.numero_affaire ?? l.cle).toUpperCase());
+      parArc.set(arc, s);
+    }
+    return new Map([...parArc].filter(([, s]) => s.size > 1).map(([a, s]) => [a, [...s].sort((x, y) => x.localeCompare(y, "fr", { numeric: true }))]));
+  }, [suivi]);
+
   /* un seul tableau : forfaits et PE / PI, trié par client (puis n°) par défaut */
   const lignes = useMemo<LigneFacturation[]>(
     () => [
@@ -511,9 +525,19 @@ function FacturationContenu() {
   );
 
   const [tri, setTri] = useState<{ cle: keyof LigneFacturation; sens: 1 | -1 }>({ cle: "client", sens: 1 });
+  // RECHERCHE_FACTURATION : client, n° CBE / DBE / ARC Louxor, désignation, personne, statut
+  const [recherche, setRecherche] = useState("");
   const lignesTriees = useMemo(
     () =>
-      [...lignes].sort((a, b) => {
+      [...lignes]
+        .filter((l) => {
+          const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+          const mots = sansAccents(recherche).split(/\s+/).filter(Boolean);
+          if (mots.length === 0) return true;
+          const texte = sansAccents([l.client, l.numero, l.dbe, l.arc, l.type, l.imputation, l.designation, l.personne, l.statut, l.statutBase].join(" "));
+          return mots.every((m) => texte.includes(m));
+        })
+        .sort((a, b) => {
         const va = a[tri.cle];
         const vb = b[tri.cle];
         const r =
@@ -523,7 +547,7 @@ function FacturationContenu() {
         // à égalité : par n° d'affaire
         return r * tri.sens || a.numero.localeCompare(b.numero, "fr", { numeric: true });
       }),
-    [lignes, tri]
+    [lignes, tri, recherche]
   );
 
   const forfaitsLivres = forfaits.filter((f) => !f.prevu);
@@ -688,6 +712,20 @@ function FacturationContenu() {
               <Tuile libelle="Reste à facturer" valeur={euros(resteAFacturer)} sous="forfaits prévus + PE / PI non clôturés" accent={resteAFacturer > 0.5} />
             </div>
 
+            {doublonsLouxor.size > 0 && (
+              <Message genre="erreur">
+                <strong>N° ARC Louxor en double ({doublonsLouxor.size})</strong> : un même numéro sur plusieurs commandes, à corriger dans le Suivi
+                d’affaire BE —{" "}
+                {[...doublonsLouxor].map(([arc, nums], i) => (
+                  <span key={arc}>
+                    {i > 0 ? " · " : ""}
+                    <strong>{arc}</strong> : {nums.map((n) => (n.startsWith("CBE") ? n : `CBE${n}`)).join(", ")}
+                  </span>
+                ))}
+                .
+              </Message>
+            )}
+
             {/* A_CORRIGER_V2 : ce qui empêche de facturer, une ligne par commande : ce qui bloque, et que faire */}
             {(() => {
               type Blocage = { bloque: string; faire: string };
@@ -793,6 +831,26 @@ function FacturationContenu() {
                   </span>
                 ))}
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                <input
+                  type="search"
+                  value={recherche}
+                  onChange={(e) => setRecherche(e.target.value)}
+                  placeholder="Rechercher : client, n° CBE, DBE ou Louxor, désignation, personne…"
+                  aria-label="Rechercher dans la facturation"
+                  style={{ ...page.entrees, maxWidth: 420, minHeight: 40, fontSize: 14 }}
+                />
+                {recherche.trim() !== "" && (
+                  <>
+                    <span style={{ fontSize: 13, color: C.gris }}>
+                      {lignesTriees.length} ligne{lignesTriees.length > 1 ? "s" : ""} sur {lignes.length}
+                    </span>
+                    <button type="button" style={{ ...page.btnSecondaire, minHeight: 36 }} onClick={() => setRecherche("")}>
+                      Effacer
+                    </button>
+                  </>
+                )}
+              </div>
               {lignes.length === 0 ? (
                 <p style={{ color: C.gris }}>Rien à facturer ce mois-ci.</p>
               ) : (
@@ -828,7 +886,14 @@ function FacturationContenu() {
                         <td style={{ ...td, fontWeight: 700 }}>{l.client || "—"}</td>
                         <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{l.numero}</td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{l.dbe || "—"}</td>
-                        <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{celluleLouxor(l.arc || null, l.statut)}</td>
+                        <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {celluleLouxor(l.arc || null, l.statut)}
+                          {l.arc && doublonsLouxor.has(l.arc.trim().toUpperCase()) && (
+                            <div title={`Aussi sur : ${(doublonsLouxor.get(l.arc.trim().toUpperCase()) ?? []).join(", ")}`} style={{ fontSize: 11, color: "#b3261e", fontWeight: 800, fontStyle: "normal" }}>
+                              ⚠ en double
+                            </div>
+                          )}
+                        </td>
                         <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{l.type}</td>
                         <td style={{ ...td, maxWidth: 240, fontSize: 13 }}>{l.designation}</td>
                         <td style={{ ...td, fontWeight: 800 }}>{l.personne}</td>

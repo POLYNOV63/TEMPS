@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Recherche : état",
+  "cherche": "  const [tri, setTri] = useState<{ cle: keyof LigneFacturation; sens: 1 | -1 }>({ cle: \"client\", sens: 1 });",
+  "remplace": "  const [tri, setTri] = useState<{ cle: keyof LigneFacturation; sens: 1 | -1 }>({ cle: \"client\", sens: 1 });\n  // RECHERCHE_FACTURATION : client, n° CBE / DBE / ARC Louxor, désignation, personne, statut\n  const [recherche, setRecherche] = useState(\"\");"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Recherche : filtre du tableau",
+  "cherche": "      [...lignes].sort((a, b) => {",
+  "remplace": "      [...lignes]\n        .filter((l) => {\n          const sansAccents = (t: string) => t.normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\").toLowerCase();\n          const mots = sansAccents(recherche).split(/\\s+/).filter(Boolean);\n          if (mots.length === 0) return true;\n          const texte = sansAccents([l.client, l.numero, l.dbe, l.arc, l.type, l.imputation, l.designation, l.personne, l.statut, l.statutBase].join(\" \"));\n          return mots.every((m) => texte.includes(m));\n        })\n        .sort((a, b) => {"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Recherche : dépendance",
+  "cherche": "    [lignes, tri]",
+  "remplace": "    [lignes, tri, recherche]"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "N° Louxor en double : calcul",
+  "cherche": "  /* un seul tableau : forfaits et PE / PI",
+  "remplace": "  /* LOUXOR_DOUBLONS : un même n° ARC Louxor sur deux commandes différentes (base ou avenant) */\n  const doublonsLouxor = useMemo(() => {\n    const parArc = new Map<string, Set<string>>();\n    for (const l of suivi) {\n      if (l.disparue || !(l.genre === \"BASE\" || l.genre === \"AVENANT\")) continue;\n      const arc = l.numero_arc_louxor?.trim().toUpperCase();\n      if (!arc) continue;\n      const s = parArc.get(arc) ?? new Set<string>();\n      s.add((l.numero_affaire ?? l.cle).toUpperCase());\n      parArc.set(arc, s);\n    }\n    return new Map([...parArc].filter(([, s]) => s.size > 1).map(([a, s]) => [a, [...s].sort((x, y) => x.localeCompare(y, \"fr\", { numeric: true }))]));\n  }, [suivi]);\n\n  /* un seul tableau : forfaits et PE / PI"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "N° Louxor en double : alerte",
+  "cherche": "            {/* A_CORRIGER_V2",
+  "remplace": "            {doublonsLouxor.size > 0 && (\n              <Message genre=\"erreur\">\n                <strong>N° ARC Louxor en double ({doublonsLouxor.size})</strong> : un même numéro sur plusieurs commandes, à corriger dans le Suivi\n                d’affaire BE —{\" \"}\n                {[...doublonsLouxor].map(([arc, nums], i) => (\n                  <span key={arc}>\n                    {i > 0 ? \" · \" : \"\"}\n                    <strong>{arc}</strong> : {nums.map((n) => (n.startsWith(\"CBE\") ? n : `CBE${n}`)).join(\", \")}\n                  </span>\n                ))}\n                .\n              </Message>\n            )}\n\n            {/* A_CORRIGER_V2"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "N° Louxor en double : repère dans le tableau",
+  "cherche": "<td style={{ ...td, fontWeight: 700, whiteSpace: \"nowrap\" }}>{celluleLouxor(l.arc || null, l.statut)}</td>",
+  "remplace": "<td style={{ ...td, fontWeight: 700, whiteSpace: \"nowrap\" }}>\n                          {celluleLouxor(l.arc || null, l.statut)}\n                          {l.arc && doublonsLouxor.has(l.arc.trim().toUpperCase()) && (\n                            <div title={`Aussi sur : ${(doublonsLouxor.get(l.arc.trim().toUpperCase()) ?? []).join(\", \")}`} style={{ fontSize: 11, color: \"#b3261e\", fontWeight: 800, fontStyle: \"normal\" }}>\n                              ⚠ en double\n                            </div>\n                          )}\n                        </td>"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Recherche : champ",
+  "cherche": "              {lignes.length === 0 ? (",
+  "remplace": "              <div style={{ display: \"flex\", alignItems: \"center\", gap: 10, flexWrap: \"wrap\", marginBottom: 10 }}>\n                <input\n                  type=\"search\"\n                  value={recherche}\n                  onChange={(e) => setRecherche(e.target.value)}\n                  placeholder=\"Rechercher : client, n° CBE, DBE ou Louxor, désignation, personne…\"\n                  aria-label=\"Rechercher dans la facturation\"\n                  style={{ ...page.entrees, maxWidth: 420, minHeight: 40, fontSize: 14 }}\n                />\n                {recherche.trim() !== \"\" && (\n                  <>\n                    <span style={{ fontSize: 13, color: C.gris }}>\n                      {lignesTriees.length} ligne{lignesTriees.length > 1 ? \"s\" : \"\"} sur {lignes.length}\n                    </span>\n                    <button type=\"button\" style={{ ...page.btnSecondaire, minHeight: 36 }} onClick={() => setRecherche(\"\")}>\n                      Effacer\n                    </button>\n                  </>\n                )}\n              </div>\n              {lignes.length === 0 ? ("
+ }
+]
