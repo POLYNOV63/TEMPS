@@ -8,6 +8,7 @@ import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import DetailMontant, { type DetailDemande } from "@/components/finances/DetailMontant";
 import { chargerMoi, chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
+import { exporterExcelPolynov, type ColonneExcel, type FeuilleExcel } from "@/lib/excelPolynov";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import {
   GROUPES,
@@ -646,65 +647,175 @@ function FinancesContenu() {
 
   /* ------------------------------ export ------------------------------ */
 
-  function exporter() {
-    const wb = XLSX.utils.book_new();
-    const entete = ["", ...mois.map(libMois), "Total"];
-    const ligne = (libelle: string, valeurs: number[]) => [libelle, ...valeurs.map((v) => Math.round(v)), Math.round(valeurs.reduce((t, v) => t + v, 0))];
-    const ecarts = vue.realise.map((v, i) => v - vue.prevu[i]);
+  /* EXPORT_FINANCES_V2 : classeur mis en page (titres, euros, totaux, en-têtes figés) */
+  async function exporter() {
+    type L = Record<string, string | number | null | undefined>;
+    const moisEnCours = new Date().toISOString().slice(0, 7);
+    const sous = `Exercice du 1er novembre ${exercice} au 31 octobre ${exercice + 1} · exporté le ${new Date().toLocaleDateString("fr-FR")}`;
+    const colsMois = (somme: boolean): ColonneExcel[] => [
+      { titre: "", cle: "poste", largeur: 40 },
+      ...mois.map((m, i) => ({ titre: libMois(m), cle: `m${i}`, format: "euros" as const, largeur: 12, total: somme })),
+      { titre: "Total", cle: "total", format: "euros" as const, largeur: 14, total: somme },
+    ];
+    const ligne = (poste: string, valeurs: (number | null)[], avecTotal = true): L => {
+      const o: L = { poste, total: avecTotal ? Math.round(valeurs.reduce((t: number, v) => t + (v ?? 0), 0)) : null };
+      valeurs.forEach((v, i) => (o[`m${i}`] = v === null ? null : Math.round(v)));
+      return o;
+    };
     let cR = 0;
     let cP = 0;
     const cumulR = vue.realise.map((v) => (cR += v));
     const cumulP = vue.prevu.map((v) => (cP += v));
-    const feuille1 = [
-      [`Finances — exercice ${exercice}-${exercice + 1}`],
-      [],
-      entete,
-      ligne("Prévisionnel", vue.prevu),
-      ligne("Réalisé", vue.realise),
-      ligne("Attendu (non livré / non facturé)", vue.attendu),
-      ligne("Atterrissage (réalisé + attendu)", vue.realise.map((v, i) => v + vue.attendu[i])),
-      ligne("Écart", ecarts),
-      ["Cumul prévu", ...cumulP.map(Math.round), ""],
-      ["Cumul réalisé", ...cumulR.map(Math.round), ""],
-      ligne(`Réalisé ${exercice - 1}-${exercice}`, vue.realiseN1),
-      [],
-      ["Par imputation"],
-      entete,
-      ...vue.parImputation.map((r) => ligne(r.cle, r.valeurs)),
-      [],
-      ["Par activité"],
-      entete,
-      ...vue.parActivite.map((r) => ligne(r.cle, r.valeurs)),
+    const atter = vue.realise.map((v, i) => v + vue.attendu[i]);
+    const ecoule = mois.map((m) => m <= moisEnCours);
+    const plusTard = mois.map((m) => reportsPEPI.filter((r) => r.m === m).reduce((t, r) => t + r.montant, 0));
+    const nb = ecoule.filter(Boolean).length || 12;
+    const rN = vue.realise.slice(0, nb).reduce((t, v) => t + v, 0);
+    const rN1 = vue.realiseN1.slice(0, nb).reduce((t, v) => t + v, 0);
+
+    const feuilles: FeuilleExcel[] = [
+      {
+        nom: "Mois par mois",
+        titre: `Finances ${exercice}-${exercice + 1} — mois par mois`,
+        sousTitre: sous,
+        colonnes: colsMois(false),
+        lignes: [
+          ligne("Prévisionnel", vue.prevu),
+          ligne("Réalisé (facturé)", vue.realise),
+          ligne("Attendu (pas encore livré ou facturé)", vue.attendu),
+          ligne("Atterrissage (réalisé + attendu)", atter),
+          ligne("Écart atterrissage − prévisionnel", atter.map((v, i) => v - vue.prevu[i])),
+          ligne("Cumul réalisé", cumulR.map((v, i) => (ecoule[i] ? v : null)), false),
+          ligne("Cumul prévisionnel", cumulP, false),
+          ligne("Écart cumulé réalisé − prévu", cumulR.map((v, i) => (ecoule[i] ? v - cumulP[i] : null)), false),
+          ligne("Fait, facturé plus tard (hors atterrissage)", plusTard),
+          ligne(`Réalisé ${exercice - 1}-${exercice} (N-1)`, vue.realiseN1),
+        ],
+        alerte: (l) => String(l.poste).startsWith("Écart") && Number(l.total ?? l[`m${nb - 1}`] ?? 0) < 0,
+        notes: [
+          `Réalisé face à N-1, à même date (${nb} mois) : ${Math.round(rN).toLocaleString("fr-FR")} € contre ${Math.round(rN1).toLocaleString("fr-FR")} €${rN1 > 0 ? ` (${rN >= rN1 ? "+" : ""}${Math.round((rN / rN1 - 1) * 100)} %)` : ""}.`,
+          "Réalisé = facturé (forfaits livrés, PE / PI des mois clôturés). L’atterrissage n’inclut pas le travail facturé plus tard.",
+        ],
+      },
+      {
+        nom: "Par imputation",
+        titre: `Réalisé par imputation — ${exercice}-${exercice + 1}`,
+        sousTitre: sous,
+        colonnes: colsMois(true),
+        lignes: vue.parImputation.map((r) => ligne(r.cle, r.valeurs)),
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Par activité",
+        titre: `Réalisé par activité — ${exercice}-${exercice + 1}`,
+        sousTitre: sous,
+        colonnes: colsMois(true),
+        lignes: vue.parActivite.map((r) => ligne(r.cle, r.valeurs)),
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Activités x imputations",
+        titre: `Activités × imputations — ${exercice}-${exercice + 1}`,
+        sousTitre: sous,
+        colonnes: [
+          { titre: "Activité", cle: "activite", largeur: 22 },
+          ...vue.imputations.map((imp) => ({ titre: imp, cle: `i_${imp}`, format: "euros" as const, largeur: 13, total: true })),
+          { titre: "Total", cle: "total", format: "euros" as const, largeur: 14, total: true },
+        ],
+        lignes: GROUPES.map((g) => {
+          const o: L = { activite: g };
+          let t = 0;
+          for (const imp of vue.imputations) {
+            const v = Math.round(vue.croisement.get(`${g}|${imp}`) ?? 0);
+            o[`i_${imp}`] = v || null;
+            t += v;
+          }
+          o.total = t;
+          return o;
+        }).filter((o) => Number(o.total) !== 0),
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Rentabilité",
+        titre: `Rentabilité par activité — ${exercice}-${exercice + 1}`,
+        sousTitre: `${sous} · affaires au forfait terminées dans l’exercice et mois clôturés des PE / PI`,
+        colonnes: [
+          { titre: "Activité", cle: "activite", largeur: 22 },
+          { titre: "CA", cle: "ca", format: "euros", largeur: 14, total: true },
+          { titre: "H. chiffrées", cle: "hc", format: "nombre", largeur: 12, total: true },
+          { titre: "H. réalisées", cle: "hr", format: "nombre", largeur: 12, total: true },
+          { titre: "Prix vendu (€/h)", cle: "pv", format: "euros", largeur: 14 },
+          { titre: "Prix obtenu (€/h)", cle: "po", format: "euros", largeur: 14 },
+          { titre: "Coût", cle: "cout", format: "euros", largeur: 14, total: true },
+          { titre: "Marge", cle: "marge", format: "euros", largeur: 14, total: true },
+          { titre: "Marge %", cle: "pct", largeur: 9 },
+        ],
+        lignes: vue.parGroupeRenta.map(([g, v]) => ({
+          activite: g,
+          ca: Math.round(v.ca),
+          hc: Math.round(v.heuresChiffrees) || null,
+          hr: Math.round(v.heuresRealisees) || null,
+          pv: v.heuresChiffrees > 0 ? Math.round(v.ca / v.heuresChiffrees) : null,
+          po: v.heuresRealisees > 0 ? Math.round(v.ca / v.heuresRealisees) : null,
+          cout: v.cout === null ? null : Math.round(v.cout),
+          marge: v.cout === null ? null : Math.round(v.ca - v.cout),
+          pct: v.cout === null || v.ca === 0 ? "" : `${Math.round(((v.ca - v.cout) / v.ca) * 100)} %`,
+        })),
+        alerte: (l) => Number(l.marge ?? 0) < 0,
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Facturé plus tard",
+        titre: `Fait, facturé plus tard — ${exercice}-${exercice + 1}`,
+        sousTitre: `${sous} · PE / PI dont le mois est reporté (montant estimé = heures × taux)`,
+        colonnes: [
+          { titre: "Commande", cle: "commande", largeur: 14 },
+          { titre: "Imputation", cle: "imp", largeur: 11 },
+          { titre: "Travail de", cle: "mois", largeur: 12 },
+          { titre: "Heures", cle: "heures", format: "nombre", largeur: 10, total: true },
+          { titre: "Montant estimé", cle: "montant", format: "euros", largeur: 15, total: true },
+          { titre: "Pourquoi", cle: "pourquoi", largeur: 28 },
+          { titre: "Facturé", cle: "facture", largeur: 18 },
+        ],
+        lignes: reportsPEPI
+          .filter((r) => r.m >= mois[0] && r.m <= mois[11])
+          .sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }))
+          .map((r) => ({
+            commande: `CBE${r.numero}`,
+            imp: r.imputation ?? "",
+            mois: libMois(r.m),
+            heures: Math.round(r.heures * 100) / 100,
+            montant: Math.round(r.montant * 100) / 100,
+            pourquoi: r.auto ? "commande pas encore reçue" : "reporté à la main",
+            facture: r.facture && r.factureValide ? `en ${libMois(r.facture)}` : r.facture ? `prévu en ${libMois(r.facture)}` : "pas encore",
+          })),
+        alerte: (l) => l.facture === "pas encore",
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Taux PE PI",
+        titre: `Taux de vente moyen des PE / PI — ${exercice}-${exercice + 1}`,
+        sousTitre: `${sous} · montant facturé ÷ heures facturées, mois clôturés`,
+        colonnes: [
+          { titre: "", cle: "poste", largeur: 16 },
+          ...mois.map((m, i) => ({ titre: libMois(m), cle: `m${i}`, format: "euros" as const, largeur: 11 })),
+          { titre: "Exercice", cle: "ex", format: "euros" as const, largeur: 12 },
+          { titre: "N-1", cle: "n1", format: "euros" as const, largeur: 12 },
+        ],
+        lignes: vue.tauxPEPI.flatMap((t) =>
+          (["h", "j"] as const).map((u) => {
+            const taux = (s: { montant: number; heures: number; jours: number }) => {
+              const q = u === "h" ? s.heures : s.jours;
+              return q > 0 ? Math.round(s.montant / q) : null;
+            };
+            const o: L = { poste: `${t.imp} · € / ${u === "h" ? "heure" : "jour"}`, ex: taux(t.exercice), n1: taux(t.n1) };
+            t.parMois.forEach((s, i) => (o[`m${i}`] = taux(s)));
+            return o;
+          })
+        ),
+      },
     ];
-    const ws1 = XLSX.utils.aoa_to_sheet(feuille1);
-    ws1["!cols"] = [{ wch: 22 }, ...mois.map(() => ({ wch: 11 })), { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws1, "Mois par mois");
-
-    const croisement: (string | number)[][] = [["Activité", ...vue.imputations, "Total"]];
-    for (const g of GROUPES) {
-      const valeurs = vue.imputations.map((imp) => Math.round(vue.croisement.get(`${g}|${imp}`) ?? 0));
-      if (valeurs.every((v) => v === 0)) continue;
-      croisement.push([g, ...valeurs, valeurs.reduce((t, v) => t + v, 0)]);
-    }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(croisement), "Activités x imputations");
-
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(
-        vue.parGroupeRenta.map(([g, v]) => ({
-          Activité: g,
-          "CA (€)": Math.round(v.ca),
-          "Heures chiffrées": Math.round(v.heuresChiffrees),
-          "Heures réalisées": Math.round(v.heuresRealisees),
-          "Prix vendu (€/h)": v.heuresChiffrees > 0 ? Math.round(v.ca / v.heuresChiffrees) : "",
-          "Prix obtenu (€/h)": v.heuresRealisees > 0 ? Math.round(v.ca / v.heuresRealisees) : "",
-          "Coût (€)": v.cout === null ? "" : Math.round(v.cout),
-          "Marge (€)": v.cout === null ? "" : Math.round(v.ca - v.cout),
-        }))
-      ),
-      "Rentabilité par activité"
-    );
-    XLSX.writeFile(wb, `Finances_${exercice}-${exercice + 1}.xlsx`);
+    await exporterExcelPolynov(`Finances_${exercice}-${exercice + 1}`, feuilles);
   }
 
   /* ------------------------------ rendu ------------------------------ */
@@ -767,7 +878,7 @@ function FinancesContenu() {
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice - 1)} aria-label="Exercice précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 120, textAlign: "center" }}>{exercice}-{exercice + 1}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice + 1)} aria-label="Exercice suivant">▶</button>
-            <button type="button" style={page.btnPrimaire} onClick={exporter} disabled={chargement}>Exporter en Excel</button>
+            <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
           </div>
         </div>
 
