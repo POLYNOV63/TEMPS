@@ -1,0 +1,74 @@
+[
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : état de la recherche",
+  "cherche": "  const [filtreType, setFiltreType] = useState<\"TOUS\" | \"CBE\" | \"DBE\" | \"PE\" | \"PI\">(\"TOUS\");",
+  "remplace": "  const [filtreType, setFiltreType] = useState<\"TOUS\" | \"CBE\" | \"DBE\" | \"PE\" | \"PI\">(\"TOUS\");\n  // RECHERCHE_PLANNING : n°, client, description, imputation, personne affectée ou responsable\n  const [recherche, setRecherche] = useState(\"\");"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : correspondance à la recherche",
+  "cherche": "    [filtreType]\n  );",
+  "remplace": "    [filtreType]\n  );\n\n  const correspondRecherche = useMemo(() => {\n    const sansAccents = (t: string) => t.normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\").toLowerCase();\n    const mots = sansAccents(recherche).split(/\\s+/).filter(Boolean);\n    if (mots.length === 0) return () => true;\n    const gens = new Map<string, string>();\n    for (const a of affectations) {\n      if (!a.affaire_id) continue;\n      const c = annuaire.find((x) => x.id === a.collaborateur_id);\n      if (c) gens.set(a.affaire_id, `${gens.get(a.affaire_id) ?? \"\"} ${nomCollab(c)} ${c.prenom ?? \"\"} ${c.nom ?? \"\"}`);\n    }\n    return (a: Affaire) => {\n      const base = (a.numero.match(/^\\d+/)?.[0] ?? a.numero).replace(/^0+/, \"\");\n      const resp = annuaire.find((x) => x.id === a.responsable_id);\n      const texte = sansAccents(\n        [\n          `${a.type}${a.numero}`,\n          a.numero,\n          a.designation ?? \"\",\n          a.imputation ?? \"\",\n          clientsParBase.get(`${a.type}|${base}`) ?? \"\",\n          gens.get(a.id) ?? \"\",\n          resp ? `${nomCollab(resp)} ${resp.prenom ?? \"\"} ${resp.nom ?? \"\"}` : \"\",\n        ].join(\" \")\n      );\n      return mots.every((m) => texte.includes(m));\n    };\n  }, [recherche, affectations, annuaire, clientsParBase]);"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : affaires en cours filtrées",
+  "cherche": "        .filter((a) => a.statut === \"EN_COURS\" || a.statut === \"EN_ATTENTE\")\n        .filter(garderType)",
+  "remplace": "        .filter((a) => a.statut === \"EN_COURS\" || a.statut === \"EN_ATTENTE\")\n        .filter(garderType)\n        .filter(correspondRecherche)"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : affaires en cours, dépendance",
+  "cherche": "            a.numero.localeCompare(b.numero, \"fr\", { numeric: true })\n        ),\n    [affaires, garderType]",
+  "remplace": "            a.numero.localeCompare(b.numero, \"fr\", { numeric: true })\n        ),\n    [affaires, garderType, correspondRecherche]"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : affaires livrées filtrées",
+  "cherche": "        .filter((a) => a.statut === \"LIVREE\")\n        .filter(garderType)",
+  "remplace": "        .filter((a) => a.statut === \"LIVREE\")\n        .filter(garderType)\n        .filter(correspondRecherche)"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : affaires livrées, dépendance",
+  "cherche": "            b.numero.localeCompare(a.numero, \"fr\", { numeric: true })\n        ),\n    [affaires, garderType]",
+  "remplace": "            b.numero.localeCompare(a.numero, \"fr\", { numeric: true })\n        ),\n    [affaires, garderType, correspondRecherche]"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : champ de recherche",
+  "cherche": "            {([\"TOUS\", \"CBE\", \"DBE\", \"PE\", \"PI\"] as const).map((t) => (",
+  "remplace": "            <input\n              type=\"search\"\n              value={recherche}\n              onChange={(e) => setRecherche(e.target.value)}\n              placeholder=\"Rechercher : n°, client, description, personne…\"\n              aria-label=\"Rechercher dans le planning\"\n              style={{ ...page.entrees, width: 290, minHeight: 44, fontSize: 14 }}\n            />\n            {([\"TOUS\", \"CBE\", \"DBE\", \"PE\", \"PI\"] as const).map((t) => ("
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : un devis remis n'y compte plus",
+  "cherche": "      const affaire = a.affaire_id ? affairesParId.get(a.affaire_id) : undefined;\n      const { fond, encre } = couleurs(affaire);",
+  "remplace": "      const affaire = a.affaire_id ? affairesParId.get(a.affaire_id) : undefined;\n      const { fond, encre } = couleurs(affaire);\n      // DEVIS_REMIS_RESSOURCES : comme au planning des affaires, un devis envoyé ou perdu n'apparaît plus\n      if (affaire && affaire.type === \"DBE\" && affaire.statut !== \"EN_COURS\" && affaire.statut !== \"EN_ATTENTE\") {\n        for (const j of js) p.charge[j.i] -= j.h;\n        continue;\n      }"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : la semaine en cours",
+  "cherche": "  const gabarit = `${LARGEUR_NOM}px repeat(${colonnes.length}, minmax(0, 1fr)) 96px`;",
+  "remplace": "  const gabarit = `${LARGEUR_NOM}px repeat(${colonnes.length}, minmax(0, 1fr)) 96px`;\n  // SEMAINE_ENCADREE : colonnes de la semaine en cours\n  const lundiCourant = lundiDe(aujourdhui);\n  const idxSemaine = colonnes.map((j, i) => (j >= lundiCourant && j <= ajouterJours(lundiCourant, 4) ? i : -1)).filter((i) => i >= 0);\n  const cadreSemaine = (haut: boolean, bas: boolean): CSSProperties | null =>\n    idxSemaine.length === 0\n      ? null\n      : {\n          gridColumn: `${idxSemaine[0] + 2} / ${idxSemaine[idxSemaine.length - 1] + 3}`,\n          gridRow: \"1 / -1\",\n          borderLeft: `2px solid ${C.rouge}`,\n          borderRight: `2px solid ${C.rouge}`,\n          borderTop: haut ? `2px solid ${C.rouge}` : undefined,\n          borderBottom: bas ? `2px solid ${C.rouge}` : undefined,\n          borderRadius: haut ? \"6px 6px 0 0\" : bas ? \"0 0 6px 6px\" : undefined,\n          background: \"rgba(192, 0, 0, 0.035)\",\n          pointerEvents: \"none\",\n          zIndex: 3,\n        };"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : cadre dans l'en-tête",
+  "cherche": "              <div style={{ gridColumn: colonnes.length + 2, gridRow: \"1 / span 3\", display: \"flex\", alignItems: \"flex-end\", justifyContent: \"flex-end\", padding: \"0 6px 6px\", fontSize: 11, fontWeight: 800, textTransform: \"uppercase\", color: C.gris, textAlign: \"right\" }}>",
+  "remplace": "              {cadreSemaine(true, false) && <div aria-hidden=\"true\" title=\"Semaine en cours\" style={{ ...cadreSemaine(true, false)!, gridRow: \"2 / span 2\" }} />}\n              <div style={{ gridColumn: colonnes.length + 2, gridRow: \"1 / span 3\", display: \"flex\", alignItems: \"flex-end\", justifyContent: \"flex-end\", padding: \"0 6px 6px\", fontSize: 11, fontWeight: 800, textTransform: \"uppercase\", color: C.gris, textAlign: \"right\" }}>"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : cadre sur chaque personne",
+  "cherche": "            {lignes.map((l) => {\n              const ratio = l.totalNet > 0 ? l.totalAffecte / l.totalNet : 0;",
+  "remplace": "            {lignes.map((l, k) => {\n              const ratio = l.totalNet > 0 ? l.totalAffecte / l.totalNet : 0;\n              const cadre = cadreSemaine(false, k === lignes.length - 1);"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : cadre dessiné",
+  "cherche": "                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${l.voies + 1}`, display: \"flex\", flexDirection: \"column\", justifyContent: \"center\", alignItems: \"flex-end\", paddingRight: 6, fontSize: 12 }}>",
+  "remplace": "                  {cadre && <div aria-hidden=\"true\" style={{ ...cadre, margin: \"-6px 0\" }} />}\n                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${l.voies + 1}`, display: \"flex\", flexDirection: \"column\", justifyContent: \"center\", alignItems: \"flex-end\", paddingRight: 6, fontSize: 12 }}>"
+ }
+]
