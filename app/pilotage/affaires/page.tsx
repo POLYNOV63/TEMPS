@@ -318,7 +318,8 @@ function PlanningAffairesContenu() {
         // Au planning d'office : toute commande en cours ou en intention de commande ; une commande
         // livrée ou abandonnée n'y reste que si elle a eu des affectations (historique de charge).
         const avecAffectations = new Set(pl.affectations.map((x) => x.affaire_id).filter(Boolean) as string[]);
-        const actives = af.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || avecAffectations.has(a.id));
+        // DEVIS_ENVOYE_HORS_PLANNING : un devis envoyé (ou perdu) quitte le planning, même avec des affectations
+        const actives = af.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE" || (avecAffectations.has(a.id) && a.type !== "DBE"));
         setToutesAffaires(af);
 
         // PE / PI : seulement les avenants (R1, R2…) quand il y en a ; sinon la commande de base.
@@ -642,9 +643,10 @@ function PlanningAffairesContenu() {
         .filter(garderType)
         .sort(
           (a, b) =>
-            // ORDRE_PAR_NUMERO : plus anciennes d'abord, avenant juste sous sa commande de base
+            // PLANNING_TRI_RECENT : plus récentes d'abord (n° de base le plus grand), avenant juste sous sa commande de base
             rangGroupe(a) - rangGroupe(b) ||
             (a.type === b.type ? 0 : a.type === "CBE" ? -1 : 1) ||
+            Number(b.numero.match(/^\d+/)?.[0] ?? 0) - Number(a.numero.match(/^\d+/)?.[0] ?? 0) ||
             a.numero.localeCompare(b.numero, "fr", { numeric: true })
         ),
     [affaires, garderType]
