@@ -95,6 +95,9 @@ type LignePrestation = {
   baseHoraire: number;
 };
 
+/* REPORT_FACTURATION : heures PE / PI faites ce mois-ci mais facturées plus tard */
+type Reporte = { numero: string; client: string | null; designation: string | null; personne: string; heures: number; montant: number; pourquoi: string };
+
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nombre = (n: number) => (Math.round(n * 100) / 100).toLocaleString("fr-FR");
@@ -143,6 +146,7 @@ function FacturationContenu() {
   const [montants, setMontants] = useState<Map<string, { montant: number; echeances: number }>>(new Map());
   const [clients, setClients] = useState<Map<string, string>>(new Map());
   const [prestations, setPrestations] = useState<LignePrestation[]>([]);
+  const [reportes, setReportes] = useState<Reporte[]>([]);
 
   /* Suivi d'affaire BE : chargé une fois */
   useEffect(() => {
@@ -189,15 +193,15 @@ function FacturationContenu() {
     (async () => {
       try {
         const [pm, lp, pa, co, sa, pmTous, saTous] = await Promise.all([
-          supabase.from("prestation_mois").select("ligne_id,valide,reporte,report_sortant,hs_refacturer,heures_fige,montant_fige,montant_import,commande_import,reste_import").eq("mois", debut),
+          supabase.from("prestation_mois").select("ligne_id,valide,reporte,report_sortant,report_heures,hs_refacturer,heures_fige,montant_fige,montant_import,commande_import,reste_import").eq("mois", debut),
           supabase.from("prestation_lignes").select("id,affaire_id,collaborateur_id,unite,taux,base_horaire"),
           supabase.from("pilotage_affaires").select("id,numero,statut,imputation,designation"),
           supabase.from("collaborateurs").select("id,trigramme"),
           chargerTout<{ ligne_id: string; heures: number | string | null }>((a, b) =>
             supabase.from("prestation_saisies").select("ligne_id,heures").gte("jour", debut).lte("jour", fin).order("ligne_id").range(a, b)
           ),
-          chargerTout<{ ligne_id: string; mois: string; valide: boolean; heures_fige: number | string | null }>((a, b) =>
-            supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige").lte("mois", debut).order("ligne_id").range(a, b)
+          chargerTout<{ ligne_id: string; mois: string; valide: boolean; heures_fige: number | string | null; reporte: boolean | null; report_sortant: number | string | null }>((a, b) =>
+            supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige,reporte,report_sortant").lte("mois", debut).order("ligne_id").range(a, b)
           ),
           chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>
             supabase.from("prestation_saisies").select("ligne_id,jour,heures").lte("jour", fin).order("ligne_id").range(a, b)
@@ -211,7 +215,7 @@ function FacturationContenu() {
         const trig = new Map(((co.data ?? []) as { id: string; trigramme: string | null }[]).map((c) => [c.id, c.trigramme ?? "?"]));
         const heures = new Map<string, number>();
         for (const s of sa) heures.set(s.ligne_id, (heures.get(s.ligne_id) ?? 0) + (Number(s.heures) || 0));
-        const moisLignes = new Map(((pm.data ?? []) as { ligne_id: string; valide: boolean; reporte: boolean; report_sortant: number | null; hs_refacturer: number | null; heures_fige: number | null; montant_fige: number | null; montant_import: number | null; commande_import: number | string | null; reste_import: number | string | null }[]).map((m) => [m.ligne_id, m]));
+        const moisLignes = new Map(((pm.data ?? []) as { ligne_id: string; valide: boolean; reporte: boolean; report_sortant: number | null; hs_refacturer: number | null; heures_fige: number | null; montant_fige: number | null; montant_import: number | null; commande_import: number | string | null; reste_import: number | string | null; report_heures?: number | string | null }[]).map((m) => [m.ligne_id, m]));
 
         /* consommé de chaque commande : mois clôturé = heures facturées (figées) ; mois ouvert = heures saisies */
         const valides = new Map<string, number>(); // « ligne|AAAA-MM » -> heures figées
@@ -232,6 +236,28 @@ function FacturationContenu() {
         const consommeAffaire = new Map<string, number>();
         for (const [id, l] of lignesP) consommeAffaire.set(l.affaire_id, (consommeAffaire.get(l.affaire_id) ?? 0) + (consommeLigne.get(id) ?? 0));
 
+        // REPORT_FACTURATION : les heures des mois reportés à la suite se facturent au premier mois non reporté (comme le relevé)
+        const pmParCle = new Map(pmTous.map((x) => [`${x.ligne_id}|${x.mois.slice(0, 7)}`, x]));
+        const heuresParCle = new Map<string, number>();
+        for (const x of saTous) {
+          const k = `${x.ligne_id}|${x.jour.slice(0, 7)}`;
+          heuresParCle.set(k, (heuresParCle.get(k) ?? 0) + (Number(x.heures) || 0));
+        }
+        const reportEntrant = (ligneId: string) => {
+          let t = 0;
+          for (let k = 1; k <= 24; k++) {
+            const mm = decaler(mois, -k);
+            const row = pmParCle.get(`${ligneId}|${mm}`);
+            if (row?.reporte) {
+              t += heuresParCle.get(`${ligneId}|${mm}`) ?? 0;
+              continue;
+            }
+            t += Number(row?.report_sortant) || 0;
+            break;
+          }
+          return t;
+        };
+        const reportes: Reporte[] = [];
         const res: LignePrestation[] = [];
         for (const [id, l] of lignesP) {
           const m = moisLignes.get(id);
@@ -240,7 +266,27 @@ function FacturationContenu() {
           const a = affaires.get(l.affaire_id);
           if (!a) continue;
           const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / (Number(l.base_horaire) || 7) : l.taux;
-          const facturees = m?.valide ? Number(m.heures_fige) || 0 : m?.reporte ? 0 : Math.max(0, h0 - (Number(m?.report_sortant) || 0));
+          // mois reporté (enregistré, ou commande pas encore reçue) : rien à facturer ce mois-ci, listé à part
+          const reporte = m ? Boolean(m.reporte) : a.statut === "EN_ATTENTE";
+          if (reporte && !m?.valide) {
+            if (h0 > 0) {
+              const slR = parNumero.get(a.numero.toUpperCase());
+              const baseR = slR ? baseDe(slR) : undefined;
+              const idClient = slR?.client_id ?? baseR?.client_id;
+              reportes.push({
+                numero: `CBE${a.numero}`,
+                client: idClient ? clients.get(idClient) ?? null : null,
+                designation: a.designation,
+                personne: trig.get(l.collaborateur_id) ?? "?",
+                heures: h0,
+                montant: tauxH === null ? 0 : Math.round(h0 * tauxH * 100) / 100,
+                pourquoi: m ? "mois reporté dans le relevé" : `commande pas encore reçue (${slR?.statut ?? "intention de commande"})`,
+              });
+            }
+            continue;
+          }
+          const entrant = m?.valide ? 0 : m?.report_heures !== null && m?.report_heures !== undefined ? Number(m.report_heures) || 0 : reportEntrant(id);
+          const facturees = m?.valide ? Number(m.heures_fige) || 0 : Math.max(0, h0 - (Number(m?.report_sortant) || 0)) + entrant;
           const montant = m?.valide
             ? Number(m.montant_fige) || 0
             : m?.montant_import !== null && m?.montant_import !== undefined
@@ -277,6 +323,7 @@ function FacturationContenu() {
         }
         res.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }) || x.personne.localeCompare(y.personne));
         setPrestations(res);
+        setReportes(reportes.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true })));
       } catch (e) {
         if (actif) setErreur(e instanceof Error ? e.message : "Chargement impossible.");
       } finally {
@@ -489,6 +536,7 @@ function FacturationContenu() {
   const resteAFacturer = totalFacturable - totalFacture;
   const nonFacturables = prestations.filter((p) => !p.facturable);
   const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);
+  const totalReporte = reportes.reduce((t, r) => t + r.montant, 0);
   // le total « à facturer » des PE / PI N'INCLUT PAS les lignes non facturables
   const totalPrestations = prestations.filter((p) => p.facturable).reduce((t, p) => t + p.montant, 0);
   /* LIVREE_SANS_DATE : forfaits « Livrée » dans le Suivi d'affaire mais sans date de livraison :
@@ -575,6 +623,7 @@ function FacturationContenu() {
           { poste: "Facturé (forfaits livrés + PE / PI des mois clôturés)", montant: totalFacture, lignes: forfaitsLivres.length + peFacturables.filter((p) => p.cloture).length },
           { poste: "RESTE À FACTURER (forfaits prévus + PE / PI non clôturés)", montant: resteAFacturer, lignes: forfaitsPrevus.length + peFacturables.filter((p) => !p.cloture).length },
           { poste: "Non facturable (compté nulle part)", montant: totalNonFacturable, lignes: nonFacturables.length },
+          { poste: "Reporté au mois suivant (estimé, compté nulle part ce mois-ci)", montant: totalReporte, lignes: reportes.length },
         ],
         alerte: (l) => String(l.poste).startsWith("Non facturable") && Number(l.montant) > 0,
         notes: [
@@ -842,6 +891,45 @@ function FacturationContenu() {
                 </table>
               )}
             </section>
+
+            {reportes.length > 0 && (
+              <section style={{ ...page.carte, padding: 16, marginTop: 14, borderLeft: "5px solid #7a3e00", overflowX: "auto" }}>
+                <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
+                  Reporté au mois suivant <span style={{ color: C.gris, fontWeight: 600 }}>({reportes.length})</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#7a3e00", marginLeft: 10 }}>≈ {euros(totalReporte)}, compté nulle part ce mois-ci</span>
+                </h2>
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
+                  PE / PI travaillées ce mois-ci mais facturées plus tard. Les heures restent au planning ; le premier mois facturé les reprend, dans
+                  le relevé (⚙, Report).
+                </p>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Client</th>
+                      <th style={th}>N° CBE</th>
+                      <th style={th}>Désignation</th>
+                      <th style={th}>Pers.</th>
+                      <th style={thD}>Heures</th>
+                      <th style={thD}>Montant estimé</th>
+                      <th style={th}>Pourquoi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportes.map((r, i) => (
+                      <tr key={`${r.numero}-${r.personne}-${i}`}>
+                        <td style={{ ...td, fontWeight: 700 }}>{r.client ?? "—"}</td>
+                        <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{r.numero}</td>
+                        <td style={{ ...td, maxWidth: 260, fontSize: 13 }}>{r.designation ?? ""}</td>
+                        <td style={{ ...td, fontWeight: 800 }}>{r.personne}</td>
+                        <td style={tdD}>{nombre(r.heures)} h</td>
+                        <td style={tdD}>{euros(r.montant)}</td>
+                        <td style={{ ...td, color: "#7a3e00" }}>{r.pourquoi}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            )}
 
             <p style={{ fontSize: 13, color: C.gris, marginTop: 12, lineHeight: 1.5 }}>
               Forfaits : lignes « Livrée » du Suivi d’affaire BE dont la date de livraison tombe dans le mois ; une commande avec échéances n’est

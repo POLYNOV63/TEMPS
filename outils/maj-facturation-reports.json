@@ -1,0 +1,68 @@
+[
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Type des lignes reportées",
+  "cherche": "const NOMS_MOIS = [",
+  "remplace": "/* REPORT_FACTURATION : heures PE / PI faites ce mois-ci mais facturées plus tard */\ntype Reporte = { numero: string; client: string | null; designation: string | null; personne: string; heures: number; montant: number; pourquoi: string };\n\nconst NOMS_MOIS = ["
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "État des lignes reportées",
+  "cherche": "  const [prestations, setPrestations] = useState<LignePrestation[]>([]);",
+  "remplace": "  const [prestations, setPrestations] = useState<LignePrestation[]>([]);\n  const [reportes, setReportes] = useState<Reporte[]>([]);"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Relevé du mois : report saisi",
+  "cherche": "supabase.from(\"prestation_mois\").select(\"ligne_id,valide,reporte,report_sortant,hs_refacturer,heures_fige,montant_fige,montant_import,commande_import,reste_import\").eq(\"mois\", debut),",
+  "remplace": "supabase.from(\"prestation_mois\").select(\"ligne_id,valide,reporte,report_sortant,report_heures,hs_refacturer,heures_fige,montant_fige,montant_import,commande_import,reste_import\").eq(\"mois\", debut),"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Mois passés : reports",
+  "cherche": "          chargerTout<{ ligne_id: string; mois: string; valide: boolean; heures_fige: number | string | null }>((a, b) =>\n            supabase.from(\"prestation_mois\").select(\"ligne_id,mois,valide,heures_fige\").lte(\"mois\", debut).order(\"ligne_id\").range(a, b)",
+  "remplace": "          chargerTout<{ ligne_id: string; mois: string; valide: boolean; heures_fige: number | string | null; reporte: boolean | null; report_sortant: number | string | null }>((a, b) =>\n            supabase.from(\"prestation_mois\").select(\"ligne_id,mois,valide,heures_fige,reporte,report_sortant\").lte(\"mois\", debut).order(\"ligne_id\").range(a, b)"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Type du mois : heures reportées",
+  "cherche": "reste_import: number | string | null }[]).map((m) => [m.ligne_id, m]));",
+  "remplace": "reste_import: number | string | null; report_heures?: number | string | null }[]).map((m) => [m.ligne_id, m]));"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Heures reportées des mois précédents",
+  "cherche": "        const res: LignePrestation[] = [];",
+  "remplace": "        // REPORT_FACTURATION : les heures des mois reportés à la suite se facturent au premier mois non reporté (comme le relevé)\n        const pmParCle = new Map(pmTous.map((x) => [`${x.ligne_id}|${x.mois.slice(0, 7)}`, x]));\n        const heuresParCle = new Map<string, number>();\n        for (const x of saTous) {\n          const k = `${x.ligne_id}|${x.jour.slice(0, 7)}`;\n          heuresParCle.set(k, (heuresParCle.get(k) ?? 0) + (Number(x.heures) || 0));\n        }\n        const reportEntrant = (ligneId: string) => {\n          let t = 0;\n          for (let k = 1; k <= 24; k++) {\n            const mm = decaler(mois, -k);\n            const row = pmParCle.get(`${ligneId}|${mm}`);\n            if (row?.reporte) {\n              t += heuresParCle.get(`${ligneId}|${mm}`) ?? 0;\n              continue;\n            }\n            t += Number(row?.report_sortant) || 0;\n            break;\n          }\n          return t;\n        };\n        const reportes: Reporte[] = [];\n        const res: LignePrestation[] = [];"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Mois reporté : à part ; mois facturé : avec les heures reportées",
+  "cherche": "          const facturees = m?.valide ? Number(m.heures_fige) || 0 : m?.reporte ? 0 : Math.max(0, h0 - (Number(m?.report_sortant) || 0));",
+  "remplace": "          // mois reporté (enregistré, ou commande pas encore reçue) : rien à facturer ce mois-ci, listé à part\n          const reporte = m ? Boolean(m.reporte) : a.statut === \"EN_ATTENTE\";\n          if (reporte && !m?.valide) {\n            if (h0 > 0) {\n              const slR = parNumero.get(a.numero.toUpperCase());\n              const baseR = slR ? baseDe(slR) : undefined;\n              const idClient = slR?.client_id ?? baseR?.client_id;\n              reportes.push({\n                numero: `CBE${a.numero}`,\n                client: idClient ? clients.get(idClient) ?? null : null,\n                designation: a.designation,\n                personne: trig.get(l.collaborateur_id) ?? \"?\",\n                heures: h0,\n                montant: tauxH === null ? 0 : Math.round(h0 * tauxH * 100) / 100,\n                pourquoi: m ? \"mois reporté dans le relevé\" : `commande pas encore reçue (${slR?.statut ?? \"intention de commande\"})`,\n              });\n            }\n            continue;\n          }\n          const entrant = m?.valide ? 0 : m?.report_heures !== null && m?.report_heures !== undefined ? Number(m.report_heures) || 0 : reportEntrant(id);\n          const facturees = m?.valide ? Number(m.heures_fige) || 0 : Math.max(0, h0 - (Number(m?.report_sortant) || 0)) + entrant;"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Liste des reportés enregistrée",
+  "cherche": "        res.sort((x, y) => x.numero.localeCompare(y.numero, \"fr\", { numeric: true }) || x.personne.localeCompare(y.personne));\n        setPrestations(res);",
+  "remplace": "        res.sort((x, y) => x.numero.localeCompare(y.numero, \"fr\", { numeric: true }) || x.personne.localeCompare(y.personne));\n        setPrestations(res);\n        setReportes(reportes.sort((x, y) => x.numero.localeCompare(y.numero, \"fr\", { numeric: true })));"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Total reporté",
+  "cherche": "  const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);",
+  "remplace": "  const totalNonFacturable = nonFacturables.reduce((t, p) => t + p.montant, 0);\n  const totalReporte = reportes.reduce((t, r) => t + r.montant, 0);"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Export : ligne « Reporté »",
+  "cherche": "          { poste: \"Non facturable (compté nulle part)\", montant: totalNonFacturable, lignes: nonFacturables.length },",
+  "remplace": "          { poste: \"Non facturable (compté nulle part)\", montant: totalNonFacturable, lignes: nonFacturables.length },\n          { poste: \"Reporté au mois suivant (estimé, compté nulle part ce mois-ci)\", montant: totalReporte, lignes: reportes.length },"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Encadré « Reporté au mois suivant »",
+  "cherche": "            <p style={{ fontSize: 13, color: C.gris, marginTop: 12, lineHeight: 1.5 }}>",
+  "remplace": "            {reportes.length > 0 && (\n              <section style={{ ...page.carte, padding: 16, marginTop: 14, borderLeft: \"5px solid #7a3e00\", overflowX: \"auto\" }}>\n                <h2 style={{ margin: \"0 0 4px\", fontSize: 18 }}>\n                  Reporté au mois suivant <span style={{ color: C.gris, fontWeight: 600 }}>({reportes.length})</span>\n                  <span style={{ fontSize: 14, fontWeight: 600, color: \"#7a3e00\", marginLeft: 10 }}>≈ {euros(totalReporte)}, compté nulle part ce mois-ci</span>\n                </h2>\n                <p style={{ margin: \"0 0 10px\", fontSize: 13, color: C.gris }}>\n                  PE / PI travaillées ce mois-ci mais facturées plus tard. Les heures restent au planning ; le premier mois facturé les reprend, dans\n                  le relevé (⚙, Report).\n                </p>\n                <table style={{ borderCollapse: \"collapse\", width: \"100%\", fontSize: 13.5 }}>\n                  <thead>\n                    <tr>\n                      <th style={th}>Client</th>\n                      <th style={th}>N° CBE</th>\n                      <th style={th}>Désignation</th>\n                      <th style={th}>Pers.</th>\n                      <th style={thD}>Heures</th>\n                      <th style={thD}>Montant estimé</th>\n                      <th style={th}>Pourquoi</th>\n                    </tr>\n                  </thead>\n                  <tbody>\n                    {reportes.map((r, i) => (\n                      <tr key={`${r.numero}-${r.personne}-${i}`}>\n                        <td style={{ ...td, fontWeight: 700 }}>{r.client ?? \"—\"}</td>\n                        <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: \"nowrap\" }}>{r.numero}</td>\n                        <td style={{ ...td, maxWidth: 260, fontSize: 13 }}>{r.designation ?? \"\"}</td>\n                        <td style={{ ...td, fontWeight: 800 }}>{r.personne}</td>\n                        <td style={tdD}>{nombre(r.heures)} h</td>\n                        <td style={tdD}>{euros(r.montant)}</td>\n                        <td style={{ ...td, color: \"#7a3e00\" }}>{r.pourquoi}</td>\n                      </tr>\n                    ))}\n                  </tbody>\n                </table>\n              </section>\n            )}\n\n            <p style={{ fontSize: 13, color: C.gris, marginTop: 12, lineHeight: 1.5 }}>"
+ }
+]
