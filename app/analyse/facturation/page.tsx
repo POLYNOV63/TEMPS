@@ -92,6 +92,7 @@ type LignePrestation = {
   commandeClasseur: number | null;
   resteClasseur: number | null;
   consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)
+  classeur: number | null; // MONTANT_RELEVE : montant importé du Suivi des prestations, pour contrôle seulement
   baseHoraire: number;
 };
 
@@ -132,6 +133,7 @@ type LigneFacturation = {
   cloture: boolean;
   alerteLouxor: boolean;
   sansDate: boolean; // « Livrée » dans le Suivi d'affaire mais sans date de livraison
+  classeurMontant?: number | null;
 };
 const decaler = (m: string, k: number) => {
   const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + k, 1));
@@ -287,14 +289,15 @@ function FacturationContenu() {
           }
           const entrant = m?.valide ? 0 : m?.report_heures !== null && m?.report_heures !== undefined ? Number(m.report_heures) || 0 : reportEntrant(id);
           const facturees = m?.valide ? Number(m.heures_fige) || 0 : Math.max(0, h0 - (Number(m?.report_sortant) || 0)) + entrant;
+          // le relevé fait foi : même montant que lui (figé si clôturé, sinon heures × taux) ;
+          // le montant importé du classeur n'est plus qu'un contrôle
           const montant = m?.valide
             ? Number(m.montant_fige) || 0
-            : m?.montant_import !== null && m?.montant_import !== undefined
-              ? Number(m.montant_import)
-              : tauxH === null
-                ? 0
-                : (facturees + (Number(m?.hs_refacturer) || 0) * 1.25) * tauxH;
-          if (montant <= 0.004 && facturees <= 0) continue;
+            : tauxH === null
+              ? 0
+              : (facturees + (Number(m?.hs_refacturer) || 0) * 1.25) * tauxH;
+          const classeur = m?.montant_import !== null && m?.montant_import !== undefined ? Number(m.montant_import) : null;
+          if (montant <= 0.004 && facturees <= 0 && !(classeur !== null && classeur > 0.5)) continue;
           const sl = parNumero.get(a.numero.toUpperCase());
           const base = sl ? baseDe(sl) : undefined;
           res.push({
@@ -318,6 +321,7 @@ function FacturationContenu() {
             commandeClasseur: m?.commande_import === null || m?.commande_import === undefined ? null : Number(m.commande_import),
             resteClasseur: m?.reste_import === null || m?.reste_import === undefined ? null : Number(m.reste_import),
             consommeH: consommeAffaire.get(l.affaire_id) ?? 0,
+            classeur,
             baseHoraire: Number(l.base_horaire) || 7,
           });
         }
@@ -494,6 +498,7 @@ function FacturationContenu() {
         taux: p.taux,
         livraison: p.dateLivraison ?? "",
         montant: p.montant,
+        classeurMontant: p.classeur,
         statut: p.statutCommande ?? "pas de commande",
         statutBase: "",
         facturable: p.facturable,
@@ -866,6 +871,14 @@ function FacturationContenu() {
                             {euros(l.montant)}
                           </span>
                           {l.cloture && <span title="Mois clôturé : montant figé"> 🔒</span>}
+                          {!l.cloture && l.classeurMontant !== null && l.classeurMontant !== undefined && Math.abs(l.classeurMontant - l.montant) > 0.5 && (
+                            <div
+                              title="Montant importé du Suivi des prestations, différent du relevé : les heures ne sont pas rangées pareil dans les deux. Le relevé fait foi."
+                              style={{ fontSize: 11, fontWeight: 800, color: "#c76500", fontStyle: "normal" }}
+                            >
+                              ⚠ classeur : {euros(l.classeurMontant)}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}

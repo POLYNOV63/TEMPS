@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Type : montant du classeur (contrôle)",
+  "cherche": "  consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)",
+  "remplace": "  consommeH: number; // heures facturées (mois clôturés) ou saisies (mois ouverts)\n  classeur: number | null; // MONTANT_RELEVE : montant importé du Suivi des prestations, pour contrôle seulement"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Montant : celui du relevé (le classeur ne sert plus que de contrôle)",
+  "cherche": "          const montant = m?.valide\n            ? Number(m.montant_fige) || 0\n            : m?.montant_import !== null && m?.montant_import !== undefined\n              ? Number(m.montant_import)\n              : tauxH === null\n                ? 0\n                : (facturees + (Number(m?.hs_refacturer) || 0) * 1.25) * tauxH;",
+  "remplace": "          // le relevé fait foi : même montant que lui (figé si clôturé, sinon heures × taux) ;\n          // le montant importé du classeur n'est plus qu'un contrôle\n          const montant = m?.valide\n            ? Number(m.montant_fige) || 0\n            : tauxH === null\n              ? 0\n              : (facturees + (Number(m?.hs_refacturer) || 0) * 1.25) * tauxH;\n          const classeur = m?.montant_import !== null && m?.montant_import !== undefined ? Number(m.montant_import) : null;"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Ligne gardée si le classeur annonce un montant",
+  "cherche": "          if (montant <= 0.004 && facturees <= 0) continue;",
+  "remplace": "          if (montant <= 0.004 && facturees <= 0 && !(classeur !== null && classeur > 0.5)) continue;"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Montant du classeur transmis",
+  "cherche": "            consommeH: consommeAffaire.get(l.affaire_id) ?? 0,",
+  "remplace": "            consommeH: consommeAffaire.get(l.affaire_id) ?? 0,\n            classeur,"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Type de ligne du tableau : contrôle classeur",
+  "cherche": "  sansDate: boolean; // « Livrée » dans le Suivi d'affaire mais sans date de livraison",
+  "remplace": "  sansDate: boolean; // « Livrée » dans le Suivi d'affaire mais sans date de livraison\n  classeurMontant?: number | null;"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Ligne PE / PI : contrôle classeur",
+  "cherche": "        montant: p.montant,",
+  "remplace": "        montant: p.montant,\n        classeurMontant: p.classeur,"
+ },
+ {
+  "fichier": "app/analyse/facturation/page.tsx",
+  "nom": "Alerte sous le montant",
+  "cherche": "                          {l.cloture && <span title=\"Mois clôturé : montant figé\"> 🔒</span>}",
+  "remplace": "                          {l.cloture && <span title=\"Mois clôturé : montant figé\"> 🔒</span>}\n                          {!l.cloture && l.classeurMontant !== null && l.classeurMontant !== undefined && Math.abs(l.classeurMontant - l.montant) > 0.5 && (\n                            <div\n                              title=\"Montant importé du Suivi des prestations, différent du relevé : les heures ne sont pas rangées pareil dans les deux. Le relevé fait foi.\"\n                              style={{ fontSize: 11, fontWeight: 800, color: \"#c76500\", fontStyle: \"normal\" }}\n                            >\n                              ⚠ classeur : {euros(l.classeurMontant)}\n                            </div>\n                          )}"
+ }
+]
