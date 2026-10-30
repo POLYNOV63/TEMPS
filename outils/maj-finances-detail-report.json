@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "État de la fenêtre de détail",
+  "cherche": "  /* FAIT_PLUS_TARD : mois de PE / PI reportés (travail fait, facturé plus tard) */",
+  "remplace": "  // DETAIL_FAIT_PLUS_TARD : fenêtre du détail (un mois « AAAA-MM », ou « EXERCICE » pour tout ce qui reste à facturer)\n  const [detailReport, setDetailReport] = useState<string | null>(null);\n\n  /* FAIT_PLUS_TARD : mois de PE / PI reportés (travail fait, facturé plus tard) */"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Heures gardées pour le détail (type)",
+  "cherche": "    const res: { m: string; montant: number; facture: string | null; factureValide: boolean; auto: boolean; numero: string; imputation: string | null }[] = [];",
+  "remplace": "    const res: { m: string; montant: number; facture: string | null; factureValide: boolean; auto: boolean; numero: string; imputation: string | null; heures: number }[] = [];"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Heures gardées pour le détail",
+  "cherche": "          auto: !row,",
+  "remplace": "          auto: !row,\n          heures: h,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Ligne du tableau cliquable",
+  "cherche": "ligneValeurs(\"Fait, facturé plus tard\", faitPlusTard, { color: \"#7a3e00\", fontStyle: \"italic\", fontWeight: 400 })",
+  "remplace": "ligneValeurs(\"Fait, facturé plus tard\", faitPlusTard, { color: \"#7a3e00\", fontStyle: \"italic\", fontWeight: 400 }, (i) => setDetailReport(mois[i]))"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile cliquable (ouverture)",
+  "cherche": "              {aRapprocher > 0.5 && (\n                <Tuile",
+  "remplace": "              {aRapprocher > 0.5 && (\n                <button type=\"button\" onClick={() => setDetailReport(\"EXERCICE\")} title=\"Voir le détail\" style={{ all: \"unset\", cursor: \"pointer\", display: \"flex\" }}>\n                <Tuile"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Tuile cliquable (fermeture)",
+  "cherche": "                  sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}\n                />\n              )}",
+  "remplace": "                  sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}\n                />\n                </button>\n              )}"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Fenêtre du détail",
+  "cherche": "{detail && <DetailMontant detail={detail} mouvements={mouvements} attendus={attendus.mouvements} onFermer={() => setDetail(null)} />}",
+  "remplace": "{detail && <DetailMontant detail={detail} mouvements={mouvements} attendus={attendus.mouvements} onFermer={() => setDetail(null)} />}\n\n              {detailReport &&\n                (() => {\n                  const exerciceEntier = detailReport === \"EXERCICE\";\n                  const liste = reportsPEPI\n                    .filter((r) => (exerciceEntier ? r.m >= mois[0] && r.m <= mois[11] && !(r.facture && r.factureValide) : r.m === detailReport))\n                    .sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, \"fr\", { numeric: true }));\n                  const totalListe = liste.reduce((t, r) => t + r.montant, 0);\n                  const thD: CSSProperties = { ...th, textAlign: \"left\" };\n                  return (\n                    <div\n                      role=\"dialog\"\n                      aria-modal=\"true\"\n                      aria-label=\"Fait, facturé plus tard\"\n                      onClick={() => setDetailReport(null)}\n                      style={{ position: \"fixed\", inset: 0, background: \"rgba(0,0,0,.35)\", display: \"flex\", alignItems: \"center\", justifyContent: \"center\", zIndex: 100 }}\n                    >\n                      <div onClick={(e) => e.stopPropagation()} style={{ ...page.carte, padding: 20, width: 780, maxWidth: \"94vw\", maxHeight: \"85vh\", overflowY: \"auto\" }}>\n                        <div style={{ display: \"flex\", alignItems: \"center\", gap: 10 }}>\n                          <h2 style={{ margin: 0, fontSize: 19 }}>\n                            Fait, facturé plus tard — {exerciceEntier ? `exercice ${exercice}-${exercice + 1}, pas encore facturé` : libMois(detailReport)}\n                          </h2>\n                          <span style={{ flex: 1 }} />\n                          <button type=\"button\" onClick={() => setDetailReport(null)} aria-label=\"Fermer\" style={{ border: \"none\", background: \"transparent\", fontSize: 22, cursor: \"pointer\" }}>\n                            ×\n                          </button>\n                        </div>\n                        <p style={{ margin: \"4px 0 12px\", fontSize: 13, color: C.gris }}>\n                          PE / PI dont le mois est reporté : travail fait, facturé plus tard. Montant estimé = heures × taux. Hors réalisé et hors atterrissage tant qu’il\n                          n’est pas facturé.\n                        </p>\n                        {liste.length === 0 ? (\n                          <p style={{ color: C.gris }}>Rien à afficher.</p>\n                        ) : (\n                          <table style={{ borderCollapse: \"collapse\", width: \"100%\" }}>\n                            <thead>\n                              <tr>\n                                <th style={thD}>Commande</th>\n                                <th style={thD}>Travail de</th>\n                                <th style={th}>Heures</th>\n                                <th style={th}>Montant estimé</th>\n                                <th style={thD}>Pourquoi</th>\n                                <th style={thD}>Facturé</th>\n                              </tr>\n                            </thead>\n                            <tbody>\n                              {liste.map((r, i) => (\n                                <tr key={`${r.numero}-${r.m}-${i}`}>\n                                  <td style={tdG}>\n                                    CBE{r.numero} <span style={{ fontWeight: 400, color: C.gris }}>{r.imputation ?? \"\"}</span>\n                                  </td>\n                                  <td style={{ ...tdG, fontWeight: 400 }}>{libMois(r.m)}</td>\n                                  <td style={td}>{formatHeures(r.heures)}</td>\n                                  <td style={{ ...td, fontWeight: 800 }}>{euros(r.montant)}</td>\n                                  <td style={{ ...tdG, fontWeight: 400, color: \"#7a3e00\" }}>{r.auto ? \"commande pas encore reçue\" : \"reporté à la main\"}</td>\n                                  <td style={{ ...tdG, fontWeight: 400 }}>\n                                    {r.facture && r.factureValide ? `en ${libMois(r.facture)} ✓` : r.facture ? `prévu en ${libMois(r.facture)}` : \"pas encore\"}\n                                  </td>\n                                </tr>\n                              ))}\n                              <tr>\n                                <td style={{ ...tdG, borderTop: `2px solid ${C.ligne}` }} colSpan={2}>\n                                  Total\n                                </td>\n                                <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(liste.reduce((t, r) => t + r.heures, 0))}</td>\n                                <td style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{euros(totalListe)}</td>\n                                <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }} colSpan={2} />\n                              </tr>\n                            </tbody>\n                          </table>\n                        )}\n                      </div>\n                    </div>\n                  );\n                })()}"
+ }
+]

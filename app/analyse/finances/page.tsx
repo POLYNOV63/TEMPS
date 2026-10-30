@@ -88,6 +88,9 @@ function FinancesContenu() {
   const [couts, setCouts] = useState<Map<number, number>>(new Map());
   const [previsionnel, setPrevisionnel] = useState<Map<string, number>>(new Map()); // AAAA-MM -> €
 
+  // DETAIL_FAIT_PLUS_TARD : fenêtre du détail (un mois « AAAA-MM », ou « EXERCICE » pour tout ce qui reste à facturer)
+  const [detailReport, setDetailReport] = useState<string | null>(null);
+
   /* FAIT_PLUS_TARD : mois de PE / PI reportés (travail fait, facturé plus tard) */
   const [donneesReport, setDonneesReport] = useState<{
     lignes: { id: string; affaire_id: string; taux: number | null; unite: string; base_horaire: number }[];
@@ -138,7 +141,7 @@ function FinancesContenu() {
       const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1));
       return d.toISOString().slice(0, 7);
     };
-    const res: { m: string; montant: number; facture: string | null; factureValide: boolean; auto: boolean; numero: string; imputation: string | null }[] = [];
+    const res: { m: string; montant: number; facture: string | null; factureValide: boolean; auto: boolean; numero: string; imputation: string | null; heures: number }[] = [];
     for (const l of lignes) {
       const a = affaires.get(l.affaire_id);
       if (!a || l.taux === null) continue;
@@ -166,6 +169,7 @@ function FinancesContenu() {
           facture,
           factureValide: facture ? Boolean(moisLignes.get(`${l.id}|${facture}`)?.valide) : false,
           auto: !row,
+          heures: h,
           numero: (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""),
           imputation: a.imputation,
         });
@@ -799,11 +803,13 @@ function FinancesContenu() {
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
               {aRapprocher > 0.5 && (
+                <button type="button" onClick={() => setDetailReport("EXERCICE")} title="Voir le détail" style={{ all: "unset", cursor: "pointer", display: "flex" }}>
                 <Tuile
                   libelle="Fait, facturé plus tard"
                   valeur={keuros(aRapprocher)}
                   sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}
                 />
+                </button>
               )}
               <Tuile libelle="Prix de vente obtenu" valeur={vue.prixObtenu === null ? "—" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString("fr-FR")} €/h` : "CA hors négoce ÷ heures passées"} />
               <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
@@ -905,7 +911,7 @@ function FinancesContenu() {
                   {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 }, (i) => setDetail({ mois: mois[i], ligne: "REALISE" }))}
                   {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" }, (i) => setDetail({ mois: mois[i], ligne: "ATTENDU" }))}
                   {faitPlusTard.some((v) => v > 0.5) &&
-                    ligneValeurs("Fait, facturé plus tard", faitPlusTard, { color: "#7a3e00", fontStyle: "italic", fontWeight: 400 })}
+                    ligneValeurs("Fait, facturé plus tard", faitPlusTard, { color: "#7a3e00", fontStyle: "italic", fontWeight: 400 }, (i) => setDetailReport(mois[i]))}
                   {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" }, (i) => setDetail({ mois: mois[i], ligne: "ATTERRISSAGE" }))}
                   <tr>
                     <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
@@ -983,6 +989,81 @@ function FinancesContenu() {
 
               {/* DETAIL_MONTANT_V3 : ce qui compose le montant cliqué */}
               {detail && <DetailMontant detail={detail} mouvements={mouvements} attendus={attendus.mouvements} onFermer={() => setDetail(null)} />}
+
+              {detailReport &&
+                (() => {
+                  const exerciceEntier = detailReport === "EXERCICE";
+                  const liste = reportsPEPI
+                    .filter((r) => (exerciceEntier ? r.m >= mois[0] && r.m <= mois[11] && !(r.facture && r.factureValide) : r.m === detailReport))
+                    .sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+                  const totalListe = liste.reduce((t, r) => t + r.montant, 0);
+                  const thD: CSSProperties = { ...th, textAlign: "left" };
+                  return (
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Fait, facturé plus tard"
+                      onClick={() => setDetailReport(null)}
+                      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+                    >
+                      <div onClick={(e) => e.stopPropagation()} style={{ ...page.carte, padding: 20, width: 780, maxWidth: "94vw", maxHeight: "85vh", overflowY: "auto" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <h2 style={{ margin: 0, fontSize: 19 }}>
+                            Fait, facturé plus tard — {exerciceEntier ? `exercice ${exercice}-${exercice + 1}, pas encore facturé` : libMois(detailReport)}
+                          </h2>
+                          <span style={{ flex: 1 }} />
+                          <button type="button" onClick={() => setDetailReport(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                            ×
+                          </button>
+                        </div>
+                        <p style={{ margin: "4px 0 12px", fontSize: 13, color: C.gris }}>
+                          PE / PI dont le mois est reporté : travail fait, facturé plus tard. Montant estimé = heures × taux. Hors réalisé et hors atterrissage tant qu’il
+                          n’est pas facturé.
+                        </p>
+                        {liste.length === 0 ? (
+                          <p style={{ color: C.gris }}>Rien à afficher.</p>
+                        ) : (
+                          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                            <thead>
+                              <tr>
+                                <th style={thD}>Commande</th>
+                                <th style={thD}>Travail de</th>
+                                <th style={th}>Heures</th>
+                                <th style={th}>Montant estimé</th>
+                                <th style={thD}>Pourquoi</th>
+                                <th style={thD}>Facturé</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {liste.map((r, i) => (
+                                <tr key={`${r.numero}-${r.m}-${i}`}>
+                                  <td style={tdG}>
+                                    CBE{r.numero} <span style={{ fontWeight: 400, color: C.gris }}>{r.imputation ?? ""}</span>
+                                  </td>
+                                  <td style={{ ...tdG, fontWeight: 400 }}>{libMois(r.m)}</td>
+                                  <td style={td}>{formatHeures(r.heures)}</td>
+                                  <td style={{ ...td, fontWeight: 800 }}>{euros(r.montant)}</td>
+                                  <td style={{ ...tdG, fontWeight: 400, color: "#7a3e00" }}>{r.auto ? "commande pas encore reçue" : "reporté à la main"}</td>
+                                  <td style={{ ...tdG, fontWeight: 400 }}>
+                                    {r.facture && r.factureValide ? `en ${libMois(r.facture)} ✓` : r.facture ? `prévu en ${libMois(r.facture)}` : "pas encore"}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr>
+                                <td style={{ ...tdG, borderTop: `2px solid ${C.ligne}` }} colSpan={2}>
+                                  Total
+                                </td>
+                                <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(liste.reduce((t, r) => t + r.heures, 0))}</td>
+                                <td style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{euros(totalListe)}</td>
+                                <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }} colSpan={2} />
+                              </tr>
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
               {estAdmin && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
