@@ -506,7 +506,8 @@ function PrestationsContenu() {
           .filter((l) => l.actif && categorie(l) === cat && l.unite === unite)
           .sort(
             (x, y) =>
-              (affairesParId.get(x.affaire_id)?.numero ?? "").localeCompare(affairesParId.get(y.affaire_id)?.numero ?? "", "fr", { numeric: true }) ||
+              // TRI_RECENT : les commandes les plus récentes (n° le plus grand) en haut
+              (affairesParId.get(y.affaire_id)?.numero ?? "").localeCompare(affairesParId.get(x.affaire_id)?.numero ?? "", "fr", { numeric: true }) ||
               nomCollab(collabs.get(x.collaborateur_id)).localeCompare(nomCollab(collabs.get(y.collaborateur_id)))
           );
         if (ls.length) res.push({ cle: `${cat}-${unite}`, titre: `${titres[cat]} — tarif ${unite === "JOUR" ? "journalier" : "horaire"}`, categorie: cat, unite, lignes: ls });
@@ -529,7 +530,7 @@ function PrestationsContenu() {
         );
         return candidates
           .filter((a) => !(/^\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero)))
-          .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+          .sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true }));
       })(),
     [affaires, lignes, debut]
   );

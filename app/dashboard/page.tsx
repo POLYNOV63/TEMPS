@@ -903,12 +903,15 @@ function BlocMonEspace({
           description="Mes demandes de congés, RTT et récupération"
           onClick={() => aller("/RH")}
         />
-        <CarteCompacte
-          icone="📘"
-          titre="Guide"
-          description="Comment fonctionne l’Espace POLYNOV, pas à pas"
-          onClick={() => aller("/guide")}
-        />
+        {/* GUIDE_RESPONSABLES : le guide est réservé aux responsables (avecBilanAffaire = faux pour eux) */}
+        {!avecBilanAffaire && (
+          <CarteCompacte
+            icone="📘"
+            titre="Guide"
+            description="Comment fonctionne l’Espace POLYNOV, pour les responsables"
+            onClick={() => aller("/guide")}
+          />
+        )}
       </div>
     </Groupe>
   );
