@@ -88,6 +88,92 @@ function FinancesContenu() {
   const [couts, setCouts] = useState<Map<number, number>>(new Map());
   const [previsionnel, setPrevisionnel] = useState<Map<string, number>>(new Map()); // AAAA-MM -> €
 
+  /* FAIT_PLUS_TARD : mois de PE / PI reportés (travail fait, facturé plus tard) */
+  const [donneesReport, setDonneesReport] = useState<{
+    lignes: { id: string; affaire_id: string; taux: number | null; unite: string; base_horaire: number }[];
+    affaires: Map<string, { numero: string; statut: string; imputation: string | null }>;
+    moisLignes: Map<string, { reporte: boolean; valide: boolean }>;
+    heures: Map<string, number>;
+  } | null>(null);
+  useEffect(() => {
+    (async () => {
+      const [pl, pa, pmAll] = await Promise.all([
+        supabase.from("prestation_lignes").select("id,affaire_id,taux,unite,base_horaire"),
+        supabase.from("pilotage_affaires").select("id,numero,statut,imputation"),
+        chargerTout<{ ligne_id: string; mois: string; reporte: boolean | null; valide: boolean | null }>((a, b) =>
+          supabase.from("prestation_mois").select("ligne_id,mois,reporte,valide").order("ligne_id").range(a, b)
+        ),
+      ]);
+      const affaires = new Map(((pa.data ?? []) as { id: string; numero: string; statut: string; imputation: string | null }[]).map((a) => [a.id, a]));
+      const lignes = ((pl.data ?? []) as { id: string; affaire_id: string; taux: number | string | null; unite: string; base_horaire: number | string | null }[]).map((l) => ({
+        id: l.id,
+        affaire_id: l.affaire_id,
+        taux: l.taux === null ? null : Number(l.taux),
+        unite: l.unite,
+        base_horaire: Number(l.base_horaire) || 7,
+      }));
+      const moisLignes = new Map(pmAll.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, { reporte: Boolean(x.reporte), valide: Boolean(x.valide) }]));
+      // seules les lignes qui ont (ou ont pu avoir) un mois reporté
+      const candidates = lignes.filter((l) => affaires.get(l.affaire_id)?.statut === "EN_ATTENTE" || pmAll.some((x) => x.ligne_id === l.id && x.reporte)).map((l) => l.id);
+      const heures = new Map<string, number>();
+      if (candidates.length > 0) {
+        const sa = await chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>
+          supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", candidates).order("ligne_id").range(a, b)
+        );
+        for (const s of sa) {
+          const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
+          heures.set(k, (heures.get(k) ?? 0) + (Number(s.heures) || 0));
+        }
+      }
+      setDonneesReport({ lignes, affaires, moisLignes, heures });
+    })().catch(() => setDonneesReport(null));
+  }, []);
+
+  /* Chaque mois reporté d'une ligne : son montant (heures × taux), et le mois où il se facture
+     (premier mois suivant non reporté ; null si pas encore connu) */
+  const reportsPEPI = useMemo(() => {
+    if (!donneesReport) return [];
+    const { lignes, affaires, moisLignes, heures } = donneesReport;
+    const suivant = (m: string) => {
+      const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1));
+      return d.toISOString().slice(0, 7);
+    };
+    const res: { m: string; montant: number; facture: string | null; factureValide: boolean; auto: boolean; numero: string; imputation: string | null }[] = [];
+    for (const l of lignes) {
+      const a = affaires.get(l.affaire_id);
+      if (!a || l.taux === null) continue;
+      const tauxH = l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+      const reporteEn = (m: string) => {
+        const row = moisLignes.get(`${l.id}|${m}`);
+        return row ? row.reporte : a.statut === "EN_ATTENTE";
+      };
+      for (const [cle, h] of heures) {
+        if (!cle.startsWith(`${l.id}|`) || h <= 0) continue;
+        const m = cle.slice(l.id.length + 1);
+        if (!reporteEn(m)) continue;
+        const row = moisLignes.get(`${l.id}|${m}`);
+        let facture: string | null = null;
+        let x = suivant(m);
+        for (let k = 0; k < 24; k++, x = suivant(x)) {
+          if (!reporteEn(x)) {
+            facture = x;
+            break;
+          }
+        }
+        res.push({
+          m,
+          montant: Math.round(h * tauxH * 100) / 100,
+          facture,
+          factureValide: facture ? Boolean(moisLignes.get(`${l.id}|${facture}`)?.valide) : false,
+          auto: !row,
+          numero: (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""),
+          imputation: a.imputation,
+        });
+      }
+    }
+    return res;
+  }, [donneesReport]);
+
   const [coutSaisi, setCoutSaisi] = useState("");
   const [totalAnnuel, setTotalAnnuel] = useState("");
   const [evolution, setEvolution] = useState("0");
@@ -362,8 +448,26 @@ function FinancesContenu() {
           return { date: h.mois, base_affaire: `${h.type}${h.numero}`, source: "ATTENDU" as const, montant: h.montant, parGroupe: g, negoce: 0, achats: 0, client: h.client, imputation: h.categorie };
         }),
     ];
-    return { mouvements: [...forfaits.mouvements, ...pepi], aDater: forfaits.aDater, enRetard: forfaits.mouvements.filter((m) => m.retard) };
-  }, [lignesFin, releve, prevusReleve, historique]);
+    // FAIT_PLUS_TARD : un mois reporté se compte dans l'attendu du mois où il sera facturé (pas encore clôturé),
+    // et sort de son propre mois quand le report vient de la commande pas encore reçue
+    const correctifs: MouvementCA[] = [];
+    const moisApres = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
+    for (const r of reportsPEPI) {
+      const g = (v: number) => {
+        const x = groupesVides();
+        x["Non ventilé"] = v;
+        return x;
+      };
+      if (r.auto) {
+        correctifs.push({ date: `${r.m}-01`, base_affaire: r.numero, source: "ATTENDU", montant: -r.montant, parGroupe: g(-r.montant), negoce: 0, achats: 0, client: null, imputation: r.imputation });
+      }
+      if (!(r.facture && r.factureValide)) {
+        const cible = r.facture ?? moisApres(r.m > moisCourantIso ? r.m : moisCourantIso);
+        correctifs.push({ date: `${cible}-01`, base_affaire: r.numero, source: "ATTENDU", montant: r.montant, parGroupe: g(r.montant), negoce: 0, achats: 0, client: null, imputation: r.imputation });
+      }
+    }
+    return { mouvements: [...forfaits.mouvements, ...pepi, ...correctifs], aDater: forfaits.aDater, enRetard: forfaits.mouvements.filter((m) => m.retard) };
+  }, [lignesFin, releve, prevusReleve, historique, reportsPEPI]);
 
   const mois = useMemo(() => moisExercice(exercice), [exercice]);
   const moisN1 = useMemo(() => moisExercice(exercice - 1), [exercice]);
@@ -612,6 +716,10 @@ function FinancesContenu() {
   const maxBarre = Math.max(1, ...atterrissage, ...vue.realiseN1, ...vue.prevu);
   const moisCourant = new Date().toISOString().slice(0, 7);
   const coutEx = coutHoraire(couts, `${mois[0]}-01`);
+  // FAIT_PLUS_TARD : travail des PE / PI reporté, au mois où il a été fait (hors réalisé et atterrissage)
+  const faitPlusTard = mois.map((m) => reportsPEPI.filter((r) => r.m === m).reduce((t, r) => t + r.montant, 0));
+  // à rapprocher : fait dans l'exercice, facturé après sa fin (ou date de facture pas encore connue)
+  const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && (r.facture === null || r.facture > mois[11])).reduce((t, r) => t + r.montant, 0);
 
   let cumR = 0;
   let cumP = 0;
@@ -692,6 +800,13 @@ function FinancesContenu() {
                 sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
+              {aRapprocher > 0.5 && (
+                <Tuile
+                  libelle="Fait, facturé après le 31/10"
+                  valeur={keuros(aRapprocher)}
+                  sous={`PE / PI reportées, hors atterrissage · production de l’exercice : ${keuros(totalAtterrissage + aRapprocher)}`}
+                />
+              )}
               <Tuile libelle="Prix de vente obtenu" valeur={vue.prixObtenu === null ? "—" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString("fr-FR")} €/h` : "CA hors négoce ÷ heures passées"} />
               <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
             </div>
@@ -791,6 +906,8 @@ function FinancesContenu() {
                   </tr>
                   {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 }, (i) => setDetail({ mois: mois[i], ligne: "REALISE" }))}
                   {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" }, (i) => setDetail({ mois: mois[i], ligne: "ATTENDU" }))}
+                  {faitPlusTard.some((v) => v > 0.5) &&
+                    ligneValeurs("Fait, facturé plus tard", faitPlusTard, { color: "#7a3e00", fontStyle: "italic", fontWeight: 400 })}
                   {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" }, (i) => setDetail({ mois: mois[i], ligne: "ATTERRISSAGE" }))}
                   <tr>
                     <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
@@ -1076,6 +1193,11 @@ function FinancesContenu() {
                 <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Autre, Négoce) ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
                 <li><strong>Rentabilité</strong> : affaires au forfait dont toutes les commandes sont livrées dans l’exercice, et mois validés des PE / PI. Coût = heures réellement passées × coût de structure de l’exercice + achats.</li>
                 <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>
+                <li>
+                  <strong>Fait, facturé plus tard</strong> : PE / PI d’un mois reporté (commande pas encore reçue, ou report du relevé), au mois où le
+                  travail a été fait. Hors réalisé et hors atterrissage, qui restent le facturé ; il compte dans l’attendu du mois où il sera facturé. La
+                  tuile « Fait, facturé après le 31/10 » sert au rapprochement avec la comptabilité (factures à établir).
+                </li>
                 <li>
                   <strong>Ajustements</strong> : montants ajoutés à la main au réalisé d’un mois pour coller à la comptabilité, sous l’imputation « Ajustement »
                   {ajustements.length > 0 ? ` (${ajustements.map((a) => `${libMois(a.mois.slice(0, 7))} ${a.montant > 0 ? "+" : ""}${keuros(a.montant)}`).join(", ")})` : ""}.
