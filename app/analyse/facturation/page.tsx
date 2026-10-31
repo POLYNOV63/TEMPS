@@ -6,7 +6,7 @@ import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
-import { chargerTout } from "@/lib/pilotageDonnees";
+import { chargerMoi, chargerTout } from "@/lib/pilotageDonnees";
 import { exporterExcelPolynov } from "@/lib/excelPolynov";
 
 /* ===============================================================
@@ -141,7 +141,17 @@ const decaler = (m: string, k: number) => {
 };
 
 function FacturationContenu() {
-  const [mois, setMois] = useState(() => new Date().toISOString().slice(0, 7));
+  // LIEN_RELEVE : le mois peut venir de l'adresse (?mois=AAAA-MM), depuis le relevé PE / PI
+  const [mois, setMois] = useState(() => {
+    const m = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mois") : null;
+    return m && /^\d{4}-\d{2}/.test(m) ? m.slice(0, 7) : new Date().toISOString().slice(0, 7);
+  });
+  const [estAdmin, setEstAdmin] = useState(false);
+  useEffect(() => {
+    chargerMoi()
+      .then((m) => setEstAdmin(Boolean(m?.estAdmin)))
+      .catch(() => setEstAdmin(false));
+  }, []);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [suivi, setSuivi] = useState<LigneSuivi[]>([]);
@@ -701,6 +711,11 @@ function FacturationContenu() {
             <Link href="/analyse/finances" title="Le chiffre d’affaires de l’exercice, mois par mois" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
               Finances →
             </Link>
+            {estAdmin && (
+              <Link href={`/pilotage/prestations?mois=${mois}`} title="Le relevé PE / PI de ce mois" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+                Relevé PE / PI →
+              </Link>
+            )}
             <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
           </div>
         </div>
@@ -822,7 +837,7 @@ function FacturationContenu() {
             <section style={{ ...page.carte, padding: 16, overflowX: "auto" }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>
                 À facturer en {libMois}{" "}
-                <Link href="/pilotage/prestations" style={{ fontSize: 14, fontWeight: 700, color: C.rougeFonce }}>ouvrir le relevé PE / PI →</Link>
+                {estAdmin && <Link href={`/pilotage/prestations?mois=${mois}`} style={{ fontSize: 14, fontWeight: 700, color: C.rougeFonce }}>ouvrir le relevé PE / PI →</Link>}
               </h2>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12.5, color: C.gris, margin: "-4px 0 10px" }}>
                 {[
