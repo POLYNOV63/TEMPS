@@ -697,6 +697,10 @@ function FacturationContenu() {
             <button type="button" style={page.btnSecondaire} onClick={() => setMois((m) => decaler(m, -1))} aria-label="Mois précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 140, textAlign: "center" }}>{libMois}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setMois((m) => decaler(m, 1))} aria-label="Mois suivant">▶</button>
+            {/* LIEN_FINANCES */}
+            <Link href="/analyse/finances" title="Le chiffre d’affaires de l’exercice, mois par mois" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+              Finances →
+            </Link>
             <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
           </div>
         </div>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as XLSX from "xlsx";
+import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
@@ -1131,6 +1132,10 @@ function FinancesContenu() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {/* LIEN_FACTURATION */}
+            <Link href="/analyse/facturation" title="Le point de fin de mois avec la comptabilité" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+              Facturation du mois →
+            </Link>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice - 1)} aria-label="Exercice précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 120, textAlign: "center" }}>{exercice}-{exercice + 1}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice + 1)} aria-label="Exercice suivant">▶</button>
