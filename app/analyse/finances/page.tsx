@@ -1177,16 +1177,7 @@ function FinancesContenu() {
                 sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
-              {aRapprocher > 0.5 && (
-                <button type="button" onClick={() => setDetailReport("EXERCICE")} title="Voir le détail" style={{ all: "unset", cursor: "pointer", display: "flex" }}>
-                <Tuile
-                  libelle="Fait, facturé plus tard"
-                  valeur={keuros(aRapprocher)}
-                  sous={`PE / PI reportées, pas encore facturées : hors atterrissage · avec : ${keuros(totalAtterrissage + aRapprocher)}`}
-                />
-                </button>
-              )}
-              <Tuile libelle="Prix de vente obtenu" valeur={vue.prixObtenu === null ? "—" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString("fr-FR")} €/h` : "CA hors négoce ÷ heures passées"} />
+              {/* VIGNETTES_ALLEGEES : le détail du travail facturé plus tard reste dans le tableau (ligne cliquable) */}
               <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
             </div>
 

@@ -1,0 +1,27 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : calcul des vignettes",
+  "cherche": "@@DEBUT@@  const synthese = useMemo(() => {@@FIN@@\n\n  const alertes = useMemo",
+  "remplace": "  // TUILES_PORTEFEUILLE : des chiffres concrets, commandes et devis séparés\n  const synthese = useMemo(() => {\n    const aujourdhuiS = aujourdhuiISO();\n    const prest = (a: AffaireP) => a.imputation === \"PE\" || a.imputation === \"PI\";\n    const cbeEnCours = lignes.filter((l) => l.affaire.type === \"CBE\" && l.affaire.statut === \"EN_COURS\");\n    const forfaits = cbeEnCours.filter((l) => !prest(l.affaire));\n    const devis = lignes.filter((l) => l.affaire.type === \"DBE\" && l.affaire.statut === \"EN_COURS\");\n    const intentions = lignes.filter((l) => l.affaire.type === \"CBE\" && l.affaire.statut === \"EN_ATTENTE\");\n    // forfaits : chiffré et pointé des familles (le réalisé est porté par une seule ligne de la famille)\n    const chiffre = forfaits.reduce((t, l) => t + (l.famille ? l.famille.chiffre : l.dansFamille ? 0 : l.totaux.chiffre), 0);\n    const realise = forfaits.reduce((t, l) => t + (l.dansFamille ? 0 : l.totaux.realise), 0);\n    const reste = forfaits.reduce((t, l) => t + (l.dansFamille ? 0 : l.totaux.reste), 0);\n    const actives = lignes.filter((l) => l.affaire.statut === \"EN_COURS\" || l.affaire.statut === \"EN_ATTENTE\");\n    const depasses = actives.filter((l) => l.totaux.depassement > 0);\n    return {\n      commandes: cbeEnCours.length,\n      forfaits: forfaits.length,\n      prestations: cbeEnCours.length - forfaits.length,\n      devis: devis.length,\n      devisRetard: devis.filter((l) => l.affaire.echeance && l.affaire.echeance < aujourdhuiS).length,\n      intentions: intentions.length,\n      reste,\n      chiffre,\n      realise,\n      depassements: depasses.length,\n      heuresDepassees: depasses.reduce((t, l) => t + l.totaux.depassement, 0),\n      actives: actives.filter((l) => !l.dansFamille).length,\n    };\n  }, [lignes]);"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : vignettes",
+  "cherche": "@@DEBUT@@            <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 14, marginBottom: 20 }}>\n              <Tuile\n                libelle=\"Affaires en cours\"@@FIN@@            {(alertes.critiques.length > 0",
+  "remplace": "            <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 14, marginBottom: 20 }}>\n              <Tuile\n                libelle=\"Commandes en cours\"\n                valeur={String(synthese.commandes)}\n                sous={`${synthese.forfaits} au forfait · ${synthese.prestations} en PE / PI (commandes et avenants)`}\n              />\n              <Tuile\n                libelle=\"Devis à rendre\"\n                valeur={String(synthese.devis)}\n                sous={synthese.devisRetard > 0 ? `dont ${synthese.devisRetard} en retard (date de rendu dépassée)` : \"aucun en retard\"}\n                accent={synthese.devisRetard > 0}\n              />\n              <Tuile\n                libelle=\"Intentions de commande\"\n                valeur={String(synthese.intentions)}\n                sous=\"commande pas encore reçue : travail à risque, à relancer\"\n                accent={synthese.intentions > 0}\n              />\n              <Tuile\n                libelle=\"Reste à faire (forfaits)\"\n                valeur={formatHeures(synthese.reste)}\n                sous={\n                  synthese.chiffre > 0\n                    ? `${Math.round((synthese.reste / synthese.chiffre) * 100)} % du chiffré · ${formatHeures(synthese.realise)} pointées sur ${formatHeures(synthese.chiffre)}`\n                    : \"chiffré des forfaits en cours − pointé\"\n                }\n              />\n              <Tuile\n                libelle=\"Dépassements\"\n                valeur={String(synthese.depassements)}\n                sous={\n                  synthese.depassements > 0\n                    ? `${formatHeures(synthese.heuresDepassees)} au-delà du chiffré · ${Math.round((synthese.depassements / Math.max(1, synthese.actives)) * 100)} % des affaires actives`\n                    : \"aucune affaire active au-delà du chiffré\"\n                }\n                accent={synthese.depassements > 0}\n              />\n            </div>\n\n"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Finances : vignette « Prix de vente obtenu » retirée",
+  "cherche": "              <Tuile libelle=\"Prix de vente obtenu\" valeur={vue.prixObtenu === null ? \"—\" : `${Math.round(vue.prixObtenu)} €/h`} sous={coutEx !== null ? `coût ${coutEx.toLocaleString(\"fr-FR\")} €/h` : \"CA hors négoce ÷ heures passées\"} />\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Finances : vignette « Fait, facturé plus tard » retirée",
+  "cherche": "@@DEBUT@@              {aRapprocher > 0.5 && (@@FIN@@\n              )}\n",
+  "remplace": "              {/* VIGNETTES_ALLEGEES : le détail du travail facturé plus tard reste dans le tableau (ligne cliquable) */}\n",
+  "inclusif": true
+ }
+]

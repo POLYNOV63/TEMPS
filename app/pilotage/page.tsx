@@ -419,17 +419,33 @@ function PortefeuilleContenu() {
     setTri((t) => (t.col === col ? { col, sens: t.sens === 1 ? -1 : 1 } : { col, sens: 1 }));
   }
 
+  // TUILES_PORTEFEUILLE : des chiffres concrets, commandes et devis séparés
   const synthese = useMemo(() => {
-    const enCours = lignes.filter((l) => l.affaire.statut === "EN_COURS");
-    const cbeEnCours = enCours.filter((l) => l.affaire.type === "CBE");
-
+    const aujourdhuiS = aujourdhuiISO();
+    const prest = (a: AffaireP) => a.imputation === "PE" || a.imputation === "PI";
+    const cbeEnCours = lignes.filter((l) => l.affaire.type === "CBE" && l.affaire.statut === "EN_COURS");
+    const forfaits = cbeEnCours.filter((l) => !prest(l.affaire));
+    const devis = lignes.filter((l) => l.affaire.type === "DBE" && l.affaire.statut === "EN_COURS");
+    const intentions = lignes.filter((l) => l.affaire.type === "CBE" && l.affaire.statut === "EN_ATTENTE");
+    // forfaits : chiffré et pointé des familles (le réalisé est porté par une seule ligne de la famille)
+    const chiffre = forfaits.reduce((t, l) => t + (l.famille ? l.famille.chiffre : l.dansFamille ? 0 : l.totaux.chiffre), 0);
+    const realise = forfaits.reduce((t, l) => t + (l.dansFamille ? 0 : l.totaux.realise), 0);
+    const reste = forfaits.reduce((t, l) => t + (l.dansFamille ? 0 : l.totaux.reste), 0);
+    const actives = lignes.filter((l) => l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE");
+    const depasses = actives.filter((l) => l.totaux.depassement > 0);
     return {
-      enCours: enCours.length,
-      cbe: cbeEnCours.length,
-      dbe: enCours.length - cbeEnCours.length,
-      enAttente: lignes.filter((l) => l.affaire.statut === "EN_ATTENTE").length,
-      reste: cbeEnCours.reduce((t, l) => t + l.totaux.reste, 0),
-      depassements: lignes.filter((l) => (l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE") && l.totaux.depassement > 0).length,
+      commandes: cbeEnCours.length,
+      forfaits: forfaits.length,
+      prestations: cbeEnCours.length - forfaits.length,
+      devis: devis.length,
+      devisRetard: devis.filter((l) => l.affaire.echeance && l.affaire.echeance < aujourdhuiS).length,
+      intentions: intentions.length,
+      reste,
+      chiffre,
+      realise,
+      depassements: depasses.length,
+      heuresDepassees: depasses.reduce((t, l) => t + l.totaux.depassement, 0),
+      actives: actives.filter((l) => !l.dansFamille).length,
     };
   }, [lignes]);
 
