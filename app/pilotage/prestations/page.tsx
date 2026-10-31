@@ -1243,9 +1243,6 @@ function PrestationsContenu() {
             <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, -1))} aria-label="Mois précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 150, textAlign: "center" }}>{nomMois}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setMois(decalerMois(mois, 1))} aria-label="Mois suivant">▶</button>
-            <Link href="/admin/import-prestations" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }} title="Le Suivi des prestations (Excel) fait foi : importer ses onglets de mois dans le relevé">
-              ⇪ Importer le Suivi des prestations
-            </Link>
             <button type="button" style={page.btnSecondaire} onClick={() => void exporter()} disabled={lignes.length === 0 || enCours !== ""}>
               {enCours === "export" ? "Export…" : "Exporter (gabarit Excel)"}
             </button>
