@@ -1638,7 +1638,7 @@ function PrestationsContenu() {
           const L_MOIS = 66;
           const L_MONTANT = 80;
           const L_RESTE = 104;
-          const L_OUTILS = 98;
+          const L_OUTILS = 128;
           const X_MOIS = L_CMD + L_PERS;
           const X_MONTANT = X_MOIS + L_MOIS;
           const X_RESTE = X_MONTANT + L_MONTANT;
@@ -1668,7 +1668,7 @@ function PrestationsContenu() {
           const nbCol = 2 + jours.length + 4;
           const fondFixe = "#ffffff";
           // ENTETES_VISIBLES : titres de colonnes plus grands et plus foncés
-          const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "6px 4px", fontSize: 13, fontWeight: 800, color: "#1f2328", letterSpacing: ".3px", borderBottom: "2px solid #b3b9c0" };
+          const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "6px 4px", fontSize: 13, fontWeight: 800, color: "#1f2328", letterSpacing: ".3px", borderBottom: "2px solid #b3b9c0", textAlign: "center", whiteSpace: "normal", lineHeight: 1.15, overflow: "visible", textOverflow: "clip" }; // ENTETES_CENTRES
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
           const cellule: CSSProperties = { ...td, padding: "3px 4px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
           const enUnite = (l: Ligne, heures: number) =>
@@ -1701,12 +1701,12 @@ function PrestationsContenu() {
                         </button>
                       </div>
                     </th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "left" }}>Pers.</th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(L_CMD, L_PERS, "#f1f2f4"), zIndex: 5, textAlign: "center" }}>Pers.</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MOIS, L_MOIS, "#f1f2f4"), zIndex: 5, textAlign: "center" }} title="Facturé ce mois-ci, dans l'unité de la ligne (jours ou heures)">
                       Mois
                     </th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande à la fin du mois affiché, consommé sur commandé, et ce qui reste à planifier après">
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "center" }}>Montant</th>
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "center" }} title="Reste sur la commande à la fin du mois affiché, consommé sur commandé, et ce qui reste à planifier après">
                       Reste commande
                     </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
