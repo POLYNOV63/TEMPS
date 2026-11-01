@@ -946,6 +946,95 @@ function IndicateursContenu() {
               );
             })()}
 
+            {/* DEVIS_FORFAITS : devis émis au forfait (hors PE / PI) face à ce qu'ils rapportent, par imputation */}
+            {(() => {
+              const impBase = new Map(lignes.filter((l) => l.genre === "BASE" && l.base_affaire).map((l) => [l.base_affaire as string, l.imputation]));
+              const imp = (l: LigneInd) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
+              const forfait = (l: LigneInd) => imp(l) !== "PE" && imp(l) !== "PI";
+              const emisF = calcul.emis.filter(forfait);
+              const cmdF = calcul.commandes.filter(forfait);
+              const m = (l: LigneInd) => (montantsVisibles ? l.montant : l.heures_total);
+              const stats = (emis: LigneInd[], cmd: LigneInd[]) => {
+                const de = (issue: string) => emis.filter((l) => issueDevis(l) === issue);
+                const g = de("GAGNE");
+                const p = de("PERDU");
+                const a = [...de("ATTENTE"), ...de("INTENTION")];
+                const somme = (xs: LigneInd[]) => xs.reduce((t, l) => t + m(l), 0);
+                return {
+                  emis: { nb: emis.length, v: somme(emis) },
+                  gagnes: { nb: g.length, v: somme(g) },
+                  perdus: { nb: p.length, v: somme(p) },
+                  attente: { nb: a.length, v: somme(a) },
+                  cmd: { nb: cmd.length, v: somme(cmd) },
+                };
+              };
+              const total = stats(emisF, cmdF);
+              const imputations = [...new Set([...emisF, ...cmdF].map(imp))].sort((x, y) => x.localeCompare(y, "fr"));
+              const taux = (a: number, b: number) => (a + b > 0 ? `${Math.round((a / (a + b)) * 100)} %` : "—");
+              const cellule = (x: { nb: number; v: number }) => (
+                <>
+                  <strong>{x.nb}</strong>
+                  <span style={{ color: C.gris }}> · {formatMetrique(x.v)}</span>
+                </>
+              );
+              const thD: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap" };
+              const tdD: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap" };
+              return (
+                <>
+                  <h2 style={titreSection}>Devis et commandes au forfait</h2>
+                  <p style={{ ...page.sousTitre, marginTop: -6 }}>
+                    Hors PE / PI. Les devis <strong>émis</strong> sur la période et ce qu’ils sont devenus, face aux commandes au forfait <strong>reçues</strong> sur la
+                    même période ({montantsVisibles ? "montants" : "heures chiffrées"}).
+                  </p>
+                  <div style={rangee}>
+                    <Tuile libelle="Devis émis au forfait" valeur={`${total.emis.nb}`} sous={`${formatMetrique(total.emis.v)} chiffrés`} />
+                    <Tuile
+                      libelle="Devenus commande"
+                      valeur={`${total.gagnes.nb}`}
+                      sous={`${formatMetrique(total.gagnes.v)} · taux ${taux(total.gagnes.nb, total.perdus.nb)} en nombre, ${taux(total.gagnes.v, total.perdus.v)} en ${montantsVisibles ? "montant" : "heures"}`}
+                    />
+                    <Tuile libelle="Encore sans réponse" valeur={`${total.attente.nb}`} sous={`${formatMetrique(total.attente.v)} en attente ou en intention`} />
+                    <Tuile libelle="Commandes reçues au forfait" valeur={`${total.cmd.nb}`} sous={`${formatMetrique(total.cmd.v)} · commandes et avenants reçus sur la période`} />
+                  </div>
+                  <div style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                      <thead>
+                        <tr>
+                          <th style={page.th}>Imputation</th>
+                          <th style={thD}>Devis émis</th>
+                          <th style={thD}>Devenus commande</th>
+                          <th style={thD}>Perdus</th>
+                          <th style={thD}>Sans réponse</th>
+                          <th style={thD} title="Gagnés ÷ (gagnés + perdus)">Taux (nb / {montantsVisibles ? "€" : "h"})</th>
+                          <th style={thD}>Commandes reçues</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...imputations.map((i) => ({ cle: i, s: stats(emisF.filter((l) => imp(l) === i), cmdF.filter((l) => imp(l) === i)) })), { cle: "Total", s: total }].map(({ cle, s: st }) => (
+                          <tr key={cle} style={cle === "Total" ? { background: "#f6f7f8" } : undefined}>
+                            <td style={{ ...page.td, fontWeight: 800 }}>{cle}</td>
+                            <td style={tdD}>{cellule(st.emis)}</td>
+                            <td style={{ ...tdD, color: "#1b5e20" }}>{cellule(st.gagnes)}</td>
+                            <td style={tdD}>{cellule(st.perdus)}</td>
+                            <td style={tdD}>{cellule(st.attente)}</td>
+                            <td style={{ ...tdD, fontWeight: 800 }}>
+                              {taux(st.gagnes.nb, st.perdus.nb)} / {taux(st.gagnes.v, st.perdus.v)}
+                            </td>
+                            <td style={{ ...tdD, fontWeight: 800 }}>{cellule(st.cmd)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ fontSize: 12, color: C.gris, marginTop: 6 }}>
+                      Devis émis : envoyés sur la période (à défaut, ouverts). « Devenus commande » : devis de la période qui portent un n° de commande, au
+                      montant de la commande. Commandes reçues : toutes celles reçues sur la période, y compris issues de devis plus anciens ; c’est ce que la
+                      période a réellement rapporté.
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+
             {/* ================= COÛT DES DEVIS ================= */}
             {coutDevis && (
               <>
