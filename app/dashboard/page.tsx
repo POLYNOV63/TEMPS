@@ -1095,8 +1095,6 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
         <CarteCompacte icone="🎯" titre="Pointé / chiffré" description="Pointé face au chiffré, affaire par affaire" onClick={() => aller("/analyse/pointage")} />
-        {/* CARTE_DEVIS */}
-        <CarteCompacte icone="📝" titre="Analyse des devis" description="Heures passées sur les devis, par qui, et devis devenus commandes" onClick={() => aller("/analyse/devis")} />
         {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
         <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
         <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />

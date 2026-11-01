@@ -244,6 +244,9 @@ function IndicateursContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [voirCarnet, setVoirCarnet] = useState(false);
+  /* COUT_DEVIS : heures pointées sur chaque devis (feuilles d'heures et historique), par n° de devis */
+  const [heuresDevis, setHeuresDevis] = useState<Map<string, number>>(new Map());
+  const [voirDevis, setVoirDevis] = useState(false);
 
   useEffect(() => {
     let actif = true;
@@ -320,6 +323,14 @@ function IndicateursContenu() {
           }))
         );
         setMontantsVisibles(montants.length > 0);
+
+        const rd = new Map<string, number>();
+        for (const x of realise) {
+          if (x.type_affaire !== "DBE") continue;
+          const k = String(x.numero).replace(/^0+/, "");
+          rd.set(k, (rd.get(k) ?? 0) + (Number(x.heures) || 0));
+        }
+        setHeuresDevis(rd);
 
         const r = new Map<string, number>();
         for (const x of realise) {
@@ -443,6 +454,36 @@ function IndicateursContenu() {
       evolutionCarnet,
     };
   }, [lignes, debut, fin, debutN1, finN1, periodeValide, consomme, preset]);
+
+  /* COUT_DEVIS : les devis OUVERTS sur la période, ce qu'ils ont coûté en heures (toutes les heures pointées
+     dessus, même après la période) et ce qu'ils sont devenus */
+  const coutDevis = useMemo(() => {
+    if (!periodeValide) return null;
+    const numeroDevis = (l: LigneInd) => (l.numero_devis ?? "").replace(/^\D+/, "").match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
+    const vus = new Set<string>();
+    const devis = lignes
+      .filter((l) => !l.disparue && (l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") && l.date_ouverture && l.date_ouverture >= debut && l.date_ouverture <= fin)
+      .filter((l) => {
+        const n = numeroDevis(l);
+        if (!n || vus.has(n)) return false;
+        vus.add(n);
+        return true;
+      })
+      .map((l) => ({ l, numero: numeroDevis(l), heures: heuresDevis.get(numeroDevis(l)) ?? 0, issue: issueDevis(l) }))
+      .sort((x, y) => Number(y.numero) - Number(x.numero));
+    const somme = (xs: typeof devis) => xs.reduce((t, d) => t + d.heures, 0);
+    const gagnes = devis.filter((d) => d.issue === "GAGNE");
+    const perdus = devis.filter((d) => d.issue === "PERDU");
+    const montantGagne = gagnes.reduce((t, d) => t + d.l.montant, 0);
+    return {
+      devis,
+      heures: somme(devis),
+      sansHeure: devis.filter((d) => d.heures < 0.01).length,
+      gagnes: { nb: gagnes.length, heures: somme(gagnes) },
+      perdus: { nb: perdus.length, heures: somme(perdus) },
+      montantGagne,
+    };
+  }, [lignes, debut, fin, periodeValide, heuresDevis]);
 
   const valeur = (a: Agregat) => (montantsVisibles ? keuros(a.montant) : formatHeures(a.heures));
   const metrique = (p: Part) => (montantsVisibles ? p.montant : p.heures);
@@ -870,6 +911,91 @@ function IndicateursContenu() {
                 </div>
               );
             })()}
+
+            {/* ================= COÛT DES DEVIS ================= */}
+            {coutDevis && (
+              <>
+                <h2 style={titreSection}>Coût des devis</h2>
+                <p style={{ ...page.sousTitre, marginTop: -6 }}>
+                  Les devis <strong>ouverts</strong> du {formatDate(debut)} au {formatDate(fin)}, et toutes les heures pointées dessus (feuilles d’heures, et
+                  historique avant le 2 novembre 2026), même après la période.
+                </p>
+                <div style={rangee}>
+                  <Tuile
+                    libelle="Devis ouverts"
+                    valeur={`${coutDevis.devis.length}`}
+                    sous={`${formatHeures(coutDevis.heures)} passées · ${coutDevis.devis.length > 0 ? formatHeures(coutDevis.heures / coutDevis.devis.length) : "—"} en moyenne par devis${coutDevis.sansHeure > 0 ? ` · ${coutDevis.sansHeure} sans heure pointée` : ""}`}
+                  />
+                  <Tuile
+                    libelle="Par devis gagné"
+                    valeur={coutDevis.gagnes.nb > 0 ? formatHeures(coutDevis.gagnes.heures / coutDevis.gagnes.nb) : "—"}
+                    sous={`${coutDevis.gagnes.nb} gagnés · ${formatHeures(coutDevis.gagnes.heures)} au total`}
+                  />
+                  <Tuile
+                    libelle="Par devis perdu"
+                    valeur={coutDevis.perdus.nb > 0 ? formatHeures(coutDevis.perdus.heures / coutDevis.perdus.nb) : "—"}
+                    sous={`${coutDevis.perdus.nb} perdus · ${formatHeures(coutDevis.perdus.heures)} au total`}
+                  />
+                  {montantsVisibles && (
+                    <Tuile
+                      libelle="Heures de devis pour 1 000 € gagnés"
+                      valeur={coutDevis.montantGagne > 0 ? formatHeures((coutDevis.heures / coutDevis.montantGagne) * 1000) : "—"}
+                      sous={`toutes les heures de devis de la période, rapportées aux ${keuros(coutDevis.montantGagne)} gagnés`}
+                    />
+                  )}
+                </div>
+                <div style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
+                  <button
+                    type="button"
+                    aria-expanded={voirDevis}
+                    onClick={() => setVoirDevis((v) => !v)}
+                    className="sans-impression"
+                    style={{ all: "unset", cursor: "pointer", fontSize: 16, fontWeight: 800, display: "inline-flex", gap: 8, minHeight: 36, alignItems: "center" }}
+                  >
+                    <span aria-hidden="true">{voirDevis ? "▾" : "▸"}</span> Devis ouverts sur la période ({coutDevis.devis.length})
+                  </button>
+                  {voirDevis && (
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 8 }}>
+                      <thead>
+                        <tr>
+                          <th style={page.th}>Devis</th>
+                          <th style={page.th}>Client</th>
+                          <th style={page.th}>Désignation</th>
+                          <th style={page.th}>Ouvert le</th>
+                          <th style={page.th}>Envoyé le</th>
+                          <th style={{ ...page.th, textAlign: "right" }}>Heures passées</th>
+                          <th style={page.th}>Devenu</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {coutDevis.devis.map(({ l, numero, heures, issue }) => (
+                          <tr key={numero}>
+                            <td style={{ ...page.td, fontWeight: 800, whiteSpace: "nowrap" }}>DBE{numero}</td>
+                            <td style={page.td}>{l.client ?? "—"}</td>
+                            <td style={{ ...page.td, fontSize: 13 }}>{l.designation ?? "—"}</td>
+                            <td style={{ ...page.td, whiteSpace: "nowrap" }}>{formatDate(l.date_ouverture)}</td>
+                            <td style={{ ...page.td, whiteSpace: "nowrap" }}>{formatDate(l.date_envoi)}</td>
+                            <td style={{ ...page.td, textAlign: "right", fontWeight: 800 }}>{heures > 0 ? formatHeures(heures) : "—"}</td>
+                            <td style={page.td}>
+                              {issue === "GAGNE" ? (
+                                <span style={{ fontWeight: 800, color: "#1b5e20" }}>
+                                  ✓ {l.numero_affaire ?? "commande"}
+                                  {montantsVisibles && l.montant > 0 ? ` · ${keuros(l.montant)}` : ""}
+                                </span>
+                              ) : (
+                                <span style={{ color: issue === "PERDU" ? C.rougeTexte : C.gris }}>
+                                  {issue === "PERDU" ? "perdu" : issue === "INTENTION" ? "intention de commande" : l.statut === "Devis ouvert" ? "en cours de rédaction" : "en attente de réponse"}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
 
             {/* ================= CARNET DE COMMANDES ================= */}
             <h2 style={titreSection}>2. Carnet de commandes</h2>
