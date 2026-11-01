@@ -229,6 +229,13 @@ type LigneBrute = {
 function IndicateursContenu() {
   const aujourdhui = aujourdhuiISO();
   const [preset, setPreset] = useState<Preset>("EXERCICE");
+  /* EXERCICE_CHOISI : l'exercice analysé (du 1er novembre au 31 octobre, ou jusqu'à aujourd'hui pour l'exercice en cours) */
+  const exerciceCourant = Number(debutExercice(aujourdhui).slice(0, 4));
+  const [exerciceChoisi, setExerciceChoisi] = useState(exerciceCourant);
+  const bornesExercice = (an: number) => {
+    const finEx = `${an + 1}-10-31`;
+    return { debut: `${an}-11-01`, fin: finEx < aujourdhui ? finEx : aujourdhui };
+  };
   // Top 10 clients : imputation choisie ("" = toutes)
   const [imputationTop, setImputationTop] = useState("");
   // par défaut : l'exercice en cours, pour que tous les indicateurs suivent les mêmes critères que les Finances
@@ -377,6 +384,12 @@ function IndicateursContenu() {
 
   function choisir(p: Preset) {
     setPreset(p);
+    if (p === "EXERCICE") {
+      const per = bornesExercice(exerciceChoisi);
+      setDebut(per.debut);
+      setFin(per.fin);
+      return;
+    }
     if (p !== "LIBRE") {
       const per = periodeDe(p, aujourdhui);
       setDebut(per.debut);
@@ -657,7 +670,7 @@ function IndicateursContenu() {
         <div className="sans-impression" style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 8 }}>
           {(
             [
-              ["EXERCICE", "Exercice en cours"],
+              ["EXERCICE", "Exercice"],
               ["ANNEE", "Année en cours"],
               ["TRIMESTRE", "Trimestre en cours"],
               ["DOUZE_MOIS", "12 derniers mois"],
@@ -668,6 +681,27 @@ function IndicateursContenu() {
               {libelle}
             </button>
           ))}
+          <select
+            value={exerciceChoisi}
+            onChange={(e) => {
+              const an = Number(e.target.value);
+              setExerciceChoisi(an);
+              setPreset("EXERCICE");
+              const per = bornesExercice(an);
+              setDebut(per.debut);
+              setFin(per.fin);
+            }}
+            aria-label="Exercice analysé"
+            title="Exercice analysé (du 1er novembre au 31 octobre)"
+            style={{ ...page.entrees, width: "auto", minHeight: 40, fontWeight: 700, borderColor: preset === "EXERCICE" ? C.rouge : undefined }}
+          >
+            {[0, 1, 2, 3].map((k) => (
+              <option key={k} value={exerciceCourant - k}>
+                Exercice {exerciceCourant - k}-{exerciceCourant - k + 1}
+                {k === 0 ? " (en cours)" : ""}
+              </option>
+            ))}
+          </select>
           <span style={{ width: 8 }} />
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             Du
