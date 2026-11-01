@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Barre d'un devis : heures passées",
+  "cherche": "        : \"\"\n      : rp && rp.chiffre > 0\n        ? `${formatHeures(rp.pointe)} pointées",
+  "remplace": "        : \"\"\n      : affaire.type === \"DBE\"\n        ? // HEURES_DBE : heures pointées sur le devis (feuilles d'heures et historique)\n          `${formatHeures(realiseParAffaire.get(`DBE|${affaire.numero.replace(/^0+/, \"\")}`) ?? 0)} passées`\n      : rp && rp.chiffre > 0\n        ? `${formatHeures(rp.pointe)} pointées"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Colonne de droite d'un devis : heures passées et prévues",
+  "cherche": "                    const r = resteAPlanifier.get(affaire.id);\n                    if (r && r.chiffre > 0) return `${formatHeures(r.pointe + r.planifie)} / ${formatHeures(r.chiffre)}`;",
+  "remplace": "                    const r = resteAPlanifier.get(affaire.id);\n                    if (affaire.type === \"DBE\") {\n                      const passees = realiseParAffaire.get(`DBE|${affaire.numero.replace(/^0+/, \"\")}`) ?? 0;\n                      return `${formatHeures(passees)} passées${affecteAffiche > 0 ? ` · ${formatHeures(affecteAffiche)} prévues` : \"\"}`;\n                    }\n                    if (r && r.chiffre > 0) return `${formatHeures(r.pointe + r.planifie)} / ${formatHeures(r.chiffre)}`;"
+ }
+]

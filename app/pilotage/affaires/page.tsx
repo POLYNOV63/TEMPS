@@ -1416,6 +1416,9 @@ function PlanningAffairesContenu() {
       ? env.commande > 0
         ? `enveloppe ${formatHeures(env.commande)} · reste ${formatHeures(Math.max(0, env.reste))}`
         : ""
+      : affaire.type === "DBE"
+        ? // HEURES_DBE : heures pointées sur le devis (feuilles d'heures et historique)
+          `${formatHeures(realiseParAffaire.get(`DBE|${affaire.numero.replace(/^0+/, "")}`) ?? 0)} passées`
       : rp && rp.chiffre > 0
         ? `${formatHeures(rp.pointe)} pointées${rp.planifie > 0.5 ? ` + ${formatHeures(rp.planifie)} planifiées` : ""} / ${formatHeures(rp.chiffre)}`
         : chiffre > 0
@@ -1748,6 +1751,10 @@ function PlanningAffairesContenu() {
                 <div style={{ fontSize: 12, fontWeight: 800 }} title="Déjà pointé + planifié à venir, sur le chiffré">
                   {(() => {
                     const r = resteAPlanifier.get(affaire.id);
+                    if (affaire.type === "DBE") {
+                      const passees = realiseParAffaire.get(`DBE|${affaire.numero.replace(/^0+/, "")}`) ?? 0;
+                      return `${formatHeures(passees)} passées${affecteAffiche > 0 ? ` · ${formatHeures(affecteAffiche)} prévues` : ""}`;
+                    }
                     if (r && r.chiffre > 0) return `${formatHeures(r.pointe + r.planifie)} / ${formatHeures(r.chiffre)}`;
                     return chiffre > 0 ? `${formatHeures(affecteAffiche)} / ${formatHeures(chiffre)}` : affecteAffiche > 0 ? formatHeures(affecteAffiche) : "—";
                   })()}
