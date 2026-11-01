@@ -1667,7 +1667,8 @@ function PrestationsContenu() {
           const petitOutil: CSSProperties = { ...outil, minWidth: 28, height: 30, padding: "0 4px", fontSize: 14 };
           const nbCol = 2 + jours.length + 4;
           const fondFixe = "#ffffff";
-          const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "5px 4px", fontSize: 11 };
+          // ENTETES_VISIBLES : titres de colonnes plus grands et plus foncés
+          const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "6px 4px", fontSize: 13, fontWeight: 800, color: "#1f2328", letterSpacing: ".3px", borderBottom: "2px solid #b3b9c0" };
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
           const cellule: CSSProperties = { ...td, padding: "3px 4px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
           const enUnite = (l: Ligne, heures: number) =>
