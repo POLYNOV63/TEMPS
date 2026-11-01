@@ -187,6 +187,25 @@ function PrestationsContenu() {
   const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
+  /* AVENANTS_IGNORES : commandes qu'on ne veut plus voir dans « Avenant à prévoir » (retenu sur ce poste) */
+  const [avenantsIgnores, setAvenantsIgnores] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      setAvenantsIgnores(new Set(JSON.parse(localStorage.getItem("polynov_avenants_ignores") ?? "[]") as string[]));
+    } catch {
+      /* rien de retenu */
+    }
+  }, []);
+  const ignorerAvenants = (ids: string[] | null) =>
+    setAvenantsIgnores((s) => {
+      const n = ids === null ? new Set<string>() : new Set([...s, ...ids]);
+      try {
+        localStorage.setItem("polynov_avenants_ignores", JSON.stringify([...n]));
+      } catch {
+        /* stockage indisponible */
+      }
+      return n;
+    });
   /* DORMANTES_RELEVE : PE / PI en cours sans activité depuis 3 mois, rangées à part ; « reprendre » les remet dans le relevé */
   const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
   const [reveillees, setReveillees] = useState<Set<string>>(new Set());
@@ -1312,14 +1331,21 @@ function PrestationsContenu() {
           (() => {
             const vues = new Set<string>();
             const alertes: { a: AffaireP; texte: string; crit: boolean }[] = [];
+            let masquees = 0;
             for (const l of lignes) {
               if (!l.actif || vues.has(l.affaire_id)) continue;
               vues.add(l.affaire_id);
               const a = affairesParId.get(l.affaire_id);
               if (!a || a.statut === "LIVREE") continue;
+              // une commande sans heure ce mois-ci n'a pas besoin d'avenant maintenant (prestation finie ou en pause)
+              if (!lignes.some((x) => x.affaire_id === a.id && x.actif && calcul(x).heures > 0)) continue;
               const f = ficheDe(a);
               if (f.reste === null || !f.quantite) continue;
               const u = f.unite === "JOUR" ? "j" : "h";
+              if (avenantsIgnores.has(a.id) && (f.reste <= 0.01 || f.reste / f.quantite < 0.2)) {
+                masquees++;
+                continue;
+              }
               if (f.reste <= 0.01) alertes.push({ a, crit: true, texte: f.reste < -0.01 ? `dépassée de ${texteHeures(Math.round(-f.reste * 10) / 10)} ${u}` : "épuisée" });
               else if (f.reste / f.quantite < 0.2) alertes.push({ a, crit: false, texte: `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u} (${Math.round((f.reste / f.quantite) * 100)} %)` });
             }
@@ -1329,6 +1355,20 @@ function PrestationsContenu() {
               <Message genre={alertes.some((x) => x.crit) ? "erreur" : "info"}>
                 {/* AVENANT_DETAIL : chaque commande avec son client et sa description */}
                 <strong>Avenant à prévoir</strong> ({alertes.length})
+                {masquees > 0 && (
+                  <button type="button" onClick={() => ignorerAvenants(null)} style={{ all: "unset", cursor: "pointer", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}>
+                    réafficher les {masquees} masquée{masquees > 1 ? "s" : ""}
+                  </button>
+                )}
+                {alertes.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => ignorerAvenants(alertes.map((x) => x.a.id))}
+                    style={{ all: "unset", cursor: "pointer", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}
+                  >
+                    ne plus signaler celles-ci
+                  </button>
+                )}
                 <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
                   {alertes.map((x) => {
                     const nf = numeroFacture(x.a);
@@ -1351,6 +1391,14 @@ function PrestationsContenu() {
                         {x.a.designation ? <span style={{ fontWeight: 400 }}> · {x.a.designation}</span> : null}
                         {" — "}
                         <strong>{x.texte}</strong>
+                        <button
+                          type="button"
+                          onClick={() => ignorerAvenants([x.a.id])}
+                          title="Ne plus signaler cette commande ici (la suite est prévue). Retenu sur ce poste."
+                          style={{ all: "unset", cursor: "pointer", marginLeft: 8, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}
+                        >
+                          ne plus signaler
+                        </button>
                       </li>
                     );
                   })}

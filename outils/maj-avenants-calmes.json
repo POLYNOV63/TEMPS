@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Commandes à ne plus signaler (gardées sur ce poste)",
+  "cherche": "  const [fiche, setFiche] = useState<string | null>(null);",
+  "remplace": "  const [fiche, setFiche] = useState<string | null>(null);\n  /* AVENANTS_IGNORES : commandes qu'on ne veut plus voir dans « Avenant à prévoir » (retenu sur ce poste) */\n  const [avenantsIgnores, setAvenantsIgnores] = useState<Set<string>>(new Set());\n  useEffect(() => {\n    try {\n      setAvenantsIgnores(new Set(JSON.parse(localStorage.getItem(\"polynov_avenants_ignores\") ?? \"[]\") as string[]));\n    } catch {\n      /* rien de retenu */\n    }\n  }, []);\n  const ignorerAvenants = (ids: string[] | null) =>\n    setAvenantsIgnores((s) => {\n      const n = ids === null ? new Set<string>() : new Set([...s, ...ids]);\n      try {\n        localStorage.setItem(\"polynov_avenants_ignores\", JSON.stringify([...n]));\n      } catch {\n        /* stockage indisponible */\n      }\n      return n;\n    });"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Compteur des commandes masquées",
+  "cherche": "            const alertes: { a: AffaireP; texte: string; crit: boolean }[] = [];",
+  "remplace": "            const alertes: { a: AffaireP; texte: string; crit: boolean }[] = [];\n            let masquees = 0;"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Seulement les commandes qui travaillent ce mois-ci, hors masquées",
+  "cherche": "              if (!a || a.statut === \"LIVREE\") continue;\n              const f = ficheDe(a);",
+  "remplace": "              if (!a || a.statut === \"LIVREE\") continue;\n              // une commande sans heure ce mois-ci n'a pas besoin d'avenant maintenant (prestation finie ou en pause)\n              if (!lignes.some((x) => x.affaire_id === a.id && x.actif && calcul(x).heures > 0)) continue;\n              const f = ficheDe(a);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Commandes masquées écartées",
+  "cherche": "              const u = f.unite === \"JOUR\" ? \"j\" : \"h\";\n              if (f.reste <= 0.01) alertes.push",
+  "remplace": "              const u = f.unite === \"JOUR\" ? \"j\" : \"h\";\n              if (avenantsIgnores.has(a.id) && (f.reste <= 0.01 || f.reste / f.quantite < 0.2)) {\n                masquees++;\n                continue;\n              }\n              if (f.reste <= 0.01) alertes.push"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Bouton « ne plus signaler »",
+  "cherche": "                        <strong>{x.texte}</strong>\n                      </li>",
+  "remplace": "                        <strong>{x.texte}</strong>\n                        <button\n                          type=\"button\"\n                          onClick={() => ignorerAvenants([x.a.id])}\n                          title=\"Ne plus signaler cette commande ici (la suite est prévue). Retenu sur ce poste.\"\n                          style={{ all: \"unset\", cursor: \"pointer\", marginLeft: 8, fontSize: 12, color: C.gris, textDecoration: \"underline dotted\" }}\n                        >\n                          ne plus signaler\n                        </button>\n                      </li>"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Lien pour réafficher les commandes masquées",
+  "cherche": "                <strong>Avenant à prévoir</strong> ({alertes.length})",
+  "remplace": "                <strong>Avenant à prévoir</strong> ({alertes.length})\n                {masquees > 0 && (\n                  <button type=\"button\" onClick={() => ignorerAvenants(null)} style={{ all: \"unset\", cursor: \"pointer\", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: \"underline dotted\" }}>\n                    réafficher les {masquees} masquée{masquees > 1 ? \"s\" : \"\"}\n                  </button>\n                )}\n                {alertes.length > 1 && (\n                  <button\n                    type=\"button\"\n                    onClick={() => ignorerAvenants(alertes.map((x) => x.a.id))}\n                    style={{ all: \"unset\", cursor: \"pointer\", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: \"underline dotted\" }}\n                  >\n                    ne plus signaler celles-ci\n                  </button>\n                )}"
+ }
+]
