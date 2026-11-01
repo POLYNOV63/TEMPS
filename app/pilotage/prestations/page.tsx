@@ -1246,7 +1246,7 @@ function PrestationsContenu() {
           <div>
             <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
             <p style={page.sousTitre}>
-              Ce relevé fait foi et alimente le planning. <strong>⤓</strong> remplit le mois d’une ligne · cliquer-glisser sur des jours puis taper
+              Ce relevé fait foi et alimente le planning. <strong>+7h</strong> remplit les jours vides d’une ligne · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
               une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose.
             </p>
           </div>
@@ -1766,6 +1766,15 @@ function PrestationsContenu() {
                                         {nf?.numero}
                                       </Link>
                                       {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                                      {/* REPERE_REPORT : heures reportées du mois précédent sur cette ligne */}
+                                      {!c.reporte && c.reportEntrant > 0.01 && (
+                                        <span
+                                          title={`Cette ligne facture ce mois-ci ${formatHeures(c.reportEntrant)} reportées de ${NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12]} : elles sont déjà comptées, ne les ressaisissez pas dans les jours.`}
+                                          style={{ fontSize: 11, fontWeight: 800, color: "#ffffff", background: "#7a3e00", borderRadius: 4, padding: "0 5px" }}
+                                        >
+                                          ↪ report {NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12].slice(0, 4)}.
+                                        </span>
+                                      )}
                                       <button type="button" onClick={() => setFiche(a.id)} title="Fiche commande : commandé, taux, consommé, reste" aria-label={`Fiche commande ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 14, color: "#1f4e99", fontWeight: 800 }}>
                                         ⓘ
                                       </button>
@@ -1867,8 +1876,9 @@ function PrestationsContenu() {
                                         📅
                                       </button>
                                     ) : (
-                                      <button type="button" style={petitOutil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
-                                        ⤓
+                                      <button type="button" style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
+                                        {/* REMPLIR_TEXTE : « +7h » au lieu d'une flèche qui faisait penser à un menu */}
+                                        +{texteHeures(l.base_horaire)}h
                                       </button>
                                     ))}
                                   {!verrou && (

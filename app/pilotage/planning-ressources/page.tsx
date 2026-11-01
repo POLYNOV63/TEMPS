@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -62,6 +63,26 @@ function PlanningRessourcesContenu() {
   const [capacites, setCapacites] = useState<Capacites>(new Map());
   const [avecEncadrement, setAvecEncadrement] = useState(false);
   const [recherche, setRecherche] = useState("");
+  /* RESSOURCES_PREDOMINANCE : chacun rangé sous son activité principale (fiche Collaborateurs) */
+  const [predo, setPredo] = useState<Map<string, { nom: string; ordre: number }>>(new Map());
+  useEffect(() => {
+    Promise.all([
+      supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id,niveau"),
+      supabase.from("activites").select("id,nom,ordre_affichage"),
+    ])
+      .then(([p, a]) => {
+        if (p.error || a.error) return;
+        const acts = new Map(((a.data ?? []) as { id: string; nom: string; ordre_affichage: number | null }[]).map((x) => [x.id, { nom: x.nom, ordre: x.ordre_affichage ?? 999 }]));
+        const m = new Map<string, { nom: string; ordre: number }>();
+        for (const x of (p.data ?? []) as { collaborateur_id: string; activite_id: string; niveau: string | null }[]) {
+          if (x.niveau && x.niveau !== "PRINCIPALE") continue;
+          const act = acts.get(x.activite_id);
+          if (act && !m.has(x.collaborateur_id)) m.set(x.collaborateur_id, act);
+        }
+        setPredo(m);
+      })
+      .catch(() => undefined);
+  }, []);
 
   // colonnes : jours ouvrés de la période
   const colonnes = useMemo(() => {
@@ -118,6 +139,11 @@ function PlanningRessourcesContenu() {
 
       const affaire = a.affaire_id ? affairesParId.get(a.affaire_id) : undefined;
       const { fond, encre } = couleurs(affaire);
+      // DEVIS_REMIS_RESSOURCES : comme au planning des affaires, un devis envoyé ou perdu n'apparaît plus
+      if (affaire && affaire.type === "DBE" && affaire.statut !== "EN_COURS" && affaire.statut !== "EN_ATTENTE") {
+        for (const j of js) p.charge[j.i] -= j.h;
+        continue;
+      }
       const libelle = affaire ? `${affaire.type}${affaire.numero}` : a.libelle ?? "Hors affaire";
       const detail = affaire ? `${affaire.designation}${affaire.imputation ? ` · ${affaire.imputation}` : ""}` : "Hors affaire";
 
@@ -161,10 +187,13 @@ function PlanningRessourcesContenu() {
         const totalAffecte = p.charge.reduce((t, h) => t + h, 0);
         const totalNet = nets.reduce((t, h) => t + h, 0);
         const voies = Math.max(1, ...p.segments.map((s) => s.voie + 1));
-        return { collab: c, ...p, nets, totalAffecte, totalNet, voies };
+        const g = predo.size > 0 ? predo.get(c.id) ?? { nom: "Sans prédominance", ordre: 9999 } : { nom: "", ordre: 0 };
+        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre };
       })
-      .sort((x, y) => (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
-  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche]);
+      .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
+  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo]);
+  // toutes les lignes ont la même hauteur : celle de la personne qui a le plus de barres empilées
+  const voiesMax = Math.max(1, ...lignes.map((l) => l.voies));
 
   /* en-tête : mois, semaines, jours */
   const mois = useMemo(() => {
@@ -179,6 +208,24 @@ function PlanningRessourcesContenu() {
   }, [colonnes]);
 
   const gabarit = `${LARGEUR_NOM}px repeat(${colonnes.length}, minmax(0, 1fr)) 96px`;
+  // SEMAINE_ENCADREE : colonnes de la semaine en cours
+  const lundiCourant = lundiDe(aujourdhui);
+  const idxSemaine = colonnes.map((j, i) => (j >= lundiCourant && j <= ajouterJours(lundiCourant, 4) ? i : -1)).filter((i) => i >= 0);
+  const cadreSemaine = (haut: boolean, bas: boolean): CSSProperties | null =>
+    idxSemaine.length === 0
+      ? null
+      : {
+          gridColumn: `${idxSemaine[0] + 2} / ${idxSemaine[idxSemaine.length - 1] + 3}`,
+          gridRow: "1 / -1",
+          borderLeft: `2px solid ${C.rouge}`,
+          borderRight: `2px solid ${C.rouge}`,
+          borderTop: haut ? `2px solid ${C.rouge}` : undefined,
+          borderBottom: bas ? `2px solid ${C.rouge}` : undefined,
+          borderRadius: haut ? "6px 6px 0 0" : bas ? "0 0 6px 6px" : undefined,
+          background: "rgba(192, 0, 0, 0.035)",
+          pointerEvents: "none",
+          zIndex: 3,
+        };
   const col = (i: number) => i + 2;
   const btn: CSSProperties = { minHeight: 36, minWidth: 36, border: "1.5px solid #b9bec5", background: "#ffffff", borderRadius: 8, color: C.rougeFonce, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", padding: "0 10px" };
 
@@ -214,29 +261,17 @@ function PlanningRessourcesContenu() {
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}>
             <input type="checkbox" checked={avecEncadrement} onChange={(e) => setAvecEncadrement(e.target.checked)} /> avec l’encadrement
           </label>
-          <span style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap", fontSize: 12, color: C.gris }}>
-            {[
-              ["#dff3e3", "libre"],
-              ["#fff1c4", "en partie"],
-              ["#ffd8a8", "plein"],
-              ["#f7b4b4", "surchargé"],
-              ["#eceef1", "non travaillé"],
-            ].map(([c, l]) => (
-              <span key={l} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <i style={{ display: "inline-block", width: 14, height: 10, background: c, borderRadius: 2 }} /> {l}
-              </span>
-            ))}
-          </span>
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {chargement && <Message genre="info">Chargement…</Message>}
 
         {!chargement && (
-          <section style={{ ...page.carte, padding: 10 }}>
+          {/* RESSOURCES_GLISSER : largeur minimale (22 px par jour), la page se fait glisser de côté sur téléphone */}
+          <section style={{ ...page.carte, padding: 10, minWidth: LARGEUR_NOM + 96 + colonnes.length * 22 }}>
             {/* en-tête fixe : mois, semaines, jours */}
             <div style={{ display: "grid", gridTemplateColumns: gabarit, position: "sticky", top: 112, zIndex: 15, background: "#ffffff", boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)" }}>
-              <div style={{ gridColumn: 1, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, textTransform: "uppercase", color: C.gris }}>Personne</div>
+              <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, textTransform: "uppercase", color: C.gris }}>Personne</div>
               {mois.map((m) => (
                 <div key={m.cle} style={{ gridColumn: `${col(m.debut)} / span ${m.nb}`, gridRow: 1, textAlign: "center", fontWeight: 800, fontSize: 13, color: C.rougeFonce, borderLeft: "2px solid #b3b9c0", whiteSpace: "nowrap", overflow: "hidden", textTransform: "capitalize", padding: "3px 0" }}>
                   {m.nb >= 3 ? new Date(`${m.cle}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }) : ""}
@@ -254,16 +289,33 @@ function PlanningRessourcesContenu() {
                   {Number(j.slice(8))}
                 </div>
               ))}
+              {cadreSemaine(true, false) && <div aria-hidden="true" title="Semaine en cours" style={{ ...cadreSemaine(true, false)!, gridRow: "2 / span 2" }} />}
               <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", justifyContent: "flex-end", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: C.gris, textAlign: "right" }}>
                 Affecté / dispo
               </div>
             </div>
 
-            {lignes.map((l) => {
+            {lignes.map((l, k) => {
               const ratio = l.totalNet > 0 ? l.totalAffecte / l.totalNet : 0;
+              const cadre = cadreSemaine(false, k === lignes.length - 1);
               return (
-                <div key={l.collab.id} style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${l.voies}, ${HAUTEUR_VOIE}px) 12px`, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>
-                  <div style={{ gridColumn: 1, gridRow: `1 / span ${l.voies + 1}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4 }}>
+                <Fragment key={l.collab.id}>
+                {l.groupe && (k === 0 || lignes[k - 1].groupe !== l.groupe) && (() => {
+                  const du = lignes.filter((x) => x.groupe === l.groupe);
+                  const aff = du.reduce((t, x) => t + x.totalAffecte, 0);
+                  const net = du.reduce((t, x) => t + x.totalNet, 0);
+                  const r = net > 0 ? aff / net : 0;
+                  return (
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 6px 4px", marginTop: k === 0 ? 0 : 8, borderBottom: `2px solid ${C.ligne}`, position: "sticky", left: 0 }}>
+                      <strong style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: ".4px", color: C.rougeFonce }}>{l.groupe}</strong>
+                      <span style={{ fontSize: 13, color: C.gris }}>
+                        {du.length} personne{du.length > 1 ? "s" : ""} · charge <strong style={{ color: r > 1.01 ? "#b3261e" : r > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(r * 100)} %</strong> ({formatHeures(aff)} / {formatHeures(net)})
+                      </span>
+                    </div>
+                  );
+                })()}
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${voiesMax}, ${HAUTEUR_VOIE}px)`, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>
+                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${voiesMax}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
                     <strong style={{ fontSize: 15 }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                   </div>
@@ -298,21 +350,16 @@ function PlanningRessourcesContenu() {
                     );
                   })}
 
-                  {colonnes.map((j, i) => (
-                    <div
-                      key={`c-${j}`}
-                      title={`${formatDate(j)} — ${formatHeures(l.charge[i])} / ${formatHeures(l.nets[i])} disponibles`}
-                      style={{ gridColumn: col(i), gridRow: l.voies + 1, margin: "0 1px", borderRadius: 2, background: couleurCharge(l.charge[i], l.nets[i]), border: l.nets[i] > 0 && l.charge[i] > l.nets[i] + 0.01 ? "1px solid #b3261e" : "none", boxSizing: "border-box" }}
-                    />
-                  ))}
 
-                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${l.voies + 1}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
+                  {cadre && <div aria-hidden="true" style={{ ...cadre, margin: "-6px 0" }} />}
+                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${voiesMax}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
                     <strong style={{ color: ratio > 1.01 ? "#b3261e" : ratio > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(ratio * 100)} %</strong>
                     <span style={{ color: C.gris }}>
                       {formatHeures(l.totalAffecte)} / {formatHeures(l.totalNet)}
                     </span>
                   </div>
                 </div>
+                </Fragment>
               );
             })}
             {lignes.length === 0 && <p style={{ color: C.gris, padding: 8 }}>Personne à afficher.</p>}

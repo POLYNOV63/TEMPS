@@ -170,6 +170,8 @@ function PlanningAffairesContenu() {
 
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
   const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("TOUS");
+  // RECHERCHE_PLANNING : n°, client, description, imputation, personne affectée ou responsable
+  const [recherche, setRecherche] = useState("");
   // On a toujours le droit de dépasser le chiffré : les barres ne s'arrêtent jamais au chiffré
   const limiter = false;
   const [drag, setDrag] = useState<DragEtat | null>(null);
@@ -636,11 +638,40 @@ function PlanningAffairesContenu() {
     [filtreType]
   );
 
+  const correspondRecherche = useMemo(() => {
+    const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const mots = sansAccents(recherche).split(/\s+/).filter(Boolean);
+    if (mots.length === 0) return () => true;
+    const gens = new Map<string, string>();
+    for (const a of affectations) {
+      if (!a.affaire_id) continue;
+      const c = annuaire.find((x) => x.id === a.collaborateur_id);
+      if (c) gens.set(a.affaire_id, `${gens.get(a.affaire_id) ?? ""} ${nomCollab(c)} ${c.prenom ?? ""} ${c.nom ?? ""}`);
+    }
+    return (a: Affaire) => {
+      const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
+      const resp = annuaire.find((x) => x.id === a.responsable_id);
+      const texte = sansAccents(
+        [
+          `${a.type}${a.numero}`,
+          a.numero,
+          a.designation ?? "",
+          a.imputation ?? "",
+          clientsParBase.get(`${a.type}|${base}`) ?? "",
+          gens.get(a.id) ?? "",
+          resp ? `${nomCollab(resp)} ${resp.prenom ?? ""} ${resp.nom ?? ""}` : "",
+        ].join(" ")
+      );
+      return mots.every((m) => texte.includes(m));
+    };
+  }, [recherche, affectations, annuaire, clientsParBase]);
+
   const lignes = useMemo(
     () =>
       affaires
         .filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE")
         .filter(garderType)
+        .filter(correspondRecherche)
         .sort(
           (a, b) =>
             // PLANNING_TRI_RECENT : plus récentes d'abord (n° de base le plus grand), avenant juste sous sa commande de base
@@ -649,7 +680,7 @@ function PlanningAffairesContenu() {
             Number(b.numero.match(/^\d+/)?.[0] ?? 0) - Number(a.numero.match(/^\d+/)?.[0] ?? 0) ||
             a.numero.localeCompare(b.numero, "fr", { numeric: true })
         ),
-    [affaires, garderType]
+    [affaires, garderType, correspondRecherche]
   );
 
   /* Affaires livrées restées au planning : rangées en bas, la plus récente d'abord */
@@ -658,12 +689,13 @@ function PlanningAffairesContenu() {
       affaires
         .filter((a) => a.statut === "LIVREE")
         .filter(garderType)
+        .filter(correspondRecherche)
         .sort(
           (a, b) =>
             (b.date_livraison ?? "").localeCompare(a.date_livraison ?? "") ||
             b.numero.localeCompare(a.numero, "fr", { numeric: true })
         ),
-    [affaires, garderType]
+    [affaires, garderType, correspondRecherche]
   );
 
   // Panneau des ressources : les plus libres d'abord
@@ -1938,6 +1970,14 @@ function PlanningAffairesContenu() {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="search"
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              placeholder="Rechercher : n°, client, description, personne…"
+              aria-label="Rechercher dans le planning"
+              style={{ ...page.entrees, width: 290, minHeight: 44, fontSize: 14 }}
+            />
             {(["TOUS", "CBE", "DBE", "PE", "PI"] as const).map((t) => (
               <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>
                 {t === "TOUS" ? "Tout" : t}
