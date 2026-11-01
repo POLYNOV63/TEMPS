@@ -113,6 +113,33 @@ function PointageContenu() {
     }
     return m;
   }, [lignesPeriode]);
+  // AFFAIRES_A_CHEVAL : ce qui a été pointé du début de la période à aujourd'hui, pour retrouver « avant » et « à la fin »
+  const aujourdhuiPointage = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+  const [lignesDepuis, setLignesDepuis] = useState<{ type_affaire: string; numero: string; heures: number }[]>([]);
+  useEffect(() => {
+    if (!bornes || bornes.au >= aujourdhuiPointage) {
+      setLignesDepuis([]);
+      return;
+    }
+    let actif = true;
+    void supabase.rpc("pointage_periode", { p_debut: bornes.du, p_fin: aujourdhuiPointage }).then(({ data, error }) => {
+      if (!actif) return;
+      setLignesDepuis(error ? [] : ((data ?? []) as { type_affaire: string; numero: string; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));
+    });
+    return () => {
+      actif = false;
+    };
+  }, [bornes?.du, bornes?.au, aujourdhuiPointage]);
+  const depuisParFamille = useMemo(() => {
+    if (!bornes || bornes.au >= aujourdhuiPointage) return null;
+    const m = new Map<string, number>();
+    for (const x of lignesDepuis) m.set(`${x.type_affaire}|${x.numero}`, (m.get(`${x.type_affaire}|${x.numero}`) ?? 0) + x.heures);
+    return m;
+  }, [lignesDepuis, bornes?.du, bornes?.au, aujourdhuiPointage]);
+
   const devisPeriode = useMemo(() => {
     let n = 0;
     let h = 0;
@@ -464,8 +491,9 @@ function PointageContenu() {
                   <strong>Ce que vous regardez :</strong> {quoi}
                   {genre} {etat} ({affichees.length}). {periodeActive ? (
                     <>
-                      Colonne <strong>« Sur la période »</strong> : ce qui a été pointé {libellePeriode} (seules les affaires pointées sur cette période sont listées). Les autres
-                      colonnes portent sur
+                      Pour chaque affaire pointée {libellePeriode} : <strong>« Avant »</strong> ce qui l’avait été avant la période, <strong>« Sur la période »</strong>
+                      ce qui l’a été pendant, <strong>« À la fin »</strong> le cumul à la fin de la période, que la jauge compare au chiffré. Une affaire à cheval
+                      sur la période y est donc comptée pour sa seule part. Sans période, on voit
                     </>
                   ) : (
                     "Pour chacune,"
@@ -557,8 +585,15 @@ function PointageContenu() {
                     <th style={thG}>Resp.</th>
                     <th style={thG}>Échéance</th>
                     <th style={th}>Chiffré</th>
-                    <th style={th}>Pointé</th>
-                    {periodeActive && <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>}
+                    {periodeActive ? (
+                      <>
+                        <th style={th} title="Pointé avant le début de la période">Avant</th>
+                        <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>
+                        <th style={th} title="Cumul à la fin de la période (avant + sur la période)">À la fin</th>
+                      </>
+                    ) : (
+                      <th style={th}>Pointé</th>
+                    )}
                     <th style={th}>{affichees.every((f) => f.type === "DBE") ? "Passées par" : "Consommé"}</th>
                     <th style={thG}>Alerte</th>
                   </tr>
@@ -572,6 +607,9 @@ function PointageContenu() {
                       .filter((p) => p.type_affaire === f.type && String(p.numero).replace(/^0+/, "") === f.base.replace(/^0+/, ""))
                       .reduce((m, p) => m.set(p.collaborateur_id, (m.get(p.collaborateur_id) ?? 0) + num(p.heures)), new Map<string, number>());
                     const surPeriode = periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, "")}`);
+                    const depuisDebut = depuisParFamille ? depuisParFamille.get(`${f.type}|${f.base.replace(/^0+/, "")}`) ?? 0 : surPeriode?.heures ?? 0;
+                    const avantPeriode = Math.max(0, f.pointe - depuisDebut);
+                    const finPeriode = avantPeriode + (surPeriode?.heures ?? 0);
                     return (
                       <Fragment key={cle}>
                         <tr>
@@ -605,8 +643,15 @@ function PointageContenu() {
                           <td style={tdG}>{nomCollab(collabs.get(f.responsable ?? ""))}</td>
                           <td style={{ ...tdG, whiteSpace: "nowrap" }}>{formatDate(f.echeance)}</td>
                           <td style={td}>{formatHeures(f.chiffre)}</td>
-                          <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>
-                          {periodeActive && <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>}
+                          {periodeActive ? (
+                            <>
+                              <td style={{ ...td, color: C.gris }}>{formatHeures(avantPeriode)}</td>
+                              <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>
+                              <td style={{ ...td, fontWeight: 800 }}>{formatHeures(finPeriode)}</td>
+                            </>
+                          ) : (
+                            <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>
+                          )}
                           {f.type === "DBE" ? (
                             <td style={{ ...tdG, fontSize: 13 }} title="Heures pointées sur le devis, par personne">
                               {[...(periodeActive ? surPeriode?.parPersonne ?? new Map<string, number>() : personnes).entries()]
@@ -615,7 +660,7 @@ function PointageContenu() {
                                 .join(" · ") || "—"}
                             </td>
                           ) : (
-                            <td style={td}>{jauge(f.chiffre, f.pointe)}</td>
+                            <td style={td}>{jauge(f.chiffre, periodeActive ? finPeriode : f.pointe)}</td>
                           )}
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -632,7 +677,7 @@ function PointageContenu() {
                         </tr>
                         {ouverte && (
                           <tr>
-                            <td colSpan={periodeActive ? 10 : 9} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
+                            <td colSpan={periodeActive ? 11 : 9} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
                                 <div style={{ flex: "1 1 360px" }}>
                                   <strong>Par activité</strong>

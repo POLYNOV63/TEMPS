@@ -995,7 +995,7 @@ function BlocAnalyse({
         {admin && (
           <CarteCompacte
             icone="📈"
-            titre="Bilans"
+            titre="Analyse de capacité"
             description="Heures, activité et taux d'occupation de chaque collaborateur"
             onClick={() => aller("/admin/bilans")}
           />
@@ -1096,7 +1096,7 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
         <CarteCompacte icone="🎯" titre="Pointé / chiffré" description="Pointé face au chiffré, affaire par affaire" onClick={() => aller("/analyse/pointage")} />
         {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
-        <CarteCompacte icone="📊" titre="Bilans" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
+        <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
         <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
       </div>
     </Groupe>

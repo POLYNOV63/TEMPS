@@ -1,0 +1,57 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : pointé depuis le début de la période jusqu'à aujourd'hui",
+  "cherche": "  const devisPeriode = useMemo(() => {",
+  "remplace": "  // AFFAIRES_A_CHEVAL : ce qui a été pointé du début de la période à aujourd'hui, pour retrouver « avant » et « à la fin »\n  const aujourdhuiPointage = (() => {\n    const d = new Date();\n    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}-${String(d.getDate()).padStart(2, \"0\")}`;\n  })();\n  const [lignesDepuis, setLignesDepuis] = useState<{ type_affaire: string; numero: string; heures: number }[]>([]);\n  useEffect(() => {\n    if (!bornes || bornes.au >= aujourdhuiPointage) {\n      setLignesDepuis([]);\n      return;\n    }\n    let actif = true;\n    void supabase.rpc(\"pointage_periode\", { p_debut: bornes.du, p_fin: aujourdhuiPointage }).then(({ data, error }) => {\n      if (!actif) return;\n      setLignesDepuis(error ? [] : ((data ?? []) as { type_affaire: string; numero: string; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));\n    });\n    return () => {\n      actif = false;\n    };\n  }, [bornes?.du, bornes?.au, aujourdhuiPointage]);\n  const depuisParFamille = useMemo(() => {\n    if (!bornes || bornes.au >= aujourdhuiPointage) return null;\n    const m = new Map<string, number>();\n    for (const x of lignesDepuis) m.set(`${x.type_affaire}|${x.numero}`, (m.get(`${x.type_affaire}|${x.numero}`) ?? 0) + x.heures);\n    return m;\n  }, [lignesDepuis, bornes?.du, bornes?.au, aujourdhuiPointage]);\n\n  const devisPeriode = useMemo(() => {"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : en-têtes « Avant », « Sur la période », « À la fin »",
+  "cherche": "                    <th style={th}>Pointé</th>\n                    {periodeActive && <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>}",
+  "remplace": "                    {periodeActive ? (\n                      <>\n                        <th style={th} title=\"Pointé avant le début de la période\">Avant</th>\n                        <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>\n                        <th style={th} title=\"Cumul à la fin de la période (avant + sur la période)\">À la fin</th>\n                      </>\n                    ) : (\n                      <th style={th}>Pointé</th>\n                    )}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : calcul par affaire",
+  "cherche": "                    const surPeriode = periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`);",
+  "remplace": "                    const surPeriode = periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`);\n                    const depuisDebut = depuisParFamille ? depuisParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`) ?? 0 : surPeriode?.heures ?? 0;\n                    const avantPeriode = Math.max(0, f.pointe - depuisDebut);\n                    const finPeriode = avantPeriode + (surPeriode?.heures ?? 0);"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : colonnes « Avant », « Sur la période », « À la fin »",
+  "cherche": "                          <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>\n                          {periodeActive && <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>}",
+  "remplace": "                          {periodeActive ? (\n                            <>\n                              <td style={{ ...td, color: C.gris }}>{formatHeures(avantPeriode)}</td>\n                              <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>\n                              <td style={{ ...td, fontWeight: 800 }}>{formatHeures(finPeriode)}</td>\n                            </>\n                          ) : (\n                            <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>\n                          )}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : la jauge montre où en était l'affaire à la fin de la période",
+  "cherche": "                            <td style={td}>{jauge(f.chiffre, f.pointe)}</td>",
+  "remplace": "                            <td style={td}>{jauge(f.chiffre, periodeActive ? finPeriode : f.pointe)}</td>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : détail sur toute la largeur",
+  "cherche": "<td colSpan={periodeActive ? 10 : 9} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>",
+  "remplace": "<td colSpan={periodeActive ? 11 : 9} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "À cheval : explication",
+  "cherche": "Colonne <strong>« Sur la période »</strong> : ce qui a été pointé {libellePeriode} (seules les affaires pointées sur cette période sont listées). Les autres\n                      colonnes portent sur",
+  "remplace": "Pour chaque affaire pointée {libellePeriode} : <strong>« Avant »</strong> ce qui l’avait été avant la période, <strong>« Sur la période »</strong>\n                      ce qui l’a été pendant, <strong>« À la fin »</strong> le cumul à la fin de la période, que la jauge compare au chiffré. Une affaire à cheval\n                      sur la période y est donc comptée pour sa seule part. Sans période, on voit"
+ },
+ {
+  "fichier": "app/dashboard/page.tsx",
+  "nom": "Tableau de bord : « Bilans » devient « Analyse de capacité »",
+  "cherche": "titre=\"Bilans\"",
+  "remplace": "titre=\"Analyse de capacité\"",
+  "tous": true
+ },
+ {
+  "fichier": "app/admin/bilans/page.tsx",
+  "nom": "Page : « Analyse de capacité »",
+  "cherche": "Bilans : où part le temps de l’équipe",
+  "remplace": "Analyse de capacité : où part le temps de l’équipe"
+ }
+]

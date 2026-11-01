@@ -2839,7 +2839,7 @@ feuilles.forEach((f) => {
                 styles.heroTitle
               }
             >
-              Bilans : où part le temps de l’équipe
+              Analyse de capacité : où part le temps de l’équipe
             </h1>
 
             <p
