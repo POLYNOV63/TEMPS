@@ -267,7 +267,6 @@ function PlanningRessourcesContenu() {
         {chargement && <Message genre="info">Chargement…</Message>}
 
         {!chargement && (
-          {/* RESSOURCES_GLISSER : largeur minimale (22 px par jour), la page se fait glisser de côté sur téléphone */}
           <section style={{ ...page.carte, padding: 10, minWidth: LARGEUR_NOM + 96 + colonnes.length * 22 }}>
             {/* en-tête fixe : mois, semaines, jours */}
             <div style={{ display: "grid", gridTemplateColumns: gabarit, position: "sticky", top: 112, zIndex: 15, background: "#ffffff", boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)" }}>

@@ -444,7 +444,8 @@ function FacturationContenu() {
   const doublonsLouxor = useMemo(() => {
     const parArc = new Map<string, Set<string>>();
     for (const l of suivi) {
-      if (l.disparue || !(l.genre === "BASE" || l.genre === "AVENANT")) continue;
+      // LOUXOR_SANS_LIVREES : une commande livrée n'entre plus dans la vérification
+      if (l.disparue || l.statut === "Livrée" || !(l.genre === "BASE" || l.genre === "AVENANT")) continue;
       const arc = l.numero_arc_louxor?.trim().toUpperCase();
       if (!arc) continue;
       const s = parArc.get(arc) ?? new Set<string>();
