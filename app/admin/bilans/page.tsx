@@ -1062,7 +1062,8 @@ function BilansPageContenu() {
       return 35;
     }
 
-    if (modePeriode === "EXERCICE") {
+    const semaineEntiere: boolean = true; // SEMAINE_PAR_LUNDI : les heures de la semaine sont comptées en entier
+    if (modePeriode === "EXERCICE" || semaineEntiere) {
       return 35;
     }
 
@@ -1292,8 +1293,10 @@ feuilles.forEach((f) => {
       dimanche.getUTCDate() + 6
     );
 
+    // SEMAINE_PAR_LUNDI : une semaine entière appartient à la période qui contient son lundi
+    void dimanche;
     return (
-      dimanche >=
+      lundi >=
         new Date(
           periodeActive.debut.getFullYear(),
           periodeActive.debut.getMonth(),
