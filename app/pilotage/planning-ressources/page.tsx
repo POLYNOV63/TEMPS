@@ -155,6 +155,16 @@ function PlanningRessourcesContenu() {
     }
 
     const parPersonne = new Map<string, { segments: Segment[]; charge: number[] }>();
+    // ACTIVITE_VENDUE : heures sur commandes (CBE : forfaits, PE, PI), par personne et par jour
+    const venduPar = new Map<string, number[]>();
+    const venduDe = (id: string) => {
+      let v = venduPar.get(id);
+      if (!v) {
+        v = colonnes.map(() => 0);
+        venduPar.set(id, v);
+      }
+      return v;
+    };
     for (const a of affectations) {
       const js = (joursParAffectation.get(a.id) ?? []).sort((x, y) => x.i - y.i);
       if (js.length === 0) continue;
@@ -167,6 +177,10 @@ function PlanningRessourcesContenu() {
       if (affaire && affaire.type === "DBE" && affaire.statut !== "EN_COURS" && affaire.statut !== "EN_ATTENTE") {
         for (const j of js) p.charge[j.i] -= j.h;
         continue;
+      }
+      if (affaire?.type === "CBE") {
+        const v = venduDe(a.collaborateur_id);
+        for (const j of js) v[j.i] += j.h;
       }
       const libelle = affaire ? `${affaire.type}${affaire.numero}` : a.libelle ?? "Hors affaire";
       const detail = affaire ? `${affaire.designation}${affaire.imputation ? ` · ${affaire.imputation}` : ""}` : "Hors affaire";
@@ -195,15 +209,17 @@ function PlanningRessourcesContenu() {
         const k = `${a.type}|${(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "")}`;
         if (/^\d+$/.test(a.numero) || !parBase.has(k)) parBase.set(k, a);
       }
-      const groupes = new Map<string, { collab: string; affaire: AffaireP | undefined; libelle: string; jours: { i: number; h: number }[] }>();
+      const groupes = new Map<string, { collab: string; affaire: AffaireP | undefined; libelle: string; jours: { i: number; h: number }[]; divers: Map<string, number> }>();
       for (const x of realise) {
         const i = index.get(x.jour);
         if (i === undefined || x.heures <= 0) continue;
         const affaire = x.numero ? parBase.get(`${x.type_affaire}|${x.numero}`) : undefined;
-        const libelle = x.numero ? `${x.type_affaire}${x.numero}` : x.libelle ?? "Divers";
+        // tout ce qui n'est ni CBE ni DBE (formations, réunions…) dans une seule case « Divers »
+        const libelle = x.numero ? `${x.type_affaire}${x.numero}` : "Divers";
         const k = `${x.collaborateur_id}|${libelle}`;
-        const g = groupes.get(k) ?? { collab: x.collaborateur_id, affaire, libelle, jours: [] };
+        const g = groupes.get(k) ?? { collab: x.collaborateur_id, affaire, libelle, jours: [], divers: new Map<string, number>() };
         g.jours.push({ i, h: x.heures });
+        if (!x.numero) g.divers.set(x.libelle ?? "Divers", (g.divers.get(x.libelle ?? "Divers") ?? 0) + x.heures);
         groupes.set(k, g);
       }
       for (const [k, g] of groupes) {
@@ -216,6 +232,7 @@ function PlanningRessourcesContenu() {
         for (const i of idx) {
           const h = parJour.get(i) ?? 0;
           p.charge[i] += h;
+          if (g.libelle.startsWith("CBE")) venduDe(g.collab)[i] += h;
           if (courant && i === courant.fin + 1) {
             courant.fin = i;
             courant.heures += h;
@@ -225,7 +242,10 @@ function PlanningRessourcesContenu() {
               cle: `r-${k}-${i}`,
               affaireId: g.affaire?.id ?? null,
               libelle: g.libelle,
-              detail: `Réalisé (pointé)${g.affaire ? ` · ${g.affaire.designation}` : ""}`,
+              detail:
+                g.divers.size > 0
+                  ? `Réalisé : ${[...g.divers].map(([l, h]) => `${l} ${formatHeures(h)}`).join(", ")}`
+                  : `Réalisé (pointé)${g.affaire ? ` · ${g.affaire.designation}` : ""}`,
               debut: i,
               fin: i,
               heures: h,
@@ -266,7 +286,7 @@ function PlanningRessourcesContenu() {
         const totalNet = nets.reduce((t, h) => t + h, 0);
         const voies = Math.max(1, ...p.segments.map((s) => s.voie + 1));
         const g = predo.size > 0 ? predo.get(c.id) ?? { nom: "Sans prédominance", ordre: 9999 } : { nom: "", ordre: 0 };
-        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre };
+        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre, vendu: venduPar.get(c.id) ?? colonnes.map(() => 0) };
       })
       .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
   }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo, passe, realise, lundiActuel, affaires]);
@@ -384,6 +404,65 @@ function PlanningRessourcesContenu() {
                 </div>
               ))}
               {cadreSemaine(true, false) && <div aria-hidden="true" title="Semaine en cours" style={{ ...cadreSemaine(true, false)!, gridRow: "2 / span 2" }} />}
+              {/* ACTIVITE_VENDUE : % des heures disponibles de l'équipe affichée passées (ou prévues) sur des commandes */}
+              <div
+                title="Heures sur commandes (CBE : forfaits, PE, PI) ÷ heures disponibles de l’équipe affichée. Semaines passées : réalisé ; semaines à venir : prévu."
+                style={{ gridColumn: 1, gridRow: 4, position: "sticky", left: 0, zIndex: 4, background: "#ffffff", display: "flex", alignItems: "center", padding: "3px 4px", fontSize: 12, fontWeight: 800, color: C.rougeFonce, borderTop: `1px solid ${C.ligne}` }}
+              >
+                % vendu
+              </div>
+              {(() => {
+                const semaine = (w: number) => {
+                  const i = w * 5;
+                  const finSem = Math.min(colonnes.length, i + 5);
+                  let v = 0;
+                  let d = 0;
+                  for (const l of lignes)
+                    for (let k = i; k < finSem; k++) {
+                      v += l.vendu[k] ?? 0;
+                      d += l.nets[k] ?? 0;
+                    }
+                  return { i, finSem, v, d };
+                };
+                const semaines = Array.from({ length: Math.ceil(colonnes.length / 5) }, (_, w) => semaine(w));
+                const vTotal = semaines.reduce((t, s) => t + s.v, 0);
+                const dTotal = semaines.reduce((t, s) => t + s.d, 0);
+                return (
+                  <>
+                    {semaines.map(({ i, finSem, v, d }) => {
+                      const pct = d > 0 ? v / d : 0;
+                      const passee = colonnes[i] < lundiActuel;
+                      return (
+                        <div
+                          key={`v-${colonnes[i]}`}
+                          title={`S${numeroSemaine(colonnes[i])} : ${formatHeures(v)} sur commandes pour ${formatHeures(d)} disponibles (${passee ? "réalisé" : "prévu"})`}
+                          style={{
+                            gridColumn: `${col(i)} / span ${finSem - i}`,
+                            gridRow: 4,
+                            textAlign: "center",
+                            padding: "3px 0",
+                            fontSize: 12,
+                            fontWeight: 800,
+                            color: pct >= 0.8 ? "#1b5e20" : pct >= 0.6 ? "#7a3e00" : "#b3261e",
+                            background: passee ? "#f1f2f4" : "#ffffff",
+                            borderLeft: `1px solid ${C.ligne}`,
+                            borderTop: `1px solid ${C.ligne}`,
+                          }}
+                        >
+                          {d > 0 ? `${Math.round(pct * 100)} %` : "—"}
+                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? "réalisé" : "prévu"}</span>
+                        </div>
+                      );
+                    })}
+                    <div
+                      title={`Sur la période : ${formatHeures(vTotal)} sur commandes pour ${formatHeures(dTotal)} disponibles`}
+                      style={{ gridColumn: colonnes.length + 2, gridRow: 4, textAlign: "right", padding: "3px 6px", fontSize: 12, fontWeight: 800, borderTop: `1px solid ${C.ligne}` }}
+                    >
+                      {dTotal > 0 ? `${Math.round((vTotal / dTotal) * 100)} %` : "—"}
+                    </div>
+                  </>
+                );
+              })()}
               <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", justifyContent: "flex-end", padding: "0 6px 6px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", color: C.gris, textAlign: "right" }}>
                 Affecté / dispo
               </div>

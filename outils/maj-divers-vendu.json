@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Heures vendues : compteur par personne et par jour",
+  "cherche": "    const parPersonne = new Map<string, { segments: Segment[]; charge: number[] }>();",
+  "remplace": "    const parPersonne = new Map<string, { segments: Segment[]; charge: number[] }>();\n    // ACTIVITE_VENDUE : heures sur commandes (CBE : forfaits, PE, PI), par personne et par jour\n    const venduPar = new Map<string, number[]>();\n    const venduDe = (id: string) => {\n      let v = venduPar.get(id);\n      if (!v) {\n        v = colonnes.map(() => 0);\n        venduPar.set(id, v);\n      }\n      return v;\n    };"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Heures vendues : le prévu",
+  "cherche": "        for (const j of js) p.charge[j.i] -= j.h;\n        continue;\n      }",
+  "remplace": "        for (const j of js) p.charge[j.i] -= j.h;\n        continue;\n      }\n      if (affaire?.type === \"CBE\") {\n        const v = venduDe(a.collaborateur_id);\n        for (const j of js) v[j.i] += j.h;\n      }"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Réalisé : une seule case « Divers » (type)",
+  "cherche": "      const groupes = new Map<string, { collab: string; affaire: AffaireP | undefined; libelle: string; jours: { i: number; h: number }[] }>();",
+  "remplace": "      const groupes = new Map<string, { collab: string; affaire: AffaireP | undefined; libelle: string; jours: { i: number; h: number }[]; divers: Map<string, number> }>();"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Réalisé : une seule case « Divers »",
+  "cherche": "        const libelle = x.numero ? `${x.type_affaire}${x.numero}` : x.libelle ?? \"Divers\";\n        const k = `${x.collaborateur_id}|${libelle}`;\n        const g = groupes.get(k) ?? { collab: x.collaborateur_id, affaire, libelle, jours: [] };\n        g.jours.push({ i, h: x.heures });",
+  "remplace": "        // tout ce qui n'est ni CBE ni DBE (formations, réunions…) dans une seule case « Divers »\n        const libelle = x.numero ? `${x.type_affaire}${x.numero}` : \"Divers\";\n        const k = `${x.collaborateur_id}|${libelle}`;\n        const g = groupes.get(k) ?? { collab: x.collaborateur_id, affaire, libelle, jours: [], divers: new Map<string, number>() };\n        g.jours.push({ i, h: x.heures });\n        if (!x.numero) g.divers.set(x.libelle ?? \"Divers\", (g.divers.get(x.libelle ?? \"Divers\") ?? 0) + x.heures);"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Réalisé : détail de la case « Divers »",
+  "cherche": "              detail: `Réalisé (pointé)${g.affaire ? ` · ${g.affaire.designation}` : \"\"}`,",
+  "remplace": "              detail:\n                g.divers.size > 0\n                  ? `Réalisé : ${[...g.divers].map(([l, h]) => `${l} ${formatHeures(h)}`).join(\", \")}`\n                  : `Réalisé (pointé)${g.affaire ? ` · ${g.affaire.designation}` : \"\"}`,"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Heures vendues : le réalisé",
+  "cherche": "          p.charge[i] += h;",
+  "remplace": "          p.charge[i] += h;\n          if (g.libelle.startsWith(\"CBE\")) venduDe(g.collab)[i] += h;"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Heures vendues : rattachées à chaque personne",
+  "cherche": "        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre };",
+  "remplace": "        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre, vendu: venduPar.get(c.id) ?? colonnes.map(() => 0) };"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne « % vendu » par semaine, sous les jours",
+  "cherche": "              <div style={{ gridColumn: colonnes.length + 2, gridRow: \"1 / span 3\", display: \"flex\", alignItems: \"flex-end\", justifyContent: \"flex-end\", padding: \"0 6px 6px\", fontSize: 11, fontWeight: 800, textTransform: \"uppercase\", color: C.gris, textAlign: \"right\" }}>",
+  "remplace": "              {/* ACTIVITE_VENDUE : % des heures disponibles de l'équipe affichée passées (ou prévues) sur des commandes */}\n              <div\n                title=\"Heures sur commandes (CBE : forfaits, PE, PI) ÷ heures disponibles de l’équipe affichée. Semaines passées : réalisé ; semaines à venir : prévu.\"\n                style={{ gridColumn: 1, gridRow: 4, position: \"sticky\", left: 0, zIndex: 4, background: \"#ffffff\", display: \"flex\", alignItems: \"center\", padding: \"3px 4px\", fontSize: 12, fontWeight: 800, color: C.rougeFonce, borderTop: `1px solid ${C.ligne}` }}\n              >\n                % vendu\n              </div>\n              {(() => {\n                const semaine = (w: number) => {\n                  const i = w * 5;\n                  const finSem = Math.min(colonnes.length, i + 5);\n                  let v = 0;\n                  let d = 0;\n                  for (const l of lignes)\n                    for (let k = i; k < finSem; k++) {\n                      v += l.vendu[k] ?? 0;\n                      d += l.nets[k] ?? 0;\n                    }\n                  return { i, finSem, v, d };\n                };\n                const semaines = Array.from({ length: Math.ceil(colonnes.length / 5) }, (_, w) => semaine(w));\n                const vTotal = semaines.reduce((t, s) => t + s.v, 0);\n                const dTotal = semaines.reduce((t, s) => t + s.d, 0);\n                return (\n                  <>\n                    {semaines.map(({ i, finSem, v, d }) => {\n                      const pct = d > 0 ? v / d : 0;\n                      const passee = colonnes[i] < lundiActuel;\n                      return (\n                        <div\n                          key={`v-${colonnes[i]}`}\n                          title={`S${numeroSemaine(colonnes[i])} : ${formatHeures(v)} sur commandes pour ${formatHeures(d)} disponibles (${passee ? \"réalisé\" : \"prévu\"})`}\n                          style={{\n                            gridColumn: `${col(i)} / span ${finSem - i}`,\n                            gridRow: 4,\n                            textAlign: \"center\",\n                            padding: \"3px 0\",\n                            fontSize: 12,\n                            fontWeight: 800,\n                            color: pct >= 0.8 ? \"#1b5e20\" : pct >= 0.6 ? \"#7a3e00\" : \"#b3261e\",\n                            background: passee ? \"#f1f2f4\" : \"#ffffff\",\n                            borderLeft: `1px solid ${C.ligne}`,\n                            borderTop: `1px solid ${C.ligne}`,\n                          }}\n                        >\n                          {d > 0 ? `${Math.round(pct * 100)} %` : \"—\"}\n                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? \"réalisé\" : \"prévu\"}</span>\n                        </div>\n                      );\n                    })}\n                    <div\n                      title={`Sur la période : ${formatHeures(vTotal)} sur commandes pour ${formatHeures(dTotal)} disponibles`}\n                      style={{ gridColumn: colonnes.length + 2, gridRow: 4, textAlign: \"right\", padding: \"3px 6px\", fontSize: 12, fontWeight: 800, borderTop: `1px solid ${C.ligne}` }}\n                    >\n                      {dTotal > 0 ? `${Math.round((vTotal / dTotal) * 100)} %` : \"—\"}\n                    </div>\n                  </>\n                );\n              })()}\n              <div style={{ gridColumn: colonnes.length + 2, gridRow: \"1 / span 3\", display: \"flex\", alignItems: \"flex-end\", justifyContent: \"flex-end\", padding: \"0 6px 6px\", fontSize: 11, fontWeight: 800, textTransform: \"uppercase\", color: C.gris, textAlign: \"right\" }}>"
+ }
+]
