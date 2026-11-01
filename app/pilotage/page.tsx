@@ -95,7 +95,8 @@ function PortefeuilleContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
-  const [filtreType, setFiltreType] = useState<FiltreType>("TOUS");
+  // CBE_PAR_DEFAUT : le portefeuille s'ouvre sur les commandes
+  const [filtreType, setFiltreType] = useState<FiltreType>("CBE");
   const [filtreStatut, setFiltreStatut] = useState<FiltreStatut>("ACTIVES");
   const [filtrePlanning, setFiltrePlanning] = useState<FiltrePlanning>("TOUS");
   const [depassementSeul, setDepassementSeul] = useState(false);
@@ -435,11 +436,11 @@ function PortefeuilleContenu() {
   }, [lignes, collabs]);
 
   const filtresActifs =
-    filtreType !== "TOUS" || recherche !== "" || filtreImputation !== "" || filtreClient !== "" || filtreResp !== "" ||
+    filtreType !== "CBE" || recherche !== "" || filtreImputation !== "" || filtreClient !== "" || filtreResp !== "" ||
     filtrePlanning !== "TOUS" || depassementSeul || filtreStatut !== "ACTIVES";
 
   function reinitialiserFiltres() {
-    setFiltreType("TOUS");
+    setFiltreType("CBE");
     setRecherche("");
     setFiltreImputation("");
     setFiltreClient("");

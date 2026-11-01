@@ -187,6 +187,8 @@ function PrestationsContenu() {
   const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
+  /* PLANIFIE_FUTUR : heures déjà saisies après le mois affiché (planifiées) et dernier jour saisi avant lui, par ligne */
+  const [planif, setPlanif] = useState<{ futur: Map<string, { heures: number; dernier: string }>; avant: Map<string, string> }>({ futur: new Map(), avant: new Map() });
   /* AVENANTS_IGNORES : commandes qu'on ne veut plus voir dans « Avenant à prévoir » (retenu sur ce poste) */
   const [avenantsIgnores, setAvenantsIgnores] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -318,6 +320,23 @@ function PrestationsContenu() {
         ]);
         if (!actif) return;
 
+        const fu = await chargerTout<Saisie>((a, b) =>
+          supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").gt("jour", fin).order("jour").range(a, b)
+        );
+        if (!actif) return;
+        const futur = new Map<string, { heures: number; dernier: string }>();
+        for (const s of fu) {
+          const h = Number(s.heures) || 0;
+          if (h <= 0) continue;
+          const v = futur.get(s.ligne_id) ?? { heures: 0, dernier: "" };
+          v.heures += h;
+          if (s.jour > v.dernier) v.dernier = s.jour;
+          futur.set(s.ligne_id, v);
+        }
+        const dernierAvant = new Map<string, string>();
+        for (const s of sa) if ((Number(s.heures) || 0) > 0 && s.jour > (dernierAvant.get(s.ligne_id) ?? "")) dernierAvant.set(s.ligne_id, s.jour);
+        setPlanif({ futur, avant: dernierAvant });
+
         const affaireDe = new Map(lg.map((l) => [l.id, l.affaire_id]));
         const avant = new Map<string, number>();
         const parLigneMois = new Map<string, number>();
@@ -444,6 +463,18 @@ function PrestationsContenu() {
     },
     [affairesParId, reel]
   );
+
+  const dernierParLigne = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of lignes) {
+      let d = planif.avant.get(l.id) ?? "";
+      for (const s of saisies) if (s.ligne_id === l.id && (s.heures ?? 0) > 0 && s.jour > d) d = s.jour;
+      const f = planif.futur.get(l.id)?.dernier ?? "";
+      m.set(l.id, f > d ? f : d);
+    }
+    return m;
+  }, [lignes, saisies, planif]);
+  const dernierJourLigne = (l: Ligne) => dernierParLigne.get(l.id) ?? "";
 
   /* Mois reporté : réglage enregistré, sinon automatique tant que la commande n'est pas reçue (intention) */
   const estReporte = useCallback(
@@ -758,6 +789,60 @@ function PrestationsContenu() {
       return;
     // troisième paramètre (pas de proposition de décalage) : pris en compte s'il existe
     void (ecrire as unknown as (x: Ligne, v: typeof valeurs, p?: boolean) => Promise<void>)(l, valeurs, false);
+  }
+
+  /* PLANIFIER_RESTE : le reste non planifié de la commande, sur cette personne, une journée (base de la ligne)
+     par jour ouvré à partir du lendemain du dernier jour saisi, mois suivants compris */
+  async function planifierReste(l: Ligne) {
+    const a = affairesParId.get(l.affaire_id);
+    if (!a || !peutAgir) return;
+    const f = ficheDe(a);
+    if (f.reste === null || f.quantite === null) return setErreur("Commande non chiffrée : montant ou heures absents du Suivi d’affaire.");
+    const parUnite = (x: Ligne) => (f.unite === "JOUR" ? x.base_horaire || f.base : 1);
+    const futurU = lignes.filter((x) => x.affaire_id === a.id).reduce((t, x) => t + (planif.futur.get(x.id)?.heures ?? 0) / parUnite(x), 0);
+    const resteU = f.reste - futurU;
+    if (resteU <= 0.01) return setInfo(`${a.numero} : tout est déjà planifié.`);
+    let resteH = Math.round(resteU * parUnite(l) * 100) / 100;
+    const lendemain = (iso: string) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    };
+    const dernier = dernierJourLigne(l);
+    let jour = dernier && dernier >= debut ? lendemain(dernier) : debut;
+    const parJour = Math.max(0.5, l.base_horaire);
+    const ajouts: { jour: string; heures: number }[] = [];
+    for (let garde = 0; resteH > 0.001 && garde < 800; garde++, jour = lendemain(jour)) {
+      const js = new Date(`${jour}T00:00:00Z`).getUTCDay();
+      if (js === 0 || js === 6 || estFerie(jour) || absent(l.collaborateur_id, jour)) continue;
+      const h = Math.min(resteH, parJour);
+      ajouts.push({ jour, heures: Math.round(h * 100) / 100 });
+      resteH -= h;
+    }
+    if (ajouts.length === 0) return;
+    const fr = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("fr-FR");
+    const u = f.unite === "JOUR" ? "j" : "h";
+    if (
+      !window.confirm(
+        `Planifier ${texteHeures(Math.round(resteU * 100) / 100)} ${u} pour ${nomCollab(collabs.get(l.collaborateur_id))} sur ${a.numero}, du ${fr(ajouts[0].jour)} au ${fr(ajouts[ajouts.length - 1].jour)} (${ajouts.length} jour(s) ouvré(s)) ?`
+      )
+    )
+      return;
+    const ceMois = ajouts.filter((x) => x.jour <= fin);
+    const ensuite = ajouts.filter((x) => x.jour > fin);
+    if (ceMois.length) await ecrire(l, ceMois.map((x) => ({ jour: x.jour, valeur: { heures: x.heures, code: null } })), false);
+    if (ensuite.length) {
+      const { error } = await supabase
+        .from("prestation_saisies")
+        .upsert(ensuite.map((x) => ({ ligne_id: l.id, jour: x.jour, heures: x.heures, code: null })), { onConflict: "ligne_id,jour" });
+      if (error) return setErreur(traduireErreur(error.message));
+      for (const m of [...new Set(ensuite.map((x) => `${x.jour.slice(0, 7)}-01`))]) {
+        const { error: ep } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: l.id, p_mois: m });
+        if (ep) setErreur(`Planning non mis à jour (${m.slice(0, 7)}) : ${traduireErreur(ep.message)}`);
+      }
+    }
+    setInfo(`${a.numero} : ${texteHeures(Math.round(resteU * 100) / 100)} ${u} planifiés jusqu’au ${fr(ajouts[ajouts.length - 1].jour)}.`);
+    setRechargement((n) => n + 1);
   }
 
   function toutRemplir() {
@@ -1265,7 +1350,7 @@ function PrestationsContenu() {
           <div>
             <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
             <p style={page.sousTitre}>
-              Ce relevé fait foi et alimente le planning. <strong>+7h</strong> remplit les jours vides d’une ligne · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
+              Ce relevé fait foi et alimente le planning. <strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: "#ffe94d", padding: "0 3px" }}>en jaune</span> = dernier jour planifié · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
               une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose.
             </p>
           </div>
@@ -1326,86 +1411,7 @@ function PrestationsContenu() {
           </Message>
         )}
 
-        {/* ALERTES_RELEVE : commandes épuisées ou bientôt épuisées (moins de 20 % de reste) */}
-        {!chargement &&
-          (() => {
-            const vues = new Set<string>();
-            const alertes: { a: AffaireP; texte: string; crit: boolean }[] = [];
-            let masquees = 0;
-            for (const l of lignes) {
-              if (!l.actif || vues.has(l.affaire_id)) continue;
-              vues.add(l.affaire_id);
-              const a = affairesParId.get(l.affaire_id);
-              if (!a || a.statut === "LIVREE") continue;
-              // une commande sans heure ce mois-ci n'a pas besoin d'avenant maintenant (prestation finie ou en pause)
-              if (!lignes.some((x) => x.affaire_id === a.id && x.actif && calcul(x).heures > 0)) continue;
-              const f = ficheDe(a);
-              if (f.reste === null || !f.quantite) continue;
-              const u = f.unite === "JOUR" ? "j" : "h";
-              if (avenantsIgnores.has(a.id) && (f.reste <= 0.01 || f.reste / f.quantite < 0.2)) {
-                masquees++;
-                continue;
-              }
-              if (f.reste <= 0.01) alertes.push({ a, crit: true, texte: f.reste < -0.01 ? `dépassée de ${texteHeures(Math.round(-f.reste * 10) / 10)} ${u}` : "épuisée" });
-              else if (f.reste / f.quantite < 0.2) alertes.push({ a, crit: false, texte: `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u} (${Math.round((f.reste / f.quantite) * 100)} %)` });
-            }
-            if (alertes.length === 0) return null;
-            alertes.sort((x, y) => Number(y.crit) - Number(x.crit) || x.a.numero.localeCompare(y.a.numero, "fr", { numeric: true }));
-            return (
-              <Message genre={alertes.some((x) => x.crit) ? "erreur" : "info"}>
-                {/* AVENANT_DETAIL : chaque commande avec son client et sa description */}
-                <strong>Avenant à prévoir</strong> ({alertes.length})
-                {masquees > 0 && (
-                  <button type="button" onClick={() => ignorerAvenants(null)} style={{ all: "unset", cursor: "pointer", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}>
-                    réafficher les {masquees} masquée{masquees > 1 ? "s" : ""}
-                  </button>
-                )}
-                {alertes.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => ignorerAvenants(alertes.map((x) => x.a.id))}
-                    style={{ all: "unset", cursor: "pointer", marginLeft: 10, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}
-                  >
-                    ne plus signaler celles-ci
-                  </button>
-                )}
-                <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                  {alertes.map((x) => {
-                    const nf = numeroFacture(x.a);
-                    return (
-                      <li key={x.a.id} style={{ margin: "2px 0" }}>
-                        <button
-                          type="button"
-                          onClick={() => setFiche(x.a.id)}
-                          title="Ouvrir la fiche commande"
-                          style={{ all: "unset", cursor: "pointer", fontWeight: 800, textDecoration: "underline dotted" }}
-                        >
-                          {x.a.numero}
-                        </button>
-                        {nf.client ? (
-                          <>
-                            {" · "}
-                            <strong>{nf.client}</strong>
-                          </>
-                        ) : null}
-                        {x.a.designation ? <span style={{ fontWeight: 400 }}> · {x.a.designation}</span> : null}
-                        {" — "}
-                        <strong>{x.texte}</strong>
-                        <button
-                          type="button"
-                          onClick={() => ignorerAvenants([x.a.id])}
-                          title="Ne plus signaler cette commande ici (la suite est prévue). Retenu sur ce poste."
-                          style={{ all: "unset", cursor: "pointer", marginLeft: 8, fontSize: 12, color: C.gris, textDecoration: "underline dotted" }}
-                        >
-                          ne plus signaler
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </Message>
-            );
-          })()}
+        {/* ALERTES_RETIREES : le bandeau « Avenant à prévoir » est remplacé par « tout planifié / à planifier » dans la colonne Reste */}
         {!chargement && lignes.length === 0 && (
           <Message genre="info">Aucune prestation ce mois-ci. Ajoutez une ligne (affaire PE / PI × personne) en bas de page.</Message>
         )}
@@ -1631,7 +1637,7 @@ function PrestationsContenu() {
           const L_PERS = 62;
           const L_MOIS = 66;
           const L_MONTANT = 80;
-          const L_RESTE = 84;
+          const L_RESTE = 104;
           const L_OUTILS = 98;
           const X_MOIS = L_CMD + L_PERS;
           const X_MONTANT = X_MOIS + L_MOIS;
@@ -1699,8 +1705,8 @@ function PrestationsContenu() {
                       Mois
                     </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "right" }}>Montant</th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé">
-                      Reste
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "right" }} title="Reste sur la commande à la fin du mois affiché, consommé sur commandé, et ce qui reste à planifier après">
+                      Reste commande
                     </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
                     {semainesMois.map((w) => (
@@ -1926,6 +1932,23 @@ function PrestationsContenu() {
                                           <Pastille genre={f.reste <= 0 ? "crit" : f.quantite && f.reste / f.quantite < 0.2 ? "warn" : "ok"}>
                                             {texteHeures(Math.round(f.reste * 10) / 10)} {u}
                                           </Pastille>
+                                          {/* CONSO_PLANIFIE : consommé sur commandé, et ce qui reste à planifier après ce mois */}
+                                          {(() => {
+                                            const futurU = lignes
+                                              .filter((x) => x.affaire_id === a.id)
+                                              .reduce((t, x) => t + (planif.futur.get(x.id)?.heures ?? 0) / (f.unite === "JOUR" ? x.base_horaire || f.base : 1), 0);
+                                            const aPlanifier = f.reste - futurU;
+                                            return (
+                                              <>
+                                                <div style={{ fontSize: 10, color: C.gris, whiteSpace: "nowrap" }}>
+                                                  {texteHeures(Math.round(f.consomme * 10) / 10)} / {texteHeures(Math.round((f.quantite ?? 0) * 10) / 10)} {u} consommés
+                                                </div>
+                                                <div style={{ fontSize: 10, fontWeight: 800, whiteSpace: "nowrap", color: aPlanifier <= 0.05 ? "#1b5e20" : "#b35c00" }}>
+                                                  {aPlanifier <= 0.05 ? "✓ tout planifié" : `${texteHeures(Math.round(aPlanifier * 10) / 10)} ${u} à planifier`}
+                                                </div>
+                                              </>
+                                            );
+                                          })()}
                                           {ecartClasseur && <div style={{ fontSize: 10, color: "#b35c00", fontWeight: 800 }}>⚠ classeur {texteHeures(resteClasseur ?? 0)}</div>}
                                         </button>
                                       );
@@ -1956,9 +1979,13 @@ function PrestationsContenu() {
                                         📅
                                       </button>
                                     ) : (
-                                      <button type="button" style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>
-                                        {/* REMPLIR_TEXTE : « +7h » au lieu d'une flèche qui faisait penser à un menu */}
-                                        +{texteHeures(l.base_horaire)}h
+                                      <button
+                                        type="button"
+                                        style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }}
+                                        title="Planifier le reste de la commande sur cette personne : une journée par jour ouvré à partir du dernier jour saisi, mois suivants compris"
+                                        onClick={() => void planifierReste(l)}
+                                      >
+                                        ↦ reste
                                       </button>
                                     ))}
                                   {!verrou && (
@@ -1980,12 +2007,13 @@ function PrestationsContenu() {
                                 const ferme = j.weekend || j.ferie;
                                 // congé validé (Validation RH) : proposé en grisé, on peut toujours forcer une autre valeur
                                 const conge = !s && absent(l.collaborateur_id, j.date);
+                                const dernierPlanifie = j.date === dernierJourLigne(l);
                                 return (
                                   <td
                                     key={j.date}
                                     onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
                                     onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
-                                    title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
+                                    title={dernierPlanifie ? "Dernier jour planifié de cette ligne" : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
                                     style={{
                                       ...bordHaut,
                                       padding: 0,
@@ -1994,6 +2022,8 @@ function PrestationsContenu() {
                                       // FOND_ABSENCE : absence saisie ou congé validé en bleu clair, maladie / accident en rose
                                       background: choisi
                                         ? "#fff3c4"
+                                        : dernierPlanifie
+                                          ? "#ffe94d"
                                         : s?.code || conge
                                           ? /^(ML|MA|AT|MP)/i.test(s?.code ?? "")
                                             ? "#fde2e2"

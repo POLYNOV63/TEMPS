@@ -40,7 +40,7 @@ for (const ch of changements) {
     const n = t.split(debut).length - 1;
     const i = t.indexOf(debut);
     const j = i < 0 ? -1 : t.indexOf(fin, i);
-    if (n !== 1 || j < 0 || j - i > 3000) {
+    if (n !== 1 || j < 0 || j - i > 15000) {
       console.error(`✗ ${ch.nom} : passage trouvé ${n} fois${j < 0 ? ", fin introuvable" : ""}`);
       erreurs++;
       continue;
