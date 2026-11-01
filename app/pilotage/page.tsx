@@ -821,20 +821,39 @@ function PortefeuilleContenu() {
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
               <Tuile
-                libelle="Affaires en cours"
-                valeur={String(synthese.enCours)}
-                sous={`${synthese.cbe} CBE · ${synthese.dbe} DBE`}
+                libelle="Commandes en cours"
+                valeur={String(synthese.commandes)}
+                sous={`${synthese.forfaits} au forfait · ${synthese.prestations} en PE / PI (commandes et avenants)`}
               />
-              <Tuile libelle="En attente" valeur={String(synthese.enAttente)} sous="décision du client" />
               <Tuile
-                libelle="Reste à faire"
+                libelle="Devis à rendre"
+                valeur={String(synthese.devis)}
+                sous={synthese.devisRetard > 0 ? `dont ${synthese.devisRetard} en retard (date de rendu dépassée)` : "aucun en retard"}
+                accent={synthese.devisRetard > 0}
+              />
+              <Tuile
+                libelle="Intentions de commande"
+                valeur={String(synthese.intentions)}
+                sous="commande pas encore reçue : travail à risque, à relancer"
+                accent={synthese.intentions > 0}
+              />
+              <Tuile
+                libelle="Reste à faire (forfaits)"
                 valeur={formatHeures(synthese.reste)}
-                sous="CBE en cours : chiffré − réalisé"
+                sous={
+                  synthese.chiffre > 0
+                    ? `${Math.round((synthese.reste / synthese.chiffre) * 100)} % du chiffré · ${formatHeures(synthese.realise)} pointées sur ${formatHeures(synthese.chiffre)}`
+                    : "chiffré des forfaits en cours − pointé"
+                }
               />
               <Tuile
                 libelle="Dépassements"
                 valeur={String(synthese.depassements)}
-                sous="affaires actives : réalisé supérieur au chiffré"
+                sous={
+                  synthese.depassements > 0
+                    ? `${formatHeures(synthese.heuresDepassees)} au-delà du chiffré · ${Math.round((synthese.depassements / Math.max(1, synthese.actives)) * 100)} % des affaires actives`
+                    : "aucune affaire active au-delà du chiffré"
+                }
                 accent={synthese.depassements > 0}
               />
             </div>
