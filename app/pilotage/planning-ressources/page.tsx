@@ -96,6 +96,29 @@ function PlanningRessourcesContenu() {
   const debut = colonnes[0];
   const fin = colonnes[colonnes.length - 1];
 
+  /* REALISE_PASSE : pour les semaines passées, ce qui a été pointé (feuilles d'heures, historique, SQL 72)
+     au lieu de ce qui était prévu ; « prévu » d'un clic */
+  const [passe, setPasse] = useState<"REALISE" | "PREVU">("REALISE");
+  const lundiActuel = lundiDe(aujourdhui);
+  const [realise, setRealise] = useState<{ collaborateur_id: string; jour: string; type_affaire: string; numero: string | null; libelle: string | null; heures: number }[]>([]);
+  useEffect(() => {
+    const premier = colonnes[0];
+    if (passe !== "REALISE" || !premier || premier >= lundiActuel) {
+      setRealise([]);
+      return;
+    }
+    const dernier = colonnes[colonnes.length - 1];
+    const veille = ajouterJours(lundiActuel, -1);
+    let actif = true;
+    void supabase.rpc("planning_realise", { p_debut: premier, p_fin: dernier < veille ? dernier : veille }).then(({ data, error }) => {
+      if (!actif) return;
+      setRealise(error ? [] : ((data ?? []) as { collaborateur_id: string; jour: string; type_affaire: string; numero: string | null; libelle: string | null; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));
+    });
+    return () => {
+      actif = false;
+    };
+  }, [colonnes, passe, lundiActuel]);
+
   useEffect(() => {
     let actif = true;
     setChargement(true);
@@ -125,6 +148,7 @@ function PlanningRessourcesContenu() {
       const i = index.get(j.jour);
       const h = num(j.heures);
       if (i === undefined || h <= 0) continue;
+      if (passe === "REALISE" && j.jour < lundiActuel) continue;
       const l = joursParAffectation.get(j.affectation_id) ?? [];
       l.push({ i, h });
       joursParAffectation.set(j.affectation_id, l);
@@ -162,6 +186,60 @@ function PlanningRessourcesContenu() {
       parPersonne.set(a.collaborateur_id, p);
     }
 
+    // REALISE_PASSE : barres du réalisé (couleurs foncées), jours consécutifs regroupés
+    if (passe === "REALISE" && realise.length > 0) {
+      const sombre = (fond: string) =>
+        fond === C.rouge ? "#6d0000" : fond === "#6f8fb3" ? "#2f4b6b" : fond === "#6b58a8" ? "#3a2d6b" : fond === "#f2bfd0" ? "#a24f73" : "#3b4046";
+      const parBase = new Map<string, AffaireP>();
+      for (const a of affaires) {
+        const k = `${a.type}|${(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "")}`;
+        if (/^\d+$/.test(a.numero) || !parBase.has(k)) parBase.set(k, a);
+      }
+      const groupes = new Map<string, { collab: string; affaire: AffaireP | undefined; libelle: string; jours: { i: number; h: number }[] }>();
+      for (const x of realise) {
+        const i = index.get(x.jour);
+        if (i === undefined || x.heures <= 0) continue;
+        const affaire = x.numero ? parBase.get(`${x.type_affaire}|${x.numero}`) : undefined;
+        const libelle = x.numero ? `${x.type_affaire}${x.numero}` : x.libelle ?? "Divers";
+        const k = `${x.collaborateur_id}|${libelle}`;
+        const g = groupes.get(k) ?? { collab: x.collaborateur_id, affaire, libelle, jours: [] };
+        g.jours.push({ i, h: x.heures });
+        groupes.set(k, g);
+      }
+      for (const [k, g] of groupes) {
+        const p = parPersonne.get(g.collab) ?? { segments: [], charge: colonnes.map(() => 0) };
+        const fond = g.affaire ? couleurs(g.affaire).fond : g.libelle.startsWith("DBE") ? "#f2bfd0" : g.libelle.startsWith("CBE") ? C.rouge : "#7b8189";
+        const parJour = new Map<number, number>();
+        for (const j of g.jours) parJour.set(j.i, (parJour.get(j.i) ?? 0) + j.h);
+        const idx = [...parJour.keys()].sort((x, y) => x - y);
+        let courant: Segment | null = null;
+        for (const i of idx) {
+          const h = parJour.get(i) ?? 0;
+          p.charge[i] += h;
+          if (courant && i === courant.fin + 1) {
+            courant.fin = i;
+            courant.heures += h;
+          } else {
+            if (courant) p.segments.push(courant);
+            courant = {
+              cle: `r-${k}-${i}`,
+              affaireId: g.affaire?.id ?? null,
+              libelle: g.libelle,
+              detail: `Réalisé (pointé)${g.affaire ? ` · ${g.affaire.designation}` : ""}`,
+              debut: i,
+              fin: i,
+              heures: h,
+              couleur: sombre(fond),
+              encre: "#ffffff",
+              voie: 0,
+            };
+          }
+        }
+        if (courant) p.segments.push(courant);
+        parPersonne.set(g.collab, p);
+      }
+    }
+
     // voies : deux barres qui se chevauchent sont empilées
     for (const p of parPersonne.values()) {
       p.segments.sort((x, y) => x.debut - y.debut || y.fin - x.fin);
@@ -191,7 +269,7 @@ function PlanningRessourcesContenu() {
         return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre };
       })
       .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
-  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo]);
+  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo, passe, realise, lundiActuel, affaires]);
   // toutes les lignes ont la même hauteur : celle de la personne qui a le plus de barres empilées
   const voiesMax = Math.max(1, ...lignes.map((l) => l.voies));
 
@@ -261,6 +339,23 @@ function PlanningRessourcesContenu() {
           <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}>
             <input type="checkbox" checked={avecEncadrement} onChange={(e) => setAvecEncadrement(e.target.checked)} /> avec l’encadrement
           </label>
+          <span
+            title="Semaines passées : ce qui a été pointé (feuilles d’heures, et historique avant le 2 novembre 2026, réparti sur la semaine), en barres foncées ; ou ce qui était prévu au planning"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}
+          >
+            Passé :
+            {(["REALISE", "PREVU"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={passe === v}
+                onClick={() => setPasse(v)}
+                style={{ ...btn, minWidth: 0, background: passe === v ? C.rouge : "#ffffff", color: passe === v ? "#ffffff" : C.rougeFonce, borderColor: passe === v ? C.rouge : "#b9bec5" }}
+              >
+                {v === "REALISE" ? "réalisé" : "prévu"}
+              </button>
+            ))}
+          </span>
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
