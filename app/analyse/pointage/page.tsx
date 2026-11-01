@@ -66,6 +66,62 @@ function PointageContenu() {
   const [seulementAlertes, setSeulementAlertes] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  /* POINTE_PERIODE : ce qui a été pointé sur une période (SQL 73), en plus du cumul depuis l'ouverture */
+  const exerciceCourant = new Date().getMonth() >= 10 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+  const [periode, setPeriode] = useState<{ mode: "TOUT" | "EXERCICE" | "MOIS" | "LIBRE"; exercice: number; mois: string; du: string; au: string }>({
+    mode: "TOUT",
+    exercice: exerciceCourant,
+    mois: new Date().toISOString().slice(0, 7),
+    du: "",
+    au: "",
+  });
+  const bornes = (() => {
+    if (periode.mode === "EXERCICE") return { du: `${periode.exercice}-11-01`, au: `${periode.exercice + 1}-10-31` };
+    if (periode.mode === "MOIS" && periode.mois) {
+      const [a, m] = periode.mois.split("-").map(Number);
+      return { du: `${periode.mois}-01`, au: new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10) };
+    }
+    if (periode.mode === "LIBRE" && periode.du && periode.au && periode.du <= periode.au) return { du: periode.du, au: periode.au };
+    return null;
+  })();
+  const periodeActive = bornes !== null;
+  const frDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR");
+  const libellePeriode = bornes ? `du ${frDate(bornes.du)} au ${frDate(bornes.au)}` : "";
+  const [lignesPeriode, setLignesPeriode] = useState<{ type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number }[]>([]);
+  useEffect(() => {
+    if (!bornes) {
+      setLignesPeriode([]);
+      return;
+    }
+    let actif = true;
+    void supabase.rpc("pointage_periode", { p_debut: bornes.du, p_fin: bornes.au }).then(({ data, error }) => {
+      if (!actif) return;
+      setLignesPeriode(error ? [] : ((data ?? []) as { type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));
+    });
+    return () => {
+      actif = false;
+    };
+  }, [bornes?.du, bornes?.au]);
+  const periodeParFamille = useMemo(() => {
+    const m = new Map<string, { heures: number; parPersonne: Map<string, number> }>();
+    for (const x of lignesPeriode) {
+      const k = `${x.type_affaire}|${x.numero}`;
+      const v = m.get(k) ?? { heures: 0, parPersonne: new Map<string, number>() };
+      v.heures += x.heures;
+      v.parPersonne.set(x.collaborateur_id, (v.parPersonne.get(x.collaborateur_id) ?? 0) + x.heures);
+      m.set(k, v);
+    }
+    return m;
+  }, [lignesPeriode]);
+  const devisPeriode = useMemo(() => {
+    let n = 0;
+    let h = 0;
+    for (const [k, v] of periodeParFamille) if (k.startsWith("DBE|") && v.heures > 0.01) {
+      n++;
+      h += v.heures;
+    }
+    return { n, h };
+  }, [periodeParFamille]);
   /* CLIENT_POINTAGE : client (nom abrégé du Suivi d'affaire) par affaire, « CBE|1750 » ; PE / PI dormantes */
   const [clientsParBase, setClientsParBase] = useState<Map<string, string>>(new Map());
   const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
@@ -211,12 +267,13 @@ function PointageContenu() {
         return perimetre === "TOUT" || (perimetre === "PEPI" ? pepi : !pepi);
       })
       .filter((f) => typeAff === "TOUS" || f.type === typeAff)
+      .filter((f) => !periodeActive || (periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, "")}`)?.heures ?? 0) > 0.01)
       .filter((f) => vue === "TOUTES" || (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "LIVREE"))
       .filter((f) => !seulementAlertes || f.pointe > f.chiffre + 0.5 || f.horsChiffrage > 0.5 || f.activites.some((d) => d.chiffre > 0 && d.pointe > d.chiffre + 0.5))
       .filter((f) => !q || `${f.type}${f.base} ${f.designation} ${clientDe(f)}`.toLowerCase().includes(q))
       // POINTAGE_LISIBLE : les plus récentes (n° le plus grand) en haut
       .sort((x, y) => Number(y.base) - Number(x.base) || y.base.localeCompare(x.base, "fr", { numeric: true }));
-  }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff]);
+  }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff, periodeActive, periodeParFamille]);
 
   const totaux = useMemo(() => {
     const chiffre = affichees.reduce((t, f) => t + f.chiffre, 0);
@@ -345,6 +402,39 @@ function PointageContenu() {
                   </button>
                 ))}
               </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }} role="group" aria-label="Période">
+                <strong style={{ fontSize: 14 }}>Période :</strong>
+                {(
+                  [
+                    ["TOUT", "Depuis l’ouverture"],
+                    ["EXERCICE", "Exercice"],
+                    ["MOIS", "Mois"],
+                    ["LIBRE", "Dates libres"],
+                  ] as const
+                ).map(([v, l]) => (
+                  <button key={v} type="button" aria-pressed={periode.mode === v} onClick={() => setPeriode({ ...periode, mode: v })} style={periode.mode === v ? page.btnPrimaire : page.btnSecondaire}>
+                    {l}
+                  </button>
+                ))}
+                {periode.mode === "EXERCICE" && (
+                  <select value={periode.exercice} onChange={(e) => setPeriode({ ...periode, exercice: Number(e.target.value) })} style={{ ...page.entrees, width: "auto" }} aria-label="Exercice">
+                    {[0, 1, 2, 3].map((k) => (
+                      <option key={k} value={exerciceCourant - k}>
+                        {exerciceCourant - k}-{exerciceCourant - k + 1}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {periode.mode === "MOIS" && (
+                  <input type="month" value={periode.mois} onChange={(e) => setPeriode({ ...periode, mois: e.target.value })} style={{ ...page.entrees, width: "auto" }} aria-label="Mois" />
+                )}
+                {periode.mode === "LIBRE" && (
+                  <>
+                    <input type="date" value={periode.du} onChange={(e) => setPeriode({ ...periode, du: e.target.value })} style={{ ...page.entrees, width: "auto" }} aria-label="Du" />
+                    <input type="date" value={periode.au} onChange={(e) => setPeriode({ ...periode, au: e.target.value })} style={{ ...page.entrees, width: "auto" }} aria-label="Au" />
+                  </>
+                )}
+              </div>
               <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher une affaire…" style={{ ...page.entrees, maxWidth: 240 }} aria-label="Rechercher" />
             </div>
 
@@ -352,6 +442,16 @@ function PointageContenu() {
               <Tuile libelle="Affaires" valeur={String(affichees.length)} sous={`${formatHeures(totaux.chiffre)} chiffrées`} />
               <Tuile libelle="Pointé" valeur={formatHeures(totaux.pointe)} sous={totaux.chiffre > 0 ? `${pct(totaux.pointe / totaux.chiffre)} du chiffré` : ""} />
               <Tuile libelle="Au-delà du chiffré" valeur={String(totaux.depassees)} sous="affaires dont le pointé dépasse le chiffré" accent={totaux.depassees > 0} />
+              {periodeActive && (
+                <Tuile
+                  libelle="Pointé sur la période"
+                  valeur={formatHeures(affichees.reduce((t, f) => t + (periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, "")}`)?.heures ?? 0), 0))}
+                  sous={`${affichees.length} affaire${affichees.length > 1 ? "s" : ""} · ${libellePeriode}`}
+                />
+              )}
+              {periodeActive && (
+                <Tuile libelle="Devis travaillés" valeur={String(devisPeriode.n)} sous={`${formatHeures(devisPeriode.h)} passées sur les DBE · ${libellePeriode}`} />
+              )}
             </div>
 
             {(() => {
@@ -362,7 +462,15 @@ function PointageContenu() {
               return (
                 <Message genre="info">
                   <strong>Ce que vous regardez :</strong> {quoi}
-                  {genre} {etat} ({affichees.length}). Pour chacune, <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{" "}
+                  {genre} {etat} ({affichees.length}). {periodeActive ? (
+                    <>
+                      Colonne <strong>« Sur la période »</strong> : ce qui a été pointé {libellePeriode} (seules les affaires pointées sur cette période sont listées). Les autres
+                      colonnes portent sur
+                    </>
+                  ) : (
+                    "Pour chacune,"
+                  )}{" "}
+                  <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{" "}
                   {new Date().toLocaleDateString("fr-FR")} (feuilles d’heures, et historique avant le 2 novembre 2026), face à ses heures chiffrées. Une affaire
                   regroupe sa commande de base et ses avenants.
                 </Message>
@@ -450,6 +558,7 @@ function PointageContenu() {
                     <th style={thG}>Échéance</th>
                     <th style={th}>Chiffré</th>
                     <th style={th}>Pointé</th>
+                    {periodeActive && <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>}
                     <th style={th}>{affichees.every((f) => f.type === "DBE") ? "Passées par" : "Consommé"}</th>
                     <th style={thG}>Alerte</th>
                   </tr>
@@ -462,6 +571,7 @@ function PointageContenu() {
                     const personnes = parPersonne
                       .filter((p) => p.type_affaire === f.type && String(p.numero).replace(/^0+/, "") === f.base.replace(/^0+/, ""))
                       .reduce((m, p) => m.set(p.collaborateur_id, (m.get(p.collaborateur_id) ?? 0) + num(p.heures)), new Map<string, number>());
+                    const surPeriode = periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, "")}`);
                     return (
                       <Fragment key={cle}>
                         <tr>
@@ -496,9 +606,10 @@ function PointageContenu() {
                           <td style={{ ...tdG, whiteSpace: "nowrap" }}>{formatDate(f.echeance)}</td>
                           <td style={td}>{formatHeures(f.chiffre)}</td>
                           <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>
+                          {periodeActive && <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>}
                           {f.type === "DBE" ? (
                             <td style={{ ...tdG, fontSize: 13 }} title="Heures pointées sur le devis, par personne">
-                              {[...personnes.entries()]
+                              {[...(periodeActive ? surPeriode?.parPersonne ?? new Map<string, number>() : personnes).entries()]
                                 .sort((x, y) => y[1] - x[1])
                                 .map(([id, h]) => `${nomCollab(collabs.get(id))} ${formatHeures(h)}`)
                                 .join(" · ") || "—"}
@@ -521,7 +632,7 @@ function PointageContenu() {
                         </tr>
                         {ouverte && (
                           <tr>
-                            <td colSpan={9} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
+                            <td colSpan={periodeActive ? 10 : 9} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
                                 <div style={{ flex: "1 1 360px" }}>
                                   <strong>Par activité</strong>

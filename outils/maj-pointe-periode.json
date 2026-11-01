@@ -1,0 +1,68 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : état, bornes et chargement",
+  "cherche": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());",
+  "remplace": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());\n  /* POINTE_PERIODE : ce qui a été pointé sur une période (SQL 73), en plus du cumul depuis l'ouverture */\n  const exerciceCourant = new Date().getMonth() >= 10 ? new Date().getFullYear() : new Date().getFullYear() - 1;\n  const [periode, setPeriode] = useState<{ mode: \"TOUT\" | \"EXERCICE\" | \"MOIS\" | \"LIBRE\"; exercice: number; mois: string; du: string; au: string }>({\n    mode: \"TOUT\",\n    exercice: exerciceCourant,\n    mois: new Date().toISOString().slice(0, 7),\n    du: \"\",\n    au: \"\",\n  });\n  const bornes = (() => {\n    if (periode.mode === \"EXERCICE\") return { du: `${periode.exercice}-11-01`, au: `${periode.exercice + 1}-10-31` };\n    if (periode.mode === \"MOIS\" && periode.mois) {\n      const [a, m] = periode.mois.split(\"-\").map(Number);\n      return { du: `${periode.mois}-01`, au: new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10) };\n    }\n    if (periode.mode === \"LIBRE\" && periode.du && periode.au && periode.du <= periode.au) return { du: periode.du, au: periode.au };\n    return null;\n  })();\n  const periodeActive = bornes !== null;\n  const frDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(\"fr-FR\");\n  const libellePeriode = bornes ? `du ${frDate(bornes.du)} au ${frDate(bornes.au)}` : \"\";\n  const [lignesPeriode, setLignesPeriode] = useState<{ type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number }[]>([]);\n  useEffect(() => {\n    if (!bornes) {\n      setLignesPeriode([]);\n      return;\n    }\n    let actif = true;\n    void supabase.rpc(\"pointage_periode\", { p_debut: bornes.du, p_fin: bornes.au }).then(({ data, error }) => {\n      if (!actif) return;\n      setLignesPeriode(error ? [] : ((data ?? []) as { type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));\n    });\n    return () => {\n      actif = false;\n    };\n  }, [bornes?.du, bornes?.au]);\n  const periodeParFamille = useMemo(() => {\n    const m = new Map<string, { heures: number; parPersonne: Map<string, number> }>();\n    for (const x of lignesPeriode) {\n      const k = `${x.type_affaire}|${x.numero}`;\n      const v = m.get(k) ?? { heures: 0, parPersonne: new Map<string, number>() };\n      v.heures += x.heures;\n      v.parPersonne.set(x.collaborateur_id, (v.parPersonne.get(x.collaborateur_id) ?? 0) + x.heures);\n      m.set(k, v);\n    }\n    return m;\n  }, [lignesPeriode]);\n  const devisPeriode = useMemo(() => {\n    let n = 0;\n    let h = 0;\n    for (const [k, v] of periodeParFamille) if (k.startsWith(\"DBE|\") && v.heures > 0.01) {\n      n++;\n      h += v.heures;\n    }\n    return { n, h };\n  }, [periodeParFamille]);"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : seules les affaires pointées sur la période",
+  "cherche": "      .filter((f) => typeAff === \"TOUS\" || f.type === typeAff)",
+  "remplace": "      .filter((f) => typeAff === \"TOUS\" || f.type === typeAff)\n      .filter((f) => !periodeActive || (periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`)?.heures ?? 0) > 0.01)"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : dépendances",
+  "cherche": "  }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff]);",
+  "remplace": "  }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff, periodeActive, periodeParFamille]);"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : choix de la période",
+  "cherche": "              <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder=\"Rechercher une affaire…\"",
+  "remplace": "              <div style={{ display: \"flex\", gap: 6, alignItems: \"center\", flexWrap: \"wrap\" }} role=\"group\" aria-label=\"Période\">\n                <strong style={{ fontSize: 14 }}>Période :</strong>\n                {(\n                  [\n                    [\"TOUT\", \"Depuis l’ouverture\"],\n                    [\"EXERCICE\", \"Exercice\"],\n                    [\"MOIS\", \"Mois\"],\n                    [\"LIBRE\", \"Dates libres\"],\n                  ] as const\n                ).map(([v, l]) => (\n                  <button key={v} type=\"button\" aria-pressed={periode.mode === v} onClick={() => setPeriode({ ...periode, mode: v })} style={periode.mode === v ? page.btnPrimaire : page.btnSecondaire}>\n                    {l}\n                  </button>\n                ))}\n                {periode.mode === \"EXERCICE\" && (\n                  <select value={periode.exercice} onChange={(e) => setPeriode({ ...periode, exercice: Number(e.target.value) })} style={{ ...page.entrees, width: \"auto\" }} aria-label=\"Exercice\">\n                    {[0, 1, 2, 3].map((k) => (\n                      <option key={k} value={exerciceCourant - k}>\n                        {exerciceCourant - k}-{exerciceCourant - k + 1}\n                      </option>\n                    ))}\n                  </select>\n                )}\n                {periode.mode === \"MOIS\" && (\n                  <input type=\"month\" value={periode.mois} onChange={(e) => setPeriode({ ...periode, mois: e.target.value })} style={{ ...page.entrees, width: \"auto\" }} aria-label=\"Mois\" />\n                )}\n                {periode.mode === \"LIBRE\" && (\n                  <>\n                    <input type=\"date\" value={periode.du} onChange={(e) => setPeriode({ ...periode, du: e.target.value })} style={{ ...page.entrees, width: \"auto\" }} aria-label=\"Du\" />\n                    <input type=\"date\" value={periode.au} onChange={(e) => setPeriode({ ...periode, au: e.target.value })} style={{ ...page.entrees, width: \"auto\" }} aria-label=\"Au\" />\n                  </>\n                )}\n              </div>\n              <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder=\"Rechercher une affaire…\""
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : vignettes du pointé et des devis",
+  "cherche": "              <Tuile libelle=\"Au-delà du chiffré\" valeur={String(totaux.depassees)} sous=\"affaires dont le pointé dépasse le chiffré\" accent={totaux.depassees > 0} />",
+  "remplace": "              <Tuile libelle=\"Au-delà du chiffré\" valeur={String(totaux.depassees)} sous=\"affaires dont le pointé dépasse le chiffré\" accent={totaux.depassees > 0} />\n              {periodeActive && (\n                <Tuile\n                  libelle=\"Pointé sur la période\"\n                  valeur={formatHeures(affichees.reduce((t, f) => t + (periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`)?.heures ?? 0), 0))}\n                  sous={`${affichees.length} affaire${affichees.length > 1 ? \"s\" : \"\"} · ${libellePeriode}`}\n                />\n              )}\n              {periodeActive && (\n                <Tuile libelle=\"Devis travaillés\" valeur={String(devisPeriode.n)} sous={`${formatHeures(devisPeriode.h)} passées sur les DBE · ${libellePeriode}`} />\n              )}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : explication",
+  "cherche": "Pour chacune, <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{\" \"}",
+  "remplace": "{periodeActive ? (\n                    <>\n                      Colonne <strong>« Sur la période »</strong> : ce qui a été pointé {libellePeriode} (seules les affaires pointées sur cette période sont listées). Les autres\n                      colonnes portent sur\n                    </>\n                  ) : (\n                    \"Pour chacune,\"\n                  )}{\" \"}\n                  <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{\" \"}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : colonne « Sur la période » (en-tête)",
+  "cherche": "                    <th style={th}>Pointé</th>\n                    <th style={th}>{affichees.every((f) => f.type === \"DBE\") ? \"Passées par\" : \"Consommé\"}</th>",
+  "remplace": "                    <th style={th}>Pointé</th>\n                    {periodeActive && <th style={{ ...th, color: C.rougeFonce }}>Sur la période</th>}\n                    <th style={th}>{affichees.every((f) => f.type === \"DBE\") ? \"Passées par\" : \"Consommé\"}</th>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : personnes de la période",
+  "cherche": "                      .reduce((m, p) => m.set(p.collaborateur_id, (m.get(p.collaborateur_id) ?? 0) + num(p.heures)), new Map<string, number>());",
+  "remplace": "                      .reduce((m, p) => m.set(p.collaborateur_id, (m.get(p.collaborateur_id) ?? 0) + num(p.heures)), new Map<string, number>());\n                    const surPeriode = periodeParFamille.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`);"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : colonne « Sur la période »",
+  "cherche": "                          <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>",
+  "remplace": "                          <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>\n                          {periodeActive && <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(surPeriode?.heures ?? 0)}</td>}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : devis, qui a passé les heures sur la période",
+  "cherche": "                              {[...personnes.entries()]\n                                .sort((x, y) => y[1] - x[1])\n                                .map(([id, h]) => `${nomCollab(collabs.get(id))} ${formatHeures(h)}`)",
+  "remplace": "                              {[...(periodeActive ? surPeriode?.parPersonne ?? new Map<string, number>() : personnes).entries()]\n                                .sort((x, y) => y[1] - x[1])\n                                .map(([id, h]) => `${nomCollab(collabs.get(id))} ${formatHeures(h)}`)"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Période : détail sur toute la largeur",
+  "cherche": "<td colSpan={9} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>",
+  "remplace": "<td colSpan={periodeActive ? 10 : 9} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>"
+ }
+]
