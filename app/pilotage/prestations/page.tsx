@@ -188,7 +188,7 @@ function PrestationsContenu() {
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
   /* PLANIFIE_FUTUR : heures déjà saisies après le mois affiché (planifiées) et dernier jour saisi avant lui, par ligne */
-  const [planif, setPlanif] = useState<{ futur: Map<string, { heures: number; dernier: string }>; avant: Map<string, string> }>({ futur: new Map(), avant: new Map() });
+  const [planif, setPlanif] = useState<{ futur: Map<string, { heures: number; dernier: string; fait: number }>; avant: Map<string, string> }>({ futur: new Map(), avant: new Map() });
   /* AVENANTS_IGNORES : commandes qu'on ne veut plus voir dans « Avenant à prévoir » (retenu sur ce poste) */
   const [avenantsIgnores, setAvenantsIgnores] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -324,12 +324,18 @@ function PrestationsContenu() {
           supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").gt("jour", fin).order("jour").range(a, b)
         );
         if (!actif) return;
-        const futur = new Map<string, { heures: number; dernier: string }>();
+        // FICHE_AU_JOUR : dans ce qui est saisi après le mois affiché, la part déjà faite (jusqu'à aujourd'hui)
+        const jourAuj = (() => {
+          const d = new Date();
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        })();
+        const futur = new Map<string, { heures: number; dernier: string; fait: number }>();
         for (const s of fu) {
           const h = Number(s.heures) || 0;
           if (h <= 0) continue;
-          const v = futur.get(s.ligne_id) ?? { heures: 0, dernier: "" };
+          const v = futur.get(s.ligne_id) ?? { heures: 0, dernier: "", fait: 0 };
           v.heures += h;
+          if (s.jour <= jourAuj) v.fait += h;
           if (s.jour > v.dernier) v.dernier = s.jour;
           futur.set(s.ligne_id, v);
         }
@@ -1862,8 +1868,9 @@ function PrestationsContenu() {
                                           ↪ report {NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12].slice(0, 4)}.
                                         </span>
                                       )}
-                                      <button type="button" onClick={() => setFiche(a.id)} title="Fiche commande : commandé, taux, consommé, reste" aria-label={`Fiche commande ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 14, color: "#1f4e99", fontWeight: 800 }}>
-                                        ⓘ
+                                      <button type="button" onClick={() => setFiche(a.id)} title="Fiche commande : commandé, taux, consommé, reste" aria-label={`Fiche commande ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 11, color: "#1f4e99", fontWeight: 800, border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>
+                                        {/* BOUTON_FICHE : un mot plutôt qu'un petit i */}
+                                        fiche
                                       </button>
                                     </span>
                                     <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${a.designation}${nf?.client ? ` · ${nf.client}` : ""}`}>
@@ -2349,17 +2356,65 @@ function PrestationsContenu() {
                 {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, "Montant de la commande ÷ taux des lignes")}
                 {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Taux des lignes du relevé (celui de la première, s’il y en a plusieurs)")}
 
-                {titreSection("Où on en est")}
-                {info("Consommé", `${deux(Math.round(f.consomme * 100) / 100)} ${u}${f.consoE > 0 ? ` · ${euros(f.consoE)}` : ""}`, "Heures saisies au relevé, tous mois et toutes personnes confondus")}
-                {info(
-                  "Reste",
-                  f.reste === null ? "—" : (
-                    <span style={{ color: f.reste < 0 ? "#b3261e" : undefined }}>
-                      {f.reste < 0 ? `dépassé de ${deux(-f.reste)} ${u}` : `${deux(Math.round(f.reste * 100) / 100)} ${u}`}
-                      {f.resteE !== null ? ` · ${euros(f.resteE)}` : ""}
-                    </span>
-                  )
-                )}
+                {(() => {
+                  const auj = (() => {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                  })();
+                  let faitU = 0;
+                  let planU = 0;
+                  let faitE = 0;
+                  let planE = 0;
+                  for (const l of lignes.filter((x) => x.affaire_id === a.id)) {
+                    const k = f.unite === "JOUR" ? l.base_horaire || f.base : 1;
+                    const tH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+                    let fait = 0;
+                    let plan = 0;
+                    const avant = consoLigneAvant.get(l.id) ?? 0;
+                    if (debut <= auj) fait += avant;
+                    else plan += avant;
+                    for (const s of saisies) {
+                      if (s.ligne_id !== l.id || !(s.heures && s.heures > 0)) continue;
+                      if (s.jour <= auj) fait += s.heures;
+                      else plan += s.heures;
+                    }
+                    const fu = planif.futur.get(l.id);
+                    if (fu) {
+                      fait += fu.fait;
+                      plan += fu.heures - fu.fait;
+                    }
+                    faitU += fait / k;
+                    planU += plan / k;
+                    if (tH !== null) {
+                      faitE += fait * tH;
+                      planE += plan * tH;
+                    }
+                  }
+                  const q = f.quantite ?? 0;
+                  const reste = q - faitU - planU;
+                  const resteE = f.montant > 0 ? f.montant - faitE - planE : null;
+                  const arr = (n: number) => deux(Math.round(n * 100) / 100);
+                  return (
+                    <>
+                      {titreSection(`Où on en est au ${new Date().toLocaleDateString("fr-FR")}`)}
+                      {info("Commandé", f.quantite === null ? "—" : `${arr(q)} ${u}${f.montant > 0 ? ` · ${euros(f.montant)}` : ""}`)}
+                      {info("Fait", `${arr(faitU)} ${u}${faitE > 0 ? ` · ${euros(faitE)}` : ""}`, "Saisi au relevé jusqu’à aujourd’hui, toutes personnes confondues")}
+                      {info("Planifié", `${arr(planU)} ${u}${planE > 0 ? ` · ${euros(planE)}` : ""}`, "Saisi au relevé après aujourd’hui (ce mois-ci et les mois suivants)")}
+                      {info(
+                        "Reste à planifier",
+                        f.quantite === null ? (
+                          "—"
+                        ) : (
+                          <span style={{ color: reste < -0.01 ? "#b3261e" : reste <= 0.05 ? "#1b5e20" : undefined }}>
+                            {reste < -0.01 ? `dépassé de ${arr(-reste)} ${u}` : reste <= 0.05 ? "✓ rien : tout est fait ou planifié" : `${arr(reste)} ${u}`}
+                            {resteE !== null && reste > 0.05 ? ` · ${euros(resteE)}` : ""}
+                          </span>
+                        ),
+                        "Commandé − fait − planifié"
+                      )}
+                    </>
+                  );
+                })()}
 
                 {titreSection("Personnes")}
                 {sansLigne ? (
