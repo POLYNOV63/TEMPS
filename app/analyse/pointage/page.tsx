@@ -439,7 +439,11 @@ function PointageContenu() {
                     ["LIBRE", "Dates libres"],
                   ] as const
                 ).map(([v, l]) => (
-                  <button key={v} type="button" aria-pressed={periode.mode === v} onClick={() => setPeriode({ ...periode, mode: v })} style={periode.mode === v ? page.btnPrimaire : page.btnSecondaire}>
+                  <button key={v} type="button" aria-pressed={periode.mode === v} onClick={() => {
+                      setPeriode({ ...periode, mode: v });
+                      // un devis envoyé ou une commande livrée ont pu être travaillés sur la période
+                      if (v !== "TOUT") setVue("TOUTES");
+                    }} style={periode.mode === v ? page.btnPrimaire : page.btnSecondaire}>
                     {l}
                   </button>
                 ))}
@@ -477,7 +481,18 @@ function PointageContenu() {
                 />
               )}
               {periodeActive && (
-                <Tuile libelle="Devis travaillés" valeur={String(devisPeriode.n)} sous={`${formatHeures(devisPeriode.h)} passées sur les DBE · ${libellePeriode}`} />
+                (() => {
+                  // DEVIS_COHERENTS : les devis de la liste (mêmes filtres), et le total de tous les devis pointés pour comparaison
+                  const dbe = affichees.filter((f) => f.type === "DBE");
+                  const h = dbe.reduce((t, f) => t + (periodeParFamille.get(`DBE|${f.base.replace(/^0+/, "")}`)?.heures ?? 0), 0);
+                  return (
+                    <Tuile
+                      libelle="Devis travaillés"
+                      valeur={String(dbe.length)}
+                      sous={`${formatHeures(h)} passées · ${libellePeriode}${devisPeriode.n !== dbe.length ? ` · ${devisPeriode.n} devis pointés en tout (${formatHeures(devisPeriode.h)}), tous filtres confondus` : ""}`}
+                    />
+                  );
+                })()
               )}
             </div>
 

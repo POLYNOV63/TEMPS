@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Vignette « Devis travaillés » : mêmes devis que la liste",
+  "cherche": "                <Tuile libelle=\"Devis travaillés\" valeur={String(devisPeriode.n)} sous={`${formatHeures(devisPeriode.h)} passées sur les DBE · ${libellePeriode}`} />",
+  "remplace": "                (() => {\n                  // DEVIS_COHERENTS : les devis de la liste (mêmes filtres), et le total de tous les devis pointés pour comparaison\n                  const dbe = affichees.filter((f) => f.type === \"DBE\");\n                  const h = dbe.reduce((t, f) => t + (periodeParFamille.get(`DBE|${f.base.replace(/^0+/, \"\")}`)?.heures ?? 0), 0);\n                  return (\n                    <Tuile\n                      libelle=\"Devis travaillés\"\n                      valeur={String(dbe.length)}\n                      sous={`${formatHeures(h)} passées · ${libellePeriode}${devisPeriode.n !== dbe.length ? ` · ${devisPeriode.n} devis pointés en tout (${formatHeures(devisPeriode.h)}), tous filtres confondus` : \"\"}`}\n                    />\n                  );\n                })()"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Choisir une période montre toutes les affaires (en cours et livrées)",
+  "cherche": "onClick={() => setPeriode({ ...periode, mode: v })}",
+  "remplace": "onClick={() => {\n                      setPeriode({ ...periode, mode: v });\n                      // un devis envoyé ou une commande livrée ont pu être travaillés sur la période\n                      if (v !== \"TOUT\") setVue(\"TOUTES\");\n                    }}"
+ }
+]
