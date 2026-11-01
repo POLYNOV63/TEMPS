@@ -2257,28 +2257,6 @@ function PrestationsContenu() {
               </section>
             )}
 
-            {peutAgir && (
-              <section style={{ ...page.carte, padding: 14, flex: "1 1 420px" }}>
-                <h2 style={{ margin: "0 0 8px", fontSize: 17 }}>Ajouter une ligne</h2>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  <select value={ajout?.affaire_id ?? ""} onChange={(e) => setAjout({ affaire_id: e.target.value, collaborateur_id: ajout?.collaborateur_id ?? "" })} style={{ ...page.entrees, width: "auto" }} aria-label="Affaire">
-                    <option value="">Affaire PE / PI…</option>
-                    {affaires.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE").map((a) => (
-                      <option key={a.id} value={a.id}>{a.type} {a.numero} — {a.designation}</option>
-                    ))}
-                  </select>
-                  <select value={ajout?.collaborateur_id ?? ""} onChange={(e) => setAjout({ affaire_id: ajout?.affaire_id ?? "", collaborateur_id: e.target.value })} style={{ ...page.entrees, width: "auto" }} aria-label="Personne">
-                    <option value="">Personne…</option>
-                    {annuaire.map((c) => (
-                      <option key={c.id} value={c.id}>{nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}</option>
-                    ))}
-                  </select>
-                  <button type="button" style={page.btnPrimaire} disabled={!ajout?.affaire_id || !ajout?.collaborateur_id} onClick={() => void ajouterLigne()}>
-                    Ajouter
-                  </button>
-                </div>
-              </section>
-            )}
           </div>
         )}
 
@@ -2423,6 +2401,30 @@ function PrestationsContenu() {
                       </span>
                     </div>
                   ))
+                )}
+                {/* AJOUT_DANS_FICHE : une personne de plus sur la commande (remplace « Ajouter une ligne » en bas de page) */}
+                {peutAgir && !sansLigne && (
+                  <div style={{ padding: "8px 0" }}>
+                    <select
+                      defaultValue=""
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        void staffer(a.id, e.target.value);
+                        setFiche(null);
+                      }}
+                      style={{ ...champ, width: 240 }}
+                      aria-label={`Ajouter une personne sur ${a.numero}`}
+                    >
+                      <option value="">+ Ajouter une personne…</option>
+                      {annuaire
+                        .filter((p) => !f.personnes.some((x) => x.ligne.collaborateur_id === p.id))
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {nomCollab(p)}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 )}
 
                 {(f.montant <= 0 || f.heuresCmd <= 0) && (

@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Fiche commande : ajouter une personne",
+  "cherche": "                )}\n\n                {(f.montant <= 0 || f.heuresCmd <= 0) && (",
+  "remplace": "                )}\n                {/* AJOUT_DANS_FICHE : une personne de plus sur la commande (remplace « Ajouter une ligne » en bas de page) */}\n                {peutAgir && !sansLigne && (\n                  <div style={{ padding: \"8px 0\" }}>\n                    <select\n                      defaultValue=\"\"\n                      onChange={(e) => {\n                        if (!e.target.value) return;\n                        void staffer(a.id, e.target.value);\n                        setFiche(null);\n                      }}\n                      style={{ ...champ, width: 240 }}\n                      aria-label={`Ajouter une personne sur ${a.numero}`}\n                    >\n                      <option value=\"\">+ Ajouter une personne…</option>\n                      {annuaire\n                        .filter((p) => !f.personnes.some((x) => x.ligne.collaborateur_id === p.id))\n                        .map((p) => (\n                          <option key={p.id} value={p.id}>\n                            {nomCollab(p)}\n                          </option>\n                        ))}\n                    </select>\n                  </div>\n                )}\n\n                {(f.montant <= 0 || f.heuresCmd <= 0) && ("
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Bloc « Ajouter une ligne » retiré du bas de page",
+  "cherche": "@@DEBUT@@            {peutAgir && (\n              <section style={{ ...page.carte, padding: 14, flex: \"1 1 420px\" }}>@@FIN@@          </div>\n        )}\n\n        <p style={{ fontSize: 12, color: C.gris, marginTop: 12 }}>",
+  "remplace": ""
+ }
+]
