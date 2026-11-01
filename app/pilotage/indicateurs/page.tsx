@@ -868,7 +868,7 @@ function IndicateursContenu() {
             {(() => {
               // imputation d'une commande : la sienne, sinon celle de sa commande de base (avenants)
               const impBase = new Map(lignes.filter((l) => l.genre === "BASE" && l.base_affaire).map((l) => [l.base_affaire as string, l.imputation]));
-              const imputationDe = (l: (typeof calcul.commandes)[number]) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
+              const imputationDe = (l: LigneInd) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
               const parImputation = repartir(calcul.commandes, imputationDe);
               const choisie = imputationTop && parImputation.some((p) => p.cle === imputationTop) ? imputationTop : "";
               const perimetre = choisie ? calcul.commandes.filter((l) => imputationDe(l) === choisie) : calcul.commandes;
