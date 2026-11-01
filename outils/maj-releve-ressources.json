@@ -1,0 +1,81 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : repère « report » sur le n° de commande",
+  "cherche": "                                      {a.statut === \"EN_ATTENTE\" && <span style={{ fontSize: 11, color: \"#7a3e00\", fontWeight: 800 }}>INT.</span>}\n                                      <button type=\"button\" onClick={() => setFiche(a.id)} title=\"Fiche commande",
+  "remplace": "                                      {a.statut === \"EN_ATTENTE\" && <span style={{ fontSize: 11, color: \"#7a3e00\", fontWeight: 800 }}>INT.</span>}\n                                      {/* REPERE_REPORT : heures reportées du mois précédent sur cette ligne */}\n                                      {!c.reporte && c.reportEntrant > 0.01 && (\n                                        <span\n                                          title={`Cette ligne facture ce mois-ci ${formatHeures(c.reportEntrant)} reportées de ${NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12]} : elles sont déjà comptées, ne les ressaisissez pas dans les jours.`}\n                                          style={{ fontSize: 11, fontWeight: 800, color: \"#ffffff\", background: \"#7a3e00\", borderRadius: 4, padding: \"0 5px\" }}\n                                        >\n                                          ↪ report {NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12].slice(0, 4)}.\n                                        </span>\n                                      )}\n                                      <button type=\"button\" onClick={() => setFiche(a.id)} title=\"Fiche commande"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : bouton de remplissage qui ne ressemble plus à un menu",
+  "cherche": "                                      <button type=\"button\" style={petitOutil} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>\n                                        ⤓\n                                      </button>",
+  "remplace": "                                      <button type=\"button\" style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>\n                                        {/* REMPLIR_TEXTE : « +7h » au lieu d'une flèche qui faisait penser à un menu */}\n                                        +{texteHeures(l.base_horaire)}h\n                                      </button>"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : texte d'aide",
+  "cherche": "Ce relevé fait foi et alimente le planning. <strong>⤓</strong> remplit le mois d’une ligne",
+  "remplace": "Ce relevé fait foi et alimente le planning. <strong>+7h</strong> remplit les jours vides d’une ligne · <strong>⚙</strong> ouvre ses réglages"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : outils",
+  "cherche": "import { useEffect, useMemo, useState, type CSSProperties } from \"react\";",
+  "remplace": "import { Fragment, useEffect, useMemo, useState, type CSSProperties } from \"react\";\nimport { supabase } from \"@/lib/supabase\";"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : prédominances",
+  "cherche": "  const [recherche, setRecherche] = useState(\"\");",
+  "remplace": "  const [recherche, setRecherche] = useState(\"\");\n  /* RESSOURCES_PREDOMINANCE : chacun rangé sous son activité principale (fiche Collaborateurs) */\n  const [predo, setPredo] = useState<Map<string, { nom: string; ordre: number }>>(new Map());\n  useEffect(() => {\n    Promise.all([\n      supabase.from(\"collaborateurs_predominances\").select(\"collaborateur_id,activite_id,niveau\"),\n      supabase.from(\"activites\").select(\"id,nom,ordre_affichage\"),\n    ])\n      .then(([p, a]) => {\n        if (p.error || a.error) return;\n        const acts = new Map(((a.data ?? []) as { id: string; nom: string; ordre_affichage: number | null }[]).map((x) => [x.id, { nom: x.nom, ordre: x.ordre_affichage ?? 999 }]));\n        const m = new Map<string, { nom: string; ordre: number }>();\n        for (const x of (p.data ?? []) as { collaborateur_id: string; activite_id: string; niveau: string | null }[]) {\n          if (x.niveau && x.niveau !== \"PRINCIPALE\") continue;\n          const act = acts.get(x.activite_id);\n          if (act && !m.has(x.collaborateur_id)) m.set(x.collaborateur_id, act);\n        }\n        setPredo(m);\n      })\n      .catch(() => undefined);\n  }, []);"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : groupe de chaque personne",
+  "cherche": "        return { collab: c, ...p, nets, totalAffecte, totalNet, voies };",
+  "remplace": "        const g = predo.size > 0 ? predo.get(c.id) ?? { nom: \"Sans prédominance\", ordre: 9999 } : { nom: \"\", ordre: 0 };\n        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre };"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : tri par prédominance",
+  "cherche": "      .sort((x, y) => (nomCollab(x.collab) ?? \"\").localeCompare(nomCollab(y.collab) ?? \"\"));",
+  "remplace": "      .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? \"\").localeCompare(nomCollab(y.collab) ?? \"\"));"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : tri, dépendance",
+  "cherche": "  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche]);",
+  "remplace": "  }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo]);\n  // toutes les lignes ont la même hauteur : celle de la personne qui a le plus de barres empilées\n  const voiesMax = Math.max(1, ...lignes.map((l) => l.voies));"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : hauteur commune (nom et total)",
+  "cherche": "`1 / span ${l.voies + 1}`",
+  "remplace": "`1 / span ${voiesMax}`",
+  "tous": true
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : briques de charge retirées",
+  "cherche": "                  {colonnes.map((j, i) => (\n                    <div\n                      key={`c-${j}`}\n                      title={`${formatDate(j)} — ${formatHeures(l.charge[i])} / ${formatHeures(l.nets[i])} disponibles`}\n                      style={{ gridColumn: col(i), gridRow: l.voies + 1, margin: \"0 1px\", borderRadius: 2, background: couleurCharge(l.charge[i], l.nets[i]), border: l.nets[i] > 0 && l.charge[i] > l.nets[i] + 0.01 ? \"1px solid #b3261e\" : \"none\", boxSizing: \"border-box\" }}\n                    />\n                  ))}\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : ligne d'une personne, avec le titre de son groupe",
+  "cherche": "                <div key={l.collab.id} style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${l.voies}, ${HAUTEUR_VOIE}px) 12px`, rowGap: 2, padding: \"6px 0\", borderBottom: `1px solid ${C.ligne}` }}>",
+  "remplace": "                <Fragment key={l.collab.id}>\n                {l.groupe && (k === 0 || lignes[k - 1].groupe !== l.groupe) && (() => {\n                  const du = lignes.filter((x) => x.groupe === l.groupe);\n                  const aff = du.reduce((t, x) => t + x.totalAffecte, 0);\n                  const net = du.reduce((t, x) => t + x.totalNet, 0);\n                  const r = net > 0 ? aff / net : 0;\n                  return (\n                    <div style={{ display: \"flex\", alignItems: \"baseline\", gap: 10, padding: \"10px 6px 4px\", marginTop: k === 0 ? 0 : 8, borderBottom: `2px solid ${C.ligne}`, position: \"sticky\", left: 0 }}>\n                      <strong style={{ fontSize: 14, textTransform: \"uppercase\", letterSpacing: \".4px\", color: C.rougeFonce }}>{l.groupe}</strong>\n                      <span style={{ fontSize: 13, color: C.gris }}>\n                        {du.length} personne{du.length > 1 ? \"s\" : \"\"} · charge <strong style={{ color: r > 1.01 ? \"#b3261e\" : r > 0.9 ? \"#7a3e00\" : \"#1b5e20\" }}>{Math.round(r * 100)} %</strong> ({formatHeures(aff)} / {formatHeures(net)})\n                      </span>\n                    </div>\n                  );\n                })()}\n                <div style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${voiesMax}, ${HAUTEUR_VOIE}px)`, rowGap: 2, padding: \"6px 0\", borderBottom: `1px solid ${C.ligne}` }}>"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : fin de la ligne d'une personne",
+  "cherche": "                </div>\n              );\n            })}\n            {lignes.length === 0 &&",
+  "remplace": "                </div>\n                </Fragment>\n              );\n            })}\n            {lignes.length === 0 &&"
+ },
+ {
+  "fichier": "app/pilotage/ressources/page.tsx",
+  "nom": "Ressources : légende des couleurs de charge retirée",
+  "cherche": "@@DEBUT@@          <span style={{ marginLeft: \"auto\", display: \"flex\", gap: 10, flexWrap: \"wrap\", fontSize: 12, color: C.gris }}>@@FIN@@        </div>\n\n        {erreur && <Message",
+  "remplace": ""
+ }
+]
