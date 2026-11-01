@@ -1,0 +1,98 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : CBE par défaut",
+  "cherche": "  const [filtreType, setFiltreType] = useState<FiltreType>(\"TOUS\");",
+  "remplace": "  // CBE_PAR_DEFAUT : le portefeuille s'ouvre sur les commandes\n  const [filtreType, setFiltreType] = useState<FiltreType>(\"CBE\");"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : « Effacer les filtres » revient aux CBE",
+  "cherche": "    setFiltreType(\"TOUS\");",
+  "remplace": "    setFiltreType(\"CBE\");"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : CBE n'est plus un filtre actif",
+  "cherche": "    filtreType !== \"TOUS\" || recherche !== \"\"",
+  "remplace": "    filtreType !== \"CBE\" || recherche !== \"\""
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : état du planifié à venir",
+  "cherche": "  const [fiche, setFiche] = useState<string | null>(null);",
+  "remplace": "  const [fiche, setFiche] = useState<string | null>(null);\n  /* PLANIFIE_FUTUR : heures déjà saisies après le mois affiché (planifiées) et dernier jour saisi avant lui, par ligne */\n  const [planif, setPlanif] = useState<{ futur: Map<string, { heures: number; dernier: string }>; avant: Map<string, string> }>({ futur: new Map(), avant: new Map() });"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : chargement du planifié à venir",
+  "cherche": "        const affaireDe = new Map(lg.map((l) => [l.id, l.affaire_id]));",
+  "remplace": "        const fu = await chargerTout<Saisie>((a, b) =>\n          supabase.from(\"prestation_saisies\").select(\"ligne_id,jour,heures,code\").gt(\"jour\", fin).order(\"jour\").range(a, b)\n        );\n        if (!actif) return;\n        const futur = new Map<string, { heures: number; dernier: string }>();\n        for (const s of fu) {\n          const h = Number(s.heures) || 0;\n          if (h <= 0) continue;\n          const v = futur.get(s.ligne_id) ?? { heures: 0, dernier: \"\" };\n          v.heures += h;\n          if (s.jour > v.dernier) v.dernier = s.jour;\n          futur.set(s.ligne_id, v);\n        }\n        const dernierAvant = new Map<string, string>();\n        for (const s of sa) if ((Number(s.heures) || 0) > 0 && s.jour > (dernierAvant.get(s.ligne_id) ?? \"\")) dernierAvant.set(s.ligne_id, s.jour);\n        setPlanif({ futur, avant: dernierAvant });\n\n        const affaireDe = new Map(lg.map((l) => [l.id, l.affaire_id]));"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : dernier jour planifié de chaque ligne",
+  "cherche": "  /* Mois reporté : réglage enregistré, sinon automatique tant que la commande n'est pas reçue (intention) */",
+  "remplace": "  const dernierParLigne = useMemo(() => {\n    const m = new Map<string, string>();\n    for (const l of lignes) {\n      let d = planif.avant.get(l.id) ?? \"\";\n      for (const s of saisies) if (s.ligne_id === l.id && (s.heures ?? 0) > 0 && s.jour > d) d = s.jour;\n      const f = planif.futur.get(l.id)?.dernier ?? \"\";\n      m.set(l.id, f > d ? f : d);\n    }\n    return m;\n  }, [lignes, saisies, planif]);\n  const dernierJourLigne = (l: Ligne) => dernierParLigne.get(l.id) ?? \"\";\n\n  /* Mois reporté : réglage enregistré, sinon automatique tant que la commande n'est pas reçue (intention) */"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : planifier le reste de la commande",
+  "cherche": "  function toutRemplir() {",
+  "remplace": "  /* PLANIFIER_RESTE : le reste non planifié de la commande, sur cette personne, une journée (base de la ligne)\n     par jour ouvré à partir du lendemain du dernier jour saisi, mois suivants compris */\n  async function planifierReste(l: Ligne) {\n    const a = affairesParId.get(l.affaire_id);\n    if (!a || !peutAgir) return;\n    const f = ficheDe(a);\n    if (f.reste === null || f.quantite === null) return setErreur(\"Commande non chiffrée : montant ou heures absents du Suivi d’affaire.\");\n    const parUnite = (x: Ligne) => (f.unite === \"JOUR\" ? x.base_horaire || f.base : 1);\n    const futurU = lignes.filter((x) => x.affaire_id === a.id).reduce((t, x) => t + (planif.futur.get(x.id)?.heures ?? 0) / parUnite(x), 0);\n    const resteU = f.reste - futurU;\n    if (resteU <= 0.01) return setInfo(`${a.numero} : tout est déjà planifié.`);\n    let resteH = Math.round(resteU * parUnite(l) * 100) / 100;\n    const lendemain = (iso: string) => {\n      const d = new Date(`${iso}T00:00:00Z`);\n      d.setUTCDate(d.getUTCDate() + 1);\n      return d.toISOString().slice(0, 10);\n    };\n    const dernier = dernierJourLigne(l);\n    let jour = dernier && dernier >= debut ? lendemain(dernier) : debut;\n    const parJour = Math.max(0.5, l.base_horaire);\n    const ajouts: { jour: string; heures: number }[] = [];\n    for (let garde = 0; resteH > 0.001 && garde < 800; garde++, jour = lendemain(jour)) {\n      const js = new Date(`${jour}T00:00:00Z`).getUTCDay();\n      if (js === 0 || js === 6 || estFerie(jour) || absent(l.collaborateur_id, jour)) continue;\n      const h = Math.min(resteH, parJour);\n      ajouts.push({ jour, heures: Math.round(h * 100) / 100 });\n      resteH -= h;\n    }\n    if (ajouts.length === 0) return;\n    const fr = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(\"fr-FR\");\n    const u = f.unite === \"JOUR\" ? \"j\" : \"h\";\n    if (\n      !window.confirm(\n        `Planifier ${texteHeures(Math.round(resteU * 100) / 100)} ${u} pour ${nomCollab(collabs.get(l.collaborateur_id))} sur ${a.numero}, du ${fr(ajouts[0].jour)} au ${fr(ajouts[ajouts.length - 1].jour)} (${ajouts.length} jour(s) ouvré(s)) ?`\n      )\n    )\n      return;\n    const ceMois = ajouts.filter((x) => x.jour <= fin);\n    const ensuite = ajouts.filter((x) => x.jour > fin);\n    if (ceMois.length) await ecrire(l, ceMois.map((x) => ({ jour: x.jour, valeur: { heures: x.heures, code: null } })), false);\n    if (ensuite.length) {\n      const { error } = await supabase\n        .from(\"prestation_saisies\")\n        .upsert(ensuite.map((x) => ({ ligne_id: l.id, jour: x.jour, heures: x.heures, code: null })), { onConflict: \"ligne_id,jour\" });\n      if (error) return setErreur(traduireErreur(error.message));\n      for (const m of [...new Set(ensuite.map((x) => `${x.jour.slice(0, 7)}-01`))]) {\n        const { error: ep } = await supabase.rpc(\"prestation_synchroniser_planning\", { p_ligne_id: l.id, p_mois: m });\n        if (ep) setErreur(`Planning non mis à jour (${m.slice(0, 7)}) : ${traduireErreur(ep.message)}`);\n      }\n    }\n    setInfo(`${a.numero} : ${texteHeures(Math.round(resteU * 100) / 100)} ${u} planifiés jusqu’au ${fr(ajouts[ajouts.length - 1].jour)}.`);\n    setRechargement((n) => n + 1);\n  }\n\n  function toutRemplir() {"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : bouton « ↦ reste » (planifier le reste)",
+  "cherche": "                                      <button type=\"button\" style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }} title={`Remplir les jours vides du mois avec ${texteHeures(l.base_horaire)} h (CP sur congé validé)`} onClick={() => remplirLigne(l)}>\n                                        {/* REMPLIR_TEXTE : « +7h » au lieu d'une flèche qui faisait penser à un menu */}\n                                        +{texteHeures(l.base_horaire)}h\n                                      </button>",
+  "remplace": "                                      <button\n                                        type=\"button\"\n                                        style={{ ...petitOutil, fontSize: 11, fontWeight: 800 }}\n                                        title=\"Planifier le reste de la commande sur cette personne : une journée par jour ouvré à partir du dernier jour saisi, mois suivants compris\"\n                                        onClick={() => void planifierReste(l)}\n                                      >\n                                        ↦ reste\n                                      </button>"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : texte d'aide",
+  "cherche": "<strong>+7h</strong> remplit les jours vides d’une ligne",
+  "remplace": "<strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: \"#ffe94d\", padding: \"0 3px\" }}>en jaune</span> = dernier jour planifié"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : colonne Reste plus large",
+  "cherche": "          const L_RESTE = 84;",
+  "remplace": "          const L_RESTE = 104;"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : titre de la colonne",
+  "cherche": "title=\"Reste sur la commande : celui du Suivi des prestations quand il est connu, sinon commandé − consommé\">\n                      Reste\n                    </th>",
+  "remplace": "title=\"Reste sur la commande à la fin du mois affiché, consommé sur commandé, et ce qui reste à planifier après\">\n                      Reste commande\n                    </th>"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : consommé et planifié sous le reste",
+  "cherche": "                                          <Pastille genre={f.reste <= 0 ? \"crit\" : f.quantite && f.reste / f.quantite < 0.2 ? \"warn\" : \"ok\"}>\n                                            {texteHeures(Math.round(f.reste * 10) / 10)} {u}\n                                          </Pastille>",
+  "remplace": "                                          <Pastille genre={f.reste <= 0 ? \"crit\" : f.quantite && f.reste / f.quantite < 0.2 ? \"warn\" : \"ok\"}>\n                                            {texteHeures(Math.round(f.reste * 10) / 10)} {u}\n                                          </Pastille>\n                                          {/* CONSO_PLANIFIE : consommé sur commandé, et ce qui reste à planifier après ce mois */}\n                                          {(() => {\n                                            const futurU = lignes\n                                              .filter((x) => x.affaire_id === a.id)\n                                              .reduce((t, x) => t + (planif.futur.get(x.id)?.heures ?? 0) / (f.unite === \"JOUR\" ? x.base_horaire || f.base : 1), 0);\n                                            const aPlanifier = f.reste - futurU;\n                                            return (\n                                              <>\n                                                <div style={{ fontSize: 10, color: C.gris, whiteSpace: \"nowrap\" }}>\n                                                  {texteHeures(Math.round(f.consomme * 10) / 10)} / {texteHeures(Math.round((f.quantite ?? 0) * 10) / 10)} {u} consommés\n                                                </div>\n                                                <div style={{ fontSize: 10, fontWeight: 800, whiteSpace: \"nowrap\", color: aPlanifier <= 0.05 ? \"#1b5e20\" : \"#b35c00\" }}>\n                                                  {aPlanifier <= 0.05 ? \"✓ tout planifié\" : `${texteHeures(Math.round(aPlanifier * 10) / 10)} ${u} à planifier`}\n                                                </div>\n                                              </>\n                                            );\n                                          })()}"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : repère du dernier jour planifié",
+  "cherche": "                                const conge = !s && absent(l.collaborateur_id, j.date);",
+  "remplace": "                                const conge = !s && absent(l.collaborateur_id, j.date);\n                                const dernierPlanifie = j.date === dernierJourLigne(l);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : dernier jour planifié en jaune",
+  "cherche": "                                      background: choisi\n                                        ? \"#fff3c4\"\n                                        : s?.code || conge",
+  "remplace": "                                      background: choisi\n                                        ? \"#fff3c4\"\n                                        : dernierPlanifie\n                                          ? \"#ffe94d\"\n                                        : s?.code || conge"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : explication au survol du dernier jour",
+  "cherche": "title={different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? \"Congé validé : tapez une valeur pour forcer\" : undefined}",
+  "remplace": "title={dernierPlanifie ? \"Dernier jour planifié de cette ligne\" : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? \"Congé validé : tapez une valeur pour forcer\" : undefined}"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : bandeau « Avenant à prévoir » retiré",
+  "cherche": "@@DEBUT@@        {/* ALERTES_RELEVE : commandes épuisées ou bientôt épuisées (moins de 20 % de reste) */}@@FIN@@        {!chargement && lignes.length === 0 && (",
+  "remplace": "        {/* ALERTES_RETIREES : le bandeau « Avenant à prévoir » est remplacé par « tout planifié / à planifier » dans la colonne Reste */}\n"
+ }
+]
