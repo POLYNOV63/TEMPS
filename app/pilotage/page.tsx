@@ -654,6 +654,22 @@ function PortefeuilleContenu() {
                     ) : (
                       gris("—")
                     )}
+                    {/* BARRE_PROGRESSION : pointé sur chiffré (de la famille pour une commande avec avenants) */}
+                    {!l.dansFamille &&
+                      (() => {
+                        const ch = l.famille ? l.famille.chiffre : totaux.chiffre;
+                        if (ch <= 0) return null;
+                        const r = totaux.realise / ch;
+                        const couleur = r > 1.0001 ? "#c62828" : r > 0.9 ? "#e08a00" : "#2e7d32";
+                        return (
+                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
+                            <span style={{ width: 60, height: 6, background: "#eceef1", borderRadius: 3, overflow: "hidden", display: "inline-block" }}>
+                              <span style={{ display: "block", width: `${Math.min(100, r * 100)}%`, height: "100%", background: couleur }} />
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>
+                          </div>
+                        );
+                      })()}
                     {l.famille && <div style={petit}>famille</div>}
                   </td>
                   <td style={tdNum}>

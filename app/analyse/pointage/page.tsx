@@ -58,6 +58,10 @@ function PointageContenu() {
 
   const [vue, setVue] = useState<"EN_COURS" | "LIVREES" | "TOUTES">("EN_COURS");
   const [perimetre, setPerimetre] = useState<"FORFAITS" | "PEPI" | "TOUT">("FORFAITS");
+  // POINTAGE_CBE : les commandes (CBE) par défaut ; les devis (DBE) d'un clic
+  const [typeAff, setTypeAff] = useState<"CBE" | "DBE" | "TOUS">("CBE");
+  // activité dépliée dans « Par activité » : les affaires qui la composent
+  const [activiteOuverte, setActiviteOuverte] = useState<string | null>(null);
   const [seulementAlertes, setSeulementAlertes] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
@@ -162,11 +166,12 @@ function PointageContenu() {
         const pepi = f.imputation === "PE" || f.imputation === "PI";
         return perimetre === "TOUT" || (perimetre === "PEPI" ? pepi : !pepi);
       })
+      .filter((f) => typeAff === "TOUS" || f.type === typeAff)
       .filter((f) => vue === "TOUTES" || (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "LIVREE"))
       .filter((f) => !seulementAlertes || f.pointe > f.chiffre + 0.5 || f.horsChiffrage > 0.5 || f.activites.some((d) => d.chiffre > 0 && d.pointe > d.chiffre + 0.5))
       .filter((f) => !q || `${f.type}${f.base} ${f.designation}`.toLowerCase().includes(q))
       .sort((x, y) => (y.chiffre > 0 ? y.pointe / y.chiffre : 9) - (x.chiffre > 0 ? x.pointe / x.chiffre : 9));
-  }, [familles, perimetre, vue, seulementAlertes, recherche]);
+  }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff]);
 
   const totaux = useMemo(() => {
     const chiffre = affichees.reduce((t, f) => t + f.chiffre, 0);
@@ -282,6 +287,19 @@ function PointageContenu() {
                   </button>
                 ))}
               </div>
+              <div style={{ display: "flex", gap: 6 }} role="group" aria-label="Commandes ou devis">
+                {(
+                  [
+                    ["CBE", "CBE"],
+                    ["DBE", "DBE"],
+                    ["TOUS", "CBE + DBE"],
+                  ] as const
+                ).map(([v, l]) => (
+                  <button key={v} type="button" aria-pressed={typeAff === v} onClick={() => setTypeAff(v)} style={typeAff === v ? page.btnPrimaire : page.btnSecondaire}>
+                    {l}
+                  </button>
+                ))}
+              </div>
               <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher une affaire…" style={{ ...page.entrees, maxWidth: 240 }} aria-label="Rechercher" />
             </div>
 
@@ -304,18 +322,58 @@ function PointageContenu() {
                   </tr>
                 </thead>
                 <tbody>
-                  {totaux.parAct.map((a) => (
-                    <tr key={a.nom}>
-                      <td style={{ ...tdG, fontWeight: 800 }}>{a.nom}</td>
-                      <td style={td}>{formatHeures(a.chiffre)}</td>
-                      <td style={td}>{formatHeures(a.pointe)}</td>
-                      <td style={{ ...td, color: a.pointe > a.chiffre ? C.rougeTexte : undefined, fontWeight: 700 }}>
-                        {a.pointe - a.chiffre > 0 ? "+" : ""}
-                        {formatHeures(a.pointe - a.chiffre)}
-                      </td>
-                      <td style={td}>{jauge(a.chiffre, a.pointe)}</td>
-                    </tr>
-                  ))}
+                  {totaux.parAct.map((a) => {
+                    const ouverte = activiteOuverte === a.nom;
+                    const composition = ouverte
+                      ? affichees
+                          .map((f) => ({ f, d: f.activites.find((x) => x.nom === a.nom) }))
+                          .filter((x): x is { f: Famille; d: Detail } => Boolean(x.d) && (x.d!.chiffre > 0 || x.d!.pointe > 0))
+                          .sort((x, y) => y.d.pointe - x.d.pointe)
+                      : [];
+                    return (
+                      <Fragment key={a.nom}>
+                        <tr>
+                          <td style={{ ...tdG, fontWeight: 800 }}>
+                            <button
+                              type="button"
+                              aria-expanded={ouverte}
+                              onClick={() => setActiviteOuverte(ouverte ? null : a.nom)}
+                              title="Voir les affaires qui composent cette activité"
+                              style={{ all: "unset", cursor: "pointer", fontWeight: 800 }}
+                            >
+                              <span style={{ color: C.gris, display: "inline-block", width: 16 }}>{ouverte ? "▾" : "▸"}</span>
+                              {a.nom}
+                            </button>
+                          </td>
+                          <td style={td}>{formatHeures(a.chiffre)}</td>
+                          <td style={td}>{formatHeures(a.pointe)}</td>
+                          <td style={{ ...td, color: a.pointe > a.chiffre ? C.rougeTexte : undefined, fontWeight: 700 }}>
+                            {a.pointe - a.chiffre > 0 ? "+" : ""}
+                            {formatHeures(a.pointe - a.chiffre)}
+                          </td>
+                          <td style={td}>{jauge(a.chiffre, a.pointe)}</td>
+                        </tr>
+                        {ouverte &&
+                          composition.map(({ f, d }) => (
+                            <tr key={`${a.nom}-${f.type}${f.base}`} style={{ background: "#fafbfc" }}>
+                              <td style={{ ...tdG, paddingLeft: 30, fontSize: 13 }}>
+                                <Link href={`/affaires/bilan?affaire=${f.type}${f.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                  {f.type}
+                                  {f.base}
+                                </Link>{" "}
+                                <span style={{ color: C.gris }}>{f.designation}</span>
+                              </td>
+                              <td style={{ ...td, fontSize: 13 }}>{d.chiffre > 0 ? formatHeures(d.chiffre) : "—"}</td>
+                              <td style={{ ...td, fontSize: 13 }}>{formatHeures(d.pointe)}</td>
+                              <td style={{ ...td, fontSize: 13, color: d.pointe > d.chiffre + 0.5 ? C.rougeTexte : undefined }}>
+                                {d.chiffre > 0 ? `${d.pointe - d.chiffre > 0 ? "+" : ""}${formatHeures(d.pointe - d.chiffre)}` : "hors chiffrage"}
+                              </td>
+                              <td style={td}>{d.chiffre > 0 ? jauge(d.chiffre, d.pointe) : null}</td>
+                            </tr>
+                          ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </section>
