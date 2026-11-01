@@ -323,6 +323,20 @@ function PortefeuilleContenu() {
             depassement: chiffreFamille > 0 ? Math.max(0, realiseFamille - chiffreFamille) : 0,
             pourcent: chiffreFamille > 0 ? (realiseFamille / chiffreFamille) * 100 : null,
           };
+          // FAMILLE_FLUIDE : le détail par activité porte sur toute la famille (le pointé est sur la base),
+          // et « à affecter » = reste de la famille − ce qui est déjà planifié sur ses commandes
+          const fusion = new Map<string, DetailActivite>();
+          for (const x of membres) {
+            if (x.affaire.statut === "ABANDONNEE") continue;
+            for (const d of x.activites) {
+              const f = fusion.get(d.id) ?? { ...d, chiffre: 0, realise: 0 };
+              f.chiffre += d.chiffre;
+              f.realise += d.realise;
+              fusion.set(d.id, f);
+            }
+          }
+          m.activites = [...fusion.values()].sort((a, b) => a.ordre - b.ordre);
+          m.aAffecter = Math.max(0, m.totaux.reste - membres.reduce((t, x) => t + x.planning.planifie, 0));
           // FAMILLE_CHIFFRE : le chiffré de chaque commande de la famille, pour l'afficher
           m.famille = {
             numeros: membres.map((x) => x.affaire.numero),
@@ -679,9 +693,7 @@ function PortefeuilleContenu() {
                     {l.famille ? (
                       <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join("\n")}>
                         <strong>{formatHeures(l.famille.chiffre)}</strong>
-                        <div style={{ ...petit, whiteSpace: "normal", maxWidth: 170, marginLeft: "auto" }}>
-                          famille : {(l.famille.detail ?? []).map((d) => `${d.numero.replace(/^\d+/, "") || d.numero} ${formatHeures(d.chiffre)}`).join(" + ")}
-                        </div>
+                        <div style={petit}>famille</div>
                       </span>
                     ) : l.dansFamille ? (
                       <span title={`Inclus dans le chiffré de la famille, porté par ${l.dansFamille}`}>
@@ -726,7 +738,6 @@ function PortefeuilleContenu() {
                     ) : l.famille ? (
                       <span title={`Chiffré de la famille ${l.famille.numeros.join(", ")} : ${formatHeures(l.famille.chiffre)}`}>
                         {formatHeures(totaux.reste)}
-                        <div style={petit}>sur {formatHeures(l.famille.chiffre)} (famille)</div>
                       </span>
                     ) : totaux.chiffre > 0 ? (
                       formatHeures(totaux.reste)
@@ -808,7 +819,10 @@ function PortefeuilleContenu() {
                             .sort((x, y) => x.affaire.numero.localeCompare(y.affaire.numero, "fr", { numeric: true }));
                           const libStatut = (s: string) => (s === "EN_COURS" ? "En cours" : s === "EN_ATTENTE" ? "Intention" : s === "LIVREE" ? "Livrée" : "Abandonnée");
                           return (
-                            <table style={{ borderCollapse: "collapse", fontSize: 14, marginBottom: 12 }}>
+                            <table style={{ borderCollapse: "collapse", fontSize: 14, marginBottom: 14 }}>
+                              <caption style={{ textAlign: "left", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris, padding: "0 0 4px 8px" }}>
+                                Les commandes de la famille
+                              </caption>
                               <thead>
                                 <tr>
                                   <th style={{ ...thCourt, background: "transparent" }}>Commande</th>
@@ -849,6 +863,11 @@ function PortefeuilleContenu() {
                         </span>
                       ) : (
                         <table style={{ borderCollapse: "collapse", fontSize: 14 }}>
+                          {l.famille && (
+                            <caption style={{ textAlign: "left", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris, padding: "0 0 4px 8px" }}>
+                              Par activité, toute la famille
+                            </caption>
+                          )}
                           <thead>
                             <tr>
                               <th style={{ ...thCourt, background: "transparent" }}>Activité</th>

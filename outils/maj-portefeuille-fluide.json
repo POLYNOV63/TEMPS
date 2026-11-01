@@ -1,0 +1,32 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Famille : réalisé et chiffré par activité de toute la famille, à affecter de la famille",
+  "cherche": "          // FAMILLE_CHIFFRE :",
+  "remplace": "          // FAMILLE_FLUIDE : le détail par activité porte sur toute la famille (le pointé est sur la base),\n          // et « à affecter » = reste de la famille − ce qui est déjà planifié sur ses commandes\n          const fusion = new Map<string, DetailActivite>();\n          for (const x of membres) {\n            if (x.affaire.statut === \"ABANDONNEE\") continue;\n            for (const d of x.activites) {\n              const f = fusion.get(d.id) ?? { ...d, chiffre: 0, realise: 0 };\n              f.chiffre += d.chiffre;\n              f.realise += d.realise;\n              fusion.set(d.id, f);\n            }\n          }\n          m.activites = [...fusion.values()].sort((a, b) => a.ordre - b.ordre);\n          m.aAffecter = Math.max(0, m.totaux.reste - membres.reduce((t, x) => t + x.planning.planifie, 0));\n          // FAMILLE_CHIFFRE :"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Chiffré : le total de la famille, sans le détail en ligne",
+  "cherche": "                      <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join(\"\\n\")}>\n                        <strong>{formatHeures(l.famille.chiffre)}</strong>\n                        <div style={{ ...petit, whiteSpace: \"normal\", maxWidth: 170, marginLeft: \"auto\" }}>\n                          famille : {(l.famille.detail ?? []).map((d) => `${d.numero.replace(/^\\d+/, \"\") || d.numero} ${formatHeures(d.chiffre)}`).join(\" + \")}\n                        </div>\n                      </span>",
+  "remplace": "                      <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join(\"\\n\")}>\n                        <strong>{formatHeures(l.famille.chiffre)}</strong>\n                        <div style={petit}>famille</div>\n                      </span>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Reste : plus de rappel du chiffré",
+  "cherche": "                        <div style={petit}>sur {formatHeures(l.famille.chiffre)} (famille)</div>\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Détail : titre des commandes de la famille",
+  "cherche": "                            <table style={{ borderCollapse: \"collapse\", fontSize: 14, marginBottom: 12 }}>",
+  "remplace": "                            <table style={{ borderCollapse: \"collapse\", fontSize: 14, marginBottom: 14 }}>\n                              <caption style={{ textAlign: \"left\", fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: C.gris, padding: \"0 0 4px 8px\" }}>\n                                Les commandes de la famille\n                              </caption>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Détail : titre du tableau par activité",
+  "cherche": "                        <table style={{ borderCollapse: \"collapse\", fontSize: 14 }}>\n                          <thead>\n                            <tr>\n                              <th style={{ ...thCourt, background: \"transparent\" }}>Activité</th>",
+  "remplace": "                        <table style={{ borderCollapse: \"collapse\", fontSize: 14 }}>\n                          {l.famille && (\n                            <caption style={{ textAlign: \"left\", fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: C.gris, padding: \"0 0 4px 8px\" }}>\n                              Par activité, toute la famille\n                            </caption>\n                          )}\n                          <thead>\n                            <tr>\n                              <th style={{ ...thCourt, background: \"transparent\" }}>Activité</th>"
+ }
+]
