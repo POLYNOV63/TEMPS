@@ -1,0 +1,68 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : les numéros de toute la famille",
+  "cherche": "    return lignes.filter(({ affaire, totaux, client }) => {",
+  "remplace": "    return lignes.filter(({ affaire, totaux, client, famille }) => {"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : texte",
+  "cherche": "      if (q && !normaliser(`${affaire.numero} ${affaire.designation} ${client ?? \"\"}`).includes(q)) return false;",
+  "remplace": "      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(\" \") ?? \"\"} ${affaire.designation} ${client ?? \"\"}`).includes(q)) return false;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Ancien filtre « Dormantes » retiré",
+  "cherche": "      if (dormantesSeules && !dormantes.has(affaire.id)) return false;\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Affaires actives : une ligne par famille, dormantes à part",
+  "cherche": "        filtrees.filter(({ affaire }) => {\n          if (estInactive(affaire)) return false;",
+  "remplace": "        // FAMILLE_UNE_LIGNE : une seule ligne par famille (celle qui porte le réalisé) ; les dormantes vont à part\n        filtrees.filter(({ affaire, dansFamille }) => {\n          if (dansFamille) return false;\n          if (dormantes.has(affaire.id)) return false;\n          if (estInactive(affaire)) return false;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Affaires actives : dépendances",
+  "cherche": "    [filtrees, filtreStatut, trier]",
+  "remplace": "    [filtrees, filtreStatut, trier, dormantes]"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Affaires inactives : une ligne par famille, et liste des dormantes",
+  "cherche": "  const inactives = useMemo(() => trier(filtrees.filter(({ affaire }) => estInactive(affaire))), [filtrees, trier]);",
+  "remplace": "  const inactives = useMemo(() => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier]);\n  const dormantesListe = useMemo(\n    () => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),\n    [filtrees, trier, dormantes]\n  );"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Bouton « Dormantes » retiré (elles ont leur rubrique)",
+  "cherche": "                {dormantes.size > 0 && (\n                  <button\n                    type=\"button\"\n                    aria-pressed={dormantesSeules}\n                    style={bouton(dormantesSeules)}\n                    onClick={() => setDormantesSeules((v) => !v)}\n                    title=\"PE / PI en cours sans activité depuis 3 mois : des clients à relancer\"\n                  >\n                    💤 Dormantes ({dormantes.size})\n                  </button>\n                )}\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Repère « dormante » qui ne déborde plus",
+  "cherche": "                    {dormantes.has(affaire.id) && (\n                      <div style={{ marginTop: 4 }} title=\"Commande ouverte : aucune heure saisie au relevé depuis 3 mois\">\n                        <Pastille genre=\"info\">💤 {libelleDormance(dormantes.get(affaire.id)!)}</Pastille>\n                      </div>\n                    )}",
+  "remplace": "                    {dormantes.has(affaire.id) && (\n                      <div style={{ ...petit, whiteSpace: \"normal\", marginTop: 4 }} title=\"Commande ouverte : aucune heure saisie au relevé depuis 3 mois\">\n                        💤 {libelleDormance(dormantes.get(affaire.id)!)}\n                      </div>\n                    )}"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Repère « plusieurs commandes » sous le numéro",
+  "cherche": "                    <div style={{ ...petit, paddingLeft: 24 }}>\n                      {affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : \"—\"}\n                    </div>",
+  "remplace": "                    <div style={{ ...petit, paddingLeft: 24 }}>\n                      {affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : \"—\"}\n                      {l.famille && (\n                        <button\n                          type=\"button\"\n                          onClick={() => basculerDetail(affaire.id)}\n                          title={`Famille : ${l.famille.numeros.join(\", \")}. Cliquer pour voir chaque commande.`}\n                          style={{ all: \"unset\", cursor: \"pointer\", marginLeft: 6, padding: \"0 6px\", borderRadius: 999, border: \"1px solid #9fb6cf\", color: \"#34506b\", fontWeight: 800, fontSize: 11 }}\n                        >\n                          ⧉ {l.famille.numeros.length} commandes\n                        </button>\n                      )}\n                    </div>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Détail : les commandes de la famille",
+  "cherche": "                    <td colSpan={nbColonnes} style={{ ...page.td, background: \"#fafbfc\", padding: \"10px 16px 14px 40px\" }}>\n                      {l.activites.length === 0 ? (",
+  "remplace": "                    <td colSpan={nbColonnes} style={{ ...page.td, background: \"#fafbfc\", padding: \"10px 16px 14px 40px\" }}>\n                      {/* FAMILLE_DETAIL : chaque commande de la famille (base, avenants) */}\n                      {l.famille &&\n                        (() => {\n                          const base = affaire.numero.match(/^\\d+/)?.[0] ?? \"\";\n                          const membres = lignes\n                            .filter((x) => x.affaire.type === \"CBE\" && (x.affaire.numero.match(/^\\d+/)?.[0] ?? \"\") === base)\n                            .sort((x, y) => x.affaire.numero.localeCompare(y.affaire.numero, \"fr\", { numeric: true }));\n                          const libStatut = (s: string) => (s === \"EN_COURS\" ? \"En cours\" : s === \"EN_ATTENTE\" ? \"Intention\" : s === \"LIVREE\" ? \"Livrée\" : \"Abandonnée\");\n                          return (\n                            <table style={{ borderCollapse: \"collapse\", fontSize: 14, marginBottom: 12 }}>\n                              <thead>\n                                <tr>\n                                  <th style={{ ...thCourt, background: \"transparent\" }}>Commande</th>\n                                  <th style={{ ...thCourt, background: \"transparent\" }}>Statut</th>\n                                  <th style={{ ...thCourt, background: \"transparent\" }}>Délai</th>\n                                  <th style={{ ...thNum, background: \"transparent\" }}>Chiffré</th>\n                                </tr>\n                              </thead>\n                              <tbody>\n                                {membres.map((m) => (\n                                  <tr key={m.affaire.id}>\n                                    <td style={{ ...tdCourt, padding: \"6px 8px\" }}>\n                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce }}>\n                                        {m.affaire.numero}\n                                      </Link>\n                                    </td>\n                                    <td style={{ ...tdCourt, padding: \"6px 8px\" }}>{libStatut(m.affaire.statut)}</td>\n                                    <td style={{ ...tdCourt, padding: \"6px 8px\" }}>\n                                      {formatDate(m.affaire.statut === \"LIVREE\" && m.affaire.date_livraison ? m.affaire.date_livraison : m.affaire.echeance)}\n                                    </td>\n                                    <td style={{ ...tdNum, padding: \"6px 8px\" }}>{m.totaux.chiffre > 0 ? formatHeures(m.totaux.chiffre) : gris(\"—\")}</td>\n                                  </tr>\n                                ))}\n                                <tr>\n                                  <td colSpan={3} style={{ ...tdCourt, padding: \"6px 8px\", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>\n                                    Total de la famille · réalisé {formatHeures(totaux.realise)}\n                                  </td>\n                                  <td style={{ ...tdNum, padding: \"6px 8px\", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(l.famille.chiffre)}</td>\n                                </tr>\n                              </tbody>\n                            </table>\n                          );\n                        })()}\n                      {l.activites.length === 0 ? ("
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Rubrique repliée des commandes sans activité",
+  "cherche": "              {/* ---------- Affaires inactives (livrées, abandonnées) ---------- */}",
+  "remplace": "              {/* DORMANTES_RUBRIQUE : PE / PI ouvertes sans activité, regroupées et repliées */}\n              {dormantesListe.length > 0 && (\n                <div style={{ marginTop: 20, borderTop: `1px solid ${C.ligne}`, paddingTop: 12 }}>\n                  <button\n                    type=\"button\"\n                    aria-expanded={dormantesSeules}\n                    onClick={() => setDormantesSeules((v) => !v)}\n                    style={{ all: \"unset\", cursor: \"pointer\", fontSize: 18, fontWeight: 800, display: \"inline-flex\", alignItems: \"center\", gap: 8, minHeight: 40, flexWrap: \"wrap\" }}\n                  >\n                    <span aria-hidden=\"true\">{dormantesSeules ? \"▾\" : \"▸\"}</span>\n                    💤 Commandes ouvertes sans activité <span style={{ color: C.gris, fontWeight: 600 }}>({dormantesListe.length})</span>\n                    <span style={{ fontSize: 13, fontWeight: 400, color: C.gris }}>PE / PI sans heure saisie depuis 3 mois : des clients à relancer</span>\n                  </button>\n                  {dormantesSeules && <div style={{ marginTop: 8 }}>{rendreTableau(dormantesListe)}</div>}\n                </div>\n              )}\n\n              {/* ---------- Affaires inactives (livrées, abandonnées) ---------- */}"
+ }
+]

@@ -346,14 +346,13 @@ function PortefeuilleContenu() {
   const filtrees = useMemo(() => {
     const q = normaliser(recherche.trim());
 
-    return lignes.filter(({ affaire, totaux, client }) => {
+    return lignes.filter(({ affaire, totaux, client, famille }) => {
       if (filtreType !== "TOUS" && affaire.type !== filtreType) return false;
-      if (q && !normaliser(`${affaire.numero} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
+      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(" ") ?? ""} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
       if (filtreImputation && (affaire.imputation ?? "") !== filtreImputation) return false;
       if (filtreClient && (client ?? "") !== filtreClient) return false;
       if (filtreResp && affaire.responsable_id !== filtreResp) return false;
       if (depassementSeul && !(totaux.depassement > 0)) return false;
-      if (dormantesSeules && !dormantes.has(affaire.id)) return false;
       return true;
     });
   }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes]);
@@ -386,17 +385,24 @@ function PortefeuilleContenu() {
   const actives = useMemo(
     () =>
       trier(
-        filtrees.filter(({ affaire }) => {
+        // FAMILLE_UNE_LIGNE : une seule ligne par famille (celle qui porte le réalisé) ; les dormantes vont à part
+        filtrees.filter(({ affaire, dansFamille }) => {
+          if (dansFamille) return false;
+          if (dormantes.has(affaire.id)) return false;
           if (estInactive(affaire)) return false;
           if (filtreStatut === "EN_COURS") return affaire.statut === "EN_COURS";
           if (filtreStatut === "EN_ATTENTE") return affaire.statut === "EN_ATTENTE";
           return true;
         })
       ),
-    [filtrees, filtreStatut, trier]
+    [filtrees, filtreStatut, trier, dormantes]
   );
 
-  const inactives = useMemo(() => trier(filtrees.filter(({ affaire }) => estInactive(affaire))), [filtrees, trier]);
+  const inactives = useMemo(() => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier]);
+  const dormantesListe = useMemo(
+    () => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),
+    [filtrees, trier, dormantes]
+  );
 
   // Listes des menus de filtre (seulement les valeurs présentes)
   const choixClients = useMemo(
@@ -630,6 +636,16 @@ function PortefeuilleContenu() {
                     </span>
                     <div style={{ ...petit, paddingLeft: 24 }}>
                       {affaire.imputation ? libellesImputation.get(affaire.imputation) ?? affaire.imputation : "—"}
+                      {l.famille && (
+                        <button
+                          type="button"
+                          onClick={() => basculerDetail(affaire.id)}
+                          title={`Famille : ${l.famille.numeros.join(", ")}. Cliquer pour voir chaque commande.`}
+                          style={{ all: "unset", cursor: "pointer", marginLeft: 6, padding: "0 6px", borderRadius: 999, border: "1px solid #9fb6cf", color: "#34506b", fontWeight: 800, fontSize: 11 }}
+                        >
+                          ⧉ {l.famille.numeros.length} commandes
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td style={{ ...page.td, padding: "10px 8px" }}>{affaire.designation}</td>
@@ -731,8 +747,8 @@ function PortefeuilleContenu() {
                   <td style={{ ...tdCourt, whiteSpace: "normal" }}>
                     <Pastille genre={etat.genre}>{etat.texte}</Pastille>
                     {dormantes.has(affaire.id) && (
-                      <div style={{ marginTop: 4 }} title="Commande ouverte : aucune heure saisie au relevé depuis 3 mois">
-                        <Pastille genre="info">💤 {libelleDormance(dormantes.get(affaire.id)!)}</Pastille>
+                      <div style={{ ...petit, whiteSpace: "normal", marginTop: 4 }} title="Commande ouverte : aucune heure saisie au relevé depuis 3 mois">
+                        💤 {libelleDormance(dormantes.get(affaire.id)!)}
                       </div>
                     )}
                   </td>
@@ -783,6 +799,49 @@ function PortefeuilleContenu() {
                 {ouverte && (
                   <tr>
                     <td colSpan={nbColonnes} style={{ ...page.td, background: "#fafbfc", padding: "10px 16px 14px 40px" }}>
+                      {/* FAMILLE_DETAIL : chaque commande de la famille (base, avenants) */}
+                      {l.famille &&
+                        (() => {
+                          const base = affaire.numero.match(/^\d+/)?.[0] ?? "";
+                          const membres = lignes
+                            .filter((x) => x.affaire.type === "CBE" && (x.affaire.numero.match(/^\d+/)?.[0] ?? "") === base)
+                            .sort((x, y) => x.affaire.numero.localeCompare(y.affaire.numero, "fr", { numeric: true }));
+                          const libStatut = (s: string) => (s === "EN_COURS" ? "En cours" : s === "EN_ATTENTE" ? "Intention" : s === "LIVREE" ? "Livrée" : "Abandonnée");
+                          return (
+                            <table style={{ borderCollapse: "collapse", fontSize: 14, marginBottom: 12 }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ ...thCourt, background: "transparent" }}>Commande</th>
+                                  <th style={{ ...thCourt, background: "transparent" }}>Statut</th>
+                                  <th style={{ ...thCourt, background: "transparent" }}>Délai</th>
+                                  <th style={{ ...thNum, background: "transparent" }}>Chiffré</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {membres.map((m) => (
+                                  <tr key={m.affaire.id}>
+                                    <td style={{ ...tdCourt, padding: "6px 8px" }}>
+                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                        {m.affaire.numero}
+                                      </Link>
+                                    </td>
+                                    <td style={{ ...tdCourt, padding: "6px 8px" }}>{libStatut(m.affaire.statut)}</td>
+                                    <td style={{ ...tdCourt, padding: "6px 8px" }}>
+                                      {formatDate(m.affaire.statut === "LIVREE" && m.affaire.date_livraison ? m.affaire.date_livraison : m.affaire.echeance)}
+                                    </td>
+                                    <td style={{ ...tdNum, padding: "6px 8px" }}>{m.totaux.chiffre > 0 ? formatHeures(m.totaux.chiffre) : gris("—")}</td>
+                                  </tr>
+                                ))}
+                                <tr>
+                                  <td colSpan={3} style={{ ...tdCourt, padding: "6px 8px", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                                    Total de la famille · réalisé {formatHeures(totaux.realise)}
+                                  </td>
+                                  <td style={{ ...tdNum, padding: "6px 8px", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(l.famille.chiffre)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          );
+                        })()}
                       {l.activites.length === 0 ? (
                         <span style={{ color: C.gris }}>
                           Aucune heure chiffrée par activité
@@ -966,17 +1025,6 @@ function PortefeuilleContenu() {
                 >
                   Dépassements
                 </button>
-                {dormantes.size > 0 && (
-                  <button
-                    type="button"
-                    aria-pressed={dormantesSeules}
-                    style={bouton(dormantesSeules)}
-                    onClick={() => setDormantesSeules((v) => !v)}
-                    title="PE / PI en cours sans activité depuis 3 mois : des clients à relancer"
-                  >
-                    💤 Dormantes ({dormantes.size})
-                  </button>
-                )}
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", margin: "12px 0" }}>
@@ -1025,6 +1073,23 @@ function PortefeuilleContenu() {
                 </p>
               ) : (
                 rendreTableau(actives)
+              )}
+
+              {/* DORMANTES_RUBRIQUE : PE / PI ouvertes sans activité, regroupées et repliées */}
+              {dormantesListe.length > 0 && (
+                <div style={{ marginTop: 20, borderTop: `1px solid ${C.ligne}`, paddingTop: 12 }}>
+                  <button
+                    type="button"
+                    aria-expanded={dormantesSeules}
+                    onClick={() => setDormantesSeules((v) => !v)}
+                    style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, flexWrap: "wrap" }}
+                  >
+                    <span aria-hidden="true">{dormantesSeules ? "▾" : "▸"}</span>
+                    💤 Commandes ouvertes sans activité <span style={{ color: C.gris, fontWeight: 600 }}>({dormantesListe.length})</span>
+                    <span style={{ fontSize: 13, fontWeight: 400, color: C.gris }}>PE / PI sans heure saisie depuis 3 mois : des clients à relancer</span>
+                  </button>
+                  {dormantesSeules && <div style={{ marginTop: 8 }}>{rendreTableau(dormantesListe)}</div>}
+                </div>
               )}
 
               {/* ---------- Affaires inactives (livrées, abandonnées) ---------- */}
