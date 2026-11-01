@@ -2821,7 +2821,7 @@ feuilles.forEach((f) => {
       ================================================= */}
 
       <EnTetePage section="Bilans & pilotage" />
-      <OngletsCharge actif="collaborateurs" />
+      
 
       <main style={styles.main}>
         {/* =================================================
@@ -2839,7 +2839,7 @@ feuilles.forEach((f) => {
                 styles.heroTitle
               }
             >
-              Pilotage de la charge
+              Bilans : où part le temps de l’équipe
             </h1>
 
             <p

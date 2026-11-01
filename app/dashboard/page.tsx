@@ -932,7 +932,7 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
       <Groupe titre="Charge du bureau d'études" description="Consultation">
         <div style={stylesV2.grille}>
           <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
-          <CarteCompacte icone="🎯" titre="Charge & pointage" description="Pointé face au chiffré, par affaire et par activité" onClick={() => aller("/analyse/pointage")} />
+          <CarteCompacte icone="🎯" titre="Pointé / chiffré" description="Pointé face au chiffré, par affaire et par activité" onClick={() => aller("/analyse/pointage")} />
           <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
         </div>
       </Groupe>
@@ -987,7 +987,7 @@ function BlocAnalyse({
         {admin && (
           <CarteCompacte
             icone="🎯"
-            titre="Charge & pointage"
+            titre="Pointé / chiffré"
             description="Pointé face au chiffré par affaire et par activité, dépassements, activités pointées non chiffrées"
             onClick={() => aller("/analyse/pointage")}
           />
@@ -995,7 +995,7 @@ function BlocAnalyse({
         {admin && (
           <CarteCompacte
             icone="📈"
-            titre="Analyse de charge"
+            titre="Bilans"
             description="Heures, activité et taux d'occupation de chaque collaborateur"
             onClick={() => aller("/admin/bilans")}
           />
@@ -1094,7 +1094,9 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
       <div style={stylesV2.grille}>
         <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
-        <CarteCompacte icone="🎯" titre="Charge & pointage" description="Par affaire : pointé face au chiffré · par collaborateur : heures et taux d'occupation" onClick={() => aller("/analyse/pointage")} />
+        <CarteCompacte icone="🎯" titre="Pointé / chiffré" description="Pointé face au chiffré, affaire par affaire" onClick={() => aller("/analyse/pointage")} />
+        {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
+        <CarteCompacte icone="📊" titre="Bilans" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
         <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
       </div>
     </Groupe>

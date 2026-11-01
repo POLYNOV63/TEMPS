@@ -214,7 +214,8 @@ function PointageContenu() {
       .filter((f) => vue === "TOUTES" || (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "LIVREE"))
       .filter((f) => !seulementAlertes || f.pointe > f.chiffre + 0.5 || f.horsChiffrage > 0.5 || f.activites.some((d) => d.chiffre > 0 && d.pointe > d.chiffre + 0.5))
       .filter((f) => !q || `${f.type}${f.base} ${f.designation} ${clientDe(f)}`.toLowerCase().includes(q))
-      .sort((x, y) => (y.chiffre > 0 ? y.pointe / y.chiffre : 9) - (x.chiffre > 0 ? x.pointe / x.chiffre : 9));
+      // POINTAGE_LISIBLE : les plus récentes (n° le plus grand) en haut
+      .sort((x, y) => Number(y.base) - Number(x.base) || y.base.localeCompare(x.base, "fr", { numeric: true }));
   }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff]);
 
   const totaux = useMemo(() => {
@@ -280,11 +281,11 @@ function PointageContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse technique" />
-      <OngletsCharge actif="affaires" />
+      
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
           <div>
-            <h1 style={page.titre}>Charge &amp; pointage</h1>
+            <h1 style={page.titre}>Pointé / chiffré</h1>
             <p style={page.sousTitre}>
               Ce qui a été pointé (feuilles d’heures et historique) face à ce qui a été chiffré, affaire par affaire et activité par activité. Une
               affaire regroupe sa commande de base et ses avenants : les heures sont pointées sur la base.
@@ -352,6 +353,21 @@ function PointageContenu() {
               <Tuile libelle="Pointé" valeur={formatHeures(totaux.pointe)} sous={totaux.chiffre > 0 ? `${pct(totaux.pointe / totaux.chiffre)} du chiffré` : ""} />
               <Tuile libelle="Au-delà du chiffré" valeur={String(totaux.depassees)} sous="affaires dont le pointé dépasse le chiffré" accent={totaux.depassees > 0} />
             </div>
+
+            {(() => {
+              const types = new Set(affichees.map((f) => f.type));
+              const quoi = types.size === 1 ? (types.has("DBE") ? "les devis (DBE)" : "les commandes (CBE)") : "les commandes (CBE) et les devis (DBE)";
+              const etat = vue === "EN_COURS" ? "en cours" : vue === "LIVREES" ? "livrées" : "en cours et livrées";
+              const genre = perimetre === "FORFAITS" ? " au forfait" : perimetre === "PEPI" ? " en PE / PI" : "";
+              return (
+                <Message genre="info">
+                  <strong>Ce que vous regardez :</strong> {quoi}
+                  {genre} {etat} ({affichees.length}). Pour chacune, <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{" "}
+                  {new Date().toLocaleDateString("fr-FR")} (feuilles d’heures, et historique avant le 2 novembre 2026), face à ses heures chiffrées. Une affaire
+                  regroupe sa commande de base et ses avenants.
+                </Message>
+              );
+            })()}
 
             <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Par activité (affaires affichées)</h2>
@@ -423,7 +439,7 @@ function PointageContenu() {
             </section>
 
             <section style={{ ...page.carte, padding: 16, overflowX: "auto" }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Affaire par affaire — les plus consommées d’abord</h2>
+              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Affaire par affaire — les plus récentes d’abord</h2>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead>
                   <tr>
@@ -434,7 +450,7 @@ function PointageContenu() {
                     <th style={thG}>Échéance</th>
                     <th style={th}>Chiffré</th>
                     <th style={th}>Pointé</th>
-                    <th style={th}>Consommé</th>
+                    <th style={th}>{affichees.every((f) => f.type === "DBE") ? "Passées par" : "Consommé"}</th>
                     <th style={thG}>Alerte</th>
                   </tr>
                 </thead>
@@ -480,7 +496,16 @@ function PointageContenu() {
                           <td style={{ ...tdG, whiteSpace: "nowrap" }}>{formatDate(f.echeance)}</td>
                           <td style={td}>{formatHeures(f.chiffre)}</td>
                           <td style={{ ...td, fontWeight: 800 }}>{formatHeures(f.pointe)}</td>
-                          <td style={td}>{jauge(f.chiffre, f.pointe)}</td>
+                          {f.type === "DBE" ? (
+                            <td style={{ ...tdG, fontSize: 13 }} title="Heures pointées sur le devis, par personne">
+                              {[...personnes.entries()]
+                                .sort((x, y) => y[1] - x[1])
+                                .map(([id, h]) => `${nomCollab(collabs.get(id))} ${formatHeures(h)}`)
+                                .join(" · ") || "—"}
+                            </td>
+                          ) : (
+                            <td style={td}>{jauge(f.chiffre, f.pointe)}</td>
+                          )}
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                               {f.chiffre > 0 && f.pointe > f.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(f.pointe - f.chiffre)}</Pastille>}

@@ -1,0 +1,32 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Tri : numéro le plus récent en haut",
+  "cherche": "      .sort((x, y) => (y.chiffre > 0 ? y.pointe / y.chiffre : 9) - (x.chiffre > 0 ? x.pointe / x.chiffre : 9));",
+  "remplace": "      // POINTAGE_LISIBLE : les plus récentes (n° le plus grand) en haut\n      .sort((x, y) => Number(y.base) - Number(x.base) || y.base.localeCompare(x.base, \"fr\", { numeric: true }));"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Titre du tableau",
+  "cherche": "<h2 style={{ margin: \"0 0 10px\", fontSize: 17 }}>Affaire par affaire — les plus consommées d’abord</h2>",
+  "remplace": "<h2 style={{ margin: \"0 0 10px\", fontSize: 17 }}>Affaire par affaire — les plus récentes d’abord</h2>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Ce que l'on regarde, écrit en clair",
+  "cherche": "            <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: \"auto\" }}>\n              <h2 style={{ margin: \"0 0 10px\", fontSize: 17 }}>Par activité (affaires affichées)</h2>",
+  "remplace": "            {(() => {\n              const types = new Set(affichees.map((f) => f.type));\n              const quoi = types.size === 1 ? (types.has(\"DBE\") ? \"les devis (DBE)\" : \"les commandes (CBE)\") : \"les commandes (CBE) et les devis (DBE)\";\n              const etat = vue === \"EN_COURS\" ? \"en cours\" : vue === \"LIVREES\" ? \"livrées\" : \"en cours et livrées\";\n              const genre = perimetre === \"FORFAITS\" ? \" au forfait\" : perimetre === \"PEPI\" ? \" en PE / PI\" : \"\";\n              return (\n                <Message genre=\"info\">\n                  <strong>Ce que vous regardez :</strong> {quoi}\n                  {genre} {etat} ({affichees.length}). Pour chacune, <strong>tout ce qui a été pointé depuis son ouverture</strong>, jusqu’au{\" \"}\n                  {new Date().toLocaleDateString(\"fr-FR\")} (feuilles d’heures, et historique avant le 2 novembre 2026), face à ses heures chiffrées. Une affaire\n                  regroupe sa commande de base et ses avenants.\n                </Message>\n              );\n            })()}\n\n            <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: \"auto\" }}>\n              <h2 style={{ margin: \"0 0 10px\", fontSize: 17 }}>Par activité (affaires affichées)</h2>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Colonne « Consommé » : « par qui » pour les devis (en-tête)",
+  "cherche": "<th style={th}>Consommé</th>\n                    <th style={thG}>Alerte</th>",
+  "remplace": "<th style={th}>{affichees.every((f) => f.type === \"DBE\") ? \"Passées par\" : \"Consommé\"}</th>\n                    <th style={thG}>Alerte</th>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Colonne « Consommé » : qui a passé les heures sur un devis",
+  "cherche": "                          <td style={td}>{jauge(f.chiffre, f.pointe)}</td>",
+  "remplace": "                          {f.type === \"DBE\" ? (\n                            <td style={{ ...tdG, fontSize: 13 }} title=\"Heures pointées sur le devis, par personne\">\n                              {[...personnes.entries()]\n                                .sort((x, y) => y[1] - x[1])\n                                .map(([id, h]) => `${nomCollab(collabs.get(id))} ${formatHeures(h)}`)\n                                .join(\" · \") || \"—\"}\n                            </td>\n                          ) : (\n                            <td style={td}>{jauge(f.chiffre, f.pointe)}</td>\n                          )}"
+ }
+]
