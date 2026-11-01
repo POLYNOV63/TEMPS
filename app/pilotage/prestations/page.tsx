@@ -1467,7 +1467,24 @@ function PrestationsContenu() {
               .filter((a) => dort(a.id) && !(/^\d+$/.test(a.numero) && avecAvenant.has(a.numero)) && correspond(a))
               .sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true }));
             if (liste.length === 0) return null;
-            const totalReste = liste.reduce((t, a) => t + Math.max(0, ficheDe(a).resteE ?? 0), 0);
+            // RESTE_FAMILLE_DORMANTE : reste de toutes les commandes en cours de la famille (base + avenants)
+            const resteFamille = (a: AffaireP) => {
+              const base = a.numero.match(/^\d+/)?.[0] ?? "";
+              const fam = affaires
+                .filter((x) => (x.numero.match(/^\d+/)?.[0] ?? "") === base && x.statut === "EN_COURS")
+                .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+              let quantite = 0;
+              let montant = 0;
+              const detail: string[] = [];
+              for (const x of fam) {
+                const fx = ficheDe(x);
+                quantite += Math.max(0, fx.reste ?? 0);
+                montant += Math.max(0, fx.resteE ?? 0);
+                detail.push(`${x.numero} : reste ${texteHeures(Math.round((fx.reste ?? 0) * 10) / 10)} ${fx.unite === "JOUR" ? "j" : "h"}${fx.resteE !== null ? ` (${euros(fx.resteE)})` : ""}`);
+              }
+              return { fam, quantite, montant, detail };
+            };
+            const totalReste = liste.reduce((t, a) => t + resteFamille(a).montant, 0);
             return (
               <details style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #8a9097" }}>
                 <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 15, color: "#3b4046" }}>
@@ -1495,8 +1512,23 @@ function PrestationsContenu() {
                               {a.designation}
                             </td>
                             <td style={{ ...page.td, padding: "6px 8px", fontSize: 13, whiteSpace: "nowrap", textAlign: "right" }}>
-                              {f.reste === null ? "—" : `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u}`}
-                              {f.resteE !== null && f.resteE > 0 ? ` · ${euros(f.resteE)}` : ""}
+                              {(() => {
+                                const rf = resteFamille(a);
+                                if (rf.fam.length < 2)
+                                  return (
+                                    <>
+                                      {f.reste === null ? "—" : `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u}`}
+                                      {f.resteE !== null && f.resteE > 0 ? ` · ${euros(f.resteE)}` : ""}
+                                    </>
+                                  );
+                                return (
+                                  <span title={rf.detail.join("\n")}>
+                                    reste {texteHeures(Math.round(rf.quantite * 10) / 10)} {u}
+                                    {rf.montant > 0 ? ` · ${euros(rf.montant)}` : ""}
+                                    <div style={{ fontSize: 11, color: C.gris }}>famille : {rf.fam.map((x) => x.numero).join(" + ")}</div>
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td style={{ ...page.td, padding: "6px 8px", fontSize: 13, color: C.gris }}>{d ? libelleDormance(d) : ""}</td>
                             <td style={{ ...page.td, padding: "6px 8px" }}>

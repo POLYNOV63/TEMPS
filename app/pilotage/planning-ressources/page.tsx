@@ -307,8 +307,14 @@ function PlanningRessourcesContenu() {
                   return (
                     <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 6px 4px", marginTop: k === 0 ? 0 : 8, borderBottom: `2px solid ${C.ligne}`, position: "sticky", left: 0 }}>
                       <strong style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: ".4px", color: C.rougeFonce }}>{l.groupe}</strong>
-                      <span style={{ fontSize: 13, color: C.gris }}>
-                        {du.length} personne{du.length > 1 ? "s" : ""} · charge <strong style={{ color: r > 1.01 ? "#b3261e" : r > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(r * 100)} %</strong> ({formatHeures(aff)} / {formatHeures(net)})
+                      <span
+                        style={{ fontSize: 13, color: C.gris }}
+                        title="Tout ce qui est planifié pour ces personnes (affaires, PE / PI, hors affaire) face à leur temps disponible (congés validés et jours fériés déduits), sur les semaines affichées"
+                      >
+                        {/* CHARGE_GROUPE_EXPLIQUEE */}
+                        {du.length} personne{du.length > 1 ? "s" : ""} · du {formatDate(debut)} au {formatDate(fin)} : {formatHeures(aff)} planifiées sur{" "}
+                        {formatHeures(net)} disponibles ·{" "}
+                        <strong style={{ color: r > 1.01 ? "#b3261e" : r > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(r * 100)} % de charge</strong>
                       </span>
                     </div>
                   );
