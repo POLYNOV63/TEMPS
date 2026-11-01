@@ -23,6 +23,7 @@ import {
 import { formatHeures, nomCollab, num, traduireErreur, type Charge, type Collab, type Imputation } from "@/lib/pilotageCalculs";
 import { estFerie, type AbsenceRow, type Affectation, type JourRow } from "@/lib/pilotagePlanning";
 import { remplirGabarit, type LigneGabarit } from "@/lib/gabaritPrestations";
+import { chargerDormantes, libelleDormance, type Dormance } from "@/lib/dormantes";
 
 /* ===============================================================
    PILOTAGE BE - PRESTATIONS PE / PI (relevé mensuel)
@@ -186,6 +187,9 @@ function PrestationsContenu() {
   const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
+  /* DORMANTES_RELEVE : PE / PI en cours sans activité depuis 3 mois, rangées à part ; « reprendre » les remet dans le relevé */
+  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
+  const [reveillees, setReveillees] = useState<Set<string>>(new Set());
 
   const jours = useMemo(() => joursDuMois(mois), [mois]);
   const debut = jours[0].date;
@@ -385,6 +389,12 @@ function PrestationsContenu() {
 
   /* ------------------------------ données dérivées ------------------------------ */
 
+  useEffect(() => {
+    if (affaires.length === 0) return;
+    void chargerDormantes(affaires).then(setDormantes);
+  }, [affaires]);
+  const dort = useCallback((affaireId: string) => dormantes.has(affaireId) && !reveillees.has(affaireId), [dormantes, reveillees]);
+
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
   const collabs = useMemo(() => new Map(annuaire.map((c) => [c.id, c])), [annuaire]);
   const nomsActivites = useMemo(() => new Map((referentiel?.activites ?? []).map((a) => [a.id, a.nom])), [referentiel]);
@@ -503,7 +513,7 @@ function PrestationsContenu() {
     for (const cat of ["PE", "PI", "IG"] as const)
       for (const unite of ["JOUR", "HEURE"] as const) {
         const ls = lignes
-          .filter((l) => l.actif && categorie(l) === cat && l.unite === unite)
+          .filter((l) => l.actif && categorie(l) === cat && l.unite === unite && !dort(l.affaire_id))
           .sort(
             (x, y) =>
               // TRI_RECENT : les commandes les plus récentes (n° le plus grand) en haut
@@ -513,7 +523,7 @@ function PrestationsContenu() {
         if (ls.length) res.push({ cle: `${cat}-${unite}`, titre: `${titres[cat]} — tarif ${unite === "JOUR" ? "journalier" : "horaire"}`, categorie: cat, unite, lignes: ls });
       }
     return res;
-  }, [lignes, categorie, affairesParId, collabs]);
+  }, [lignes, categorie, affairesParId, collabs, dort]);
 
   const ordreLignes = useMemo(() => blocs.flatMap((b) => b.lignes.map((l) => l.id)), [blocs]);
 
@@ -530,9 +540,10 @@ function PrestationsContenu() {
         );
         return candidates
           .filter((a) => !(/^\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero)))
+          .filter((a) => !dort(a.id))
           .sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true }));
       })(),
-    [affaires, lignes, debut]
+    [affaires, lignes, debut, dort]
   );
 
   async function staffer(affaireId: string, collaborateurId: string) {
@@ -1440,6 +1451,66 @@ function PrestationsContenu() {
                             </td>
                           </tr>
                         ));
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            );
+          })()}
+
+        {/* DORMANTES_RELEVE : encadré replié des commandes ouvertes sans activité */}
+        {!chargement &&
+          (() => {
+            const avecAvenant = new Set(affaires.filter((a) => /R\d+$/i.test(a.numero) && a.statut === "EN_COURS").map((a) => a.numero.match(/^\d+/)?.[0] ?? ""));
+            const liste = affaires
+              .filter((a) => dort(a.id) && !(/^\d+$/.test(a.numero) && avecAvenant.has(a.numero)) && correspond(a))
+              .sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true }));
+            if (liste.length === 0) return null;
+            const totalReste = liste.reduce((t, a) => t + Math.max(0, ficheDe(a).resteE ?? 0), 0);
+            return (
+              <details style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #8a9097" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 15, color: "#3b4046" }}>
+                  💤 Commandes ouvertes sans activité depuis 3 mois ({liste.length}){totalReste > 0 ? ` · reste disponible : ${euros(totalReste)}` : ""}
+                  <span style={{ fontWeight: 400, fontSize: 13, color: C.gris }}> · des clients à relancer</span>
+                </summary>
+                <div style={{ overflowX: "auto", marginTop: 8 }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                    <tbody>
+                      {liste.map((a) => {
+                        const f = ficheDe(a);
+                        const nf = numeroFacture(a);
+                        const u = f.unite === "JOUR" ? "j" : "h";
+                        const d = dormantes.get(a.id);
+                        return (
+                          <tr key={a.id}>
+                            <td style={{ ...page.td, padding: "6px 8px", whiteSpace: "nowrap" }}>
+                              <button type="button" onClick={() => setFiche(a.id)} style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textDecoration: "underline dotted" }}>
+                                {a.numero}
+                              </button>{" "}
+                              <span style={{ fontSize: 12, fontWeight: 700, color: C.gris }}>{a.imputation}</span>
+                            </td>
+                            <td style={{ ...page.td, padding: "6px 8px", fontSize: 13 }}>
+                              {nf.client ? <strong>{nf.client} · </strong> : null}
+                              {a.designation}
+                            </td>
+                            <td style={{ ...page.td, padding: "6px 8px", fontSize: 13, whiteSpace: "nowrap", textAlign: "right" }}>
+                              {f.reste === null ? "—" : `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u}`}
+                              {f.resteE !== null && f.resteE > 0 ? ` · ${euros(f.resteE)}` : ""}
+                            </td>
+                            <td style={{ ...page.td, padding: "6px 8px", fontSize: 13, color: C.gris }}>{d ? libelleDormance(d) : ""}</td>
+                            <td style={{ ...page.td, padding: "6px 8px" }}>
+                              <button
+                                type="button"
+                                onClick={() => setReveillees((s) => new Set(s).add(a.id))}
+                                title="La remettre dans le relevé ce mois-ci (pour la staffer ou y saisir des heures)"
+                                style={{ ...page.btnSecondaire, minHeight: 30, fontSize: 13 }}
+                              >
+                                Reprendre dans le relevé
+                              </button>
+                            </td>
+                          </tr>
+                        );
                       })}
                     </tbody>
                   </table>

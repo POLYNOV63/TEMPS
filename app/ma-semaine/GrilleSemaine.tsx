@@ -333,13 +333,14 @@ function Entree({
           value={ligne.code}
           disabled={lectureSeule || sansActivite}
           onChange={(e) => onCode(e.target.value)}
-          style={{ ...champ(mobile), width: mobile ? 130 : 70, flex: "none", padding: "0 2px", fontWeight: 800, color: ligne.code ? C.rougeFonce : C.gris, ...(pbCode ? rouge : {}), ...masque }}
+          style={{ ...champ(mobile), width: mobile ? 130 : 84, flex: "none", padding: "0 2px", fontWeight: 800, color: ligne.code ? C.rougeFonce : C.gris, ...(pbCode ? rouge : {}), ...masque }}
         >
           <option value="">Code</option>
           {codeInconnu && <option value={ligne.code}>{ligne.code} ⚠</option>}
           {codes.map((c) => (
             <option key={c.code} value={c.code}>
-              {mobile ? `${c.code} — ${c.libelle}` : c.code}
+              {/* CODES_EXPLIQUES : le libellé avec le code, partout */}
+              {`${c.code} — ${c.libelle}`}
             </option>
           ))}
         </select>
@@ -381,6 +382,17 @@ function Entree({
         )}
       </div>
 
+      {!replie &&
+        !cacher &&
+        ligne.code &&
+        (() => {
+          const lib = codes.find((c) => normaliserCodeGrille(c.code) === normaliserCodeGrille(ligne.code))?.libelle;
+          return lib ? (
+            <div title={lib} style={{ fontSize: 11, color: C.gris, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {ligne.code} : {lib}
+            </div>
+          ) : null;
+        })()}
       {compact && detail && (
         <button type="button" onClick={() => setDetail(false)} style={{ all: "unset", fontSize: 13, fontWeight: 700, color: "#1f4e99", padding: "6px 2px", cursor: "pointer" }}>
           ▴ Replier

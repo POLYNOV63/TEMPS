@@ -1,0 +1,164 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : outil des commandes dormantes",
+  "cherche": "import { remplirGabarit, type LigneGabarit } from \"@/lib/gabaritPrestations\";",
+  "remplace": "import { remplirGabarit, type LigneGabarit } from \"@/lib/gabaritPrestations\";\nimport { chargerDormantes, libelleDormance, type Dormance } from \"@/lib/dormantes\";"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : état des dormantes",
+  "cherche": "  const [fiche, setFiche] = useState<string | null>(null);",
+  "remplace": "  const [fiche, setFiche] = useState<string | null>(null);\n  /* DORMANTES_RELEVE : PE / PI en cours sans activité depuis 3 mois, rangées à part ; « reprendre » les remet dans le relevé */\n  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());\n  const [reveillees, setReveillees] = useState<Set<string>>(new Set());"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : chargement des dormantes",
+  "cherche": "  const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);",
+  "remplace": "  useEffect(() => {\n    if (affaires.length === 0) return;\n    void chargerDormantes(affaires).then(setDormantes);\n  }, [affaires]);\n  const dort = useCallback((affaireId: string) => dormantes.has(affaireId) && !reveillees.has(affaireId), [dormantes, reveillees]);\n\n  const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : dormantes hors des blocs",
+  "cherche": "          .filter((l) => l.actif && categorie(l) === cat && l.unite === unite)",
+  "remplace": "          .filter((l) => l.actif && categorie(l) === cat && l.unite === unite && !dort(l.affaire_id))"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : blocs, dépendance",
+  "cherche": "  }, [lignes, categorie, affairesParId, collabs]);",
+  "remplace": "  }, [lignes, categorie, affairesParId, collabs, dort]);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : dormantes hors de « à staffer »",
+  "cherche": "          .filter((a) => !(/^\\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero)))\n          .sort((x, y) => y.numero.localeCompare(x.numero, \"fr\", { numeric: true }));\n      })(),\n    [affaires, lignes, debut]",
+  "remplace": "          .filter((a) => !(/^\\d+$/.test(a.numero) && basesAvecAvenant.has(a.numero)))\n          .filter((a) => !dort(a.id))\n          .sort((x, y) => y.numero.localeCompare(x.numero, \"fr\", { numeric: true }));\n      })(),\n    [affaires, lignes, debut, dort]"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Relevé : encadré des commandes sans activité",
+  "cherche": "        {!chargement && (blocs.length > 0 || aStaffer.length > 0) && (",
+  "remplace": "        {/* DORMANTES_RELEVE : encadré replié des commandes ouvertes sans activité */}\n        {!chargement &&\n          (() => {\n            const avecAvenant = new Set(affaires.filter((a) => /R\\d+$/i.test(a.numero) && a.statut === \"EN_COURS\").map((a) => a.numero.match(/^\\d+/)?.[0] ?? \"\"));\n            const liste = affaires\n              .filter((a) => dort(a.id) && !(/^\\d+$/.test(a.numero) && avecAvenant.has(a.numero)) && correspond(a))\n              .sort((x, y) => y.numero.localeCompare(x.numero, \"fr\", { numeric: true }));\n            if (liste.length === 0) return null;\n            const totalReste = liste.reduce((t, a) => t + Math.max(0, ficheDe(a).resteE ?? 0), 0);\n            return (\n              <details style={{ ...page.carte, padding: \"10px 14px\", marginBottom: 10, borderLeft: \"5px solid #8a9097\" }}>\n                <summary style={{ cursor: \"pointer\", fontWeight: 800, fontSize: 15, color: \"#3b4046\" }}>\n                  💤 Commandes ouvertes sans activité depuis 3 mois ({liste.length}){totalReste > 0 ? ` · reste disponible : ${euros(totalReste)}` : \"\"}\n                  <span style={{ fontWeight: 400, fontSize: 13, color: C.gris }}> · des clients à relancer</span>\n                </summary>\n                <div style={{ overflowX: \"auto\", marginTop: 8 }}>\n                  <table style={{ borderCollapse: \"collapse\", width: \"100%\" }}>\n                    <tbody>\n                      {liste.map((a) => {\n                        const f = ficheDe(a);\n                        const nf = numeroFacture(a);\n                        const u = f.unite === \"JOUR\" ? \"j\" : \"h\";\n                        const d = dormantes.get(a.id);\n                        return (\n                          <tr key={a.id}>\n                            <td style={{ ...page.td, padding: \"6px 8px\", whiteSpace: \"nowrap\" }}>\n                              <button type=\"button\" onClick={() => setFiche(a.id)} style={{ all: \"unset\", cursor: \"pointer\", fontWeight: 800, color: C.rougeFonce, textDecoration: \"underline dotted\" }}>\n                                {a.numero}\n                              </button>{\" \"}\n                              <span style={{ fontSize: 12, fontWeight: 700, color: C.gris }}>{a.imputation}</span>\n                            </td>\n                            <td style={{ ...page.td, padding: \"6px 8px\", fontSize: 13 }}>\n                              {nf.client ? <strong>{nf.client} · </strong> : null}\n                              {a.designation}\n                            </td>\n                            <td style={{ ...page.td, padding: \"6px 8px\", fontSize: 13, whiteSpace: \"nowrap\", textAlign: \"right\" }}>\n                              {f.reste === null ? \"—\" : `reste ${texteHeures(Math.round(f.reste * 10) / 10)} ${u}`}\n                              {f.resteE !== null && f.resteE > 0 ? ` · ${euros(f.resteE)}` : \"\"}\n                            </td>\n                            <td style={{ ...page.td, padding: \"6px 8px\", fontSize: 13, color: C.gris }}>{d ? libelleDormance(d) : \"\"}</td>\n                            <td style={{ ...page.td, padding: \"6px 8px\" }}>\n                              <button\n                                type=\"button\"\n                                onClick={() => setReveillees((s) => new Set(s).add(a.id))}\n                                title=\"La remettre dans le relevé ce mois-ci (pour la staffer ou y saisir des heures)\"\n                                style={{ ...page.btnSecondaire, minHeight: 30, fontSize: 13 }}\n                              >\n                                Reprendre dans le relevé\n                              </button>\n                            </td>\n                          </tr>\n                        );\n                      })}\n                    </tbody>\n                  </table>\n                </div>\n              </details>\n            );\n          })()}\n\n        {!chargement && (blocs.length > 0 || aStaffer.length > 0) && ("
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : outil des commandes dormantes",
+  "cherche": "} from \"@/lib/pilotageCalculs\";\n\n/* ===============================================================\n   PILOTAGE BE - PORTEFEUILLE DES AFFAIRES",
+  "remplace": "} from \"@/lib/pilotageCalculs\";\nimport { chargerDormantes, libelleDormance, type Dormance } from \"@/lib/dormantes\";\n\n/* ===============================================================\n   PILOTAGE BE - PORTEFEUILLE DES AFFAIRES"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : famille, chiffré de chaque commande (type)",
+  "cherche": "  famille?: { numeros: string[]; chiffre: number };",
+  "remplace": "  famille?: { numeros: string[]; chiffre: number; detail?: { numero: string; chiffre: number }[] };"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : famille, chiffré de chaque commande",
+  "cherche": "          m.famille = { numeros: membres.map((x) => x.affaire.numero), chiffre: chiffreFamille };",
+  "remplace": "          // FAMILLE_CHIFFRE : le chiffré de chaque commande de la famille, pour l'afficher\n          m.famille = {\n            numeros: membres.map((x) => x.affaire.numero),\n            chiffre: chiffreFamille,\n            detail: membres.filter((x) => x.affaire.statut !== \"ABANDONNEE\").map((x) => ({ numero: x.affaire.numero, chiffre: x.totaux.chiffre })),\n          };"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : état des dormantes",
+  "cherche": "  const [toutesAlertes, setToutesAlertes] = useState(false);",
+  "remplace": "  const [toutesAlertes, setToutesAlertes] = useState(false);\n  // DORMANTES_PORTEFEUILLE : PE / PI en cours sans activité depuis 3 mois\n  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());\n  const [dormantesSeules, setDormantesSeules] = useState(false);\n  useEffect(() => {\n    if (affaires.length === 0) return;\n    void chargerDormantes(affaires).then(setDormantes);\n  }, [affaires]);"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : filtre des dormantes",
+  "cherche": "      if (depassementSeul && !(totaux.depassement > 0)) return false;",
+  "remplace": "      if (depassementSeul && !(totaux.depassement > 0)) return false;\n      if (dormantesSeules && !dormantes.has(affaire.id)) return false;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : filtre, dépendances",
+  "cherche": "  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul]);",
+  "remplace": "  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes]);"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : bouton « Dormantes »",
+  "cherche": "                  Dépassements\n                </button>\n              </div>",
+  "remplace": "                  Dépassements\n                </button>\n                {dormantes.size > 0 && (\n                  <button\n                    type=\"button\"\n                    aria-pressed={dormantesSeules}\n                    style={bouton(dormantesSeules)}\n                    onClick={() => setDormantesSeules((v) => !v)}\n                    title=\"PE / PI en cours sans activité depuis 3 mois : des clients à relancer\"\n                  >\n                    💤 Dormantes ({dormantes.size})\n                  </button>\n                )}\n              </div>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : pastille « dormante »",
+  "cherche": "                    <Pastille genre={etat.genre}>{etat.texte}</Pastille>\n                  </td>",
+  "remplace": "                    <Pastille genre={etat.genre}>{etat.texte}</Pastille>\n                    {dormantes.has(affaire.id) && (\n                      <div style={{ marginTop: 4 }} title=\"Commande ouverte : aucune heure saisie au relevé depuis 3 mois\">\n                        <Pastille genre=\"info\">💤 {libelleDormance(dormantes.get(affaire.id)!)}</Pastille>\n                      </div>\n                    )}\n                  </td>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : chiffré de la famille",
+  "cherche": "                  <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : gris(\"—\")}</td>",
+  "remplace": "                  <td style={tdNum}>\n                    {l.famille ? (\n                      <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join(\"\\n\")}>\n                        <strong>{formatHeures(l.famille.chiffre)}</strong>\n                        <div style={{ ...petit, whiteSpace: \"normal\", maxWidth: 170, marginLeft: \"auto\" }}>\n                          famille : {(l.famille.detail ?? []).map((d) => `${d.numero.replace(/^\\d+/, \"\") || d.numero} ${formatHeures(d.chiffre)}`).join(\" + \")}\n                        </div>\n                      </span>\n                    ) : l.dansFamille ? (\n                      <span title={`Inclus dans le chiffré de la famille, porté par ${l.dansFamille}`}>\n                        {gris(totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : \"—\")}\n                        <div style={petit}>inclus dans {l.dansFamille}</div>\n                      </span>\n                    ) : totaux.chiffre > 0 ? (\n                      formatHeures(totaux.chiffre)\n                    ) : (\n                      gris(\"—\")\n                    )}\n                  </td>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : outil des commandes dormantes",
+  "cherche": "import { formatDate, formatHeures, nomCollab, num, type Charge, type Collab, type Realise } from \"@/lib/pilotageCalculs\";",
+  "remplace": "import { formatDate, formatHeures, nomCollab, num, type Charge, type Collab, type Realise } from \"@/lib/pilotageCalculs\";\nimport { chargerDormantes, libelleDormance, type Dormance } from \"@/lib/dormantes\";"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : clients et dormantes",
+  "cherche": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());",
+  "remplace": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());\n  /* CLIENT_POINTAGE : client (nom abrégé du Suivi d'affaire) par affaire, « CBE|1750 » ; PE / PI dormantes */\n  const [clientsParBase, setClientsParBase] = useState<Map<string, string>>(new Map());\n  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());\n  useEffect(() => {\n    Promise.all([\n      chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string | null }>((a, b) =>\n        supabase.from(\"suivi_lignes\").select(\"base_affaire,base_devis,genre,client_id\").not(\"client_id\", \"is\", null).order(\"cle\").range(a, b)\n      ),\n      chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from(\"suivi_clients\").select(\"id,nom_abrege\").order(\"id\").range(a, b)),\n    ])\n      .then(([sl, sc]) => {\n        const noms = new Map(sc.map((c) => [c.id, c.nom_abrege]));\n        const m = new Map<string, string>();\n        for (const l of sl) {\n          const nom = l.client_id ? noms.get(l.client_id) : undefined;\n          if (!nom) continue;\n          if (l.base_affaire) {\n            const k = `CBE|${l.base_affaire.replace(/^0+/, \"\")}`;\n            if (l.genre === \"BASE\" || !m.has(k)) m.set(k, nom);\n          }\n          if (l.base_devis) {\n            const k = `DBE|${l.base_devis.replace(/^0+/, \"\")}`;\n            if (!m.has(k)) m.set(k, nom);\n          }\n        }\n        setClientsParBase(m);\n      })\n      .catch(() => undefined);\n  }, []);\n  useEffect(() => {\n    if (affaires.length === 0) return;\n    void chargerDormantes(affaires).then(setDormantes);\n  }, [affaires]);\n  const clientDe = (f: { type: string; base: string }) => clientsParBase.get(`${f.type}|${f.base.replace(/^0+/, \"\")}`) ?? \"\";\n  // une famille est dormante si l'une de ses commandes en cours l'est\n  const dormanceDe = (f: { type: string; base: string }) => {\n    for (const a of affaires) {\n      if (a.type !== f.type || (a.numero.match(/^\\d+/)?.[0] ?? a.numero).replace(/^0+/, \"\") !== f.base.replace(/^0+/, \"\")) continue;\n      const d = dormantes.get(a.id);\n      if (d) return d;\n    }\n    return null;\n  };"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : recherche par client",
+  "cherche": "      .filter((f) => !q || `${f.type}${f.base} ${f.designation}`.toLowerCase().includes(q))",
+  "remplace": "      .filter((f) => !q || `${f.type}${f.base} ${f.designation} ${clientDe(f)}`.toLowerCase().includes(q))"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : colonne Client (en-tête)",
+  "cherche": "                    <th style={thG}>Affaire</th>\n                    <th style={thG}>Désignation</th>",
+  "remplace": "                    <th style={thG}>Affaire</th>\n                    <th style={thG}>Client</th>\n                    <th style={thG}>Désignation</th>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : colonne Client",
+  "cherche": "                          <td style={tdG}>\n                            {f.designation}",
+  "remplace": "                          <td style={{ ...tdG, fontWeight: 700 }}>{clientDe(f) || \"—\"}</td>\n                          <td style={tdG}>\n                            {f.designation}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : détail sur toute la largeur",
+  "cherche": "<td colSpan={8} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>",
+  "remplace": "<td colSpan={9} style={{ ...tdG, background: \"#fafbfc\", padding: \"10px 16px\" }}>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : pastille « dormante »",
+  "cherche": "{f.chiffre === 0 && <Pastille genre=\"info\">non chiffrée</Pastille>}",
+  "remplace": "{f.chiffre === 0 && <Pastille genre=\"info\">non chiffrée</Pastille>}\n                              {(() => {\n                                const d = dormanceDe(f);\n                                return d ? <Pastille genre=\"info\">💤 {libelleDormance(d)}</Pastille> : null;\n                              })()}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Pointage : chiffré par commande de la famille",
+  "cherche": "                                <div style={{ flex: \"1 1 200px\" }}>\n                                  <strong>Par code</strong>",
+  "remplace": "                                {/* FAMILLE_POINTAGE : chiffré de chaque commande (base, avenants), total, consommé de la famille */}\n                                {(() => {\n                                  const membres = affaires\n                                    .filter((a) => a.type === f.type && a.statut !== \"ABANDONNEE\" && (a.numero.match(/^\\d+/)?.[0] ?? a.numero).replace(/^0+/, \"\") === f.base.replace(/^0+/, \"\"))\n                                    .sort((x, y) => x.numero.localeCompare(y.numero, \"fr\", { numeric: true }))\n                                    .map((a) => ({ a, chiffre: charges.filter((c) => c.affaire_id === a.id).reduce((t, c) => t + num(c.heures), 0) }));\n                                  if (membres.length < 2) return null;\n                                  const libStatut = (s: string) => (s === \"EN_COURS\" ? \"en cours\" : s === \"EN_ATTENTE\" ? \"intention\" : s === \"LIVREE\" ? \"livrée\" : s.toLowerCase());\n                                  return (\n                                    <div style={{ flex: \"1 1 240px\" }}>\n                                      <strong>Par commande</strong>\n                                      <table style={{ borderCollapse: \"collapse\", width: \"100%\", marginTop: 4 }}>\n                                        <tbody>\n                                          {membres.map(({ a, chiffre }) => (\n                                            <tr key={a.id}>\n                                              <td style={{ ...tdG, padding: \"4px 6px\", fontWeight: 700 }}>{a.numero}</td>\n                                              <td style={{ ...tdG, padding: \"4px 6px\", color: C.gris, fontSize: 12 }}>{libStatut(a.statut)}</td>\n                                              <td style={{ ...td, padding: \"4px 6px\" }}>{formatHeures(chiffre)}</td>\n                                            </tr>\n                                          ))}\n                                          <tr>\n                                            <td style={{ ...tdG, padding: \"4px 6px\", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }} colSpan={2}>\n                                              Total famille\n                                            </td>\n                                            <td style={{ ...td, padding: \"4px 6px\", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(f.chiffre)}</td>\n                                          </tr>\n                                          <tr>\n                                            <td style={{ ...tdG, padding: \"4px 6px\" }} colSpan={2}>\n                                              Pointé sur la famille\n                                            </td>\n                                            <td style={{ ...td, padding: \"4px 6px\", fontWeight: 800, color: f.pointe > f.chiffre + 0.5 ? C.rougeTexte : undefined }}>\n                                              {formatHeures(f.pointe)}\n                                              {f.chiffre > 0 ? ` · ${pct(f.pointe / f.chiffre)}` : \"\"}\n                                            </td>\n                                          </tr>\n                                        </tbody>\n                                      </table>\n                                    </div>\n                                  );\n                                })()}\n                                <div style={{ flex: \"1 1 200px\" }}>\n                                  <strong>Par code</strong>"
+ },
+ {
+  "fichier": "app/ma-semaine/GrilleSemaine.tsx",
+  "nom": "Ma semaine : codes avec leur libellé",
+  "cherche": "              {mobile ? `${c.code} — ${c.libelle}` : c.code}",
+  "remplace": "              {/* CODES_EXPLIQUES : le libellé avec le code, partout */}\n              {`${c.code} — ${c.libelle}`}"
+ },
+ {
+  "fichier": "app/ma-semaine/GrilleSemaine.tsx",
+  "nom": "Ma semaine : liste des codes un peu plus large",
+  "cherche": "style={{ ...champ(mobile), width: mobile ? 130 : 70, flex: \"none\", padding: \"0 2px\", fontWeight: 800, color: ligne.code ? C.rougeFonce : C.gris, ...(pbCode ? rouge : {}), ...masque }}",
+  "remplace": "style={{ ...champ(mobile), width: mobile ? 130 : 84, flex: \"none\", padding: \"0 2px\", fontWeight: 800, color: ligne.code ? C.rougeFonce : C.gris, ...(pbCode ? rouge : {}), ...masque }}"
+ },
+ {
+  "fichier": "app/ma-semaine/GrilleSemaine.tsx",
+  "nom": "Ma semaine : libellé du code choisi",
+  "cherche": "      {compact && detail && (\n        <button type=\"button\" onClick={() => setDetail(false)}",
+  "remplace": "      {!replie &&\n        !cacher &&\n        ligne.code &&\n        (() => {\n          const lib = codes.find((c) => normaliserCodeGrille(c.code) === normaliserCodeGrille(ligne.code))?.libelle;\n          return lib ? (\n            <div title={lib} style={{ fontSize: 11, color: C.gris, marginTop: 2, overflow: \"hidden\", textOverflow: \"ellipsis\", whiteSpace: \"nowrap\" }}>\n              {ligne.code} : {lib}\n            </div>\n          ) : null;\n        })()}\n      {compact && detail && (\n        <button type=\"button\" onClick={() => setDetail(false)}"
+ }
+]

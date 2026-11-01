@@ -37,6 +37,7 @@ import {
   type Realise,
   type Totaux,
 } from "@/lib/pilotageCalculs";
+import { chargerDormantes, libelleDormance, type Dormance } from "@/lib/dormantes";
 
 /* ===============================================================
    PILOTAGE BE - PORTEFEUILLE DES AFFAIRES
@@ -65,7 +66,7 @@ type Ligne = {
   /* Famille d'une affaire (base + avenants, ex. 1604, 1604R1, 1604R2) : les feuilles d'heures
      sont pointées sur la base, donc le réalisé est celui de toute la famille. Il est porté
      par une seule ligne (la base, sinon la première commande de la famille). */
-  famille?: { numeros: string[]; chiffre: number };
+  famille?: { numeros: string[]; chiffre: number; detail?: { numero: string; chiffre: number }[] };
   dansFamille?: string; // numéro de la ligne qui porte le réalisé de la famille
   aAffecter: number; // heures de CETTE commande restant à mettre au planning
 };
@@ -113,6 +114,13 @@ function PortefeuilleContenu() {
   });
   const [recherche, setRecherche] = useState("");
   const [toutesAlertes, setToutesAlertes] = useState(false);
+  // DORMANTES_PORTEFEUILLE : PE / PI en cours sans activité depuis 3 mois
+  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
+  const [dormantesSeules, setDormantesSeules] = useState(false);
+  useEffect(() => {
+    if (affaires.length === 0) return;
+    void chargerDormantes(affaires).then(setDormantes);
+  }, [affaires]);
 
   // AFFECTER_DBE : rédacteur et date cible de rendu d'un devis, depuis le portefeuille
   const [edDbe, setEdDbe] = useState<{ id: string; resp: string; date: string } | null>(null);
@@ -315,7 +323,12 @@ function PortefeuilleContenu() {
             depassement: chiffreFamille > 0 ? Math.max(0, realiseFamille - chiffreFamille) : 0,
             pourcent: chiffreFamille > 0 ? (realiseFamille / chiffreFamille) * 100 : null,
           };
-          m.famille = { numeros: membres.map((x) => x.affaire.numero), chiffre: chiffreFamille };
+          // FAMILLE_CHIFFRE : le chiffré de chaque commande de la famille, pour l'afficher
+          m.famille = {
+            numeros: membres.map((x) => x.affaire.numero),
+            chiffre: chiffreFamille,
+            detail: membres.filter((x) => x.affaire.statut !== "ABANDONNEE").map((x) => ({ numero: x.affaire.numero, chiffre: x.totaux.chiffre })),
+          };
         } else {
           m.totaux = { ...m.totaux, realise: 0, reste: m.totaux.chiffre, depassement: 0, pourcent: null };
           m.dansFamille = porteur.affaire.numero;
@@ -340,9 +353,10 @@ function PortefeuilleContenu() {
       if (filtreClient && (client ?? "") !== filtreClient) return false;
       if (filtreResp && affaire.responsable_id !== filtreResp) return false;
       if (depassementSeul && !(totaux.depassement > 0)) return false;
+      if (dormantesSeules && !dormantes.has(affaire.id)) return false;
       return true;
     });
-  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul]);
+  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes]);
 
   const trier = useCallback(
     (liste: Ligne[]) => {
@@ -645,7 +659,25 @@ function PortefeuilleContenu() {
                           : ""}
                     </div>
                   </td>
-                  <td style={tdNum}>{totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : gris("—")}</td>
+                  <td style={tdNum}>
+                    {l.famille ? (
+                      <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join("\n")}>
+                        <strong>{formatHeures(l.famille.chiffre)}</strong>
+                        <div style={{ ...petit, whiteSpace: "normal", maxWidth: 170, marginLeft: "auto" }}>
+                          famille : {(l.famille.detail ?? []).map((d) => `${d.numero.replace(/^\d+/, "") || d.numero} ${formatHeures(d.chiffre)}`).join(" + ")}
+                        </div>
+                      </span>
+                    ) : l.dansFamille ? (
+                      <span title={`Inclus dans le chiffré de la famille, porté par ${l.dansFamille}`}>
+                        {gris(totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : "—")}
+                        <div style={petit}>inclus dans {l.dansFamille}</div>
+                      </span>
+                    ) : totaux.chiffre > 0 ? (
+                      formatHeures(totaux.chiffre)
+                    ) : (
+                      gris("—")
+                    )}
+                  </td>
                   <td style={tdNum}>
                     {l.dansFamille ? (
                       <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">{gris(`dans ${l.dansFamille}`)}</span>
@@ -698,6 +730,11 @@ function PortefeuilleContenu() {
                   </td>
                   <td style={{ ...tdCourt, whiteSpace: "normal" }}>
                     <Pastille genre={etat.genre}>{etat.texte}</Pastille>
+                    {dormantes.has(affaire.id) && (
+                      <div style={{ marginTop: 4 }} title="Commande ouverte : aucune heure saisie au relevé depuis 3 mois">
+                        <Pastille genre="info">💤 {libelleDormance(dormantes.get(affaire.id)!)}</Pastille>
+                      </div>
+                    )}
                   </td>
                 </tr>
                 {/* AFFECTER_DBE_V2 : le formulaire s'ouvre sur une ligne à part, sous le devis */}
@@ -929,6 +966,17 @@ function PortefeuilleContenu() {
                 >
                   Dépassements
                 </button>
+                {dormantes.size > 0 && (
+                  <button
+                    type="button"
+                    aria-pressed={dormantesSeules}
+                    style={bouton(dormantesSeules)}
+                    onClick={() => setDormantesSeules((v) => !v)}
+                    title="PE / PI en cours sans activité depuis 3 mois : des clients à relancer"
+                  >
+                    💤 Dormantes ({dormantes.size})
+                  </button>
+                )}
               </div>
 
               <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", margin: "12px 0" }}>

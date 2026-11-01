@@ -10,6 +10,7 @@ import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilot
 import { supabase } from "@/lib/supabase";
 import { chargerActivites, chargerAffaires, chargerAnnuaire, chargerCharges, chargerRealise, chargerTout, type AffaireP, type ReferentielActivites } from "@/lib/pilotageDonnees";
 import { formatDate, formatHeures, nomCollab, num, type Charge, type Collab, type Realise } from "@/lib/pilotageCalculs";
+import { chargerDormantes, libelleDormance, type Dormance } from "@/lib/dormantes";
 
 /* ===============================================================
    ANALYSE TECHNIQUE - CHARGE & POINTAGE (ADMIN)
@@ -65,6 +66,49 @@ function PointageContenu() {
   const [seulementAlertes, setSeulementAlertes] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  /* CLIENT_POINTAGE : client (nom abrégé du Suivi d'affaire) par affaire, « CBE|1750 » ; PE / PI dormantes */
+  const [clientsParBase, setClientsParBase] = useState<Map<string, string>>(new Map());
+  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
+  useEffect(() => {
+    Promise.all([
+      chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string | null }>((a, b) =>
+        supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").not("client_id", "is", null).order("cle").range(a, b)
+      ),
+      chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)),
+    ])
+      .then(([sl, sc]) => {
+        const noms = new Map(sc.map((c) => [c.id, c.nom_abrege]));
+        const m = new Map<string, string>();
+        for (const l of sl) {
+          const nom = l.client_id ? noms.get(l.client_id) : undefined;
+          if (!nom) continue;
+          if (l.base_affaire) {
+            const k = `CBE|${l.base_affaire.replace(/^0+/, "")}`;
+            if (l.genre === "BASE" || !m.has(k)) m.set(k, nom);
+          }
+          if (l.base_devis) {
+            const k = `DBE|${l.base_devis.replace(/^0+/, "")}`;
+            if (!m.has(k)) m.set(k, nom);
+          }
+        }
+        setClientsParBase(m);
+      })
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (affaires.length === 0) return;
+    void chargerDormantes(affaires).then(setDormantes);
+  }, [affaires]);
+  const clientDe = (f: { type: string; base: string }) => clientsParBase.get(`${f.type}|${f.base.replace(/^0+/, "")}`) ?? "";
+  // une famille est dormante si l'une de ses commandes en cours l'est
+  const dormanceDe = (f: { type: string; base: string }) => {
+    for (const a of affaires) {
+      if (a.type !== f.type || (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "") !== f.base.replace(/^0+/, "")) continue;
+      const d = dormantes.get(a.id);
+      if (d) return d;
+    }
+    return null;
+  };
 
   useEffect(() => {
     let actif = true;
@@ -169,7 +213,7 @@ function PointageContenu() {
       .filter((f) => typeAff === "TOUS" || f.type === typeAff)
       .filter((f) => vue === "TOUTES" || (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "LIVREE"))
       .filter((f) => !seulementAlertes || f.pointe > f.chiffre + 0.5 || f.horsChiffrage > 0.5 || f.activites.some((d) => d.chiffre > 0 && d.pointe > d.chiffre + 0.5))
-      .filter((f) => !q || `${f.type}${f.base} ${f.designation}`.toLowerCase().includes(q))
+      .filter((f) => !q || `${f.type}${f.base} ${f.designation} ${clientDe(f)}`.toLowerCase().includes(q))
       .sort((x, y) => (y.chiffre > 0 ? y.pointe / y.chiffre : 9) - (x.chiffre > 0 ? x.pointe / x.chiffre : 9));
   }, [familles, perimetre, vue, seulementAlertes, recherche, typeAff]);
 
@@ -384,6 +428,7 @@ function PointageContenu() {
                 <thead>
                   <tr>
                     <th style={thG}>Affaire</th>
+                    <th style={thG}>Client</th>
                     <th style={thG}>Désignation</th>
                     <th style={thG}>Resp.</th>
                     <th style={thG}>Échéance</th>
@@ -426,6 +471,7 @@ function PointageContenu() {
                             </Link>
                             {f.numeros.length > 1 && <div style={{ fontSize: 11, color: C.gris, paddingLeft: 22 }}>{f.numeros.join(", ")}</div>}
                           </td>
+                          <td style={{ ...tdG, fontWeight: 700 }}>{clientDe(f) || "—"}</td>
                           <td style={tdG}>
                             {f.designation}
                             <div style={{ fontSize: 11, color: C.gris }}>{f.imputation}</div>
@@ -441,12 +487,16 @@ function PointageContenu() {
                               {actDepassees.length > 0 && <Pastille genre="warn">{actDepassees.map((d) => d.nom).join(", ")} au-delà</Pastille>}
                               {f.horsChiffrage > 0.5 && <Pastille genre="warn">{formatHeures(f.horsChiffrage)} hors chiffrage</Pastille>}
                               {f.chiffre === 0 && <Pastille genre="info">non chiffrée</Pastille>}
+                              {(() => {
+                                const d = dormanceDe(f);
+                                return d ? <Pastille genre="info">💤 {libelleDormance(d)}</Pastille> : null;
+                              })()}
                             </div>
                           </td>
                         </tr>
                         {ouverte && (
                           <tr>
-                            <td colSpan={8} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
+                            <td colSpan={9} style={{ ...tdG, background: "#fafbfc", padding: "10px 16px" }}>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 24 }}>
                                 <div style={{ flex: "1 1 360px" }}>
                                   <strong>Par activité</strong>
@@ -463,6 +513,46 @@ function PointageContenu() {
                                     </tbody>
                                   </table>
                                 </div>
+                                {/* FAMILLE_POINTAGE : chiffré de chaque commande (base, avenants), total, consommé de la famille */}
+                                {(() => {
+                                  const membres = affaires
+                                    .filter((a) => a.type === f.type && a.statut !== "ABANDONNEE" && (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "") === f.base.replace(/^0+/, ""))
+                                    .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }))
+                                    .map((a) => ({ a, chiffre: charges.filter((c) => c.affaire_id === a.id).reduce((t, c) => t + num(c.heures), 0) }));
+                                  if (membres.length < 2) return null;
+                                  const libStatut = (s: string) => (s === "EN_COURS" ? "en cours" : s === "EN_ATTENTE" ? "intention" : s === "LIVREE" ? "livrée" : s.toLowerCase());
+                                  return (
+                                    <div style={{ flex: "1 1 240px" }}>
+                                      <strong>Par commande</strong>
+                                      <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 4 }}>
+                                        <tbody>
+                                          {membres.map(({ a, chiffre }) => (
+                                            <tr key={a.id}>
+                                              <td style={{ ...tdG, padding: "4px 6px", fontWeight: 700 }}>{a.numero}</td>
+                                              <td style={{ ...tdG, padding: "4px 6px", color: C.gris, fontSize: 12 }}>{libStatut(a.statut)}</td>
+                                              <td style={{ ...td, padding: "4px 6px" }}>{formatHeures(chiffre)}</td>
+                                            </tr>
+                                          ))}
+                                          <tr>
+                                            <td style={{ ...tdG, padding: "4px 6px", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }} colSpan={2}>
+                                              Total famille
+                                            </td>
+                                            <td style={{ ...td, padding: "4px 6px", fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(f.chiffre)}</td>
+                                          </tr>
+                                          <tr>
+                                            <td style={{ ...tdG, padding: "4px 6px" }} colSpan={2}>
+                                              Pointé sur la famille
+                                            </td>
+                                            <td style={{ ...td, padding: "4px 6px", fontWeight: 800, color: f.pointe > f.chiffre + 0.5 ? C.rougeTexte : undefined }}>
+                                              {formatHeures(f.pointe)}
+                                              {f.chiffre > 0 ? ` · ${pct(f.pointe / f.chiffre)}` : ""}
+                                            </td>
+                                          </tr>
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  );
+                                })()}
                                 <div style={{ flex: "1 1 200px" }}>
                                   <strong>Par code</strong>
                                   <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 4 }}>
