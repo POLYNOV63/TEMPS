@@ -173,6 +173,17 @@ function PlanningRessourcesContenu() {
       }
       return v;
     };
+    // REPARTITION_CBE_DBE_DIVERS : heures sur devis (DBE) et hors affaire (Divers), par personne et par jour
+    const dbePar = new Map<string, number[]>();
+    const diversPar = new Map<string, number[]>();
+    const tableDe = (m: Map<string, number[]>, id: string) => {
+      let v = m.get(id);
+      if (!v) {
+        v = colonnes.map(() => 0);
+        m.set(id, v);
+      }
+      return v;
+    };
     for (const a of affectations) {
       const js = (joursParAffectation.get(a.id) ?? []).sort((x, y) => x.i - y.i);
       if (js.length === 0) continue;
@@ -188,6 +199,9 @@ function PlanningRessourcesContenu() {
       }
       if (affaire?.type === "CBE") {
         const v = venduDe(a.collaborateur_id);
+        for (const j of js) v[j.i] += j.h;
+      } else {
+        const v = tableDe(affaire?.type === "DBE" ? dbePar : diversPar, a.collaborateur_id);
         for (const j of js) v[j.i] += j.h;
       }
       const libelle = affaire ? `${affaire.type}${affaire.numero}` : a.libelle ?? "Hors affaire";
@@ -241,6 +255,7 @@ function PlanningRessourcesContenu() {
           const h = parJour.get(i) ?? 0;
           p.charge[i] += h;
           if (g.libelle.startsWith("CBE")) venduDe(g.collab)[i] += h;
+          else tableDe(g.libelle.startsWith("DBE") ? dbePar : diversPar, g.collab)[i] += h;
           if (courant && i === courant.fin + 1 && i % 5 !== 0) {
             courant.fin = i;
             courant.heures += h;
@@ -325,7 +340,7 @@ function PlanningRessourcesContenu() {
         const totalNet = nets.reduce((t, h) => t + h, 0);
         const voies = Math.max(1, ...p.segments.map((s) => s.voie + 1));
         const g = predo.size > 0 ? predo.get(c.id) ?? { nom: "Sans prédominance", ordre: 9999 } : { nom: "", ordre: 0 };
-        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre, vendu: venduPar.get(c.id) ?? colonnes.map(() => 0) };
+        return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre, vendu: venduPar.get(c.id) ?? colonnes.map(() => 0), dbe: dbePar.get(c.id) ?? colonnes.map(() => 0), divers: diversPar.get(c.id) ?? colonnes.map(() => 0) };
       })
       .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
   }, [colonnes, jours, affectations, affairesParId, annuaire, capacites, avecEncadrement, recherche, predo, passe, realise, lundiActuel, affaires]);
@@ -456,19 +471,23 @@ function PlanningRessourcesContenu() {
                   const finSem = Math.min(colonnes.length, i + 5);
                   let v = 0;
                   let d = 0;
+                  let db = 0;
+                  let dv = 0;
                   for (const l of lignes)
                     for (let k = i; k < finSem; k++) {
                       v += l.vendu[k] ?? 0;
                       d += l.nets[k] ?? 0;
+                      db += l.dbe[k] ?? 0;
+                      dv += l.divers[k] ?? 0;
                     }
-                  return { i, finSem, v, d };
+                  return { i, finSem, v, d, db, dv };
                 };
                 const semaines = Array.from({ length: Math.ceil(colonnes.length / 5) }, (_, w) => semaine(w));
                 const vTotal = semaines.reduce((t, s) => t + s.v, 0);
                 const dTotal = semaines.reduce((t, s) => t + s.d, 0);
                 return (
                   <>
-                    {semaines.map(({ i, finSem, v, d }) => {
+                    {semaines.map(({ i, finSem, v, d, db, dv }) => {
                       const pct = d > 0 ? v / d : 0;
                       const passee = colonnes[i] < lundiActuel;
                       return (
@@ -488,8 +507,13 @@ function PlanningRessourcesContenu() {
                             borderTop: `1px solid ${C.ligne}`,
                           }}
                         >
-                          {d > 0 ? `${Math.round(pct * 100)} %` : "—"}
+                          {d > 0 ? `CBE ${Math.round(pct * 100)} %` : "—"}
                           <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? "réalisé" : "prévu"}</span>
+                          {d > 0 && (
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#3b4046" }} title={`DBE : ${formatHeures(db)} · Divers : ${formatHeures(dv)}`}>
+                              <span style={{ color: "#a24f73" }}>DBE {Math.round((db / d) * 100)} %</span> · Divers {Math.round((dv / d) * 100)} %
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -538,10 +562,16 @@ function PlanningRessourcesContenu() {
                           const i1 = Math.min(colonnes.length, i0 + 5);
                           let ch = 0;
                           let dispo = 0;
+                          let cb = 0;
+                          let db = 0;
+                          let dv = 0;
                           for (const x of du)
                             for (let j2 = i0; j2 < i1; j2++) {
                               ch += x.charge[j2] ?? 0;
                               dispo += x.nets[j2] ?? 0;
+                              cb += x.vendu[j2] ?? 0;
+                              db += x.dbe[j2] ?? 0;
+                              dv += x.divers[j2] ?? 0;
                             }
                           const rr = dispo > 0 ? ch / dispo : 0;
                           const passee = colonnes[i0] < lundiActuel;
@@ -561,6 +591,11 @@ function PlanningRessourcesContenu() {
                               }}
                             >
                               {dispo > 0 ? `${Math.round(rr * 100)} %` : "—"}
+                              {dispo > 0 && (
+                                <div style={{ fontSize: 10, fontWeight: 700, color: C.gris }} title={`CBE ${formatHeures(cb)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)}`}>
+                                  CBE {Math.round((cb / dispo) * 100)} · DBE {Math.round((db / dispo) * 100)} · Div. {Math.round((dv / dispo) * 100)}
+                                </div>
+                              )}
                             </div>
                           );
                         })}

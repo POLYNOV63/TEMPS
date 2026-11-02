@@ -1,0 +1,62 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : compteurs DBE et Divers",
+  "cherche": "    const venduDe = (id: string) => {\n      let v = venduPar.get(id);\n      if (!v) {\n        v = colonnes.map(() => 0);\n        venduPar.set(id, v);\n      }\n      return v;\n    };",
+  "remplace": "    const venduDe = (id: string) => {\n      let v = venduPar.get(id);\n      if (!v) {\n        v = colonnes.map(() => 0);\n        venduPar.set(id, v);\n      }\n      return v;\n    };\n    // REPARTITION_CBE_DBE_DIVERS : heures sur devis (DBE) et hors affaire (Divers), par personne et par jour\n    const dbePar = new Map<string, number[]>();\n    const diversPar = new Map<string, number[]>();\n    const tableDe = (m: Map<string, number[]>, id: string) => {\n      let v = m.get(id);\n      if (!v) {\n        v = colonnes.map(() => 0);\n        m.set(id, v);\n      }\n      return v;\n    };"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : le prévu",
+  "cherche": "      if (affaire?.type === \"CBE\") {\n        const v = venduDe(a.collaborateur_id);\n        for (const j of js) v[j.i] += j.h;\n      }",
+  "remplace": "      if (affaire?.type === \"CBE\") {\n        const v = venduDe(a.collaborateur_id);\n        for (const j of js) v[j.i] += j.h;\n      } else {\n        const v = tableDe(affaire?.type === \"DBE\" ? dbePar : diversPar, a.collaborateur_id);\n        for (const j of js) v[j.i] += j.h;\n      }"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : le réalisé",
+  "cherche": "          if (g.libelle.startsWith(\"CBE\")) venduDe(g.collab)[i] += h;",
+  "remplace": "          if (g.libelle.startsWith(\"CBE\")) venduDe(g.collab)[i] += h;\n          else tableDe(g.libelle.startsWith(\"DBE\") ? dbePar : diversPar, g.collab)[i] += h;"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : rattachée à chaque personne",
+  "cherche": "vendu: venduPar.get(c.id) ?? colonnes.map(() => 0) };",
+  "remplace": "vendu: venduPar.get(c.id) ?? colonnes.map(() => 0), dbe: dbePar.get(c.id) ?? colonnes.map(() => 0), divers: diversPar.get(c.id) ?? colonnes.map(() => 0) };"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : équipe, sommes par semaine",
+  "cherche": "                  let v = 0;\n                  let d = 0;\n                  for (const l of lignes)\n                    for (let k = i; k < finSem; k++) {\n                      v += l.vendu[k] ?? 0;\n                      d += l.nets[k] ?? 0;\n                    }\n                  return { i, finSem, v, d };",
+  "remplace": "                  let v = 0;\n                  let d = 0;\n                  let db = 0;\n                  let dv = 0;\n                  for (const l of lignes)\n                    for (let k = i; k < finSem; k++) {\n                      v += l.vendu[k] ?? 0;\n                      d += l.nets[k] ?? 0;\n                      db += l.dbe[k] ?? 0;\n                      dv += l.divers[k] ?? 0;\n                    }\n                  return { i, finSem, v, d, db, dv };"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : équipe, variables",
+  "cherche": "{semaines.map(({ i, finSem, v, d }) => {",
+  "remplace": "{semaines.map(({ i, finSem, v, d, db, dv }) => {"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : équipe, affichage CBE / DBE / Divers",
+  "cherche": "                          {d > 0 ? `${Math.round(pct * 100)} %` : \"—\"}\n                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? \"réalisé\" : \"prévu\"}</span>",
+  "remplace": "                          {d > 0 ? `CBE ${Math.round(pct * 100)} %` : \"—\"}\n                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? \"réalisé\" : \"prévu\"}</span>\n                          {d > 0 && (\n                            <div style={{ fontSize: 11, fontWeight: 700, color: \"#3b4046\" }} title={`DBE : ${formatHeures(db)} · Divers : ${formatHeures(dv)}`}>\n                              <span style={{ color: \"#a24f73\" }}>DBE {Math.round((db / d) * 100)} %</span> · Divers {Math.round((dv / d) * 100)} %\n                            </div>\n                          )}"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : activité, sommes par semaine",
+  "cherche": "                              ch += x.charge[j2] ?? 0;\n                              dispo += x.nets[j2] ?? 0;",
+  "remplace": "                              ch += x.charge[j2] ?? 0;\n                              dispo += x.nets[j2] ?? 0;\n                              cb += x.vendu[j2] ?? 0;\n                              db += x.dbe[j2] ?? 0;\n                              dv += x.divers[j2] ?? 0;"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : activité, compteurs",
+  "cherche": "                          let ch = 0;\n                          let dispo = 0;",
+  "remplace": "                          let ch = 0;\n                          let dispo = 0;\n                          let cb = 0;\n                          let db = 0;\n                          let dv = 0;"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition : activité, affichage",
+  "cherche": "                              {dispo > 0 ? `${Math.round(rr * 100)} %` : \"—\"}",
+  "remplace": "                              {dispo > 0 ? `${Math.round(rr * 100)} %` : \"—\"}\n                              {dispo > 0 && (\n                                <div style={{ fontSize: 10, fontWeight: 700, color: C.gris }} title={`CBE ${formatHeures(cb)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)}`}>\n                                  CBE {Math.round((cb / dispo) * 100)} · DBE {Math.round((db / dispo) * 100)} · Div. {Math.round((dv / dispo) * 100)}\n                                </div>\n                              )}"
+ }
+]
