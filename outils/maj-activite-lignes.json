@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Activité principale de chaque personne",
+  "cherche": "  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());",
+  "remplace": "  const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());\n  /* ACTIVITE_PAR_DEFAUT : activité principale de chaque personne (fiche Collaborateurs), pour une ligne qui n'en a pas */\n  const [predo, setPredo] = useState<Map<string, string>>(new Map());\n  useEffect(() => {\n    void supabase\n      .from(\"collaborateurs_predominances\")\n      .select(\"collaborateur_id,activite_id\")\n      .eq(\"niveau\", \"PRINCIPALE\")\n      .then(({ data }) => setPredo(new Map(((data ?? []) as { collaborateur_id: string; activite_id: string }[]).map((x) => [x.collaborateur_id, x.activite_id]))));\n  }, []);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Une nouvelle ligne prend l'activité principale de la personne",
+  "cherche": "      .upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true, ...vente }, { onConflict: \"affaire_id,collaborateur_id\" });",
+  "remplace": "      .upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true, ...vente, ...(predo.get(collaborateurId) ? { activite_id: predo.get(collaborateurId) } : {}) }, { onConflict: \"affaire_id,collaborateur_id\" });"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Total du mois : activité de la ligne, sinon celle de la personne",
+  "cherche": "      const k = l.activite_id ? nomsActivites.get(l.activite_id) ?? \"Activité\" : \"Sans activité\";",
+  "remplace": "      const act = l.activite_id ?? predo.get(l.collaborateur_id) ?? null;\n      const k = act ? nomsActivites.get(act) ?? \"Activité\" : \"Sans activité\";\n      if (!act && (c.montant ?? 0) !== 0) sansActivite.push(`${affairesParId.get(l.affaire_id)?.numero ?? \"?\"} ${nomCollab(collabs.get(l.collaborateur_id))}`);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Total du mois : liste des lignes sans activité",
+  "cherche": "    const parActivite = new Map<string, number>();\n    for (const l of lignes.filter((x) => x.actif)) {",
+  "remplace": "    const parActivite = new Map<string, number>();\n    const sansActivite: string[] = [];\n    for (const l of lignes.filter((x) => x.actif)) {"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Total du mois : résultat",
+  "cherche": "    return { montant, heures, parActivite, parCategorie };\n  }, [lignes, calcul, nomsActivites, categorie]);",
+  "remplace": "    return { montant, heures, parActivite, parCategorie, sansActivite };\n  }, [lignes, calcul, nomsActivites, categorie, predo, affairesParId, collabs]);"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Total du mois : « Sans activité » dit quelles lignes",
+  "cherche": "                    <div key={k}>\n                      {k} : <strong>{euros(v)}</strong>\n                    </div>",
+  "remplace": "                    <div key={k} title={k === \"Sans activité\" ? `Lignes sans activité (à choisir dans ⚙) : ${totaux.sansActivite.join(\", \")}` : undefined}>\n                      {k} : <strong>{euros(v)}</strong>\n                      {k === \"Sans activité\" && totaux.sansActivite.length > 0 && <span style={{ fontSize: 12, color: C.gris }}> ({totaux.sansActivite.join(\", \")})</span>}\n                    </div>"
+ }
+]

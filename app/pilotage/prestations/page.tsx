@@ -238,6 +238,15 @@ function PrestationsContenu() {
     });
   /* DORMANTES_RELEVE : PE / PI en cours sans activité depuis 3 mois, rangées à part ; « reprendre » les remet dans le relevé */
   const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
+  /* ACTIVITE_PAR_DEFAUT : activité principale de chaque personne (fiche Collaborateurs), pour une ligne qui n'en a pas */
+  const [predo, setPredo] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("collaborateurs_predominances")
+      .select("collaborateur_id,activite_id")
+      .eq("niveau", "PRINCIPALE")
+      .then(({ data }) => setPredo(new Map(((data ?? []) as { collaborateur_id: string; activite_id: string }[]).map((x) => [x.collaborateur_id, x.activite_id]))));
+  }, []);
   const [reveillees, setReveillees] = useState<Set<string>>(new Set());
 
   const jours = useMemo(() => joursDuMois(mois), [mois]);
@@ -638,7 +647,7 @@ function PrestationsContenu() {
     const vente = f ? { unite: f.unite, base_horaire: f.base, ...(f.taux !== null ? { taux: Math.round(f.taux * 100) / 100 } : {}) } : {};
     const { error } = await supabase
       .from("prestation_lignes")
-      .upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true, ...vente }, { onConflict: "affaire_id,collaborateur_id" });
+      .upsert({ affaire_id: affaireId, collaborateur_id: collaborateurId, actif: true, ...vente, ...(predo.get(collaborateurId) ? { activite_id: predo.get(collaborateurId) } : {}) }, { onConflict: "affaire_id,collaborateur_id" });
     if (error) return setErreur(traduireErreur(error.message));
     setRechargement((n) => n + 1);
   }
@@ -647,11 +656,14 @@ function PrestationsContenu() {
     let montant = 0;
     let heures = 0;
     const parActivite = new Map<string, number>();
+    const sansActivite: string[] = [];
     for (const l of lignes.filter((x) => x.actif)) {
       const c = calcul(l);
       heures += c.facturables;
       montant += c.montant ?? 0;
-      const k = l.activite_id ? nomsActivites.get(l.activite_id) ?? "Activité" : "Sans activité";
+      const act = l.activite_id ?? predo.get(l.collaborateur_id) ?? null;
+      const k = act ? nomsActivites.get(act) ?? "Activité" : "Sans activité";
+      if (!act && (c.montant ?? 0) !== 0) sansActivite.push(`${affairesParId.get(l.affaire_id)?.numero ?? "?"} ${nomCollab(collabs.get(l.collaborateur_id))}`);
       parActivite.set(k, (parActivite.get(k) ?? 0) + (c.montant ?? 0));
     }
     // TAUX_MOYEN_PEPI : montant ÷ heures (et ÷ jours) facturées, par catégorie, lignes avec un taux
@@ -666,8 +678,8 @@ function PrestationsContenu() {
       v.jours += c.facturables / l.base_horaire;
       parCategorie.set(k, v);
     }
-    return { montant, heures, parActivite, parCategorie };
-  }, [lignes, calcul, nomsActivites, categorie]);
+    return { montant, heures, parActivite, parCategorie, sansActivite };
+  }, [lignes, calcul, nomsActivites, categorie, predo, affairesParId, collabs]);
 
   const moisValide = lignes.some((l) => l.actif) && lignes.filter((l) => l.actif).every((l) => moisLignes.get(l.id)?.valide);
 
@@ -2268,8 +2280,9 @@ function PrestationsContenu() {
                 <div style={{ color: C.gris, fontSize: 13 }}>{formatHeures(totaux.heures)} facturées</div>
                 <div style={{ marginTop: 8, fontSize: 14 }}>
                   {[...totaux.parActivite.entries()].sort((x, y) => y[1] - x[1]).map(([k, v]) => (
-                    <div key={k}>
+                    <div key={k} title={k === "Sans activité" ? `Lignes sans activité (à choisir dans ⚙) : ${totaux.sansActivite.join(", ")}` : undefined}>
                       {k} : <strong>{euros(v)}</strong>
+                      {k === "Sans activité" && totaux.sansActivite.length > 0 && <span style={{ fontSize: 12, color: C.gris }}> ({totaux.sansActivite.join(", ")})</span>}
                     </div>
                   ))}
                 </div>
