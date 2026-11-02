@@ -1,0 +1,8 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Réalisé : une seule barre par personne et par semaine",
+  "cherche": "    // voies : deux barres qui se chevauchent sont empilées",
+  "remplace": "    // REALISE_COMPACT : le réalisé d'une semaine passée tient en UNE barre par personne (détail au survol)\n    for (const p of parPersonne.values()) {\n      const reel = p.segments.filter((s) => s.cle.startsWith(\"r-\"));\n      if (reel.length === 0) continue;\n      const autres = p.segments.filter((s) => !s.cle.startsWith(\"r-\"));\n      const parSemaine = new Map<number, Segment[]>();\n      for (const s of reel) {\n        const w = Math.floor(s.debut / 5);\n        parSemaine.set(w, [...(parSemaine.get(w) ?? []), s]);\n      }\n      for (const [w, ss] of parSemaine) {\n        const parLibelle = new Map<string, number>();\n        for (const s of ss) parLibelle.set(s.libelle, (parLibelle.get(s.libelle) ?? 0) + s.heures);\n        const tri = [...parLibelle.entries()].sort((x, y) => y[1] - x[1]);\n        autres.push({\n          ...ss[0],\n          cle: `rs-${w}-${ss[0].cle}`,\n          affaireId: null,\n          libelle: `Réalisé : ${tri.map(([l, h]) => `${l.replace(/^CBE/, \"\")} ${formatHeures(h)}`).join(\" · \")}`,\n          detail: `Réalisé (pointé) :\\n${tri.map(([l, h]) => `${l} : ${formatHeures(h)}`).join(\"\\n\")}`,\n          debut: Math.min(...ss.map((s) => s.debut)),\n          fin: Math.max(...ss.map((s) => s.fin)),\n          heures: tri.reduce((t, [, h]) => t + h, 0),\n          couleur: \"#3b4046\",\n          encre: \"#ffffff\",\n          voie: 0,\n        });\n      }\n      p.segments = autres;\n    }\n\n    // voies : deux barres qui se chevauchent sont empilées"
+ }
+]

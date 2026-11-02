@@ -260,6 +260,37 @@ function PlanningRessourcesContenu() {
       }
     }
 
+    // REALISE_COMPACT : le réalisé d'une semaine passée tient en UNE barre par personne (détail au survol)
+    for (const p of parPersonne.values()) {
+      const reel = p.segments.filter((s) => s.cle.startsWith("r-"));
+      if (reel.length === 0) continue;
+      const autres = p.segments.filter((s) => !s.cle.startsWith("r-"));
+      const parSemaine = new Map<number, Segment[]>();
+      for (const s of reel) {
+        const w = Math.floor(s.debut / 5);
+        parSemaine.set(w, [...(parSemaine.get(w) ?? []), s]);
+      }
+      for (const [w, ss] of parSemaine) {
+        const parLibelle = new Map<string, number>();
+        for (const s of ss) parLibelle.set(s.libelle, (parLibelle.get(s.libelle) ?? 0) + s.heures);
+        const tri = [...parLibelle.entries()].sort((x, y) => y[1] - x[1]);
+        autres.push({
+          ...ss[0],
+          cle: `rs-${w}-${ss[0].cle}`,
+          affaireId: null,
+          libelle: `Réalisé : ${tri.map(([l, h]) => `${l.replace(/^CBE/, "")} ${formatHeures(h)}`).join(" · ")}`,
+          detail: `Réalisé (pointé) :\n${tri.map(([l, h]) => `${l} : ${formatHeures(h)}`).join("\n")}`,
+          debut: Math.min(...ss.map((s) => s.debut)),
+          fin: Math.max(...ss.map((s) => s.fin)),
+          heures: tri.reduce((t, [, h]) => t + h, 0),
+          couleur: "#3b4046",
+          encre: "#ffffff",
+          voie: 0,
+        });
+      }
+      p.segments = autres;
+    }
+
     // voies : deux barres qui se chevauchent sont empilées
     for (const p of parPersonne.values()) {
       p.segments.sort((x, y) => x.debut - y.debut || y.fin - x.fin);
