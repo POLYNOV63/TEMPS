@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : titre neutre",
+  "cherche": "                title=\"Heures sur commandes (CBE : forfaits, PE, PI) ÷ heures disponibles de l’équipe affichée. Semaines passées : réalisé ; semaines à venir : prévu.\"",
+  "remplace": "                title=\"Comment se répartit le temps de l’équipe affichée : commandes (CBE), devis (DBE) et interne (Divers), en part du temps disponible. Semaines passées : ce qui a été pointé ; semaines à venir : ce qui est prévu.\""
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : libellé",
+  "cherche": "                % vendu\n              </div>",
+  "remplace": "                {/* REPARTITION_NEUTRE */}\n                Répartition\n              </div>"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : libellé en gris",
+  "cherche": "display: \"flex\", alignItems: \"center\", padding: \"3px 4px\", fontSize: 12, fontWeight: 800, color: C.rougeFonce, borderTop",
+  "remplace": "display: \"flex\", alignItems: \"center\", padding: \"3px 4px\", fontSize: 12, fontWeight: 800, color: C.gris, borderTop"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : plus de vert / orange / rouge",
+  "cherche": "                        color: pct >= 0.8 ? \"#1b5e20\" : pct >= 0.6 ? \"#7a3e00\" : \"#b3261e\",",
+  "remplace": "                        color: \"#3b4046\","
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : les trois parts, comme pour les activités",
+  "cherche": "                          {d > 0 ? `CBE ${Math.round(pct * 100)} %` : \"—\"}\n                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? \"réalisé\" : \"prévu\"}</span>\n                          {d > 0 && (\n                            <div style={{ fontSize: 11, fontWeight: 700, color: \"#3b4046\" }} title={`DBE : ${formatHeures(db)} · Divers : ${formatHeures(dv)}`}>\n                              <span style={{ color: \"#a24f73\" }}>DBE {Math.round((db / d) * 100)} %</span> · Divers {Math.round((dv / d) * 100)} %\n                            </div>\n                          )}",
+  "remplace": "                          {d > 0 ? (\n                            <div title={`CBE ${formatHeures(v)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)} · disponible ${formatHeures(d)}`}>\n                              <span style={{ color: \"#b03a64\" }}>CBE {Math.round(pct * 100)} %</span>\n                              <span style={{ color: C.gris, fontWeight: 400 }}> · </span>\n                              <span style={{ color: \"#c2708f\" }}>DBE {Math.round((db / d) * 100)} %</span>\n                              <span style={{ color: C.gris, fontWeight: 400 }}> · </span>\n                              <span style={{ color: \"#6b7178\" }}>Div. {Math.round((dv / d) * 100)} %</span>\n                            </div>\n                          ) : (\n                            \"—\"\n                          )}\n                          <div style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}>{passee ? \"réalisé\" : \"prévu\"}</div>"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Ligne de l'équipe : total de la période",
+  "cherche": "{dTotal > 0 ? `${Math.round((vTotal / dTotal) * 100)} %` : \"—\"}",
+  "remplace": "{dTotal > 0 ? `CBE ${Math.round((vTotal / dTotal) * 100)} %` : \"—\"}"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Activités : charge prévue sans couleur d'alerte",
+  "cherche": "                                color: rr > 1.05 ? \"#b3261e\" : rr >= 0.8 ? \"#1b5e20\" : rr >= 0.6 ? \"#7a3e00\" : \"#b3261e\",",
+  "remplace": "                                color: \"#3b4046\","
+ }
+]

@@ -467,10 +467,11 @@ function PlanningRessourcesContenu() {
               {cadreSemaine(true, false) && <div aria-hidden="true" title="Semaine en cours" style={{ ...cadreSemaine(true, false)!, gridRow: "2 / span 2" }} />}
               {/* ACTIVITE_VENDUE : % des heures disponibles de l'équipe affichée passées (ou prévues) sur des commandes */}
               <div
-                title="Heures sur commandes (CBE : forfaits, PE, PI) ÷ heures disponibles de l’équipe affichée. Semaines passées : réalisé ; semaines à venir : prévu."
-                style={{ gridColumn: 1, gridRow: 4, position: "sticky", left: 0, zIndex: 4, background: "#ffffff", display: "flex", alignItems: "center", padding: "3px 4px", fontSize: 12, fontWeight: 800, color: C.rougeFonce, borderTop: `1px solid ${C.ligne}` }}
+                title="Comment se répartit le temps de l’équipe affichée : commandes (CBE), devis (DBE) et interne (Divers), en part du temps disponible. Semaines passées : ce qui a été pointé ; semaines à venir : ce qui est prévu."
+                style={{ gridColumn: 1, gridRow: 4, position: "sticky", left: 0, zIndex: 4, background: "#ffffff", display: "flex", alignItems: "center", padding: "3px 4px", fontSize: 12, fontWeight: 800, color: C.gris, borderTop: `1px solid ${C.ligne}` }}
               >
-                % vendu
+                {/* REPARTITION_NEUTRE */}
+                Répartition
               </div>
               {(() => {
                 const semaine = (w: number) => {
@@ -508,19 +509,24 @@ function PlanningRessourcesContenu() {
                             padding: "3px 0",
                             fontSize: 12,
                             fontWeight: 800,
-                            color: pct >= 0.8 ? "#1b5e20" : pct >= 0.6 ? "#7a3e00" : "#b3261e",
+                            color: "#3b4046",
                             background: passee ? "#f1f2f4" : "#ffffff",
                             borderLeft: `1px solid ${C.ligne}`,
                             borderTop: `1px solid ${C.ligne}`,
                           }}
                         >
-                          {d > 0 ? `CBE ${Math.round(pct * 100)} %` : "—"}
-                          <span style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}> {passee ? "réalisé" : "prévu"}</span>
-                          {d > 0 && (
-                            <div style={{ fontSize: 11, fontWeight: 700, color: "#3b4046" }} title={`DBE : ${formatHeures(db)} · Divers : ${formatHeures(dv)}`}>
-                              <span style={{ color: "#a24f73" }}>DBE {Math.round((db / d) * 100)} %</span> · Divers {Math.round((dv / d) * 100)} %
+                          {d > 0 ? (
+                            <div title={`CBE ${formatHeures(v)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)} · disponible ${formatHeures(d)}`}>
+                              <span style={{ color: "#b03a64" }}>CBE {Math.round(pct * 100)} %</span>
+                              <span style={{ color: C.gris, fontWeight: 400 }}> · </span>
+                              <span style={{ color: "#c2708f" }}>DBE {Math.round((db / d) * 100)} %</span>
+                              <span style={{ color: C.gris, fontWeight: 400 }}> · </span>
+                              <span style={{ color: "#6b7178" }}>Div. {Math.round((dv / d) * 100)} %</span>
                             </div>
+                          ) : (
+                            "—"
                           )}
+                          <div style={{ fontWeight: 400, color: C.gris, fontSize: 10 }}>{passee ? "réalisé" : "prévu"}</div>
                         </div>
                       );
                     })}
@@ -528,7 +534,7 @@ function PlanningRessourcesContenu() {
                       title={`Sur la période : ${formatHeures(vTotal)} sur commandes pour ${formatHeures(dTotal)} disponibles`}
                       style={{ gridColumn: colonnes.length + 2, gridRow: 4, textAlign: "right", padding: "3px 6px", fontSize: 12, fontWeight: 800, borderTop: `1px solid ${C.ligne}` }}
                     >
-                      {dTotal > 0 ? `${Math.round((vTotal / dTotal) * 100)} %` : "—"}
+                      {dTotal > 0 ? `CBE ${Math.round((vTotal / dTotal) * 100)} %` : "—"}
                     </div>
                   </>
                 );
@@ -592,7 +598,7 @@ function PlanningRessourcesContenu() {
                                 padding: "2px 0 4px",
                                 fontSize: 12,
                                 fontWeight: 800,
-                                color: rr > 1.05 ? "#b3261e" : rr >= 0.8 ? "#1b5e20" : rr >= 0.6 ? "#7a3e00" : "#b3261e",
+                                color: "#3b4046",
                                 background: passee ? "#f6f7f8" : undefined,
                                 borderLeft: `1px solid ${C.ligne}`,
                               }}
