@@ -493,8 +493,8 @@ function PlanningRessourcesContenu() {
                     </div>
                   );
                 })()}
-                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${voiesMax}, ${HAUTEUR_VOIE}px)`, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>
-                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${voiesMax}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>
+                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
                     <strong style={{ fontSize: 15 }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                   </div>
@@ -531,7 +531,7 @@ function PlanningRessourcesContenu() {
 
 
                   {cadre && <div aria-hidden="true" style={{ ...cadre, margin: "-6px 0" }} />}
-                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${voiesMax}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
+                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
                     <strong style={{ color: ratio > 1.01 ? "#b3261e" : ratio > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(ratio * 100)} %</strong>
                     <span style={{ color: C.gris }}>
                       {formatHeures(l.totalAffecte)} / {formatHeures(l.totalNet)}

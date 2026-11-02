@@ -1,0 +1,21 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Planning par ressource : chaque ligne à sa propre hauteur",
+  "cherche": "gridTemplateRows: `repeat(${voiesMax}, ${HAUTEUR_VOIE}px)`",
+  "remplace": "gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Planning par ressource : nom et total à la hauteur de la ligne",
+  "cherche": "`1 / span ${voiesMax}`",
+  "remplace": "`1 / span ${Math.max(2, l.voies)}`",
+  "tous": true
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Fiche : ⚠ seulement au-delà de 60 jours d'écart",
+  "cherche": "const inversee = Boolean(d?.reception && d?.ouverture && d.reception.slice(0, 10) < d.ouverture.slice(0, 10));",
+  "remplace": "const inversee = Boolean(d?.reception && d?.ouverture && (new Date(`${d.ouverture.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${d.reception.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > 60); // DATES_TOLERANCE"
+ }
+]

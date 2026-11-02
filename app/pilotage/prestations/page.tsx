@@ -2466,7 +2466,7 @@ function PrestationsContenu() {
                         <tbody>
                           {famille.map((x) => {
                             const d = datesCommandes.get(x.numero.toUpperCase().replace(/^0+/, ""));
-                            const inversee = Boolean(d?.reception && d?.ouverture && d.reception.slice(0, 10) < d.ouverture.slice(0, 10));
+                            const inversee = Boolean(d?.reception && d?.ouverture && (new Date(`${d.ouverture.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${d.reception.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > 60); // DATES_TOLERANCE
                             return (
                               <tr key={x.id} style={x.id === a.id ? { background: "#fff7e0" } : undefined}>
                                 <td style={{ ...page.td, padding: "4px 6px", fontWeight: 800 }}>{x.numero}</td>

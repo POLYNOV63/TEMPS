@@ -9,10 +9,11 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    DATES IMPOSSIBLES DANS LE SUIVI D'AFFAIRE BE
 
    Repère, dans la copie du classeur, les dates qui ne peuvent pas être
-   justes (souvent jour et mois inversés à la saisie) :
-   - commande reçue AVANT l'ouverture de la ligne ;
-   - devis envoyé AVANT son ouverture ;
-   - livraison AVANT la réception de la commande.
+   justes (souvent jour et mois inversés à la saisie), avec une tolérance
+   de 60 jours (une ligne peut être créée un peu après coup) :
+   - commande reçue plus de 60 jours AVANT l'ouverture de la ligne ;
+   - devis envoyé plus de 60 jours AVANT son ouverture ;
+   - livraison plus de 60 jours AVANT la réception de la commande.
    Propose la date « jour et mois inversés » quand elle devient cohérente.
    Affiché sur la page Synchronisation, recalculé après chaque synchro.
 ================================================================ */
@@ -43,6 +44,12 @@ function inversee(d: string): string | null {
   return x.toISOString().slice(0, 10);
 }
 
+/* vrai si a tombe plus de 60 jours avant b */
+const TOLERANCE_JOURS = 60;
+function tropTot(a: string, b: string) {
+  return (new Date(`${b.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${a.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > TOLERANCE_JOURS;
+}
+
 function verifier(l: Ligne): Probleme[] {
   const numero = l.numero_affaire || l.numero_devis || l.cle;
   const res: Probleme[] = [];
@@ -51,11 +58,11 @@ function verifier(l: Ligne): Probleme[] {
     const inv = inversee(d);
     return inv && (!apres || inv >= apres.slice(0, 10)) ? ` Jour et mois inversés ? Peut-être le ${fr(inv)}.` : "";
   };
-  if (l.date_reception_commande && l.date_ouverture && l.date_reception_commande.slice(0, 10) < l.date_ouverture.slice(0, 10))
+  if (l.date_reception_commande && l.date_ouverture && tropTot(l.date_reception_commande, l.date_ouverture))
     ajouter(`Commande reçue le ${fr(l.date_reception_commande)}, avant l’ouverture du ${fr(l.date_ouverture)}.${suggestion(l.date_reception_commande, l.date_ouverture)}`);
-  if (l.date_envoi && l.date_ouverture && l.date_envoi.slice(0, 10) < l.date_ouverture.slice(0, 10))
+  if (l.date_envoi && l.date_ouverture && tropTot(l.date_envoi, l.date_ouverture))
     ajouter(`Devis envoyé le ${fr(l.date_envoi)}, avant son ouverture le ${fr(l.date_ouverture)}.${suggestion(l.date_envoi, l.date_ouverture)}`);
-  if (l.date_livraison && l.date_reception_commande && l.date_livraison.slice(0, 10) < l.date_reception_commande.slice(0, 10))
+  if (l.date_livraison && l.date_reception_commande && tropTot(l.date_livraison, l.date_reception_commande))
     ajouter(`Livrée le ${fr(l.date_livraison)}, avant la réception de la commande le ${fr(l.date_reception_commande)}.${suggestion(l.date_livraison, l.date_reception_commande)}`);
   return res;
 }
@@ -92,7 +99,7 @@ export default function DatesIncoherentes({ actualisation }: { actualisation: st
     <section style={{ ...page.carte, padding: 16, marginTop: 20 }}>
       <h2 style={{ margin: "0 0 6px", fontSize: 20 }}>Dates impossibles dans le classeur</h2>
       <p style={{ margin: "0 0 12px", color: C.gris }}>
-        Des dates qui ne peuvent pas être justes, le plus souvent le jour et le mois inversés à la saisie (11/02 au lieu de 02/11). Elles faussent les
+        Des dates qui ne peuvent pas être justes (plus de 60 jours d’écart dans le mauvais sens), le plus souvent le jour et le mois inversés à la saisie (11/02 au lieu de 02/11). Elles faussent les
         indicateurs, la facturation et le classement des commandes : à corriger dans le Suivi d’affaire BE.
       </p>
       {erreur && <Message genre="erreur">{erreur}</Message>}
