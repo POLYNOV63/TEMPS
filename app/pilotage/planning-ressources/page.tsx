@@ -110,10 +110,18 @@ function PlanningRessourcesContenu() {
     const dernier = colonnes[colonnes.length - 1];
     const veille = ajouterJours(lundiActuel, -1);
     let actif = true;
-    void supabase.rpc("planning_realise", { p_debut: premier, p_fin: dernier < veille ? dernier : veille }).then(({ data, error }) => {
+    // CHARGE_SEMAINE : le réalisé est lu par paquets de 1 000 lignes (sinon tronqué quand on recule de plusieurs semaines)
+    void (async () => {
+      const tout: { collaborateur_id: string; jour: string; type_affaire: string; numero: string | null; libelle: string | null; heures: number | string }[] = [];
+      for (let a = 0; a < 100000; a += 1000) {
+        const { data, error } = await supabase.rpc("planning_realise", { p_debut: premier, p_fin: dernier < veille ? dernier : veille }).range(a, a + 999);
+        if (error || !data) break;
+        tout.push(...(data as typeof tout));
+        if (data.length < 1000) break;
+      }
       if (!actif) return;
-      setRealise(error ? [] : ((data ?? []) as { collaborateur_id: string; jour: string; type_affaire: string; numero: string | null; libelle: string | null; heures: number | string }[]).map((x) => ({ ...x, heures: Number(x.heures) || 0 })));
-    });
+      setRealise(tout.map((x) => ({ ...x, heures: Number(x.heures) || 0 })));
+    })();
     return () => {
       actif = false;
     };
@@ -233,7 +241,7 @@ function PlanningRessourcesContenu() {
           const h = parJour.get(i) ?? 0;
           p.charge[i] += h;
           if (g.libelle.startsWith("CBE")) venduDe(g.collab)[i] += h;
-          if (courant && i === courant.fin + 1) {
+          if (courant && i === courant.fin + 1 && i % 5 !== 0) {
             courant.fin = i;
             courant.heures += h;
           } else {
@@ -510,18 +518,54 @@ function PlanningRessourcesContenu() {
                   const net = du.reduce((t, x) => t + x.totalNet, 0);
                   const r = net > 0 ? aff / net : 0;
                   return (
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 6px 4px", marginTop: k === 0 ? 0 : 8, borderBottom: `2px solid ${C.ligne}`, position: "sticky", left: 0 }}>
-                      <strong style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: ".4px", color: C.rougeFonce }}>{l.groupe}</strong>
-                      <span
-                        style={{ fontSize: 13, color: C.gris }}
-                        title="Tout ce qui est planifié pour ces personnes (affaires, PE / PI, hors affaire) face à leur temps disponible (congés validés et jours fériés déduits), sur les semaines affichées"
-                      >
-                        {/* CHARGE_GROUPE_EXPLIQUEE */}
-                        {du.length} personne{du.length > 1 ? "s" : ""} · du {formatDate(debut)} au {formatDate(fin)} : {formatHeures(aff)} planifiées sur{" "}
-                        {formatHeures(net)} disponibles ·{" "}
-                        <strong style={{ color: r > 1.01 ? "#b3261e" : r > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(r * 100)} % de charge</strong>
-                      </span>
-                    </div>
+                    <>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "10px 6px 2px", marginTop: k === 0 ? 0 : 8, position: "sticky", left: 0 }}>
+                        <strong style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: ".4px", color: C.rougeFonce }}>{l.groupe}</strong>
+                        <span style={{ fontSize: 13, color: C.gris }}>
+                          {du.length} personne{du.length > 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      {/* CHARGE_SEMAINE : charge de l'activité semaine par semaine (réalisé pour les semaines passées, prévu ensuite) */}
+                      <div style={{ display: "grid", gridTemplateColumns: gabarit, borderBottom: `2px solid ${C.ligne}` }}>
+                        <div
+                          title="Charge de l’activité : heures planifiées (ou pointées, pour les semaines passées en « réalisé ») ÷ heures disponibles, congés et fériés déduits"
+                          style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", padding: "2px 6px 4px", fontSize: 12, fontWeight: 800, color: C.gris }}
+                        >
+                          charge
+                        </div>
+                        {Array.from({ length: Math.ceil(colonnes.length / 5) }, (_, w) => {
+                          const i0 = w * 5;
+                          const i1 = Math.min(colonnes.length, i0 + 5);
+                          let ch = 0;
+                          let dispo = 0;
+                          for (const x of du)
+                            for (let j2 = i0; j2 < i1; j2++) {
+                              ch += x.charge[j2] ?? 0;
+                              dispo += x.nets[j2] ?? 0;
+                            }
+                          const rr = dispo > 0 ? ch / dispo : 0;
+                          const passee = colonnes[i0] < lundiActuel;
+                          return (
+                            <div
+                              key={`ch-${colonnes[i0]}`}
+                              title={`S${numeroSemaine(colonnes[i0])} : ${formatHeures(ch)} ${passee && passe === "REALISE" ? "pointées" : "planifiées"} pour ${formatHeures(dispo)} disponibles`}
+                              style={{
+                                gridColumn: `${col(i0)} / span ${i1 - i0}`,
+                                textAlign: "center",
+                                padding: "2px 0 4px",
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: rr > 1.05 ? "#b3261e" : rr >= 0.8 ? "#1b5e20" : rr >= 0.6 ? "#7a3e00" : "#b3261e",
+                                background: passee ? "#f6f7f8" : undefined,
+                                borderLeft: `1px solid ${C.ligne}`,
+                              }}
+                            >
+                              {dispo > 0 ? `${Math.round(rr * 100)} %` : "—"}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   );
                 })()}
                 <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>

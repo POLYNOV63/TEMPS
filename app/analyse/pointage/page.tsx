@@ -59,9 +59,15 @@ function agreger(lignes: { numero: string; collaborateur_id: string; activite_id
 }
 
 async function chargerPeriode(du: string, au: string) {
-  const { data, error } = await supabase.rpc("pointage_periode", { p_debut: du, p_fin: au });
-  if (error) return [];
-  return ((data ?? []) as { type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number | string }[])
+  // POINTE_PAGINE : lu par paquets de 1 000 lignes (un exercice entier en dépasse largement)
+  const data: unknown[] = [];
+  for (let a = 0; a < 200000; a += 1000) {
+    const r = await supabase.rpc("pointage_periode", { p_debut: du, p_fin: au }).range(a, a + 999);
+    if (r.error || !r.data) break;
+    data.push(...(r.data as unknown[]));
+    if (r.data.length < 1000) break;
+  }
+  return (data as { type_affaire: string; numero: string; collaborateur_id: string; activite_id: string | null; heures: number | string }[])
     .filter((x) => x.type_affaire === "CBE")
     .map((x) => ({ numero: sansZeros(x.numero), collaborateur_id: x.collaborateur_id, activite_id: x.activite_id, heures: Number(x.heures) || 0 }));
 }
