@@ -363,14 +363,16 @@ function PortefeuilleContenu() {
 
     return lignes.filter(({ affaire, totaux, client, famille }) => {
       if (filtreType !== "TOUS" && affaire.type !== filtreType) return false;
-      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(" ") ?? ""} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
+      // RECHERCHE_DEVIS : on retrouve une commande par son n° de devis d'origine (DBE2835 ou 2835)
+      const devisNum = affaire.type === "CBE" ? devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) : undefined;
+      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(" ") ?? ""} ${devisNum ? `dbe${devisNum} ${devisNum}` : ""} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
       if (filtreImputation && (affaire.imputation ?? "") !== filtreImputation) return false;
       if (filtreClient && (client ?? "") !== filtreClient) return false;
       if (filtreResp && affaire.responsable_id !== filtreResp) return false;
       if (depassementSeul && !(totaux.depassement > 0)) return false;
       return true;
     });
-  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes]);
+  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes, devisParCbe]);
 
   const trier = useCallback(
     (liste: Ligne[]) => {
@@ -403,6 +405,8 @@ function PortefeuilleContenu() {
         // FAMILLE_UNE_LIGNE : une seule ligne par famille (celle qui porte le réalisé) ; les dormantes vont à part
         filtrees.filter(({ affaire, dansFamille }) => {
           if (dansFamille) return false;
+          // pendant une recherche : livrées, abandonnées et sans activité comprises, dans ce seul tableau
+          if (recherche.trim()) return true;
           if (dormantes.has(affaire.id)) return false;
           if (estInactive(affaire)) return false;
           if (filtreStatut === "EN_COURS") return affaire.statut === "EN_COURS";
@@ -410,13 +414,13 @@ function PortefeuilleContenu() {
           return true;
         })
       ),
-    [filtrees, filtreStatut, trier, dormantes]
+    [filtrees, filtreStatut, trier, dormantes, recherche]
   );
 
-  const inactives = useMemo(() => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier]);
+  const inactives = useMemo(() => trier(recherche.trim() ? [] : filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier, recherche]);
   const dormantesListe = useMemo(
-    () => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),
-    [filtrees, trier, dormantes]
+    () => trier(recherche.trim() ? [] : filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),
+    [filtrees, trier, dormantes, recherche]
   );
 
   // Listes des menus de filtre (seulement les valeurs présentes)
@@ -1051,7 +1055,7 @@ function PortefeuilleContenu() {
                 <input
                   type="search"
                   aria-label="Rechercher une affaire"
-                  placeholder="Rechercher un numéro, un descriptif ou un client…"
+                  placeholder="Rechercher : n° de commande ou de devis (DBE), descriptif, client…"
                   value={recherche}
                   onChange={(e) => setRecherche(e.target.value)}
                   style={{ ...page.entrees, maxWidth: 340 }}
@@ -1085,7 +1089,7 @@ function PortefeuilleContenu() {
 
               {/* ---------- Affaires actives ---------- */}
               <h2 style={{ margin: "8px 0", fontSize: 18 }}>
-                Affaires actives <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>
+                {recherche.trim() ? "Résultats de la recherche, tous statuts" : "Affaires actives"} <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>
               </h2>
               {actives.length === 0 ? (
                 <p style={{ color: C.gris, padding: "8px 4px" }}>

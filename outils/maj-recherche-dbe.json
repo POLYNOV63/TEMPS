@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : n° de devis (DBE) d'une commande",
+  "cherche": "      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(\" \") ?? \"\"} ${affaire.designation} ${client ?? \"\"}`).includes(q)) return false;",
+  "remplace": "      // RECHERCHE_DEVIS : on retrouve une commande par son n° de devis d'origine (DBE2835 ou 2835)\n      const devisNum = affaire.type === \"CBE\" ? devisParCbe.get((affaire.numero.match(/^\\d+/)?.[0] ?? \"\").replace(/^0+/, \"\")) : undefined;\n      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(\" \") ?? \"\"} ${devisNum ? `dbe${devisNum} ${devisNum}` : \"\"} ${affaire.designation} ${client ?? \"\"}`).includes(q)) return false;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : dépendances",
+  "cherche": "  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes]);",
+  "remplace": "  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes, devisParCbe]);"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : tous les statuts dans un seul tableau",
+  "cherche": "        filtrees.filter(({ affaire, dansFamille }) => {\n          if (dansFamille) return false;",
+  "remplace": "        filtrees.filter(({ affaire, dansFamille }) => {\n          if (dansFamille) return false;\n          // pendant une recherche : livrées, abandonnées et sans activité comprises, dans ce seul tableau\n          if (recherche.trim()) return true;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : dépendances des affaires actives",
+  "cherche": "    [filtrees, filtreStatut, trier, dormantes]",
+  "remplace": "    [filtrees, filtreStatut, trier, dormantes, recherche]"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : pas de doublon dans les inactives",
+  "cherche": "  const inactives = useMemo(() => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier]);",
+  "remplace": "  const inactives = useMemo(() => trier(recherche.trim() ? [] : filtrees.filter(({ affaire, dansFamille }) => !dansFamille && estInactive(affaire))), [filtrees, trier, recherche]);"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : pas de doublon dans les commandes sans activité",
+  "cherche": "    () => trier(filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),\n    [filtrees, trier, dormantes]",
+  "remplace": "    () => trier(recherche.trim() ? [] : filtrees.filter(({ affaire, dansFamille }) => !dansFamille && !estInactive(affaire) && dormantes.has(affaire.id))),\n    [filtrees, trier, dormantes, recherche]"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : titre du tableau",
+  "cherche": "                Affaires actives <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>",
+  "remplace": "                {recherche.trim() ? \"Résultats de la recherche, tous statuts\" : \"Affaires actives\"} <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Recherche : texte d'aide du champ",
+  "cherche": "placeholder=\"Rechercher un numéro, un descriptif ou un client…\"",
+  "remplace": "placeholder=\"Rechercher : n° de commande ou de devis (DBE), descriptif, client…\""
+ }
+]
