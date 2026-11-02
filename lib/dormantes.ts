@@ -1,17 +1,22 @@
 import { supabase } from "@/lib/supabase";
 
 /* ===============================================================
-   COMMANDES PE / PI DORMANTES (SQL 71)
+   COMMANDES PE / PI DORMANTES (SQL 71, puis 74)
 
    Une PE / PI en cours est « dormante » quand sa famille (commande de
    base et avenants) n'a ni heure saisie au relevé, ni nouvelle commande
-   reçue, depuis 3 mois. Une commande reçue récemment n'est donc jamais
-   dormante, même sans heure encore saisie.
+   reçue, depuis 3 mois.
+   Garde-fou (v2) : une commande dont on ne connaît NI la date de commande
+   NI une heure saisie est considérée comme nouvelle : jamais dormante
+   (une commande qui vient d'arriver, dont la date manque au classeur, ne
+   doit pas disparaître de « à staffer »).
 ================================================================ */
 
 export type Dormance = { depuis: string | null; jamais: boolean };
 
 const baseDe = (numero: string) => (numero.match(/^\d+/)?.[0] ?? numero).replace(/^0+/, "");
+
+type LigneActivite = { affaire_id: string; numero: string; derniere_saisie: string | null; date_commande: string | null };
 
 export async function chargerDormantes(
   affaires: { id: string; numero: string; statut: string; imputation: string | null }[],
@@ -20,8 +25,10 @@ export async function chargerDormantes(
   const res = new Map<string, Dormance>();
   const { data, error } = await supabase.rpc("pepi_activite_commandes");
   if (error || !data) return res;
+  const lignes = data as LigneActivite[];
+  const parAffaire = new Map(lignes.map((l) => [l.affaire_id, l]));
   const familles = new Map<string, { derniere: string | null; commande: string | null }>();
-  for (const r of data as { numero: string; derniere_saisie: string | null; date_commande: string | null }[]) {
+  for (const r of lignes) {
     const k = baseDe(r.numero);
     const f = familles.get(k) ?? { derniere: null, commande: null };
     if (r.derniere_saisie && (!f.derniere || r.derniere_saisie > f.derniere)) f.derniere = r.derniere_saisie;
@@ -33,6 +40,9 @@ export async function chargerDormantes(
   const seuil = d.toISOString().slice(0, 10);
   for (const a of affaires) {
     if (a.statut !== "EN_COURS" || !(a.imputation === "PE" || a.imputation === "PI")) continue;
+    // DORMANTES_V2 : rien de connu sur cette commande elle-même = commande nouvelle, jamais dormante
+    const propre = parAffaire.get(a.id);
+    if (!propre || (!propre.derniere_saisie && !propre.date_commande)) continue;
     const f = familles.get(baseDe(a.numero));
     if (!f) continue;
     const recent = [f.derniere, f.commande].filter((x): x is string => Boolean(x)).sort().pop();
