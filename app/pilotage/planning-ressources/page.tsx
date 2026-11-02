@@ -597,11 +597,22 @@ function PlanningRessourcesContenu() {
                                 borderLeft: `1px solid ${C.ligne}`,
                               }}
                             >
-                              {dispo > 0 ? `${Math.round(rr * 100)} %` : "—"}
-                              {dispo > 0 && (
-                                <div style={{ fontSize: 10, fontWeight: 700, color: C.gris }} title={`CBE ${formatHeures(cb)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)}`}>
-                                  CBE {Math.round((cb / dispo) * 100)} % · DBE {Math.round((db / dispo) * 100)} % · Div. {Math.round((dv / dispo) * 100)} %
-                                </div>
+                              {/* TROIS_PARTS : CBE / DBE / Divers en premier ; la charge totale seulement pour les semaines à venir */}
+                              {dispo > 0 ? (
+                                <>
+                                  <div title={`CBE ${formatHeures(cb)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)} · disponible ${formatHeures(dispo)}`}>
+                                    <span style={{ color: "#b03a64" }}>CBE {Math.round((cb / dispo) * 100)} %</span>
+                                    <span style={{ color: C.gris, fontWeight: 400 }}> · </span>
+                                    <span style={{ color: "#c2708f" }}>DBE {Math.round((db / dispo) * 100)} %</span>
+                                    <span style={{ color: C.gris, fontWeight: 400 }}> · </span>
+                                    <span style={{ color: "#6b7178" }}>Div. {Math.round((dv / dispo) * 100)} %</span>
+                                  </div>
+                                  {!(passee && passe === "REALISE") && (
+                                    <div style={{ fontSize: 10, fontWeight: 700 }}>charge prévue {Math.round(rr * 100)} %</div>
+                                  )}
+                                </>
+                              ) : (
+                                "—"
                               )}
                             </div>
                           );
