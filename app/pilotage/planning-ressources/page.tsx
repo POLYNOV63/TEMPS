@@ -306,8 +306,15 @@ function PlanningRessourcesContenu() {
           debut: Math.min(...ss.map((s) => s.debut)),
           fin: Math.max(...ss.map((s) => s.fin)),
           heures: tri.reduce((t, [, h]) => t + h, 0),
-          couleur: "#3b4046",
-          encre: "#ffffff",
+          // REALISE_COULEURS : la barre est colorée en proportion : CBE rose foncé, DBE rose, Divers gris clair
+          couleur: (() => {
+            const total = tri.reduce((t, [, h]) => t + h, 0) || 1;
+            const part = (f: (l: string) => boolean) => (tri.filter(([l]) => f(l)).reduce((t, [, h]) => t + h, 0) / total) * 100;
+            const cbe = part((l) => l.startsWith("CBE"));
+            const dbe = part((l) => l.startsWith("DBE"));
+            return `linear-gradient(90deg, #d9849f 0% ${cbe}%, #f2bfd0 ${cbe}% ${cbe + dbe}%, #e3e5e8 ${cbe + dbe}% 100%)`;
+          })(),
+          encre: "#2b2f33",
           voie: 0,
         });
       }
@@ -593,7 +600,7 @@ function PlanningRessourcesContenu() {
                               {dispo > 0 ? `${Math.round(rr * 100)} %` : "—"}
                               {dispo > 0 && (
                                 <div style={{ fontSize: 10, fontWeight: 700, color: C.gris }} title={`CBE ${formatHeures(cb)} · DBE ${formatHeures(db)} · Divers ${formatHeures(dv)}`}>
-                                  CBE {Math.round((cb / dispo) * 100)} · DBE {Math.round((db / dispo) * 100)} · Div. {Math.round((dv / dispo) * 100)}
+                                  CBE {Math.round((cb / dispo) * 100)} % · DBE {Math.round((db / dispo) * 100)} % · Div. {Math.round((dv / dispo) * 100)} %
                                 </div>
                               )}
                             </div>

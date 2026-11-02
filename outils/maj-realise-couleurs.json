@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Répartition de l'activité : les % affichés",
+  "cherche": "CBE {Math.round((cb / dispo) * 100)} · DBE {Math.round((db / dispo) * 100)} · Div. {Math.round((dv / dispo) * 100)}",
+  "remplace": "CBE {Math.round((cb / dispo) * 100)} % · DBE {Math.round((db / dispo) * 100)} % · Div. {Math.round((dv / dispo) * 100)} %"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Réalisé : couleurs CBE / DBE / Divers dans la barre",
+  "cherche": "          couleur: \"#3b4046\",\n          encre: \"#ffffff\",",
+  "remplace": "          // REALISE_COULEURS : la barre est colorée en proportion : CBE rose foncé, DBE rose, Divers gris clair\n          couleur: (() => {\n            const total = tri.reduce((t, [, h]) => t + h, 0) || 1;\n            const part = (f: (l: string) => boolean) => (tri.filter(([l]) => f(l)).reduce((t, [, h]) => t + h, 0) / total) * 100;\n            const cbe = part((l) => l.startsWith(\"CBE\"));\n            const dbe = part((l) => l.startsWith(\"DBE\"));\n            return `linear-gradient(90deg, #d9849f 0% ${cbe}%, #f2bfd0 ${cbe}% ${cbe + dbe}%, #e3e5e8 ${cbe + dbe}% 100%)`;\n          })(),\n          encre: \"#2b2f33\","
+ }
+]
