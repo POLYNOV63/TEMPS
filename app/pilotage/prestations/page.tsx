@@ -1962,7 +1962,7 @@ function PrestationsContenu() {
                                         <button
                                           type="button"
                                           onClick={() => setFiche(a.id)}
-                                          title={`Commande ${texteHeures(Math.round((f.quantite ?? 0) * 100) / 100)} ${u} · consommé ${texteHeures(Math.round(f.consomme * 100) / 100)} ${u}${f.resteE !== null ? ` · reste ${euros(f.resteE)}` : ""}${resteClasseur !== null ? ` · Suivi des prestations : ${texteHeures(resteClasseur)} ${u}` : ""}`}
+                                          title={`Commande ${texteHeures(Math.round((f.quantite ?? 0) * 100) / 100)} ${u} · consommé ${texteHeures(Math.round(f.consomme * 100) / 100)} ${u}${f.resteE !== null ? ` · reste ${euros(f.resteE)}` : ""}`}
                                           style={{ all: "unset", cursor: "pointer" }}
                                         >
                                           <Pastille genre={f.reste <= 0 ? "crit" : f.quantite && f.reste / f.quantite < 0.2 ? "warn" : "ok"}>
@@ -1985,7 +1985,6 @@ function PrestationsContenu() {
                                               </>
                                             );
                                           })()}
-                                          {ecartClasseur && <div style={{ fontSize: 10, color: "#b35c00", fontWeight: 800 }}>⚠ classeur {texteHeures(resteClasseur ?? 0)}</div>}
                                         </button>
                                       );
                                     })()
