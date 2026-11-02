@@ -867,8 +867,13 @@ function IndicateursContenu() {
             {/* ---------- Top 10 clients par imputation (prise de commande sur la période) ---------- */}
             {(() => {
               // imputation d'une commande : la sienne, sinon celle de sa commande de base (avenants)
-              const impBase = new Map(lignes.filter((l) => l.genre === "BASE" && l.base_affaire).map((l) => [l.base_affaire as string, l.imputation]));
-              const imputationDe = (l: LigneInd) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
+              const impBase = new Map<string, string | null>();
+              for (const x of lignes) if (x.genre === "BASE" && x.base_affaire) impBase.set(x.base_affaire, x.imputation);
+              const imputationDe = (l: LigneInd): string => {
+                if (l.imputation) return l.imputation;
+                const b = l.base_affaire ? impBase.get(l.base_affaire) : undefined;
+                return b || "Sans imputation";
+              };
               const parImputation = repartir(calcul.commandes, imputationDe);
               const choisie = imputationTop && parImputation.some((p) => p.cle === imputationTop) ? imputationTop : "";
               const perimetre = choisie ? calcul.commandes.filter((l) => imputationDe(l) === choisie) : calcul.commandes;
@@ -948,8 +953,13 @@ function IndicateursContenu() {
 
             {/* DEVIS_FORFAITS : devis émis au forfait (hors PE / PI) face à ce qu'ils rapportent, par imputation */}
             {(() => {
-              const impBase = new Map(lignes.filter((l) => l.genre === "BASE" && l.base_affaire).map((l) => [l.base_affaire as string, l.imputation]));
-              const imp = (l: LigneInd) => l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null) ?? "Sans imputation";
+              const impBase = new Map<string, string | null>();
+              for (const x of lignes) if (x.genre === "BASE" && x.base_affaire) impBase.set(x.base_affaire, x.imputation);
+              const imp = (l: LigneInd): string => {
+                if (l.imputation) return l.imputation;
+                const b = l.base_affaire ? impBase.get(l.base_affaire) : undefined;
+                return b || "Sans imputation";
+              };
               const forfait = (l: LigneInd) => imp(l) !== "PE" && imp(l) !== "PI";
               const emisF = calcul.emis.filter(forfait);
               const cmdF = calcul.commandes.filter(forfait);
