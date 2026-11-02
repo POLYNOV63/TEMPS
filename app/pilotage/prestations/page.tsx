@@ -187,6 +187,34 @@ function PrestationsContenu() {
   const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
+  /* FICHE_FAMILLE : dates de chaque commande de la famille (base et avenants), lues dans la copie du Suivi d'affaire */
+  const [datesCommandes, setDatesCommandes] = useState<Map<string, { statut: string | null; ouverture: string | null; reception: string | null; livraison: string | null }>>(new Map());
+  useEffect(() => {
+    if (!fiche) return;
+    let actif = true;
+    void chargerTout<{ numero_affaire: string | null; statut: string | null; date_ouverture: string | null; date_reception_commande: string | null; date_livraison: string | null }>((a, b) =>
+      supabase
+        .from("suivi_lignes")
+        .select("numero_affaire,statut,date_ouverture,date_reception_commande,date_livraison")
+        .in("genre", ["BASE", "AVENANT"])
+        .not("numero_affaire", "is", null)
+        .order("cle")
+        .range(a, b)
+    ).then((l) => {
+      if (!actif) return;
+      setDatesCommandes(
+        new Map(
+          l.map((x) => [
+            String(x.numero_affaire).toUpperCase().replace(/^\s*CBE\s*[-:]?\s*/, "").replace(/^0+/, ""),
+            { statut: x.statut, ouverture: x.date_ouverture, reception: x.date_reception_commande, livraison: x.date_livraison },
+          ])
+        )
+      );
+    });
+    return () => {
+      actif = false;
+    };
+  }, [fiche]);
   /* PLANIFIE_FUTUR : heures déjà saisies après le mois affiché (planifiées) et dernier jour saisi avant lui, par ligne */
   const [planif, setPlanif] = useState<{ futur: Map<string, { heures: number; dernier: string; fait: number }>; avant: Map<string, string> }>({ futur: new Map(), avant: new Map() });
   /* AVENANTS_IGNORES : commandes qu'on ne veut plus voir dans « Avenant à prévoir » (retenu sur ce poste) */
@@ -2412,6 +2440,51 @@ function PrestationsContenu() {
                         ),
                         "Commandé − fait − planifié"
                       )}
+                    </>
+                  );
+                })()}
+
+                {(() => {
+                  const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
+                  const famille = affaires
+                    .filter((x) => (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "") === base)
+                    .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+                  const frD = (d: string | null) => (d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "—");
+                  return (
+                    <>
+                      {titreSection(famille.length > 1 ? "Commandes de la famille" : "Dates de la commande")}
+                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, marginBottom: 6 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ ...page.th, padding: "4px 6px" }}>N°</th>
+                            <th style={{ ...page.th, padding: "4px 6px" }}>Statut</th>
+                            <th style={{ ...page.th, padding: "4px 6px" }}>Ouverte</th>
+                            <th style={{ ...page.th, padding: "4px 6px" }}>Reçue</th>
+                            <th style={{ ...page.th, padding: "4px 6px" }}>Livrée</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {famille.map((x) => {
+                            const d = datesCommandes.get(x.numero.toUpperCase().replace(/^0+/, ""));
+                            const inversee = Boolean(d?.reception && d?.ouverture && d.reception.slice(0, 10) < d.ouverture.slice(0, 10));
+                            return (
+                              <tr key={x.id} style={x.id === a.id ? { background: "#fff7e0" } : undefined}>
+                                <td style={{ ...page.td, padding: "4px 6px", fontWeight: 800 }}>{x.numero}</td>
+                                <td style={{ ...page.td, padding: "4px 6px" }}>{d?.statut ?? (x.statut === "LIVREE" ? "Livrée" : x.statut === "EN_COURS" ? "En cours" : x.statut)}</td>
+                                <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.ouverture ?? null)}</td>
+                                <td
+                                  style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap", color: inversee ? "#b3261e" : undefined, fontWeight: inversee ? 800 : undefined }}
+                                  title={inversee ? "Reçue avant son ouverture : date à vérifier dans le Suivi d’affaire (jour et mois inversés ?)" : undefined}
+                                >
+                                  {frD(d?.reception ?? null)}
+                                  {inversee ? " ⚠" : ""}
+                                </td>
+                                <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.livraison ?? null)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </>
                   );
                 })()}
