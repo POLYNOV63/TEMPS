@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import ControleSuiviAffaire from "@/components/ControleSuiviAffaire";
+import DatesIncoherentes from "@/components/DatesIncoherentes";
 import { C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { extraireColonnesAutorisees, type Anomalie, type LigneBrute } from "@/lib/suiviAffaires";
@@ -540,6 +541,7 @@ function SynchroContenu() {
 
         {/* contrôle pour la facturation, recalculé après chaque synchronisation */}
         <ControleSuiviAffaire actualisation={journal[0]?.id ?? ""} />
+        <DatesIncoherentes actualisation={journal[0]?.id ?? ""} />
       </div>
     </main>
   );
