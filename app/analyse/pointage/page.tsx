@@ -89,6 +89,29 @@ function AnalyseChiffreContenu() {
   const [seulementAlertes, setSeulementAlertes] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
+  /* AVANCEMENT_SAISI : % accompli estimé par le responsable (SQL 79), sur la commande de base de la famille */
+  const [avancements, setAvancements] = useState<Map<string, { pct: number; le: string | null }>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("pilotage_affaires")
+      .select("id,avancement_pct,avancement_le")
+      .not("avancement_pct", "is", null)
+      .then(({ data }) =>
+        setAvancements(new Map(((data ?? []) as { id: string; avancement_pct: number | string; avancement_le: string | null }[]).map((x) => [x.id, { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])))
+      );
+  }, []);
+  async function enregistrerAvancement(id: string, texte: string) {
+    const v = texte.trim() === "" ? null : Number(texte.replace(",", "."));
+    if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) return setErreur("L’avancement se donne entre 0 et 100 %.");
+    const { error } = await supabase.rpc("pilotage_maj_avancement", { p_affaire_id: id, p_pct: v });
+    if (error) return setErreur(error.message);
+    setAvancements((m) => {
+      const n = new Map(m);
+      if (v === null) n.delete(id);
+      else n.set(id, { pct: v, le: new Date().toISOString().slice(0, 10) });
+      return n;
+    });
+  }
 
   /* ---------- période ---------- */
   const aujourdhui = (() => {
@@ -564,6 +587,11 @@ function AnalyseChiffreContenu() {
                               {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
                               {v.chiffre === 0 && v.fin > 0.5 && <Pastille genre="warn">non chiffré</Pastille>}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
+                              {(() => {
+                                const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
+                                const av = baseId ? avancements.get(baseId) : undefined;
+                                return av ? <Pastille genre="info">accompli {Math.round(av.pct)} %</Pastille> : null;
+                              })()}
                             </div>
                           </td>
                         </tr>
@@ -589,6 +617,35 @@ function AnalyseChiffreContenu() {
                                     </tbody>
                                   </table>
                                 </div>
+                                {(() => {
+                                  const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
+                                  if (!baseId) return null;
+                                  const av = avancements.get(baseId);
+                                  const auxHeures = f.chiffre > 0 ? Math.min(100, Math.round((f.pointe / f.chiffre) * 100)) : null;
+                                  return (
+                                    <div style={{ flex: "1 1 220px" }}>
+                                      <strong>Avancement accompli (estimé)</strong>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                        <input
+                                          key={`${baseId}-${av?.pct ?? ""}`}
+                                          defaultValue={av ? String(av.pct) : ""}
+                                          inputMode="decimal"
+                                          placeholder={auxHeures !== null ? String(auxHeures) : "—"}
+                                          aria-label="Avancement accompli en pourcentage"
+                                          onBlur={(e) => {
+                                            if (e.target.value.trim() !== (av ? String(av.pct) : "")) void enregistrerAvancement(baseId, e.target.value);
+                                          }}
+                                          style={{ ...page.entrees, width: 80, textAlign: "right" }}
+                                        />
+                                        <span>%</span>
+                                      </div>
+                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
+                                        {av ? `Saisi le ${av.le ? formatDate(av.le) : "—"} · ` : "Non saisi : les en-cours se calculent aux heures · "}
+                                        aux heures : {auxHeures !== null ? `${auxHeures} %` : "chiffré inconnu"}. Vider le champ pour revenir aux heures.
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                                 {f.membres.length > 1 && (
                                   <div style={{ flex: "1 1 220px" }}>
                                     <strong>Par commande</strong>

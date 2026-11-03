@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : avancements estimés (chargement)",
+  "cherche": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());",
+  "remplace": "  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());\n  /* AVANCEMENT_SAISI : % accompli estimé par le responsable (SQL 79), sur la commande de base de la famille */\n  const [avancements, setAvancements] = useState<Map<string, { pct: number; le: string | null }>>(new Map());\n  useEffect(() => {\n    void supabase\n      .from(\"pilotage_affaires\")\n      .select(\"id,avancement_pct,avancement_le\")\n      .not(\"avancement_pct\", \"is\", null)\n      .then(({ data }) =>\n        setAvancements(new Map(((data ?? []) as { id: string; avancement_pct: number | string; avancement_le: string | null }[]).map((x) => [x.id, { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])))\n      );\n  }, []);\n  async function enregistrerAvancement(id: string, texte: string) {\n    const v = texte.trim() === \"\" ? null : Number(texte.replace(\",\", \".\"));\n    if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) return setErreur(\"L’avancement se donne entre 0 et 100 %.\");\n    const { error } = await supabase.rpc(\"pilotage_maj_avancement\", { p_affaire_id: id, p_pct: v });\n    if (error) return setErreur(error.message);\n    setAvancements((m) => {\n      const n = new Map(m);\n      if (v === null) n.delete(id);\n      else n.set(id, { pct: v, le: new Date().toISOString().slice(0, 10) });\n      return n;\n    });\n  }"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : repère de l'avancement estimé",
+  "cherche": "                              {dormance && <Pastille genre=\"info\">💤 {libelleDormance(dormance)}</Pastille>}",
+  "remplace": "                              {dormance && <Pastille genre=\"info\">💤 {libelleDormance(dormance)}</Pastille>}\n                              {(() => {\n                                const baseId = (f.membres.find((m) => /^\\d+$/.test(m.numero)) ?? f.membres[0])?.id;\n                                const av = baseId ? avancements.get(baseId) : undefined;\n                                return av ? <Pastille genre=\"info\">accompli {Math.round(av.pct)} %</Pastille> : null;\n                              })()}"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : saisie de l'avancement estimé",
+  "cherche": "                                {f.membres.length > 1 && (",
+  "remplace": "                                {(() => {\n                                  const baseId = (f.membres.find((m) => /^\\d+$/.test(m.numero)) ?? f.membres[0])?.id;\n                                  if (!baseId) return null;\n                                  const av = avancements.get(baseId);\n                                  const auxHeures = f.chiffre > 0 ? Math.min(100, Math.round((f.pointe / f.chiffre) * 100)) : null;\n                                  return (\n                                    <div style={{ flex: \"1 1 220px\" }}>\n                                      <strong>Avancement accompli (estimé)</strong>\n                                      <div style={{ display: \"flex\", alignItems: \"center\", gap: 6, marginTop: 4 }}>\n                                        <input\n                                          key={`${baseId}-${av?.pct ?? \"\"}`}\n                                          defaultValue={av ? String(av.pct) : \"\"}\n                                          inputMode=\"decimal\"\n                                          placeholder={auxHeures !== null ? String(auxHeures) : \"—\"}\n                                          aria-label=\"Avancement accompli en pourcentage\"\n                                          onBlur={(e) => {\n                                            if (e.target.value.trim() !== (av ? String(av.pct) : \"\")) void enregistrerAvancement(baseId, e.target.value);\n                                          }}\n                                          style={{ ...page.entrees, width: 80, textAlign: \"right\" }}\n                                        />\n                                        <span>%</span>\n                                      </div>\n                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>\n                                        {av ? `Saisi le ${av.le ? formatDate(av.le) : \"—\"} · ` : \"Non saisi : les en-cours se calculent aux heures · \"}\n                                        aux heures : {auxHeures !== null ? `${auxHeures} %` : \"chiffré inconnu\"}. Vider le champ pour revenir aux heures.\n                                      </div>\n                                    </div>\n                                  );\n                                })()}\n                                {f.membres.length > 1 && ("
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : avancements estimés",
+  "cherche": "    const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));",
+  "remplace": "    const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));\n    // AVANCEMENT_SAISI : % accompli estimé par le responsable (SQL 79), sur la commande de base ; sinon aux heures\n    const { data: avData } = await supabase.from(\"pilotage_affaires\").select(\"numero,avancement_pct,avancement_le\").eq(\"type\", \"CBE\").not(\"avancement_pct\", \"is\", null);\n    const avancementsSaisis = new Map(\n      ((avData ?? []) as { numero: string; avancement_pct: number | string; avancement_le: string | null }[])\n        .filter((x) => /^\\d+$/.test(x.numero))\n        .map((x) => [x.numero.replace(/^0+/, \"\"), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])\n    );"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : l'avancement estimé passe avant les heures",
+  "cherche": "      const avancement = chiffre > 0 ? Math.min(1, pointe / chiffre) : null;",
+  "remplace": "      const saisi = avancementsSaisis.get(base);\n      const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : d'où vient l'avancement",
+  "cherche": "        avancement: avancement === null ? \"chiffré inconnu\" : `${Math.round(avancement * 100)} %`,",
+  "remplace": "        avancement: avancement === null ? \"chiffré inconnu\" : `${Math.round(avancement * 100)} %`,\n        mesure: saisi ? `estimé${saisi.le ? ` le ${fr(saisi.le)}` : \"\"}` : chiffre > 0 ? \"aux heures\" : \"\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : colonne « Mesuré »",
+  "cherche": "          { titre: \"Avancement\", cle: \"avancement\", largeur: 11 },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },",
+  "remplace": "          { titre: \"Avancement\", cle: \"avancement\", largeur: 11 },\n          { titre: \"Mesuré\", cle: \"mesure\", largeur: 16 },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : note sur l'avancement",
+  "cherche": "          \"Avancement = heures pointées ÷ heures chiffrées de la famille (commande et avenants), plafonné à 100 %.\",",
+  "remplace": "          \"Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.\","
+ }
+]

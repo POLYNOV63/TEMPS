@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : les intentions de commande sortent des forfaits",
+  "cherche": "    const vivantes = lignesFin.filter((l) => !l.disparue && ![\"Devis perdu\", \"Commande annulée\"].includes(l.statut ?? \"\"));",
+  "remplace": "    // INTENTIONS_A_PART : une intention n'est pas une commande ; elle est listée à part, pour mémoire\n    const vivantes = lignesFin.filter((l) => !l.disparue && ![\"Devis perdu\", \"Commande annulée\", \"Intention de commande\"].includes(l.statut ?? \"\"));"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : PE / PI faites et pas facturées à la date (mois en cours, non clôturés)",
+  "cherche": "    const totalPepi = pepi.reduce((t, r) => t + r.montant, 0);",
+  "remplace": "    // PEPI_A_FACTURER : tout le travail des PE / PI fait jusqu'à la date et pas encore facturé À CETTE DATE :\n    // mois reportés (ci-dessus), plus les mois non reportés pas encore clôturés à la date (dont le mois en cours)\n    const pepiTout: { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string }[] = pepi.map((r) => ({\n      numero: r.numero,\n      imputation: r.imputation,\n      m: r.m,\n      heures: r.heures,\n      montant: r.montant,\n      pourquoi: r.auto ? \"commande pas encore reçue\" : \"reporté à la main\",\n    }));\n    if (donneesReport) {\n      const debutFenetre = new Date(Date.UTC(Number(moisRef.slice(0, 4)), Number(moisRef.slice(5, 7)) - 13, 1)).toISOString().slice(0, 10);\n      const [pmD, saD] = await Promise.all([\n        chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; valide_le: string | null; reporte: boolean | null }>((a, b) =>\n          supabase.from(\"prestation_mois\").select(\"ligne_id,mois,valide,valide_le,reporte\").gte(\"mois\", debutFenetre).order(\"ligne_id\").range(a, b)\n        ),\n        chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>\n          supabase.from(\"prestation_saisies\").select(\"ligne_id,jour,heures\").gte(\"jour\", debutFenetre).lte(\"jour\", dateRef).order(\"jour\").range(a, b)\n        ),\n      ]);\n      const etat = new Map(pmD.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));\n      const parLigneMois = new Map<string, number>();\n      for (const s of saD) {\n        const hs = Number(s.heures) || 0;\n        if (hs <= 0) continue;\n        const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;\n        parLigneMois.set(k, (parLigneMois.get(k) ?? 0) + hs);\n      }\n      const lignesP = new Map(donneesReport.lignes.map((l) => [l.id, l]));\n      for (const [k, hs] of parLigneMois) {\n        const [lid, m] = k.split(\"|\");\n        const l = lignesP.get(lid);\n        const a = l ? donneesReport.affaires.get(l.affaire_id) : undefined;\n        if (!l || !a || l.taux === null) continue;\n        const e = etat.get(k);\n        if (e ? Boolean(e.reporte) : a.statut === \"EN_ATTENTE\") continue; // déjà compté dans les reports\n        if (e?.valide && (!e.valide_le || String(e.valide_le).slice(0, 10) <= dateRef)) continue; // facturé à la date\n        const tauxH = l.unite === \"JOUR\" ? l.taux / l.base_horaire : l.taux;\n        pepiTout.push({\n          numero: a.numero,\n          imputation: a.imputation,\n          m,\n          heures: hs,\n          montant: Math.round(hs * tauxH * 100) / 100,\n          pourquoi: m === moisRef ? \"mois en cours : facturé en fin de mois\" : \"mois terminé, pas encore clôturé à la date\",\n        });\n      }\n      pepiTout.sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, \"fr\", { numeric: true }));\n    }\n    const totalPepi = pepiTout.reduce((t, r) => t + r.montant, 0);\n    const intentions = lignesFin\n      .filter((l) => !l.disparue && l.statut === \"Intention de commande\" && (l.genre === \"BASE\" || l.genre === \"AVENANT\") && ![\"PE\", \"PI\"].includes(l.imputation ?? \"\"))\n      .filter((l) => {\n        const d = datesToutes.get(l.cle)?.date_ouverture;\n        return !d || d.slice(0, 10) <= dateRef;\n      })\n      .map((l) => {\n        const g = pointeDe((l.base_affaire ?? \"\").replace(/^0+/, \"\"));\n        const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;\n        const av = l.heures_total > 0 ? Math.min(1, pointe / l.heures_total) : null;\n        return {\n          commande: l.cle,\n          client: l.client ?? \"\",\n          designation: l.designation ?? \"\",\n          montant: Math.round(l.m.montant) || null,\n          chiffre: Math.round(l.heures_total * 10) / 10 || null,\n          pointe: Math.round(pointe * 10) / 10 || null,\n          avancement: av === null ? \"chiffré inconnu\" : `${Math.round(av * 100)} %`,\n          valeur: av === null ? null : Math.round(av * l.m.montant),\n        };\n      });\n    const totalIntentions = intentions.reduce((t, l) => t + Number(l.valeur ?? 0), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : nombre de lignes PE / PI",
+  "cherche": "          { poste: \"PE / PI faites, pas encore facturées\", montant: Math.round(totalPepi), lignes: pepi.length },",
+  "remplace": "          { poste: \"PE / PI faites, pas encore facturées\", montant: Math.round(totalPepi), lignes: pepiTout.length },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : intentions pour mémoire",
+  "cherche": "          { poste: \"Pour mémoire : négoce et achats des forfaits en cours (à ajouter s’ils sont déjà engagés)\", montant: Math.round(totalNegoce), lignes: null },",
+  "remplace": "          { poste: \"Pour mémoire : négoce et achats des forfaits en cours (à ajouter s’ils sont déjà engagés)\", montant: Math.round(totalNegoce), lignes: null },\n          { poste: \"Pour mémoire : intentions de commande (pas des commandes), travail fait à l’avancement des heures\", montant: Math.round(totalIntentions), lignes: intentions.length },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : note sur les intentions",
+  "cherche": "          \"Le négoce et les achats n’avancent pas avec les heures : ils sont donnés à part, pour mémoire.\",",
+  "remplace": "          \"Le négoce et les achats n’avancent pas avec les heures : ils sont donnés à part, pour mémoire.\",\n          \"Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».\",\n          \"PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet PE / PI : toutes les lignes à facturer",
+  "cherche": "        lignes: pepi.map((r) => ({\n          commande: `CBE${r.numero}`,\n          imp: r.imputation ?? \"\",\n          mois: libMois(r.m),\n          heures: Math.round(r.heures * 100) / 100,\n          montant: Math.round(r.montant * 100) / 100,\n          pourquoi: r.auto ? \"commande pas encore reçue\" : \"reporté à la main\",\n        })),",
+  "remplace": "        lignes: pepiTout.map((r) => ({\n          commande: `CBE${r.numero}`,\n          imp: r.imputation ?? \"\",\n          mois: libMois(r.m),\n          heures: Math.round(r.heures * 100) / 100,\n          montant: Math.round(r.montant * 100) / 100,\n          pourquoi: r.pourquoi,\n        })),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet PE / PI : sous-titre",
+  "cherche": "        sousTitre: \"Mois reportés (commande pas encore reçue, ou report à la main) : montant estimé = heures × taux\",",
+  "remplace": "        sousTitre: \"Travail fait jusqu’à la date et pas encore facturé à cette date : mois en cours, mois non clôturés, mois reportés · montant = heures × taux\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet des intentions de commande",
+  "cherche": "        libelleTotal: \"Total\",\n      },\n    ]);",
+  "remplace": "        libelleTotal: \"Total\",\n      },\n      {\n        nom: \"Intentions (mémoire)\",\n        titre: `Intentions de commande au ${date} — pour mémoire`,\n        sousTitre: \"Pas encore des commandes : rien n’oblige le client à les passer. Hors total des en-cours.\",\n        colonnes: [\n          { titre: \"Ligne\", cle: \"commande\", largeur: 14 },\n          { titre: \"Client\", cle: \"client\", largeur: 16 },\n          { titre: \"Désignation\", cle: \"designation\", largeur: 34 },\n          { titre: \"Montant\", cle: \"montant\", format: \"euros\", largeur: 13, total: true },\n          { titre: \"H. chiffrées\", cle: \"chiffre\", format: \"nombre\", largeur: 11, total: true },\n          { titre: \"H. pointées (famille)\", cle: \"pointe\", format: \"nombre\", largeur: 13 },\n          { titre: \"Avancement\", cle: \"avancement\", largeur: 11 },\n          { titre: \"Travail fait (valeur)\", cle: \"valeur\", format: \"euros\", largeur: 15, total: true },\n        ],\n        lignes: intentions,\n        libelleTotal: \"Total\",\n      },\n    ]);"
+ }
+]

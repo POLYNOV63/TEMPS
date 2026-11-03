@@ -881,9 +881,17 @@ function FinancesContenu() {
       }
     }
     const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));
+    // AVANCEMENT_SAISI : % accompli estimé par le responsable (SQL 79), sur la commande de base ; sinon aux heures
+    const { data: avData } = await supabase.from("pilotage_affaires").select("numero,avancement_pct,avancement_le").eq("type", "CBE").not("avancement_pct", "is", null);
+    const avancementsSaisis = new Map(
+      ((avData ?? []) as { numero: string; avancement_pct: number | string; avancement_le: string | null }[])
+        .filter((x) => /^\d+$/.test(x.numero))
+        .map((x) => [x.numero.replace(/^0+/, ""), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])
+    );
     const cout = coutHoraire(couts, aujourdhui);
     const fr = (d: string | null | undefined) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
-    const vivantes = lignesFin.filter((l) => !l.disparue && !["Devis perdu", "Commande annulée"].includes(l.statut ?? ""));
+    // INTENTIONS_A_PART : une intention n'est pas une commande ; elle est listée à part, pour mémoire
+    const vivantes = lignesFin.filter((l) => !l.disparue && !["Devis perdu", "Commande annulée", "Intention de commande"].includes(l.statut ?? ""));
     const familles = new Map<string, LigneFin[]>();
     for (const l of vivantes) {
       if (!l.base_affaire) continue;
@@ -928,7 +936,8 @@ function FinancesContenu() {
       const factureDe = (l: LigneFin) =>
         !(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));
       const facture = membres.reduce((t, l) => t + factureDe(l), 0);
-      const avancement = chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
+      const saisi = avancementsSaisis.get(base);
+      const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
       const enCours = avancement === null ? null : Math.max(0, avancement * montant - facture);
       const dBase = dates.get(laBase.cle);
       const estimees = nonLivrees.map((l) => dates.get(l.cle)?.estimee ?? l.date_estimee).filter(Boolean).sort() as string[];
@@ -951,6 +960,7 @@ function FinancesContenu() {
         pointe: Math.round(pointe * 10) / 10 || null,
         reste: chiffre > 0 ? Math.round((chiffre - pointe) * 10) / 10 : null,
         avancement: avancement === null ? "chiffré inconnu" : `${Math.round(avancement * 100)} %`,
+        mesure: saisi ? `estimé${saisi.le ? ` le ${fr(saisi.le)}` : ""}` : chiffre > 0 ? "aux heures" : "",
         enCours: enCours === null ? null : Math.round(enCours),
         coutEngage: cout === null ? null : Math.round(pointe * cout),
       });
@@ -1007,7 +1017,78 @@ function FinancesContenu() {
     const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
     const totalForfaits = lignesFam.reduce((t, l) => t + Number(l.enCours ?? 0), 0);
     const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoce ?? 0) + Number(l.achats ?? 0), 0);
-    const totalPepi = pepi.reduce((t, r) => t + r.montant, 0);
+    // PEPI_A_FACTURER : tout le travail des PE / PI fait jusqu'à la date et pas encore facturé À CETTE DATE :
+    // mois reportés (ci-dessus), plus les mois non reportés pas encore clôturés à la date (dont le mois en cours)
+    const pepiTout: { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string }[] = pepi.map((r) => ({
+      numero: r.numero,
+      imputation: r.imputation,
+      m: r.m,
+      heures: r.heures,
+      montant: r.montant,
+      pourquoi: r.auto ? "commande pas encore reçue" : "reporté à la main",
+    }));
+    if (donneesReport) {
+      const debutFenetre = new Date(Date.UTC(Number(moisRef.slice(0, 4)), Number(moisRef.slice(5, 7)) - 13, 1)).toISOString().slice(0, 10);
+      const [pmD, saD] = await Promise.all([
+        chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; valide_le: string | null; reporte: boolean | null }>((a, b) =>
+          supabase.from("prestation_mois").select("ligne_id,mois,valide,valide_le,reporte").gte("mois", debutFenetre).order("ligne_id").range(a, b)
+        ),
+        chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((a, b) =>
+          supabase.from("prestation_saisies").select("ligne_id,jour,heures").gte("jour", debutFenetre).lte("jour", dateRef).order("jour").range(a, b)
+        ),
+      ]);
+      const etat = new Map(pmD.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));
+      const parLigneMois = new Map<string, number>();
+      for (const s of saD) {
+        const hs = Number(s.heures) || 0;
+        if (hs <= 0) continue;
+        const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
+        parLigneMois.set(k, (parLigneMois.get(k) ?? 0) + hs);
+      }
+      const lignesP = new Map(donneesReport.lignes.map((l) => [l.id, l]));
+      for (const [k, hs] of parLigneMois) {
+        const [lid, m] = k.split("|");
+        const l = lignesP.get(lid);
+        const a = l ? donneesReport.affaires.get(l.affaire_id) : undefined;
+        if (!l || !a || l.taux === null) continue;
+        const e = etat.get(k);
+        if (e ? Boolean(e.reporte) : a.statut === "EN_ATTENTE") continue; // déjà compté dans les reports
+        if (e?.valide && (!e.valide_le || String(e.valide_le).slice(0, 10) <= dateRef)) continue; // facturé à la date
+        const tauxH = l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+        pepiTout.push({
+          numero: a.numero,
+          imputation: a.imputation,
+          m,
+          heures: hs,
+          montant: Math.round(hs * tauxH * 100) / 100,
+          pourquoi: m === moisRef ? "mois en cours : facturé en fin de mois" : "mois terminé, pas encore clôturé à la date",
+        });
+      }
+      pepiTout.sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+    }
+    const totalPepi = pepiTout.reduce((t, r) => t + r.montant, 0);
+    const intentions = lignesFin
+      .filter((l) => !l.disparue && l.statut === "Intention de commande" && (l.genre === "BASE" || l.genre === "AVENANT") && !["PE", "PI"].includes(l.imputation ?? ""))
+      .filter((l) => {
+        const d = datesToutes.get(l.cle)?.date_ouverture;
+        return !d || d.slice(0, 10) <= dateRef;
+      })
+      .map((l) => {
+        const g = pointeDe((l.base_affaire ?? "").replace(/^0+/, ""));
+        const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;
+        const av = l.heures_total > 0 ? Math.min(1, pointe / l.heures_total) : null;
+        return {
+          commande: l.cle,
+          client: l.client ?? "",
+          designation: l.designation ?? "",
+          montant: Math.round(l.m.montant) || null,
+          chiffre: Math.round(l.heures_total * 10) / 10 || null,
+          pointe: Math.round(pointe * 10) / 10 || null,
+          avancement: av === null ? "chiffré inconnu" : `${Math.round(av * 100)} %`,
+          valeur: av === null ? null : Math.round(av * l.m.montant),
+        };
+      });
+    const totalIntentions = intentions.reduce((t, l) => t + Number(l.valeur ?? 0), 0);
 
     await exporterExcelPolynov(`En-cours_${aujourdhui}`, [
       {
@@ -1021,14 +1102,17 @@ function FinancesContenu() {
         ],
         lignes: [
           { poste: "Forfaits en cours, à l’avancement des heures", montant: Math.round(totalForfaits), lignes: lignesFam.length },
-          { poste: "PE / PI faites, pas encore facturées", montant: Math.round(totalPepi), lignes: pepi.length },
+          { poste: "PE / PI faites, pas encore facturées", montant: Math.round(totalPepi), lignes: pepiTout.length },
           { poste: "TOTAL DES EN-COURS", montant: Math.round(totalForfaits + totalPepi), lignes: null },
           { poste: "Pour mémoire : négoce et achats des forfaits en cours (à ajouter s’ils sont déjà engagés)", montant: Math.round(totalNegoce), lignes: null },
+          { poste: "Pour mémoire : intentions de commande (pas des commandes), travail fait à l’avancement des heures", montant: Math.round(totalIntentions), lignes: intentions.length },
         ],
         notes: [
-          "Avancement = heures pointées ÷ heures chiffrées de la famille (commande et avenants), plafonné à 100 %.",
+          "Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.",
           "En-cours d’un forfait = avancement × montant de la famille − déjà facturé (commandes et échéances livrées).",
           "Le négoce et les achats n’avancent pas avec les heures : ils sont donnés à part, pour mémoire.",
+          "Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».",
+          "PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.",
           cout !== null ? `Coût engagé (onglet Forfaits) = heures pointées × ${cout.toLocaleString("fr-FR")} €/h, pour comparaison.` : "Coût de structure non saisi : colonne « Coût engagé » vide.",
           "Onglets : Forfaits en cours (une ligne par famille) · Détail des commandes · Heures par activité · PE PI à facturer.",
         ],
@@ -1056,6 +1140,7 @@ function FinancesContenu() {
           { titre: "H. pointées", cle: "pointe", format: "nombre", largeur: 10, total: true },
           { titre: "H. restantes", cle: "reste", format: "nombre", largeur: 10, total: true },
           { titre: "Avancement", cle: "avancement", largeur: 11 },
+          { titre: "Mesuré", cle: "mesure", largeur: 16 },
           { titre: "En-cours", cle: "enCours", format: "euros", largeur: 14, total: true },
           { titre: "Coût engagé", cle: "coutEngage", format: "euros", largeur: 13, total: true },
         ],
@@ -1107,7 +1192,7 @@ function FinancesContenu() {
       {
         nom: "PE PI à facturer",
         titre: `PE / PI faites, pas encore facturées, au ${date}`,
-        sousTitre: "Mois reportés (commande pas encore reçue, ou report à la main) : montant estimé = heures × taux",
+        sousTitre: "Travail fait jusqu’à la date et pas encore facturé à cette date : mois en cours, mois non clôturés, mois reportés · montant = heures × taux",
         colonnes: [
           { titre: "Commande", cle: "commande", largeur: 14 },
           { titre: "Imputation", cle: "imp", largeur: 11 },
@@ -1116,14 +1201,31 @@ function FinancesContenu() {
           { titre: "Montant estimé", cle: "montant", format: "euros", largeur: 15, total: true },
           { titre: "Pourquoi", cle: "pourquoi", largeur: 28 },
         ],
-        lignes: pepi.map((r) => ({
+        lignes: pepiTout.map((r) => ({
           commande: `CBE${r.numero}`,
           imp: r.imputation ?? "",
           mois: libMois(r.m),
           heures: Math.round(r.heures * 100) / 100,
           montant: Math.round(r.montant * 100) / 100,
-          pourquoi: r.auto ? "commande pas encore reçue" : "reporté à la main",
+          pourquoi: r.pourquoi,
         })),
+        libelleTotal: "Total",
+      },
+      {
+        nom: "Intentions (mémoire)",
+        titre: `Intentions de commande au ${date} — pour mémoire`,
+        sousTitre: "Pas encore des commandes : rien n’oblige le client à les passer. Hors total des en-cours.",
+        colonnes: [
+          { titre: "Ligne", cle: "commande", largeur: 14 },
+          { titre: "Client", cle: "client", largeur: 16 },
+          { titre: "Désignation", cle: "designation", largeur: 34 },
+          { titre: "Montant", cle: "montant", format: "euros", largeur: 13, total: true },
+          { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 11, total: true },
+          { titre: "H. pointées (famille)", cle: "pointe", format: "nombre", largeur: 13 },
+          { titre: "Avancement", cle: "avancement", largeur: 11 },
+          { titre: "Travail fait (valeur)", cle: "valeur", format: "euros", largeur: 15, total: true },
+        ],
+        lignes: intentions,
         libelleTotal: "Total",
       },
     ]);
