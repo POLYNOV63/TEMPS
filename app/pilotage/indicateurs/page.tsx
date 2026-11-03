@@ -1045,6 +1045,197 @@ function IndicateursContenu() {
               );
             })()}
 
+            {/* DEVIS_ACTIVITE_CLIENT : devis OUVERTS sur la période, par activité et par client ; une offre pluri-activités
+                compte UNE fois (dans son activité principale), son montant est réparti au prorata des heures chiffrées */}
+            {(() => {
+              const numeroDevis = (l: LigneInd) => (l.numero_devis ?? "").replace(/^\D+/, "").match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
+              const vus = new Set<string>();
+              const offres = lignes
+                .filter((l) => !l.disparue && (l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") && l.date_ouverture && l.date_ouverture >= debut && l.date_ouverture <= fin)
+                .filter((l) => {
+                  const n = numeroDevis(l);
+                  if (!n || vus.has(n)) return false;
+                  vus.add(n);
+                  return true;
+                });
+              const val = (l: LigneInd) => (montantsVisibles ? l.montant : l.heures_total);
+              type St = { n: number; g: number; p: number; v: number; vg: number; vp: number };
+              const vide = (): St => ({ n: 0, g: 0, p: 0, v: 0, vg: 0, vp: 0 });
+              const parAct = new Map<Discipline, St>();
+              const parClient = new Map<string, St>();
+              const total = vide();
+              for (const l of offres) {
+                const issue = issueDevis(l);
+                const tot = DISCIPLINES.reduce((t, d) => t + l.heures[d], 0);
+                const principale: Discipline = tot > 0 ? DISCIPLINES.reduce((a, d) => (l.heures[d] > l.heures[a] ? d : a), DISCIPLINES[0]) : "autre";
+                for (const d of DISCIPLINES) {
+                  const part = tot > 0 ? l.heures[d] / tot : d === "autre" ? 1 : 0;
+                  if (part <= 0 && d !== principale) continue;
+                  const s = parAct.get(d) ?? vide();
+                  if (d === principale) {
+                    s.n++;
+                    if (issue === "GAGNE") s.g++;
+                    if (issue === "PERDU") s.p++;
+                  }
+                  s.v += val(l) * part;
+                  if (issue === "GAGNE") s.vg += val(l) * part;
+                  if (issue === "PERDU") s.vp += val(l) * part;
+                  parAct.set(d, s);
+                }
+                const nomClient = l.client ?? "Client non renseigné";
+                for (const s of [parClient.get(nomClient) ?? vide(), total]) {
+                  s.n++;
+                  if (issue === "GAGNE") s.g++;
+                  if (issue === "PERDU") s.p++;
+                  s.v += val(l);
+                  if (issue === "GAGNE") s.vg += val(l);
+                  if (issue === "PERDU") s.vp += val(l);
+                  if (s !== total) parClient.set(nomClient, s);
+                }
+              }
+              const taux = (g: number, p: number) => (g + p > 0 ? `${Math.round((g / (g + p)) * 100)} %` : "—");
+              const thD: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap" };
+              const tdD: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap" };
+              const ligneTable = (cle: string, s: St, gras = false) => (
+                <tr key={cle} style={gras ? { background: "#f6f7f8" } : undefined}>
+                  <td style={{ ...page.td, fontWeight: 800 }}>{cle}</td>
+                  <td style={{ ...tdD, fontWeight: gras ? 800 : 400 }}>{s.n}</td>
+                  <td style={{ ...tdD, color: "#1b5e20", fontWeight: 700 }}>{s.g}</td>
+                  <td style={tdD}>{s.p}</td>
+                  <td style={{ ...tdD, fontWeight: 800 }}>{taux(s.g, s.p)}</td>
+                  <td style={tdD}>{formatMetrique(s.v)}</td>
+                  <td style={{ ...tdD, color: "#1b5e20", fontWeight: 700 }}>{formatMetrique(s.vg)}</td>
+                  <td style={{ ...tdD, fontWeight: 800 }}>{taux(s.vg, s.vp)}</td>
+                </tr>
+              );
+              const entete = (premiere: string) => (
+                <thead>
+                  <tr>
+                    <th style={page.th}>{premiere}</th>
+                    <th style={thD}>Devis ouverts</th>
+                    <th style={thD}>Remportés</th>
+                    <th style={thD}>Perdus</th>
+                    <th style={thD} title="Remportés ÷ (remportés + perdus) : les devis sans réponse ne comptent pas">Taux (nb)</th>
+                    <th style={thD}>{montantsVisibles ? "Montant chiffré" : "Heures chiffrées"}</th>
+                    <th style={thD}>{montantsVisibles ? "Montant remporté" : "Heures remportées"}</th>
+                    <th style={thD}>Taux ({montantsVisibles ? "€" : "h"})</th>
+                  </tr>
+                </thead>
+              );
+              const clients = [...parClient.entries()].sort((x, y) => y[1].v - x[1].v);
+              return (
+                <>
+                  <h2 style={titreSection}>Devis par activité et par client</h2>
+                  <p style={{ ...page.sousTitre, marginTop: -6 }}>
+                    Les devis <strong>ouverts</strong> du {formatDate(debut)} au {formatDate(fin)} (les consultations reçues), et ce qu’ils sont devenus. Une offre
+                    qui mêle plusieurs activités (de la mécanique et de l’électricité, par exemple) <strong>compte une seule fois</strong>, dans son activité
+                    principale (celle qui a le plus d’heures chiffrées) ; son {montantsVisibles ? "montant" : "chiffrage"} est réparti entre ses activités au prorata
+                    des heures. Les totaux ne comptent donc jamais deux fois la même offre.
+                  </p>
+                  <div style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
+                    <h3 style={{ margin: "0 0 10px", fontSize: 16 }}>Par activité</h3>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                      {entete("Activité")}
+                      <tbody>
+                        {DISCIPLINES.filter((d) => parAct.has(d)).map((d) => ligneTable(NOMS_DISCIPLINES[d], parAct.get(d)!))}
+                        {ligneTable("Total", total, true)}
+                      </tbody>
+                    </table>
+                  </div>
+                  <details style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 16, fontWeight: 800 }}>Par client ({clients.length})</summary>
+                    <div style={{ overflowX: "auto", marginTop: 8 }}>
+                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                        {entete("Client")}
+                        <tbody>
+                          {clients.map(([c, s]) => ligneTable(c, s))}
+                          {ligneTable("Total", total, true)}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </>
+              );
+            })()}
+
+            {/* CYCLICITE_CONSULTATIONS : devis ouverts mois par mois, sur les trois derniers exercices */}
+            {(() => {
+              const numeroDevis = (l: LigneInd) => (l.numero_devis ?? "").replace(/^\D+/, "").match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
+              const premiers = new Map<string, string>();
+              for (const l of lignes) {
+                if (l.disparue || !(l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") || !l.date_ouverture) continue;
+                const n = numeroDevis(l);
+                if (!n) continue;
+                const d = l.date_ouverture.slice(0, 10);
+                if (!premiers.has(n) || d < (premiers.get(n) ?? "")) premiers.set(n, d);
+              }
+              const exFin = Number(debutExercice(fin).slice(0, 4));
+              const exAujourdhui = Number(debutExercice(aujourdhui).slice(0, 4));
+              const idxMois = (d: string) => (Number(d.slice(5, 7)) + 1) % 12; // novembre = 0
+              const series = [0, 1, 2].map((k) => {
+                const an = exFin - k;
+                const m = Array.from({ length: 12 }, () => 0);
+                for (const d of premiers.values()) if (d >= `${an}-11-01` && d <= `${an + 1}-10-31`) m[idxMois(d)]++;
+                const jusqua = an === exAujourdhui ? idxMois(aujourdhui) : 11;
+                return { an, m, jusqua };
+              });
+              const max = Math.max(5, ...series.flatMap((s) => s.m));
+              const L = 900;
+              const H = 260;
+              const mg = { g: 40, d: 16, h: 14, b: 34 };
+              const x = (i: number) => mg.g + (i * (L - mg.g - mg.d)) / 11;
+              const y = (v: number) => mg.h + (H - mg.h - mg.b) * (1 - v / max);
+              const couleurs = [C.rouge, "#5b6168", "#b9bec5"];
+              const libellesMois = Array.from({ length: 12 }, (_, i) => MOIS_COURTS[(i + 10) % 12]);
+              return (
+                <div style={rangee}>
+                  <Carte titre="Consultations reçues mois par mois — trois derniers exercices" style={{ flex: "1 1 100%" }}>
+                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, marginBottom: 6 }}>
+                      {series.map((s, k) => (
+                        <span key={s.an} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <i style={{ width: 18, height: 3, background: couleurs[k], display: "inline-block" }} />
+                          {s.an}-{s.an + 1} : <strong>{s.m.slice(0, s.jusqua + 1).reduce((t, v) => t + v, 0)}</strong> devis
+                        </span>
+                      ))}
+                    </div>
+                    <svg viewBox={`0 0 ${L} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Nombre de devis ouverts par mois, trois exercices">
+                      {[0, 0.25, 0.5, 0.75, 1].map((p) => (
+                        <g key={p}>
+                          <line x1={mg.g} x2={L - mg.d} y1={y(p * max)} y2={y(p * max)} stroke="#e5e7ea" />
+                          <text x={mg.g - 6} y={y(p * max) + 4} textAnchor="end" fontSize={11} fill="#777">
+                            {Math.round(p * max)}
+                          </text>
+                        </g>
+                      ))}
+                      {libellesMois.map((l, i) => (
+                        <text key={l} x={x(i)} y={H - 12} textAnchor="middle" fontSize={11} fill="#777">
+                          {l}
+                        </text>
+                      ))}
+                      {[...series].reverse().map((s) => {
+                        const k = series.indexOf(s);
+                        const pts = s.m.slice(0, s.jusqua + 1).map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+                        return (
+                          <g key={s.an}>
+                            <polyline points={pts} fill="none" stroke={couleurs[k]} strokeWidth={k === 0 ? 3 : 2} strokeLinejoin="round" />
+                            {s.m.slice(0, s.jusqua + 1).map((v, i) => (
+                              <circle key={i} cx={x(i)} cy={y(v)} r={k === 0 ? 4 : 3} fill={couleurs[k]}>
+                                <title>{`${libellesMois[i]} (exercice ${s.an}-${s.an + 1}) : ${v} devis ouverts`}</title>
+                              </circle>
+                            ))}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                    <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
+                      Nombre de devis ouverts chaque mois (date d’ouverture dans le Suivi d’affaire), de novembre à octobre. Les courbes superposées font
+                      apparaître les mois habituellement chargés ou creux. Exercices terminant par l’exercice choisi en haut de la page.
+                    </div>
+                  </Carte>
+                </div>
+              );
+            })()}
+
             {/* ================= COÛT DES DEVIS ================= */}
             {coutDevis && (
               <>
@@ -1132,6 +1323,14 @@ function IndicateursContenu() {
 
             {/* ================= CARNET DE COMMANDES ================= */}
             <h2 style={titreSection}>2. Carnet de commandes</h2>
+            {/* NOTE_CARNET */}
+            <div style={{ ...page.carte, padding: "10px 14px", marginBottom: 14, fontSize: 14, lineHeight: 1.5, borderLeft: `4px solid ${C.rouge}` }}>
+              <strong>Le carnet de commandes, c’est le travail déjà vendu mais pas encore livré</strong> : ce que les clients nous ont commandé et qu’il
+              reste à produire et à facturer, à la date de fin de la période. Pour un forfait, toute la commande tant qu’elle n’est pas livrée (moins ses
+              échéances déjà livrées) ; pour une PE ou une PI, la part de l’enveloppe pas encore consommée. Plus il est rempli, plus le BE a de travail
+              assuré devant lui ; son évolution mois par mois montre si les commandes arrivent plus vite (il monte) ou moins vite (il baisse) qu’on ne les
+              produit.
+            </div>
 
             <div style={rangee}>
               <Tuile
