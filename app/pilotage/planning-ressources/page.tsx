@@ -531,8 +531,7 @@ function PlanningRessourcesContenu() {
 
                   {cadre && <div aria-hidden="true" style={{ ...cadre, margin: "-6px 0" }} />}
                   <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
-                    <strong style={{ color: ratio > 1.01 ? "#b3261e" : ratio > 0.9 ? "#7a3e00" : "#1b5e20" }}>{Math.round(ratio * 100)} %</strong>
-                    <span style={{ color: C.gris }}>
+                    <span style={{ color: C.gris }} title={`${formatHeures(l.totalAffecte)} affectées pour ${formatHeures(l.totalNet)} disponibles sur la période`}>
                       {formatHeures(l.totalAffecte)} / {formatHeures(l.totalNet)}
                     </span>
                   </div>
@@ -550,7 +549,7 @@ function PlanningRessourcesContenu() {
 
 export default function PlanningRessourcesPage() {
   return (
-    <GardeAcces droit="chargeRessources">
+    <GardeAcces droit="voirPlanning">
       <PlanningRessourcesContenu />
     </GardeAcces>
   );
