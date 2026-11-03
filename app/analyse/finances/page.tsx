@@ -184,6 +184,8 @@ function FinancesContenu() {
   const [totalAnnuel, setTotalAnnuel] = useState("");
   const [evolution, setEvolution] = useState("0");
   const [voirAffaires, setVoirAffaires] = useState(false);
+  // EN_COURS_A_DATE : date à laquelle on calcule les en-cours (aujourd'hui par défaut)
+  const [dateEnCours, setDateEnCours] = useState(() => new Date().toISOString().slice(0, 10));
   // montant cliqué dans le tableau mois par mois (activité ou imputation)
   const [detail, setDetail] = useState<DetailDemande | null>(null);
   // la Direction consulte : prévisionnel et coût de structure restent saisis par l'administration
@@ -823,10 +825,62 @@ function FinancesContenu() {
      - avancement = heures pointées ÷ heures chiffrées de la famille (plafonné à 100 %) ;
      - en-cours = avancement × montant de la famille − déjà facturé (commandes et échéances livrées) ;
      - le négoce (revente) et les achats sont donnés à part, à ajouter s'ils sont déjà engagés. */
-  async function exporterEnCours() {
+  async function exporterEnCours(dateRef: string) {
     type L = Record<string, string | number | null | undefined>;
-    const aujourdhui = new Date().toISOString().slice(0, 10);
-    const date = new Date().toLocaleDateString("fr-FR");
+    const aujourdhui = dateRef;
+    const moisRef = dateRef.slice(0, 7);
+    const date = new Date(`${dateRef}T00:00:00`).toLocaleDateString("fr-FR");
+    const passe = dateRef < new Date().toISOString().slice(0, 10);
+    // dates de toutes les lignes du Suivi d'affaire : pour savoir ce qui était reçu, livré, à la date choisie
+    const datesToutes = new Map(
+      (
+        await chargerTout<{ cle: string; date_ouverture: string | null; date_reception_commande: string | null; date_livraison: string | null }>((a, b) =>
+          supabase.from("suivi_lignes").select("cle,date_ouverture,date_reception_commande,date_livraison").order("cle").range(a, b)
+        )
+      ).map((x) => [x.cle, x])
+    );
+    const livreeLe = (l: LigneFin) => (datesToutes.get(l.cle)?.date_livraison ?? l.date_livraison ?? null)?.slice(0, 10) ?? null;
+    // une commande est « en cours » à la date : reçue (ou en intention) à cette date, et pas encore livrée
+    const ouverteA = (l: LigneFin) => {
+      if (["Devis perdu", "Commande annulée"].includes(l.statut ?? "")) return false;
+      const d = datesToutes.get(l.cle);
+      const recue = d?.date_reception_commande
+        ? d.date_reception_commande.slice(0, 10) <= dateRef
+        : ["Commande reçue", "Intention de commande", "Livrée"].includes(l.statut ?? "") && (!d?.date_ouverture || d.date_ouverture.slice(0, 10) <= dateRef);
+      const livree = livreeLe(l);
+      return recue && !(livree && livree <= dateRef);
+    };
+    // heures pointées jusqu'à la date (SQL 73), par famille et par activité ; aujourd'hui : le réalisé complet
+    const pointeA = new Map<string, ParGroupe>();
+    if (passe) {
+      const [corr, lignesP] = await Promise.all([
+        supabase.from("suivi_correspondance_activites").select("colonne_excel,activite_id"),
+        (async () => {
+          const tout: { type_affaire: string; numero: string; activite_id: string | null; heures: number | string }[] = [];
+          for (let a = 0; a < 500000; a += 1000) {
+            const { data, error } = await supabase.rpc("pointage_periode", { p_debut: "2000-01-01", p_fin: dateRef }).range(a, a + 999);
+            if (error || !data) break;
+            tout.push(...(data as typeof tout));
+            if (data.length < 1000) break;
+          }
+          return tout;
+        })(),
+      ]);
+      const versDiscipline: Record<string, Discipline> = { "Méca": "meca", Calcul: "calcul", Elec: "elec", Pneu: "pneu", Scan: "scan", Autre: "autre" };
+      const groupeAct = new Map<string, Groupe>();
+      for (const c of (corr.data ?? []) as { colonne_excel: string; activite_id: string | null }[]) {
+        const d = versDiscipline[c.colonne_excel];
+        if (c.activite_id && d) groupeAct.set(c.activite_id, GROUPE_DISCIPLINE[d]);
+      }
+      for (const x of lignesP) {
+        if (x.type_affaire !== "CBE") continue;
+        const k = String(x.numero).replace(/^0+/, "");
+        const g = pointeA.get(k) ?? groupesVides();
+        g[(x.activite_id && groupeAct.get(x.activite_id)) || "Autre"] += Number(x.heures) || 0;
+        pointeA.set(k, g);
+      }
+    }
+    const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));
     const cout = coutHoraire(couts, aujourdhui);
     const fr = (d: string | null | undefined) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
     const vivantes = lignesFin.filter((l) => !l.disparue && !["Devis perdu", "Commande annulée"].includes(l.statut ?? ""));
@@ -839,7 +893,7 @@ function FinancesContenu() {
     const enCoursFam = [...familles].filter(([, membres]) => {
       const commandes = membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT");
       const laBase = commandes.find((l) => l.genre === "BASE") ?? commandes[0];
-      return laBase && !["PE", "PI"].includes(laBase.imputation ?? "") && commandes.some((l) => l.statut === "Commande reçue" || l.statut === "Intention de commande");
+      return laBase && !["PE", "PI"].includes(laBase.imputation ?? "") && commandes.some(ouverteA);
     });
 
     // dates et n° du Suivi d'affaire (lus au moment de l'export)
@@ -863,16 +917,16 @@ function FinancesContenu() {
     for (const [base, membres] of enCoursFam) {
       const commandes = membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").sort((x, y) => numeroDe(x).localeCompare(numeroDe(y), "fr", { numeric: true }));
       const laBase = commandes.find((l) => l.genre === "BASE") ?? commandes[0];
-      const nonLivrees = commandes.filter((l) => l.statut === "Commande reçue" || l.statut === "Intention de commande");
+      const nonLivrees = commandes.filter(ouverteA);
       const montant = commandes.reduce((t, l) => t + l.m.montant, 0);
       const negoce = commandes.reduce((t, l) => t + l.m.negoce, 0);
       const achats = commandes.reduce((t, l) => t + l.m.achats, 0);
       const chiffre = commandes.reduce((t, l) => t + l.heures_total, 0);
-      const g = realiseGroupes.get(base);
+      const g = pointeDe(base);
       const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;
       const decoupe = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle).reduce((t, d) => t + (d.m.echeances || d.m.montant), 0);
       const factureDe = (l: LigneFin) =>
-        l.statut !== "Livrée" ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));
+        !(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));
       const facture = membres.reduce((t, l) => t + factureDe(l), 0);
       const avancement = chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
       const enCours = avancement === null ? null : Math.max(0, avancement * montant - facture);
@@ -950,7 +1004,7 @@ function FinancesContenu() {
     }
     lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));
 
-    const pepi = reportsPEPI.filter((r) => !(r.facture && r.factureValide)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+    const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
     const totalForfaits = lignesFam.reduce((t, l) => t + Number(l.enCours ?? 0), 0);
     const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoce ?? 0) + Number(l.achats ?? 0), 0);
     const totalPepi = pepi.reduce((t, r) => t + r.montant, 0);
@@ -1140,9 +1194,26 @@ function FinancesContenu() {
             <strong style={{ fontSize: 18, minWidth: 120, textAlign: "center" }}>{exercice}-{exercice + 1}</strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice + 1)} aria-label="Exercice suivant">▶</button>
             <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
-            <button type="button" style={page.btnSecondaire} onClick={() => void exporterEnCours()} disabled={chargement} title="Travail fait et pas encore facturé, à la date du jour : forfaits à l’avancement, PE / PI reportées">
-              Exporter les en-cours
-            </button>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <input
+                type="date"
+                value={dateEnCours}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setDateEnCours(e.target.value || new Date().toISOString().slice(0, 10))}
+                aria-label="Date des en-cours"
+                title="Date à laquelle calculer les en-cours (fin de mois, clôture…)"
+                style={{ ...page.entrees, width: "auto", minHeight: 40 }}
+              />
+              <button
+                type="button"
+                style={page.btnSecondaire}
+                onClick={() => void exporterEnCours(dateEnCours)}
+                disabled={chargement}
+                title="Travail fait et pas encore facturé, à la date choisie : forfaits à l’avancement des heures pointées jusqu’à cette date, PE / PI faites et pas encore facturées"
+              >
+                Exporter les en-cours au {new Date(`${dateEnCours}T00:00:00`).toLocaleDateString("fr-FR")}
+              </button>
+            </span>
           </div>
         </div>
 

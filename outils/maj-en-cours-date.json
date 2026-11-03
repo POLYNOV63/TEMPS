@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : date choisie (état)",
+  "cherche": "  const [voirAffaires, setVoirAffaires] = useState(false);",
+  "remplace": "  const [voirAffaires, setVoirAffaires] = useState(false);\n  // EN_COURS_A_DATE : date à laquelle on calcule les en-cours (aujourd'hui par défaut)\n  const [dateEnCours, setDateEnCours] = useState(() => new Date().toISOString().slice(0, 10));"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : la date devient un paramètre",
+  "cherche": "  async function exporterEnCours() {\n    type L = Record<string, string | number | null | undefined>;\n    const aujourdhui = new Date().toISOString().slice(0, 10);\n    const date = new Date().toLocaleDateString(\"fr-FR\");",
+  "remplace": "  async function exporterEnCours(dateRef: string) {\n    type L = Record<string, string | number | null | undefined>;\n    const aujourdhui = dateRef;\n    const moisRef = dateRef.slice(0, 7);\n    const date = new Date(`${dateRef}T00:00:00`).toLocaleDateString(\"fr-FR\");\n    const passe = dateRef < new Date().toISOString().slice(0, 10);\n    // dates de toutes les lignes du Suivi d'affaire : pour savoir ce qui était reçu, livré, à la date choisie\n    const datesToutes = new Map(\n      (\n        await chargerTout<{ cle: string; date_ouverture: string | null; date_reception_commande: string | null; date_livraison: string | null }>((a, b) =>\n          supabase.from(\"suivi_lignes\").select(\"cle,date_ouverture,date_reception_commande,date_livraison\").order(\"cle\").range(a, b)\n        )\n      ).map((x) => [x.cle, x])\n    );\n    const livreeLe = (l: LigneFin) => (datesToutes.get(l.cle)?.date_livraison ?? l.date_livraison ?? null)?.slice(0, 10) ?? null;\n    // une commande est « en cours » à la date : reçue (ou en intention) à cette date, et pas encore livrée\n    const ouverteA = (l: LigneFin) => {\n      if ([\"Devis perdu\", \"Commande annulée\"].includes(l.statut ?? \"\")) return false;\n      const d = datesToutes.get(l.cle);\n      const recue = d?.date_reception_commande\n        ? d.date_reception_commande.slice(0, 10) <= dateRef\n        : [\"Commande reçue\", \"Intention de commande\", \"Livrée\"].includes(l.statut ?? \"\") && (!d?.date_ouverture || d.date_ouverture.slice(0, 10) <= dateRef);\n      const livree = livreeLe(l);\n      return recue && !(livree && livree <= dateRef);\n    };\n    // heures pointées jusqu'à la date (SQL 73), par famille et par activité ; aujourd'hui : le réalisé complet\n    const pointeA = new Map<string, ParGroupe>();\n    if (passe) {\n      const [corr, lignesP] = await Promise.all([\n        supabase.from(\"suivi_correspondance_activites\").select(\"colonne_excel,activite_id\"),\n        (async () => {\n          const tout: { type_affaire: string; numero: string; activite_id: string | null; heures: number | string }[] = [];\n          for (let a = 0; a < 500000; a += 1000) {\n            const { data, error } = await supabase.rpc(\"pointage_periode\", { p_debut: \"2000-01-01\", p_fin: dateRef }).range(a, a + 999);\n            if (error || !data) break;\n            tout.push(...(data as typeof tout));\n            if (data.length < 1000) break;\n          }\n          return tout;\n        })(),\n      ]);\n      const versDiscipline: Record<string, Discipline> = { \"Méca\": \"meca\", Calcul: \"calcul\", Elec: \"elec\", Pneu: \"pneu\", Scan: \"scan\", Autre: \"autre\" };\n      const groupeAct = new Map<string, Groupe>();\n      for (const c of (corr.data ?? []) as { colonne_excel: string; activite_id: string | null }[]) {\n        const d = versDiscipline[c.colonne_excel];\n        if (c.activite_id && d) groupeAct.set(c.activite_id, GROUPE_DISCIPLINE[d]);\n      }\n      for (const x of lignesP) {\n        if (x.type_affaire !== \"CBE\") continue;\n        const k = String(x.numero).replace(/^0+/, \"\");\n        const g = pointeA.get(k) ?? groupesVides();\n        g[(x.activite_id && groupeAct.get(x.activite_id)) || \"Autre\"] += Number(x.heures) || 0;\n        pointeA.set(k, g);\n      }\n    }\n    const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : familles en cours à la date",
+  "cherche": "      return laBase && ![\"PE\", \"PI\"].includes(laBase.imputation ?? \"\") && commandes.some((l) => l.statut === \"Commande reçue\" || l.statut === \"Intention de commande\");",
+  "remplace": "      return laBase && ![\"PE\", \"PI\"].includes(laBase.imputation ?? \"\") && commandes.some(ouverteA);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : commandes non livrées à la date",
+  "cherche": "      const nonLivrees = commandes.filter((l) => l.statut === \"Commande reçue\" || l.statut === \"Intention de commande\");",
+  "remplace": "      const nonLivrees = commandes.filter(ouverteA);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : pointé à la date",
+  "cherche": "      const g = realiseGroupes.get(base);\n      const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;",
+  "remplace": "      const g = pointeDe(base);\n      const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : facturé à la date",
+  "cherche": "        l.statut !== \"Livrée\" ? 0 : l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));",
+  "remplace": "        !(livreeLe(l) && (livreeLe(l) ?? \"\") <= dateRef) ? 0 : l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : PE / PI faites et pas facturées à la date",
+  "cherche": "    const pepi = reportsPEPI.filter((r) => !(r.facture && r.factureValide)).sort(",
+  "remplace": "    const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort("
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : choix de la date à côté du bouton",
+  "cherche": "            <button type=\"button\" style={page.btnSecondaire} onClick={() => void exporterEnCours()} disabled={chargement} title=\"Travail fait et pas encore facturé, à la date du jour : forfaits à l’avancement, PE / PI reportées\">\n              Exporter les en-cours\n            </button>",
+  "remplace": "            <span style={{ display: \"inline-flex\", alignItems: \"center\", gap: 4 }}>\n              <input\n                type=\"date\"\n                value={dateEnCours}\n                max={new Date().toISOString().slice(0, 10)}\n                onChange={(e) => setDateEnCours(e.target.value || new Date().toISOString().slice(0, 10))}\n                aria-label=\"Date des en-cours\"\n                title=\"Date à laquelle calculer les en-cours (fin de mois, clôture…)\"\n                style={{ ...page.entrees, width: \"auto\", minHeight: 40 }}\n              />\n              <button\n                type=\"button\"\n                style={page.btnSecondaire}\n                onClick={() => void exporterEnCours(dateEnCours)}\n                disabled={chargement}\n                title=\"Travail fait et pas encore facturé, à la date choisie : forfaits à l’avancement des heures pointées jusqu’à cette date, PE / PI faites et pas encore facturées\"\n              >\n                Exporter les en-cours au {new Date(`${dateEnCours}T00:00:00`).toLocaleDateString(\"fr-FR\")}\n              </button>\n            </span>"
+ }
+]
