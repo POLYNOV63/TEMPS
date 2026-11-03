@@ -13,7 +13,7 @@ const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Dro
   { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage", droit: "piloterBE" },
   { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
   { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
-  { cle: "ressources-planning", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "chargeRessources" },
+  { cle: "ressources-planning", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
   { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
   { cle: "feuilles-route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
 ];
