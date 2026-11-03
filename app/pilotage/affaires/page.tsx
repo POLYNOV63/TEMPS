@@ -1585,7 +1585,8 @@ function PlanningAffairesContenu() {
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <BadgeType type={affaire.type} />
-                <Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
+                {/* LIEN_BILAN : le bilan d'affaire, ouvert à tous */}
+                <Link href={`/affaires/bilan?affaire=${affaire.type}${affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero}&commande=${encodeURIComponent(affaire.numero)}`} title="Bilan de l’affaire" style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
                   {affaire.numero}
                 </Link>
                 {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}

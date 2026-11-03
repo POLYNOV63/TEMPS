@@ -50,7 +50,7 @@ export const DROITS = {
   administrerFeuilles: 2,
   voirPlanning: 0, // Planning des affaires : lecture pour tous
   piloterBE: 1, // Pilotage BE : portefeuille, déclarer et modifier les affaires au forfait, affecter
-  relevePrestations: 2, // relevé PE / PI (taux, heures facturées) : il alimente le planning des PE / PI
+  relevePrestations: 1, // relevé PE / PI (taux, heures facturées) : ADMIN et RESPONSABLE ; il alimente le planning des PE / PI
   chargeRessources: 2, // charge par ressource
   indicateurs: 2, // indicateurs et finances
   administration: 2, // codes, activités, profils, bilans, imports, export IA...
