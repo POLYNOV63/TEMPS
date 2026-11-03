@@ -1040,7 +1040,7 @@ function FinancesContenu() {
     }
     lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));
     // SANS_ZERO : une commande sans travail fait (ou déjà facturé) n'a pas d'en-cours : elle n'est pas listée
-    const garder = (l: L) => Number(l.enCours ?? 0) > 0.5 || l.avancement === "chiffré inconnu";
+    const garder = (l: L) => Number(l.enCours ?? 0) > 0.5 || Number(l.avance ?? 0) > 0.5 || l.avancement === "chiffré inconnu"; // GARDER_ACOMPTES
     const famillesRetenues = new Set(lignesFam.filter(garder).map((l) => String(l.commande)));
     const nbSansEnCours = lignesFam.length - famillesRetenues.size;
 
@@ -1184,7 +1184,7 @@ function FinancesContenu() {
         libelleTotal: "Total",
         notes: [
           "En jaune : toutes les heures chiffrées sont consommées alors que la commande n’est pas livrée. Elle compte comme terminée à 100 % ; si ce n’est pas le cas (dépassement), saisissez son avancement estimé dans l’Analyse du chiffré.",
-          `${nbSansEnCours} commande(s) en cours sans en-cours (aucun travail fait, ou déjà facturé) : non listées.`,
+          `${nbSansEnCours} commande(s) en cours sans en-cours ni acompte d’avance (aucun travail fait, ou facturé au plus juste) : non listées.`,
         ],
       },
       {
