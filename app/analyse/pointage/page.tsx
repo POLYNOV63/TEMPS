@@ -666,7 +666,7 @@ function AnalyseChiffreContenu() {
                                         {av ? `Saisi le ${av.le ? formatDate(av.le) : "—"} · ` : "Non saisi : les en-cours se calculent aux heures · "}
                                         aux heures : {auxHeures !== null ? `${auxHeures} %` : "chiffré inconnu"}. Vider le champ pour revenir aux heures.
                                       </div>
-                                      <strong style={{ display: "block", marginTop: 10 }}>Achats reçus ou montés, pas encore facturés</strong>
+                                      <strong style={{ display: "block", marginTop: 10 }}>Achats reçus ou montés (total)</strong>
                                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                                         <input
                                           key={`ar-${baseId}-${achatsRecus.get(baseId)?.montant ?? ""}`}
@@ -684,7 +684,7 @@ function AnalyseChiffreContenu() {
                                       </div>
                                       <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
                                         {achatsRecus.get(baseId)?.le ? `Saisi le ${formatDate(achatsRecus.get(baseId)?.le ?? null)} · ` : ""}
-                                        au prix d’achat : ce qui est arrivé ou monté et pas encore refacturé au client. Seule cette part du négoce compte dans les en-cours.
+                                        au prix d’achat : tout ce qui est arrivé ou monté sur l’affaire, facturé ou non. Seule cette part du négoce compte dans les en-cours.
                                       </div>
                                     </div>
                                   );

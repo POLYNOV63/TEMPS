@@ -1,0 +1,62 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : la famille entière (études + négoce reçu) moins tout le facturé",
+  "cherche": "      // études × avancement, moins les études déjà facturées ; négoce : achats reçus ou montés PAS ENCORE FACTURÉS\n      // (saisis), au prix de revente, dans la limite du négoce restant à facturer\n      const etudes = Math.max(0, montant - negoce);\n      const livreeAlaDate = (l: LigneFin) => Boolean(livreeLe(l) && (livreeLe(l) ?? \"\") <= dateRef);\n      const factureNegoce = membres.reduce((t, l) => {\n        if (!livreeAlaDate(l)) return t;\n        if (l.genre === \"ECHEANCE\" || l.genre === \"LOT\") return t + l.m.negoce;\n        if (l.genre === \"BASE\" || l.genre === \"AVENANT\") return t + Math.max(0, negoceCmd(l) - enfants(l.cle).reduce((s, d) => s + d.m.negoce, 0));\n        return t;\n      }, 0);\n      const recus = achatsRecusSaisis.get(base);\n      const negoceRestant = Math.max(0, negoce - factureNegoce);\n      const valeurNegoce = negoce > 0 && recus ? Math.min(negoceRestant, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;\n      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - Math.max(0, facture - factureNegoce));\n      const enCoursNegoce = valeurNegoce;\n      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;",
+  "remplace": "      // FAMILLE_GLOBALE : comme pour les avenants, tout se totalise sur la famille (commande, avenants, échéances) :\n      // valeur faite = études × avancement + négoce reçu ou monté (au prix de revente) ; en-cours = valeur faite − tout le\n      // facturé (acomptes compris) ; un acompte au-delà du travail fait est une avance du client, pas un en-cours\n      const etudes = Math.max(0, montant - negoce);\n      const recus = achatsRecusSaisis.get(base);\n      const valeurNegoce = negoce > 0 && recus ? Math.min(negoce, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;\n      const enCoursEtudes = avancement === null ? null : avancement * etudes; // valeur des études faites\n      const enCoursNegoce = valeurNegoce; // valeur du négoce reçu\n      const enCoursBrut = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce - facture;\n      const enCours = enCoursBrut === null ? null : Math.max(0, enCoursBrut);\n      const avance = enCoursBrut !== null && enCoursBrut < 0 ? -enCoursBrut : 0;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : négoce à venir = négoce pas encore reçu",
+  "cherche": "        negoceAttente: negoce > 0 ? Math.round(negoceRestant - valeurNegoce) || null : null,",
+  "remplace": "        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : acompte au-delà du travail fait",
+  "cherche": "        enCours: enCours === null ? null : Math.round(enCours),",
+  "remplace": "        enCours: enCours === null ? null : Math.round(enCours),\n        avance: avance > 0.5 ? Math.round(avance) : null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : titres des colonnes",
+  "cherche": "          { titre: \"En-cours études\", cle: \"enCoursEtudes\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"Achats reçus (saisis)\", cle: \"achatsRecus\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"En-cours négoce\", cle: \"enCoursNegoce\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },",
+  "remplace": "          { titre: \"Études faites (valeur)\", cle: \"enCoursEtudes\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"Achats reçus (saisis)\", cle: \"achatsRecus\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"Négoce reçu (valeur)\", cle: \"enCoursNegoce\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"Acompte d’avance\", cle: \"avance\", format: \"euros\", largeur: 14, total: true },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : total des acomptes d'avance",
+  "cherche": "    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);",
+  "remplace": "    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);\n    const totalAvance = lignesFam.reduce((t, l) => t + Number(l.avance ?? 0), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : libellés pour mémoire",
+  "cherche": "          { poste: \"Pour mémoire : négoce pas encore reçu ni monté (hors en-cours), au prix de revente\", montant: Math.round(totalNegoce), lignes: null },",
+  "remplace": "          { poste: \"Pour mémoire : négoce à venir, matériel pas encore arrivé (non compté dans les en-cours)\", montant: Math.round(totalNegoce), lignes: null },\n          { poste: \"Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)\", montant: Math.round(totalAvance), lignes: null },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : la méthode",
+  "cherche": "          \"En-cours d’un forfait = part ÉTUDES (montant − négoce) × avancement + part NÉGOCE pour les achats reçus ou montés, moins ce qui est déjà facturé (réparti entre études et négoce au prorata).\",",
+  "remplace": "          \"En-cours d’un forfait, sur toute la famille (commande, avenants, échéances, acomptes) : valeur des études faites (études × avancement) + valeur du négoce reçu ou monté, moins tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client (colonne « Acompte d’avance »).\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : la saisie des achats reçus",
+  "cherche": "          \"Achats reçus ou montés PAS ENCORE FACTURÉS au client : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (× négoce ÷ achats). Le négoce peut être porté par la commande ou par ses échéances.\",",
+  "remplace": "          \"Achats reçus ou montés : le TOTAL arrivé ou monté sur l’affaire, saisi à la main dans l’Analyse du chiffré, au prix d’achat ; il compte au prix de revente (× négoce ÷ achats). Négoce et achats se totalisent sur la commande, ses avenants et ses échéances.\","
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : libellé de la case (total reçu)",
+  "cherche": "                                      <strong style={{ display: \"block\", marginTop: 10 }}>Achats reçus ou montés, pas encore facturés</strong>",
+  "remplace": "                                      <strong style={{ display: \"block\", marginTop: 10 }}>Achats reçus ou montés (total)</strong>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : aide de la case (total reçu)",
+  "cherche": "                                        au prix d’achat : ce qui est arrivé ou monté et pas encore refacturé au client. Seule cette part du négoce compte dans les en-cours.",
+  "remplace": "                                        au prix d’achat : tout ce qui est arrivé ou monté sur l’affaire, facturé ou non. Seule cette part du négoce compte dans les en-cours."
+ }
+]

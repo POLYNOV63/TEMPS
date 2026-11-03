@@ -950,22 +950,17 @@ function FinancesContenu() {
       const facture = membres.reduce((t, l) => t + factureDe(l), 0);
       const saisi = avancementsSaisis.get(base);
       const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
-      // études × avancement, moins les études déjà facturées ; négoce : achats reçus ou montés PAS ENCORE FACTURÉS
-      // (saisis), au prix de revente, dans la limite du négoce restant à facturer
+      // FAMILLE_GLOBALE : comme pour les avenants, tout se totalise sur la famille (commande, avenants, échéances) :
+      // valeur faite = études × avancement + négoce reçu ou monté (au prix de revente) ; en-cours = valeur faite − tout le
+      // facturé (acomptes compris) ; un acompte au-delà du travail fait est une avance du client, pas un en-cours
       const etudes = Math.max(0, montant - negoce);
-      const livreeAlaDate = (l: LigneFin) => Boolean(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef);
-      const factureNegoce = membres.reduce((t, l) => {
-        if (!livreeAlaDate(l)) return t;
-        if (l.genre === "ECHEANCE" || l.genre === "LOT") return t + l.m.negoce;
-        if (l.genre === "BASE" || l.genre === "AVENANT") return t + Math.max(0, negoceCmd(l) - enfants(l.cle).reduce((s, d) => s + d.m.negoce, 0));
-        return t;
-      }, 0);
       const recus = achatsRecusSaisis.get(base);
-      const negoceRestant = Math.max(0, negoce - factureNegoce);
-      const valeurNegoce = negoce > 0 && recus ? Math.min(negoceRestant, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;
-      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - Math.max(0, facture - factureNegoce));
-      const enCoursNegoce = valeurNegoce;
-      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;
+      const valeurNegoce = negoce > 0 && recus ? Math.min(negoce, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;
+      const enCoursEtudes = avancement === null ? null : avancement * etudes; // valeur des études faites
+      const enCoursNegoce = valeurNegoce; // valeur du négoce reçu
+      const enCoursBrut = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce - facture;
+      const enCours = enCoursBrut === null ? null : Math.max(0, enCoursBrut);
+      const avance = enCoursBrut !== null && enCoursBrut < 0 ? -enCoursBrut : 0;
       const dBase = dates.get(laBase.cle);
       const estimees = nonLivrees.map((l) => dates.get(l.cle)?.estimee ?? l.date_estimee).filter(Boolean).sort() as string[];
       lignesFam.push({
@@ -991,8 +986,9 @@ function FinancesContenu() {
         enCoursEtudes: enCoursEtudes === null ? null : Math.round(enCoursEtudes),
         achatsRecus: recus ? Math.round(recus.montant) : null,
         enCoursNegoce: negoce > 0 ? Math.round(enCoursNegoce) : null,
-        negoceAttente: negoce > 0 ? Math.round(negoceRestant - valeurNegoce) || null : null,
+        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,
         enCours: enCours === null ? null : Math.round(enCours),
+        avance: avance > 0.5 ? Math.round(avance) : null,
       });
 
       // une ligne par commande, avenant, échéance ou lot
@@ -1051,6 +1047,7 @@ function FinancesContenu() {
     const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
     const totalForfaits = lignesFam.reduce((t, l) => t + Number(l.enCours ?? 0), 0);
     const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);
+    const totalAvance = lignesFam.reduce((t, l) => t + Number(l.avance ?? 0), 0);
     // PEPI_A_FACTURER : tout le travail des PE / PI fait jusqu'à la date et pas encore facturé À CETTE DATE :
     // mois reportés (ci-dessus), plus les mois non reportés pas encore clôturés à la date (dont le mois en cours)
     const pepiTout: { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string }[] = pepi.map((r) => ({
@@ -1138,13 +1135,14 @@ function FinancesContenu() {
           { poste: "Forfaits en cours, à l’avancement", montant: Math.round(totalForfaits), lignes: famillesRetenues.size },
           { poste: "PE / PI faites, pas encore facturées", montant: Math.round(totalPepi), lignes: pepiTout.length },
           { poste: "TOTAL DES EN-COURS", montant: Math.round(totalForfaits + totalPepi), lignes: null },
-          { poste: "Pour mémoire : négoce pas encore reçu ni monté (hors en-cours), au prix de revente", montant: Math.round(totalNegoce), lignes: null },
+          { poste: "Pour mémoire : négoce à venir, matériel pas encore arrivé (non compté dans les en-cours)", montant: Math.round(totalNegoce), lignes: null },
+          { poste: "Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)", montant: Math.round(totalAvance), lignes: null },
           { poste: "Pour mémoire : intentions de commande (pas des commandes), travail fait à l’avancement des heures", montant: Math.round(totalIntentions), lignes: intentions.length },
         ],
         notes: [
           "Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.",
-          "En-cours d’un forfait = part ÉTUDES (montant − négoce) × avancement + part NÉGOCE pour les achats reçus ou montés, moins ce qui est déjà facturé (réparti entre études et négoce au prorata).",
-          "Achats reçus ou montés PAS ENCORE FACTURÉS au client : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (× négoce ÷ achats). Le négoce peut être porté par la commande ou par ses échéances.",
+          "En-cours d’un forfait, sur toute la famille (commande, avenants, échéances, acomptes) : valeur des études faites (études × avancement) + valeur du négoce reçu ou monté, moins tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client (colonne « Acompte d’avance »).",
+          "Achats reçus ou montés : le TOTAL arrivé ou monté sur l’affaire, saisi à la main dans l’Analyse du chiffré, au prix d’achat ; il compte au prix de revente (× négoce ÷ achats). Négoce et achats se totalisent sur la commande, ses avenants et ses échéances.",
           "Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».",
           "PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.",
           "Onglets : Forfaits en cours (une ligne par famille) · Détail des commandes · Heures par activité · PE PI à facturer.",
@@ -1174,10 +1172,11 @@ function FinancesContenu() {
           { titre: "H. restantes", cle: "reste", format: "nombre", largeur: 10, total: true },
           { titre: "Avancement", cle: "avancement", largeur: 11 },
           { titre: "Mesuré", cle: "mesure", largeur: 16 },
-          { titre: "En-cours études", cle: "enCoursEtudes", format: "euros", largeur: 14, total: true },
+          { titre: "Études faites (valeur)", cle: "enCoursEtudes", format: "euros", largeur: 14, total: true },
           { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 14, total: true },
-          { titre: "En-cours négoce", cle: "enCoursNegoce", format: "euros", largeur: 14, total: true },
+          { titre: "Négoce reçu (valeur)", cle: "enCoursNegoce", format: "euros", largeur: 14, total: true },
           { titre: "En-cours", cle: "enCours", format: "euros", largeur: 14, total: true },
+          { titre: "Acompte d’avance", cle: "avance", format: "euros", largeur: 14, total: true },
         ],
         lignes: lignesFam.filter(garder),
         // SANS_COUT_ENGAGE : en jaune, une commande comptée comme terminée parce que toutes ses heures sont consommées
