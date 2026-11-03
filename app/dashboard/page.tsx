@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, t
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
+import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
 
 /* ===============================================================
    TABLEAU DE BORD
@@ -421,6 +422,8 @@ export default function DashboardPage() {
           <BlocDirection aller={aller} />
         ) : (
           <>
+            <FeuilleDeRouteDashboard />
+
             <BlocMonEspace
               aller={aller}
               statut={statutMaFeuille}
