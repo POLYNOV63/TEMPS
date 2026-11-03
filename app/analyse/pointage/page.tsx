@@ -448,6 +448,28 @@ function AnalyseChiffreContenu() {
               <Tuile libelle="Au-delà du chiffré" valeur={String(totaux.depassees)} sous="affaires dont le cumul dépasse le chiffré" accent={totaux.depassees > 0} />
             </div>
 
+            {/* HORS_APPLICATION : heures de la période pointées sur des n° CBE que l'application ne suit pas */}
+            {(() => {
+              const connues = new Set(familles.map((f) => f.base));
+              const inconnues = [...surPeriode.entries()].filter(([n, v]) => !connues.has(n) && v.total > 0.05).sort((x, y) => y[1].total - x[1].total);
+              if (inconnues.length === 0) return null;
+              const total = inconnues.reduce((t, [, v]) => t + v.total, 0);
+              return (
+                <p
+                  style={{ margin: "-4px 0 14px", fontSize: 13, color: C.gris }}
+                  title="Ces heures sont comptées dans l’Analyse de capacité (temps passé sur des commandes), mais pas ici, faute de commande connue à comparer au chiffré."
+                >
+                  ⓘ En plus : <strong>{formatHeures(total)}</strong> pointées sur la période sur des commandes que l’application ne suit pas (anciennes commandes, CAS,
+                  commandes abandonnées ou n° mal saisis) :{" "}
+                  {inconnues
+                    .slice(0, 8)
+                    .map(([n, v]) => `${n} (${formatHeures(v.total)})`)
+                    .join(", ")}
+                  {inconnues.length > 8 ? `… (+${inconnues.length - 8})` : ""}.
+                </p>
+              );
+            })()}
+
             <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
               <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Par activité (affaires affichées)</h2>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
