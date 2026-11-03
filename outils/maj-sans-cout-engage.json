@@ -1,0 +1,32 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : colonne « Coût engagé » retirée",
+  "cherche": "          { titre: \"Coût engagé\", cle: \"coutEngage\", format: \"euros\", largeur: 13, total: true },\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : valeur du coût engagé retirée",
+  "cherche": "        coutEngage: cout === null ? null : Math.round(pointe * cout),\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : note du coût engagé retirée",
+  "cherche": "          cout !== null ? `Coût engagé (onglet Forfaits) = heures pointées × ${cout.toLocaleString(\"fr-FR\")} €/h, pour comparaison.` : \"Coût de structure non saisi : colonne « Coût engagé » vide.\",\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : jaune seulement pour 100 % aux heures",
+  "cherche": "        alerte: (l) => l.avancement === \"chiffré inconnu\" || l.avancement === \"100 %\",",
+  "remplace": "        // SANS_COUT_ENGAGE : en jaune, une commande comptée comme terminée parce que toutes ses heures sont consommées\n        alerte: (l) => l.avancement === \"chiffré inconnu\" || (l.avancement === \"100 %\" && l.mesure === \"aux heures\"),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : note du jaune",
+  "cherche": "          \"En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier).\",",
+  "remplace": "          \"En jaune : toutes les heures chiffrées sont consommées alors que la commande n’est pas livrée. Elle compte comme terminée à 100 % ; si ce n’est pas le cas (dépassement), saisissez son avancement estimé dans l’Analyse du chiffré.\","
+ }
+]

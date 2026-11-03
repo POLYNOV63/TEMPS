@@ -1,0 +1,56 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : négoce et achats portés par les échéances",
+  "cherche": "      const negoce = commandes.reduce((t, l) => t + l.m.negoce, 0);\n      const achats = commandes.reduce((t, l) => t + l.m.achats, 0);",
+  "remplace": "      // NEGOCE_ECHEANCES : le négoce et les achats d'une commande sont sur elle, ou répartis sur ses échéances / lots\n      const enfants = (cle: string) => membres.filter((d) => (d.genre === \"ECHEANCE\" || d.genre === \"LOT\") && d.parent_cle === cle);\n      const negoceCmd = (c: LigneFin) => (c.m.negoce > 0 ? c.m.negoce : enfants(c.cle).reduce((t, d) => t + d.m.negoce, 0));\n      const achatsCmd = (c: LigneFin) => (c.m.achats > 0 ? c.m.achats : enfants(c.cle).reduce((t, d) => t + d.m.achats, 0));\n      const negoce = commandes.reduce((t, l) => t + negoceCmd(l), 0);\n      const achats = commandes.reduce((t, l) => t + achatsCmd(l), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : valeur d'une échéance (montant, sinon détail par discipline)",
+  "cherche": "      const decoupe = (cle: string) => membres.filter((d) => (d.genre === \"ECHEANCE\" || d.genre === \"LOT\") && d.parent_cle === cle).reduce((t, d) => t + (d.m.echeances || d.m.montant), 0);",
+  "remplace": "      const valeurLigne = (d: LigneFin) => d.m.echeances || d.m.montant || d.m.meca + d.m.calcul + d.m.elec_pneu + d.m.scan + d.m.autre + d.m.negoce;\n      const decoupe = (cle: string) => membres.filter((d) => (d.genre === \"ECHEANCE\" || d.genre === \"LOT\") && d.parent_cle === cle).reduce((t, d) => t + valeurLigne(d), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : facturé d'une échéance",
+  "cherche": "l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));",
+  "remplace": "l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? valeurLigne(l) : Math.max(0, l.m.montant - decoupe(l.cle));"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : études et négoce, chacun avec son propre facturé",
+  "cherche": "      // les études avancent avec l'avancement ; le négoce ne compte que pour les achats reçus ou montés, au prix de revente\n      const etudes = Math.max(0, montant - negoce);\n      const partEtudes = montant > 0 ? etudes / montant : 1;\n      const recus = achatsRecusSaisis.get(base);\n      const valeurNegoce = negoce > 0 && recus ? (achats > 0 ? Math.min(negoce, negoce * (recus.montant / achats)) : Math.min(negoce, recus.montant)) : 0;\n      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - facture * partEtudes);\n      const enCoursNegoce = negoce > 0 ? Math.max(0, valeurNegoce - facture * (1 - partEtudes)) : 0;\n      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;",
+  "remplace": "      // études × avancement, moins les études déjà facturées ; négoce : achats reçus ou montés PAS ENCORE FACTURÉS\n      // (saisis), au prix de revente, dans la limite du négoce restant à facturer\n      const etudes = Math.max(0, montant - negoce);\n      const livreeAlaDate = (l: LigneFin) => Boolean(livreeLe(l) && (livreeLe(l) ?? \"\") <= dateRef);\n      const factureNegoce = membres.reduce((t, l) => {\n        if (!livreeAlaDate(l)) return t;\n        if (l.genre === \"ECHEANCE\" || l.genre === \"LOT\") return t + l.m.negoce;\n        if (l.genre === \"BASE\" || l.genre === \"AVENANT\") return t + Math.max(0, negoceCmd(l) - enfants(l.cle).reduce((s, d) => s + d.m.negoce, 0));\n        return t;\n      }, 0);\n      const recus = achatsRecusSaisis.get(base);\n      const negoceRestant = Math.max(0, negoce - factureNegoce);\n      const valeurNegoce = negoce > 0 && recus ? Math.min(negoceRestant, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;\n      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - Math.max(0, facture - factureNegoce));\n      const enCoursNegoce = valeurNegoce;\n      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : négoce en attente = restant à facturer moins le reçu",
+  "cherche": "        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,",
+  "remplace": "        negoceAttente: negoce > 0 ? Math.round(negoceRestant - valeurNegoce) || null : null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Détail des commandes : montant d'une échéance",
+  "cherche": "          montant: Math.round(l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? l.m.echeances || l.m.montant : l.m.montant) || null,",
+  "remplace": "          montant: Math.round(l.genre === \"ECHEANCE\" || l.genre === \"LOT\" ? valeurLigne(l) : l.m.montant) || null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : la saisie, c'est le reçu pas encore facturé",
+  "cherche": "          \"Achats reçus ou montés : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (négoce × achats reçus ÷ achats).\",",
+  "remplace": "          \"Achats reçus ou montés PAS ENCORE FACTURÉS au client : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (× négoce ÷ achats). Le négoce peut être porté par la commande ou par ses échéances.\","
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : libellé de la case",
+  "cherche": "                                      <strong style={{ display: \"block\", marginTop: 10 }}>Achats reçus ou montés</strong>",
+  "remplace": "                                      <strong style={{ display: \"block\", marginTop: 10 }}>Achats reçus ou montés, pas encore facturés</strong>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : aide de la case",
+  "cherche": "                                        au prix d’achat ; seule cette part du négoce compte dans les en-cours.",
+  "remplace": "                                        au prix d’achat : ce qui est arrivé ou monté et pas encore refacturé au client. Seule cette part du négoce compte dans les en-cours."
+ }
+]

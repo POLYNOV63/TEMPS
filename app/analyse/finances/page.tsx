@@ -934,24 +934,37 @@ function FinancesContenu() {
       const laBase = commandes.find((l) => l.genre === "BASE") ?? commandes[0];
       const nonLivrees = commandes.filter(ouverteA);
       const montant = commandes.reduce((t, l) => t + l.m.montant, 0);
-      const negoce = commandes.reduce((t, l) => t + l.m.negoce, 0);
-      const achats = commandes.reduce((t, l) => t + l.m.achats, 0);
+      // NEGOCE_ECHEANCES : le négoce et les achats d'une commande sont sur elle, ou répartis sur ses échéances / lots
+      const enfants = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle);
+      const negoceCmd = (c: LigneFin) => (c.m.negoce > 0 ? c.m.negoce : enfants(c.cle).reduce((t, d) => t + d.m.negoce, 0));
+      const achatsCmd = (c: LigneFin) => (c.m.achats > 0 ? c.m.achats : enfants(c.cle).reduce((t, d) => t + d.m.achats, 0));
+      const negoce = commandes.reduce((t, l) => t + negoceCmd(l), 0);
+      const achats = commandes.reduce((t, l) => t + achatsCmd(l), 0);
       const chiffre = commandes.reduce((t, l) => t + l.heures_total, 0);
       const g = pointeDe(base);
       const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;
-      const decoupe = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle).reduce((t, d) => t + (d.m.echeances || d.m.montant), 0);
+      const valeurLigne = (d: LigneFin) => d.m.echeances || d.m.montant || d.m.meca + d.m.calcul + d.m.elec_pneu + d.m.scan + d.m.autre + d.m.negoce;
+      const decoupe = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle).reduce((t, d) => t + valeurLigne(d), 0);
       const factureDe = (l: LigneFin) =>
-        !(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? l.m.echeances || l.m.montant : Math.max(0, l.m.montant - decoupe(l.cle));
+        !(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : Math.max(0, l.m.montant - decoupe(l.cle));
       const facture = membres.reduce((t, l) => t + factureDe(l), 0);
       const saisi = avancementsSaisis.get(base);
       const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
-      // les études avancent avec l'avancement ; le négoce ne compte que pour les achats reçus ou montés, au prix de revente
+      // études × avancement, moins les études déjà facturées ; négoce : achats reçus ou montés PAS ENCORE FACTURÉS
+      // (saisis), au prix de revente, dans la limite du négoce restant à facturer
       const etudes = Math.max(0, montant - negoce);
-      const partEtudes = montant > 0 ? etudes / montant : 1;
+      const livreeAlaDate = (l: LigneFin) => Boolean(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef);
+      const factureNegoce = membres.reduce((t, l) => {
+        if (!livreeAlaDate(l)) return t;
+        if (l.genre === "ECHEANCE" || l.genre === "LOT") return t + l.m.negoce;
+        if (l.genre === "BASE" || l.genre === "AVENANT") return t + Math.max(0, negoceCmd(l) - enfants(l.cle).reduce((s, d) => s + d.m.negoce, 0));
+        return t;
+      }, 0);
       const recus = achatsRecusSaisis.get(base);
-      const valeurNegoce = negoce > 0 && recus ? (achats > 0 ? Math.min(negoce, negoce * (recus.montant / achats)) : Math.min(negoce, recus.montant)) : 0;
-      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - facture * partEtudes);
-      const enCoursNegoce = negoce > 0 ? Math.max(0, valeurNegoce - facture * (1 - partEtudes)) : 0;
+      const negoceRestant = Math.max(0, negoce - factureNegoce);
+      const valeurNegoce = negoce > 0 && recus ? Math.min(negoceRestant, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;
+      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - Math.max(0, facture - factureNegoce));
+      const enCoursNegoce = valeurNegoce;
       const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;
       const dBase = dates.get(laBase.cle);
       const estimees = nonLivrees.map((l) => dates.get(l.cle)?.estimee ?? l.date_estimee).filter(Boolean).sort() as string[];
@@ -978,9 +991,8 @@ function FinancesContenu() {
         enCoursEtudes: enCoursEtudes === null ? null : Math.round(enCoursEtudes),
         achatsRecus: recus ? Math.round(recus.montant) : null,
         enCoursNegoce: negoce > 0 ? Math.round(enCoursNegoce) : null,
-        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,
+        negoceAttente: negoce > 0 ? Math.round(negoceRestant - valeurNegoce) || null : null,
         enCours: enCours === null ? null : Math.round(enCours),
-        coutEngage: cout === null ? null : Math.round(pointe * cout),
       });
 
       // une ligne par commande, avenant, échéance ou lot
@@ -991,7 +1003,7 @@ function FinancesContenu() {
           numero: numeroDe(l),
           genre: libelleGenre(l.genre),
           statut: l.statut ?? "",
-          montant: Math.round(l.genre === "ECHEANCE" || l.genre === "LOT" ? l.m.echeances || l.m.montant : l.m.montant) || null,
+          montant: Math.round(l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : l.m.montant) || null,
           negoce: Math.round(l.m.negoce) || null,
           achats: Math.round(l.m.achats) || null,
           chiffre: l.genre === "BASE" || l.genre === "AVENANT" ? Math.round(l.heures_total * 10) / 10 || null : null,
@@ -1132,10 +1144,9 @@ function FinancesContenu() {
         notes: [
           "Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.",
           "En-cours d’un forfait = part ÉTUDES (montant − négoce) × avancement + part NÉGOCE pour les achats reçus ou montés, moins ce qui est déjà facturé (réparti entre études et négoce au prorata).",
-          "Achats reçus ou montés : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (négoce × achats reçus ÷ achats).",
+          "Achats reçus ou montés PAS ENCORE FACTURÉS au client : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (× négoce ÷ achats). Le négoce peut être porté par la commande ou par ses échéances.",
           "Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».",
           "PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.",
-          cout !== null ? `Coût engagé (onglet Forfaits) = heures pointées × ${cout.toLocaleString("fr-FR")} €/h, pour comparaison.` : "Coût de structure non saisi : colonne « Coût engagé » vide.",
           "Onglets : Forfaits en cours (une ligne par famille) · Détail des commandes · Heures par activité · PE PI à facturer.",
         ],
       },
@@ -1167,13 +1178,13 @@ function FinancesContenu() {
           { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 14, total: true },
           { titre: "En-cours négoce", cle: "enCoursNegoce", format: "euros", largeur: 14, total: true },
           { titre: "En-cours", cle: "enCours", format: "euros", largeur: 14, total: true },
-          { titre: "Coût engagé", cle: "coutEngage", format: "euros", largeur: 13, total: true },
         ],
         lignes: lignesFam.filter(garder),
-        alerte: (l) => l.avancement === "chiffré inconnu" || l.avancement === "100 %",
+        // SANS_COUT_ENGAGE : en jaune, une commande comptée comme terminée parce que toutes ses heures sont consommées
+        alerte: (l) => l.avancement === "chiffré inconnu" || (l.avancement === "100 %" && l.mesure === "aux heures"),
         libelleTotal: "Total",
         notes: [
-          "En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier).",
+          "En jaune : toutes les heures chiffrées sont consommées alors que la commande n’est pas livrée. Elle compte comme terminée à 100 % ; si ce n’est pas le cas (dépassement), saisissez son avancement estimé dans l’Analyse du chiffré.",
           `${nbSansEnCours} commande(s) en cours sans en-cours (aucun travail fait, ou déjà facturé) : non listées.`,
         ],
       },
