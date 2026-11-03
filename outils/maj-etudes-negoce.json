@@ -1,0 +1,62 @@
+[
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : achats reçus (chargement, enregistrement)",
+  "cherche": "  async function enregistrerAvancement(id: string, texte: string) {",
+  "remplace": "  /* ACHATS_RECUS : montant des achats reçus ou montés (SQL 80), sur la commande de base */\n  const [achatsRecus, setAchatsRecus] = useState<Map<string, { montant: number; le: string | null }>>(new Map());\n  useEffect(() => {\n    void supabase\n      .from(\"pilotage_affaires\")\n      .select(\"id,achats_recus,achats_recus_le\")\n      .not(\"achats_recus\", \"is\", null)\n      .then(({ data }) =>\n        setAchatsRecus(new Map(((data ?? []) as { id: string; achats_recus: number | string; achats_recus_le: string | null }[]).map((x) => [x.id, { montant: Number(x.achats_recus) || 0, le: x.achats_recus_le }])))\n      );\n  }, []);\n  async function enregistrerAchatsRecus(id: string, texte: string) {\n    const v = texte.trim() === \"\" ? null : Number(texte.replace(/\\s/g, \"\").replace(\",\", \".\"));\n    if (v !== null && (!Number.isFinite(v) || v < 0)) return setErreur(\"Montant des achats reçus invalide.\");\n    const { error } = await supabase.rpc(\"pilotage_maj_achats_recus\", { p_affaire_id: id, p_montant: v });\n    if (error) return setErreur(error.message);\n    setAchatsRecus((m) => {\n      const n = new Map(m);\n      if (v === null) n.delete(id);\n      else n.set(id, { montant: v, le: new Date().toISOString().slice(0, 10) });\n      return n;\n    });\n  }\n  async function enregistrerAvancement(id: string, texte: string) {"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse du chiffré : case des achats reçus ou montés",
+  "cherche": "                                        aux heures : {auxHeures !== null ? `${auxHeures} %` : \"chiffré inconnu\"}. Vider le champ pour revenir aux heures.\n                                      </div>",
+  "remplace": "                                        aux heures : {auxHeures !== null ? `${auxHeures} %` : \"chiffré inconnu\"}. Vider le champ pour revenir aux heures.\n                                      </div>\n                                      <strong style={{ display: \"block\", marginTop: 10 }}>Achats reçus ou montés</strong>\n                                      <div style={{ display: \"flex\", alignItems: \"center\", gap: 6, marginTop: 4 }}>\n                                        <input\n                                          key={`ar-${baseId}-${achatsRecus.get(baseId)?.montant ?? \"\"}`}\n                                          defaultValue={achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : \"\"}\n                                          inputMode=\"decimal\"\n                                          placeholder=\"0\"\n                                          aria-label=\"Achats reçus ou montés, en euros\"\n                                          onBlur={(e) => {\n                                            const actuel = achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : \"\";\n                                            if (e.target.value.trim() !== actuel) void enregistrerAchatsRecus(baseId, e.target.value);\n                                          }}\n                                          style={{ ...page.entrees, width: 110, textAlign: \"right\" }}\n                                        />\n                                        <span>€</span>\n                                      </div>\n                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>\n                                        {achatsRecus.get(baseId)?.le ? `Saisi le ${formatDate(achatsRecus.get(baseId)?.le ?? null)} · ` : \"\"}\n                                        au prix d’achat ; seule cette part du négoce compte dans les en-cours.\n                                      </div>"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : achats reçus saisis",
+  "cherche": "        .map((x) => [x.numero.replace(/^0+/, \"\"), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])\n    );",
+  "remplace": "        .map((x) => [x.numero.replace(/^0+/, \"\"), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])\n    );\n    // ETUDES_NEGOCE : achats reçus ou montés (SQL 80), saisis sur la commande de base\n    const { data: arData } = await supabase.from(\"pilotage_affaires\").select(\"numero,achats_recus,achats_recus_le\").eq(\"type\", \"CBE\").not(\"achats_recus\", \"is\", null);\n    const achatsRecusSaisis = new Map(\n      ((arData ?? []) as { numero: string; achats_recus: number | string; achats_recus_le: string | null }[])\n        .filter((x) => /^\\d+$/.test(x.numero))\n        .map((x) => [x.numero.replace(/^0+/, \"\"), { montant: Number(x.achats_recus) || 0, le: x.achats_recus_le }])\n    );"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : études à l'avancement, négoce pour les achats reçus",
+  "cherche": "      const enCours = avancement === null ? null : Math.max(0, avancement * montant - facture);",
+  "remplace": "      // les études avancent avec l'avancement ; le négoce ne compte que pour les achats reçus ou montés, au prix de revente\n      const etudes = Math.max(0, montant - negoce);\n      const partEtudes = montant > 0 ? etudes / montant : 1;\n      const recus = achatsRecusSaisis.get(base);\n      const valeurNegoce = negoce > 0 && recus ? (achats > 0 ? Math.min(negoce, negoce * (recus.montant / achats)) : Math.min(negoce, recus.montant)) : 0;\n      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - facture * partEtudes);\n      const enCoursNegoce = negoce > 0 ? Math.max(0, valeurNegoce - facture * (1 - partEtudes)) : 0;\n      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : colonnes études et négoce (valeurs)",
+  "cherche": "        enCours: enCours === null ? null : Math.round(enCours),",
+  "remplace": "        enCoursEtudes: enCoursEtudes === null ? null : Math.round(enCoursEtudes),\n        achatsRecus: recus ? Math.round(recus.montant) : null,\n        enCoursNegoce: negoce > 0 ? Math.round(enCoursNegoce) : null,\n        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,\n        enCours: enCours === null ? null : Math.round(enCours),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : colonnes études et négoce",
+  "cherche": "          { titre: \"Mesuré\", cle: \"mesure\", largeur: 16 },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },",
+  "remplace": "          { titre: \"Mesuré\", cle: \"mesure\", largeur: 16 },\n          { titre: \"En-cours études\", cle: \"enCoursEtudes\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"Achats reçus (saisis)\", cle: \"achatsRecus\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"En-cours négoce\", cle: \"enCoursNegoce\", format: \"euros\", largeur: 14, total: true },\n          { titre: \"En-cours\", cle: \"enCours\", format: \"euros\", largeur: 14, total: true },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : négoce pas encore reçu",
+  "cherche": "    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoce ?? 0) + Number(l.achats ?? 0), 0);",
+  "remplace": "    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : libellé du négoce pour mémoire",
+  "cherche": "          { poste: \"Pour mémoire : négoce et achats des forfaits en cours (à ajouter s’ils sont déjà engagés)\", montant: Math.round(totalNegoce), lignes: null },",
+  "remplace": "          { poste: \"Pour mémoire : négoce pas encore reçu ni monté (hors en-cours), au prix de revente\", montant: Math.round(totalNegoce), lignes: null },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : explication de la méthode",
+  "cherche": "          \"En-cours d’un forfait = avancement × montant de la famille − déjà facturé (commandes et échéances livrées).\",",
+  "remplace": "          \"En-cours d’un forfait = part ÉTUDES (montant − négoce) × avancement + part NÉGOCE pour les achats reçus ou montés, moins ce qui est déjà facturé (réparti entre études et négoce au prorata).\",\n          \"Achats reçus ou montés : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (négoce × achats reçus ÷ achats).\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : ancienne note du négoce retirée",
+  "cherche": "          \"Le négoce et les achats n’avancent pas avec les heures : ils sont donnés à part, pour mémoire.\",\n",
+  "remplace": ""
+ }
+]

@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "En-cours : familles retenues (travail fait non facturé, ou chiffré inconnu)",
+  "cherche": "    lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));",
+  "remplace": "    lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));\n    // SANS_ZERO : une commande sans travail fait (ou déjà facturé) n'a pas d'en-cours : elle n'est pas listée\n    const garder = (l: L) => Number(l.enCours ?? 0) > 0.5 || l.avancement === \"chiffré inconnu\";\n    const famillesRetenues = new Set(lignesFam.filter(garder).map((l) => String(l.commande)));\n    const nbSansEnCours = lignesFam.length - famillesRetenues.size;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : nombre de familles retenues",
+  "cherche": "          { poste: \"Forfaits en cours, à l’avancement des heures\", montant: Math.round(totalForfaits), lignes: lignesFam.length },",
+  "remplace": "          { poste: \"Forfaits en cours, à l’avancement\", montant: Math.round(totalForfaits), lignes: famillesRetenues.size },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet Forfaits : sans les familles à 0",
+  "cherche": "        lignes: lignesFam,",
+  "remplace": "        lignes: lignesFam.filter(garder),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet Forfaits : note",
+  "cherche": "        notes: [\"En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier).\"],",
+  "remplace": "        notes: [\n          \"En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier).\",\n          `${nbSansEnCours} commande(s) en cours sans en-cours (aucun travail fait, ou déjà facturé) : non listées.`,\n        ],"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet Détail : mêmes familles",
+  "cherche": "        lignes: lignesCmd,",
+  "remplace": "        lignes: lignesCmd.filter((l) => famillesRetenues.has(String(l.famille))),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Onglet Heures par activité : mêmes familles",
+  "cherche": "        lignes: lignesAct,",
+  "remplace": "        lignes: lignesAct.filter((l) => famillesRetenues.has(String(l.famille))),"
+ }
+]

@@ -100,6 +100,29 @@ function AnalyseChiffreContenu() {
         setAvancements(new Map(((data ?? []) as { id: string; avancement_pct: number | string; avancement_le: string | null }[]).map((x) => [x.id, { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])))
       );
   }, []);
+  /* ACHATS_RECUS : montant des achats reçus ou montés (SQL 80), sur la commande de base */
+  const [achatsRecus, setAchatsRecus] = useState<Map<string, { montant: number; le: string | null }>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("pilotage_affaires")
+      .select("id,achats_recus,achats_recus_le")
+      .not("achats_recus", "is", null)
+      .then(({ data }) =>
+        setAchatsRecus(new Map(((data ?? []) as { id: string; achats_recus: number | string; achats_recus_le: string | null }[]).map((x) => [x.id, { montant: Number(x.achats_recus) || 0, le: x.achats_recus_le }])))
+      );
+  }, []);
+  async function enregistrerAchatsRecus(id: string, texte: string) {
+    const v = texte.trim() === "" ? null : Number(texte.replace(/\s/g, "").replace(",", "."));
+    if (v !== null && (!Number.isFinite(v) || v < 0)) return setErreur("Montant des achats reçus invalide.");
+    const { error } = await supabase.rpc("pilotage_maj_achats_recus", { p_affaire_id: id, p_montant: v });
+    if (error) return setErreur(error.message);
+    setAchatsRecus((m) => {
+      const n = new Map(m);
+      if (v === null) n.delete(id);
+      else n.set(id, { montant: v, le: new Date().toISOString().slice(0, 10) });
+      return n;
+    });
+  }
   async function enregistrerAvancement(id: string, texte: string) {
     const v = texte.trim() === "" ? null : Number(texte.replace(",", "."));
     if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) return setErreur("L’avancement se donne entre 0 et 100 %.");
@@ -642,6 +665,26 @@ function AnalyseChiffreContenu() {
                                       <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
                                         {av ? `Saisi le ${av.le ? formatDate(av.le) : "—"} · ` : "Non saisi : les en-cours se calculent aux heures · "}
                                         aux heures : {auxHeures !== null ? `${auxHeures} %` : "chiffré inconnu"}. Vider le champ pour revenir aux heures.
+                                      </div>
+                                      <strong style={{ display: "block", marginTop: 10 }}>Achats reçus ou montés</strong>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                                        <input
+                                          key={`ar-${baseId}-${achatsRecus.get(baseId)?.montant ?? ""}`}
+                                          defaultValue={achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : ""}
+                                          inputMode="decimal"
+                                          placeholder="0"
+                                          aria-label="Achats reçus ou montés, en euros"
+                                          onBlur={(e) => {
+                                            const actuel = achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : "";
+                                            if (e.target.value.trim() !== actuel) void enregistrerAchatsRecus(baseId, e.target.value);
+                                          }}
+                                          style={{ ...page.entrees, width: 110, textAlign: "right" }}
+                                        />
+                                        <span>€</span>
+                                      </div>
+                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
+                                        {achatsRecus.get(baseId)?.le ? `Saisi le ${formatDate(achatsRecus.get(baseId)?.le ?? null)} · ` : ""}
+                                        au prix d’achat ; seule cette part du négoce compte dans les en-cours.
                                       </div>
                                     </div>
                                   );

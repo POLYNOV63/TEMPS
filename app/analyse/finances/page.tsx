@@ -888,6 +888,13 @@ function FinancesContenu() {
         .filter((x) => /^\d+$/.test(x.numero))
         .map((x) => [x.numero.replace(/^0+/, ""), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])
     );
+    // ETUDES_NEGOCE : achats reçus ou montés (SQL 80), saisis sur la commande de base
+    const { data: arData } = await supabase.from("pilotage_affaires").select("numero,achats_recus,achats_recus_le").eq("type", "CBE").not("achats_recus", "is", null);
+    const achatsRecusSaisis = new Map(
+      ((arData ?? []) as { numero: string; achats_recus: number | string; achats_recus_le: string | null }[])
+        .filter((x) => /^\d+$/.test(x.numero))
+        .map((x) => [x.numero.replace(/^0+/, ""), { montant: Number(x.achats_recus) || 0, le: x.achats_recus_le }])
+    );
     const cout = coutHoraire(couts, aujourdhui);
     const fr = (d: string | null | undefined) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
     // INTENTIONS_A_PART : une intention n'est pas une commande ; elle est listée à part, pour mémoire
@@ -938,7 +945,14 @@ function FinancesContenu() {
       const facture = membres.reduce((t, l) => t + factureDe(l), 0);
       const saisi = avancementsSaisis.get(base);
       const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
-      const enCours = avancement === null ? null : Math.max(0, avancement * montant - facture);
+      // les études avancent avec l'avancement ; le négoce ne compte que pour les achats reçus ou montés, au prix de revente
+      const etudes = Math.max(0, montant - negoce);
+      const partEtudes = montant > 0 ? etudes / montant : 1;
+      const recus = achatsRecusSaisis.get(base);
+      const valeurNegoce = negoce > 0 && recus ? (achats > 0 ? Math.min(negoce, negoce * (recus.montant / achats)) : Math.min(negoce, recus.montant)) : 0;
+      const enCoursEtudes = avancement === null ? null : Math.max(0, avancement * etudes - facture * partEtudes);
+      const enCoursNegoce = negoce > 0 ? Math.max(0, valeurNegoce - facture * (1 - partEtudes)) : 0;
+      const enCours = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce;
       const dBase = dates.get(laBase.cle);
       const estimees = nonLivrees.map((l) => dates.get(l.cle)?.estimee ?? l.date_estimee).filter(Boolean).sort() as string[];
       lignesFam.push({
@@ -961,6 +975,10 @@ function FinancesContenu() {
         reste: chiffre > 0 ? Math.round((chiffre - pointe) * 10) / 10 : null,
         avancement: avancement === null ? "chiffré inconnu" : `${Math.round(avancement * 100)} %`,
         mesure: saisi ? `estimé${saisi.le ? ` le ${fr(saisi.le)}` : ""}` : chiffre > 0 ? "aux heures" : "",
+        enCoursEtudes: enCoursEtudes === null ? null : Math.round(enCoursEtudes),
+        achatsRecus: recus ? Math.round(recus.montant) : null,
+        enCoursNegoce: negoce > 0 ? Math.round(enCoursNegoce) : null,
+        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,
         enCours: enCours === null ? null : Math.round(enCours),
         coutEngage: cout === null ? null : Math.round(pointe * cout),
       });
@@ -1013,10 +1031,14 @@ function FinancesContenu() {
       }
     }
     lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));
+    // SANS_ZERO : une commande sans travail fait (ou déjà facturé) n'a pas d'en-cours : elle n'est pas listée
+    const garder = (l: L) => Number(l.enCours ?? 0) > 0.5 || l.avancement === "chiffré inconnu";
+    const famillesRetenues = new Set(lignesFam.filter(garder).map((l) => String(l.commande)));
+    const nbSansEnCours = lignesFam.length - famillesRetenues.size;
 
     const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
     const totalForfaits = lignesFam.reduce((t, l) => t + Number(l.enCours ?? 0), 0);
-    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoce ?? 0) + Number(l.achats ?? 0), 0);
+    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);
     // PEPI_A_FACTURER : tout le travail des PE / PI fait jusqu'à la date et pas encore facturé À CETTE DATE :
     // mois reportés (ci-dessus), plus les mois non reportés pas encore clôturés à la date (dont le mois en cours)
     const pepiTout: { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string }[] = pepi.map((r) => ({
@@ -1101,16 +1123,16 @@ function FinancesContenu() {
           { titre: "Lignes", cle: "lignes", format: "nombre", largeur: 10 },
         ],
         lignes: [
-          { poste: "Forfaits en cours, à l’avancement des heures", montant: Math.round(totalForfaits), lignes: lignesFam.length },
+          { poste: "Forfaits en cours, à l’avancement", montant: Math.round(totalForfaits), lignes: famillesRetenues.size },
           { poste: "PE / PI faites, pas encore facturées", montant: Math.round(totalPepi), lignes: pepiTout.length },
           { poste: "TOTAL DES EN-COURS", montant: Math.round(totalForfaits + totalPepi), lignes: null },
-          { poste: "Pour mémoire : négoce et achats des forfaits en cours (à ajouter s’ils sont déjà engagés)", montant: Math.round(totalNegoce), lignes: null },
+          { poste: "Pour mémoire : négoce pas encore reçu ni monté (hors en-cours), au prix de revente", montant: Math.round(totalNegoce), lignes: null },
           { poste: "Pour mémoire : intentions de commande (pas des commandes), travail fait à l’avancement des heures", montant: Math.round(totalIntentions), lignes: intentions.length },
         ],
         notes: [
           "Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.",
-          "En-cours d’un forfait = avancement × montant de la famille − déjà facturé (commandes et échéances livrées).",
-          "Le négoce et les achats n’avancent pas avec les heures : ils sont donnés à part, pour mémoire.",
+          "En-cours d’un forfait = part ÉTUDES (montant − négoce) × avancement + part NÉGOCE pour les achats reçus ou montés, moins ce qui est déjà facturé (réparti entre études et négoce au prorata).",
+          "Achats reçus ou montés : saisis à la main dans l’Analyse du chiffré (détail de l’affaire), au prix d’achat ; ils comptent au prix de revente (négoce × achats reçus ÷ achats).",
           "Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».",
           "PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.",
           cout !== null ? `Coût engagé (onglet Forfaits) = heures pointées × ${cout.toLocaleString("fr-FR")} €/h, pour comparaison.` : "Coût de structure non saisi : colonne « Coût engagé » vide.",
@@ -1141,13 +1163,19 @@ function FinancesContenu() {
           { titre: "H. restantes", cle: "reste", format: "nombre", largeur: 10, total: true },
           { titre: "Avancement", cle: "avancement", largeur: 11 },
           { titre: "Mesuré", cle: "mesure", largeur: 16 },
+          { titre: "En-cours études", cle: "enCoursEtudes", format: "euros", largeur: 14, total: true },
+          { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 14, total: true },
+          { titre: "En-cours négoce", cle: "enCoursNegoce", format: "euros", largeur: 14, total: true },
           { titre: "En-cours", cle: "enCours", format: "euros", largeur: 14, total: true },
           { titre: "Coût engagé", cle: "coutEngage", format: "euros", largeur: 13, total: true },
         ],
-        lignes: lignesFam,
+        lignes: lignesFam.filter(garder),
         alerte: (l) => l.avancement === "chiffré inconnu" || l.avancement === "100 %",
         libelleTotal: "Total",
-        notes: ["En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier)."],
+        notes: [
+          "En jaune : chiffré inconnu (en-cours non calculé), ou heures chiffrées entièrement consommées (à vérifier).",
+          `${nbSansEnCours} commande(s) en cours sans en-cours (aucun travail fait, ou déjà facturé) : non listées.`,
+        ],
       },
       {
         nom: "Détail des commandes",
@@ -1168,7 +1196,7 @@ function FinancesContenu() {
           { titre: "Livrée le", cle: "livraison", largeur: 11 },
           { titre: "Facturé", cle: "facture", format: "euros", largeur: 13, total: true },
         ],
-        lignes: lignesCmd,
+        lignes: lignesCmd.filter((l) => famillesRetenues.has(String(l.famille))),
         libelleTotal: "Total facturé",
       },
       {
@@ -1184,7 +1212,7 @@ function FinancesContenu() {
           { titre: "H. restantes", cle: "reste", format: "nombre", largeur: 12, total: true },
           { titre: "Avancement", cle: "avancement", largeur: 12 },
         ],
-        lignes: lignesAct,
+        lignes: lignesAct.filter((l) => famillesRetenues.has(String(l.famille))),
         alerte: (l) => Number(l.reste ?? 0) < 0,
         libelleTotal: "Total",
         notes: ["En jaune : activité dont le pointé dépasse le chiffré."],
