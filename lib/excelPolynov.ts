@@ -6,11 +6,19 @@
    format « 1 234,56 € », ligne de total, en-tête figé, filtres
    automatiques, lignes en alerte surlignées en jaune.
 
+   FORMULES (v2) : une colonne peut porter une formule Excel, écrite avec
+   les clés des autres colonnes entre crochets, par ex.
+   « [montant]-[negoce] » ou « MAX(0,[valeur]-[facture]) » (noms de
+   fonctions en anglais, séparateur virgule : Excel les affiche en
+   français). La valeur calculée par l'application est enregistrée comme
+   résultat : le fichier s'ouvre rempli, et Excel recalcule si on change
+   une donnée. Une cellule numérique vide reste vraiment vide (comptée 0).
+
    Utilise la bibliothèque exceljs (npm install exceljs), chargée
    seulement au moment de l'export.
 ================================================================ */
 
-export type FormatColonne = "texte" | "euros" | "nombre" | "date";
+export type FormatColonne = "texte" | "euros" | "nombre" | "date" | "pourcent";
 
 export type ColonneExcel = {
   titre: string;
@@ -19,6 +27,8 @@ export type ColonneExcel = {
   format?: FormatColonne;
   /* additionnée dans la ligne de total */
   total?: boolean;
+  /* formule Excel de la ligne, avec les autres colonnes entre crochets : « [montant]-[negoce] » */
+  formule?: string;
 };
 
 export type FeuilleExcel = {
@@ -39,6 +49,10 @@ const ROUGE_PALE = "FFFDECEC";
 const GRIS_LIGNE = "FFF6F7F8";
 const GRIS_BORD = "FFD9DCE0";
 const JAUNE = "FFFFF4B8";
+const BLEU_FORMULE = "FF1F4E99";
+
+const numerique = (f?: FormatColonne) => f === "euros" || f === "nombre" || f === "pourcent";
+const formatNombre = (f?: FormatColonne) => (f === "euros" ? '#,##0.00 "€"' : f === "pourcent" ? "0%" : "#,##0.##");
 
 export async function exporterExcelPolynov(nomFichier: string, feuilles: FeuilleExcel[]) {
   const ExcelJS = (await import("exceljs")).default;
@@ -53,6 +67,7 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
     });
     const nbCol = f.colonnes.length;
     const police = { name: "Calibri", size: 11 };
+    const lettres = new Map(f.colonnes.map((c, i) => [c.cle, ws.getColumn(i + 1).letter]));
 
     // titre
     ws.mergeCells(1, 1, 1, nbCol);
@@ -74,33 +89,40 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
     const entete = ws.getRow(ligneEntete);
     f.colonnes.forEach((c, i) => {
       const cell = entete.getCell(i + 1);
-      cell.value = c.titre;
+      cell.value = c.formule ? `${c.titre} ƒ` : c.titre;
       cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ROUGE } };
-      cell.alignment = { vertical: "middle", horizontal: c.format === "euros" || c.format === "nombre" ? "right" : "left", wrapText: true };
+      cell.alignment = { vertical: "middle", horizontal: numerique(c.format) ? "right" : "left", wrapText: true };
       cell.border = { bottom: { style: "medium", color: { argb: "FF8F0000" } } };
+      if (c.formule) cell.note = `Formule : =${c.formule.replace(/\[(\w+)\]/g, (_, k: string) => `${f.colonnes.find((x) => x.cle === k)?.titre ?? k}`)}`;
       ws.getColumn(i + 1).width = c.largeur ?? Math.max(12, c.titre.length + 4);
     });
-    entete.height = 22;
+    entete.height = 30;
 
     // lignes
     f.lignes.forEach((l, k) => {
-      const row = ws.getRow(ligneEntete + 1 + k);
+      const numLigne = ligneEntete + 1 + k;
+      const row = ws.getRow(numLigne);
       const enAlerte = f.alerte?.(l) ?? false;
       f.colonnes.forEach((c, i) => {
         const cell = row.getCell(i + 1);
         const v = l[c.cle];
-        if (c.format === "date" && typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) {
+        if (c.formule) {
+          const expr = c.formule.replace(/\[(\w+)\]/g, (_, cle: string) => `${lettres.get(cle) ?? "A"}${numLigne}`);
+          cell.value = { formula: expr, result: v === null || v === undefined || v === "" ? undefined : numerique(c.format) ? Number(v) : v } as never;
+          if (numerique(c.format)) cell.numFmt = formatNombre(c.format);
+        } else if (c.format === "date" && typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) {
           cell.value = new Date(`${v.slice(0, 10)}T00:00:00Z`);
           cell.numFmt = "dd/mm/yyyy";
-        } else if ((c.format === "euros" || c.format === "nombre") && v !== null && v !== undefined && v !== "") {
+        } else if (numerique(c.format) && v !== null && v !== undefined && v !== "") {
           cell.value = Number(v);
-          cell.numFmt = c.format === "euros" ? '#,##0.00 "€"' : "#,##0.##";
+          cell.numFmt = formatNombre(c.format);
         } else {
-          cell.value = v === null || v === undefined ? "" : v;
+          // une cellule numérique vide reste vide (une formule la compte 0) ; le texte vide reste une chaîne vide
+          cell.value = v === null || v === undefined || v === "" ? (numerique(c.format) ? null : "") : v;
         }
-        cell.font = police;
-        cell.alignment = { vertical: "top", horizontal: c.format === "euros" || c.format === "nombre" ? "right" : "left", wrapText: c.format === "texte" || !c.format };
+        cell.font = c.formule ? { ...police, color: { argb: BLEU_FORMULE } } : police;
+        cell.alignment = { vertical: "top", horizontal: numerique(c.format) ? "right" : "left", wrapText: c.format === "texte" || !c.format };
         cell.border = { bottom: { style: "thin", color: { argb: GRIS_BORD } } };
         if (enAlerte) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: JAUNE } };
         else if (k % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GRIS_LIGNE } };
@@ -117,7 +139,7 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
         if (c.total) {
           const lettre = ws.getColumn(i + 1).letter;
           cell.value = { formula: `SUBTOTAL(9,${lettre}${ligneEntete + 1}:${lettre}${derniere})` };
-          cell.numFmt = c.format === "euros" ? '#,##0.00 "€"' : "#,##0.##";
+          cell.numFmt = formatNombre(c.format);
           cell.alignment = { horizontal: "right" };
         } else if (i === Math.max(0, premiereTotal - 1)) {
           cell.value = f.libelleTotal ?? "Total";
