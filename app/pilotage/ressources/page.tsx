@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -180,6 +180,96 @@ function RessourcesContenu() {
     [semaines12, capacites, joursAffectes, equipe12]
   );
 
+  /* REPARTITION_CHARGE : charge et répartition CBE / DBE / Divers, par activité (et par personne) sur les 12 semaines ;
+     réalisé (pointé) pour les semaines passées, prévu ensuite */
+  const [groupesRep, setGroupesRep] = useState<{ predo: Map<string, string>; activites: { id: string; nom: string; ordre: number }[] }>({ predo: new Map(), activites: [] });
+  const [realiseRep, setRealiseRep] = useState<{ collaborateur_id: string; jour: string; type_affaire: string; heures: number }[]>([]);
+  const [groupesOuverts, setGroupesOuverts] = useState<Set<string>>(new Set());
+  const lundiActuelRep = lundiDe(aISO(new Date()));
+  useEffect(() => {
+    void Promise.all([
+      supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id").eq("niveau", "PRINCIPALE"),
+      supabase.from("activites").select("id,nom,ordre_affichage"),
+    ]).then(([p, a]) =>
+      setGroupesRep({
+        predo: new Map(((p.data ?? []) as { collaborateur_id: string; activite_id: string }[]).map((x) => [x.collaborateur_id, x.activite_id])),
+        activites: ((a.data ?? []) as { id: string; nom: string; ordre_affichage: number | null }[]).map((x) => ({ id: x.id, nom: x.nom, ordre: x.ordre_affichage ?? 99 })),
+      })
+    );
+  }, []);
+  useEffect(() => {
+    if (lundi >= lundiActuelRep) {
+      setRealiseRep([]);
+      return;
+    }
+    let actif = true;
+    const veille = ajouterJours(lundiActuelRep, -1);
+    const finR = fenetreFin < veille ? fenetreFin : veille;
+    void (async () => {
+      const tout: { collaborateur_id: string; jour: string; type_affaire: string; heures: number | string }[] = [];
+      for (let a = 0; a < 100000; a += 1000) {
+        const { data, error } = await supabase.rpc("planning_realise", { p_debut: lundi, p_fin: finR }).range(a, a + 999);
+        if (error || !data) break;
+        tout.push(...(data as typeof tout));
+        if (data.length < 1000) break;
+      }
+      if (actif) setRealiseRep(tout.map((x) => ({ collaborateur_id: x.collaborateur_id, jour: x.jour, type_affaire: x.type_affaire, heures: Number(x.heures) || 0 })));
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [lundi, fenetreFin, lundiActuelRep]);
+
+  const repartition = useMemo(() => {
+    type Cel = { dispo: number; cbe: number; dbe: number; div: number };
+    const vide = (): Cel => ({ dispo: 0, cbe: 0, dbe: 0, div: 0 });
+    const semaineDe = (jour: string) => semaines12.findIndex((l) => jour >= l && jour <= ajouterJours(l, 6));
+    const parPersonne = new Map<string, Cel[]>();
+    for (const c of equipe12) parPersonne.set(c.id, semaines12.map((l) => ({ ...vide(), dispo: chargeParSemaine(capacites, joursAffectes, c.id, l).net })));
+    const ajouter = (id: string, jour: string, type: string | undefined, h: number, passe: boolean) => {
+      const t = parPersonne.get(id);
+      const w = semaineDe(jour);
+      if (!t || w < 0 || (semaines12[w] < lundiActuelRep) !== passe) return;
+      if (type === "CBE") t[w].cbe += h;
+      else if (type === "DBE") t[w].dbe += h;
+      else t[w].div += h;
+    };
+    for (const j of jours) {
+      const a = affectationsParId.get(j.affectation_id);
+      if (a) ajouter(a.collaborateur_id, j.jour, a.affaire_id ? affairesParId.get(a.affaire_id)?.type : undefined, num(j.heures), false);
+    }
+    for (const x of realiseRep) ajouter(x.collaborateur_id, x.jour, x.type_affaire, x.heures, true);
+    const parId = new Map(groupesRep.activites.map((a) => [a.id, a]));
+    const parGroupe = new Map<string, { nom: string; ordre: number; personnes: Collab[] }>();
+    for (const c of equipe12) {
+      const act = parId.get(groupesRep.predo.get(c.id) ?? "");
+      const k = act?.id ?? "_";
+      const g = parGroupe.get(k) ?? { nom: act?.nom ?? "Sans activité principale", ordre: act?.ordre ?? 999, personnes: [] };
+      g.personnes.push(c);
+      parGroupe.set(k, g);
+    }
+    const somme = (ids: string[]) =>
+      semaines12.map((_, w) =>
+        ids.reduce((t, id) => {
+          const x = parPersonne.get(id)?.[w];
+          if (x) {
+            t.dispo += x.dispo;
+            t.cbe += x.cbe;
+            t.dbe += x.dbe;
+            t.div += x.div;
+          }
+          return t;
+        }, vide())
+      );
+    return {
+      parPersonne,
+      equipe: somme(equipe12.map((c) => c.id)),
+      groupes: [...parGroupe.entries()]
+        .sort((x, y) => x[1].ordre - y[1].ordre)
+        .map(([cle, g]) => ({ cle, nom: g.nom, personnes: g.personnes.sort((x, y) => nomCollab(x).localeCompare(nomCollab(y), "fr")), cellules: somme(g.personnes.map((c) => c.id)) })),
+    };
+  }, [semaines12, equipe12, capacites, joursAffectes, jours, affectationsParId, affairesParId, realiseRep, groupesRep, lundiActuelRep]);
+
   /* ------------------------------ déplacement ------------------------------ */
 
   function ouvrirDeplacement(collab: Collab, surcharge: number) {
@@ -341,7 +431,7 @@ function RessourcesContenu() {
 
         {/* Vue d'ensemble : charge de chaque personne sur 12 semaines */}
         <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
-          <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Charge des 12 prochaines semaines</h2>
+          <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Charge des 12 semaines à partir de S{numeroSemaine(lundi)}</h2>
           <p style={{ margin: "0 0 12px", color: C.gris, fontSize: 14 }}>
             Heures affectées ÷ capacité de chaque personne (congés et jours fériés déduits). Elle découle du planning des affaires : rien n’est saisi à part.
           </p>
@@ -405,6 +495,117 @@ function RessourcesContenu() {
                     </td>
                   ))}
                 </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* REPARTITION_CHARGE : par activité, dépliable par personne */}
+        <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
+          <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Répartition du temps, par activité</h2>
+          <p style={{ margin: "0 0 12px", color: C.gris, fontSize: 14 }}>
+            Pour chaque semaine : la <strong>charge</strong> (heures ÷ capacité disponible, congés et fériés déduits), puis la part du temps disponible passée
+            sur les commandes, les devis et l’interne : <span style={{ color: "#b03a64", fontWeight: 800 }}>CBE</span> ·{" "}
+            <span style={{ color: "#c2708f", fontWeight: 800 }}>DBE</span> · <span style={{ color: "#6b7178", fontWeight: 800 }}>Divers</span>, en %. Semaines
+            passées (fond gris) : ce qui a été pointé ; semaines à venir : ce qui est planifié. Cliquez sur une activité pour voir chacun.
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 900, tableLayout: "fixed" }}>
+              <colgroup>
+                <col style={{ width: 170 }} />
+                {semaines12.map((l) => (
+                  <col key={l} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style={page.th} />
+                  {semaines12.map((l) => (
+                    <th key={l} style={{ ...page.th, textAlign: "center", padding: "6px 2px", background: l < lundiActuelRep ? "#eef0f3" : undefined }}>
+                      S{numeroSemaine(l)}
+                      <div style={{ fontSize: 10, fontWeight: 600, color: C.gris }}>{l < lundiActuelRep ? "réalisé" : "prévu"}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const cellule = (x: { dispo: number; cbe: number; dbe: number; div: number }, l: string, gras: boolean) => {
+                    const pc = (h: number) => Math.round((h / x.dispo) * 100);
+                    return (
+                      <td
+                        key={l}
+                        title={x.dispo > 0 ? `S${numeroSemaine(l)} : CBE ${formatHeures(x.cbe)} · DBE ${formatHeures(x.dbe)} · Divers ${formatHeures(x.div)} pour ${formatHeures(x.dispo)} disponibles` : undefined}
+                        style={{ padding: "5px 2px", textAlign: "center", borderBottom: `1px solid ${C.ligne}`, background: l < lundiActuelRep ? "#f6f7f8" : undefined }}
+                      >
+                        {x.dispo > 0 ? (
+                          <>
+                            <div style={{ fontSize: gras ? 14 : 13, fontWeight: 800, color: C.encre }}>{pc(x.cbe + x.dbe + x.div)} %</div>
+                            <div style={{ fontSize: 10, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              <span style={{ color: "#b03a64" }}>{pc(x.cbe)}</span>
+                              <span style={{ color: C.gris }}> · </span>
+                              <span style={{ color: "#c2708f" }}>{pc(x.dbe)}</span>
+                              <span style={{ color: C.gris }}> · </span>
+                              <span style={{ color: "#6b7178" }}>{pc(x.div)}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: C.gris }}>—</span>
+                        )}
+                      </td>
+                    );
+                  };
+                  return (
+                    <>
+                      <tr style={{ background: "#f8f9fa" }}>
+                        <th scope="row" style={{ textAlign: "left", padding: "8px", fontSize: 14 }}>
+                          Équipe BE
+                          <div style={{ fontSize: 11, fontWeight: 600, color: C.gris }}>hors encadrement</div>
+                        </th>
+                        {repartition.equipe.map((x, w) => cellule(x, semaines12[w], true))}
+                      </tr>
+                      {repartition.groupes.map((g) => {
+                        const ouvert = groupesOuverts.has(g.cle);
+                        return (
+                          <Fragment key={g.cle}>
+                            <tr>
+                              <th scope="row" style={{ textAlign: "left", padding: "8px", fontSize: 14, borderBottom: `1px solid ${C.ligne}` }}>
+                                <button
+                                  type="button"
+                                  aria-expanded={ouvert}
+                                  onClick={() =>
+                                    setGroupesOuverts((s) => {
+                                      const n = new Set(s);
+                                      if (n.has(g.cle)) n.delete(g.cle);
+                                      else n.add(g.cle);
+                                      return n;
+                                    })
+                                  }
+                                  style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textTransform: "uppercase", fontSize: 13 }}
+                                >
+                                  {ouvert ? "▾" : "▸"} {g.nom}
+                                </button>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: C.gris }}>
+                                  {g.personnes.length} personne{g.personnes.length > 1 ? "s" : ""}
+                                </div>
+                              </th>
+                              {g.cellules.map((x, w) => cellule(x, semaines12[w], true))}
+                            </tr>
+                            {ouvert &&
+                              g.personnes.map((c) => (
+                                <tr key={c.id}>
+                                  <th scope="row" style={{ textAlign: "left", padding: "6px 8px 6px 24px", fontSize: 13, fontWeight: 700, borderBottom: `1px solid ${C.ligne}` }}>
+                                    {nomCollab(c)}
+                                  </th>
+                                  {(repartition.parPersonne.get(c.id) ?? []).map((x, w) => cellule(x, semaines12[w], false))}
+                                </tr>
+                              ))}
+                          </Fragment>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
