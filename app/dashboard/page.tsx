@@ -422,8 +422,6 @@ export default function DashboardPage() {
           <BlocDirection aller={aller} />
         ) : (
           <>
-            <FeuilleDeRouteDashboard />
-
             <BlocMonEspace
               aller={aller}
               statut={statutMaFeuille}
@@ -441,6 +439,8 @@ export default function DashboardPage() {
               accesBilanRH={accesBilanRH}
               accesExportExcel={accesExportExcel}
             />
+
+            <FeuilleDeRouteDashboard />
           </>
         )}
       </div>
