@@ -10,6 +10,7 @@ import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire
 import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
+import { chargerPlanifie } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
    BILAN AFFAIRE
@@ -267,6 +268,41 @@ function BilanContenu() {
   useEffect(() => {
     if (affaire) void charger(affaire);
   }, [affaire, charger]);
+
+  /* PLANIFIE_BILAN : heures planifiées à venir sur chaque commande de la famille (« 1741 », « 1741R1 »…) */
+  const [planifie, setPlanifie] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!affaire) return;
+    let actif = true;
+    void (async () => {
+      const d = new Date();
+      const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const base = affaire.numero.replace(/^0+/, "");
+      const { data: afs } = await supabase.from("pilotage_affaires").select("id,numero").eq("type", affaire.type);
+      const famille = new Map(
+        ((afs ?? []) as { id: string; numero: string }[])
+          .filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base)
+          .map((a) => [a.id, a.numero.toUpperCase().replace(/^0+/, "")])
+      );
+      if (famille.size === 0) {
+        if (actif) setPlanifie(new Map());
+        return;
+      }
+      const pl = await chargerPlanifie(auj);
+      const numeroAffectation = new Map<string, string>();
+      for (const a of pl.affectations) if (a.affaire_id && famille.has(a.affaire_id)) numeroAffectation.set(a.id, famille.get(a.affaire_id) ?? "");
+      const m = new Map<string, number>();
+      for (const j of pl.jours) {
+        const n = numeroAffectation.get(j.affectation_id);
+        if (!n || j.jour < auj) continue;
+        m.set(n, (m.get(n) ?? 0) + (Number(j.heures) || 0));
+      }
+      if (actif) setPlanifie(m);
+    })().catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, [affaire]);
 
   function rechercher(e: FormEvent) {
     e.preventDefault();
@@ -669,13 +705,33 @@ function BilanContenu() {
                 const thC: CSSProperties = { ...th, textAlign: "center" };
                 const tdC: CSSProperties = { ...td, textAlign: "center", whiteSpace: "nowrap" };
                 const reste = (h: number) =>
-                  h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} dépassé</strong> : formatHeures(h);
+                  h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h);
+                // PLANIFIE_BILAN : heures planifiées à venir, commande par commande (planning des affaires)
+                const cleNumero = (l: LigneExcel) => String(l.numero_affaire ?? "").toUpperCase().replace(/^(CBE|DBE)/, "").replace(/^0+/, "");
+                const planifieDe = (l: LigneExcel) => planifie.get(cleNumero(l)) ?? 0;
+                const planifieFamille = comptees.reduce((t, l) => t + planifieDe(l), 0);
+                const jauge = (chiffre: number, pointe: number, prevu: number) => {
+                  const total = pointe + prevu;
+                  const echelle = Math.max(chiffre, total, 0.01);
+                  const au = total > chiffre + 0.01;
+                  return (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span title={`Pointé ${formatHeures(pointe)} + planifié ${formatHeures(prevu)} sur ${formatHeures(chiffre)} chiffrées`} style={{ display: "inline-flex", width: 120, height: 10, background: "#eef0f3", borderRadius: 5, overflow: "hidden", position: "relative" }}>
+                        <span style={{ width: `${(pointe / echelle) * 100}%`, background: au ? "#b3261e" : "#2e7d32" }} />
+                        <span style={{ width: `${(prevu / echelle) * 100}%`, background: au ? "#f0a8a2" : "#a8d5ae" }} />
+                        {total > chiffre && chiffre > 0 && <span style={{ position: "absolute", left: `${(chiffre / echelle) * 100}%`, top: -2, bottom: -2, borderLeft: "2px solid #1f2328" }} />}
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: au ? C.rougeTexte : C.gris }}>{chiffre > 0 ? `${Math.round((total / chiffre) * 100)} %` : ""}</span>
+                    </span>
+                  );
+                };
                 return (
                   <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
                     <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Commande et avenants</h2>
                     <p style={{ fontSize: 13, color: C.gris, margin: "0 0 12px" }}>
                       Les heures sont pointées sur la commande de base. Elles remplissent d’abord la commande, puis chaque avenant dans l’ordre ; le dernier
-                      porte le dépassement éventuel.
+                      porte le dépassement éventuel. Le planifié, lui, est celui du planning des affaires, à partir d’aujourd’hui. La barre : pointé en
+                      foncé, planifié en clair ; le trait noir marque le chiffré quand on le dépasse.
                     </p>
                     <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
                       <thead>
@@ -686,8 +742,9 @@ function BilanContenu() {
                           <th style={th}>Délai</th>
                           <th style={thN}>Chiffré</th>
                           <th style={thN}>Pointé</th>
-                          <th style={thN}>Reste</th>
-                          <th style={thC}>Consommé</th>
+                          <th style={thN}>Planifié</th>
+                          <th style={thN}>Reste à planifier</th>
+                          <th style={thC}>Pointé + planifié</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -717,36 +774,22 @@ function BilanContenu() {
                               </td>
                               <td style={tdN}>{l.genre === "DEVIS" ? "—" : formatHeures(l.heures_total)}</td>
                               <td style={{ ...tdN, fontWeight: 800 }}>{compte ? formatHeures(pointe) : "—"}</td>
-                              <td style={tdN}>{compte ? reste(l.heures_total - pointe) : "—"}</td>
-                              <td style={tdC}>
-                                {compte && l.heures_total > 0 ? (
-                                  <>
-                                    <Barre part={part} depasse={pointe > l.heures_total + 0.01} />{" "}
-                                    <span style={{ fontSize: 12, fontWeight: 800, color: pointe > l.heures_total + 0.01 ? C.rougeTexte : C.gris }}>{Math.round(part * 100)} %</span>
-                                  </>
-                                ) : null}
-                              </td>
+                              <td style={tdN}>{compte && planifieDe(l) > 0.01 ? formatHeures(planifieDe(l)) : compte ? "—" : ""}</td>
+                              <td style={tdN}>{compte ? reste(l.heures_total - pointe - planifieDe(l)) : "—"}</td>
+                              <td style={tdC}>{compte && l.heures_total > 0 ? jauge(l.heures_total, pointe, planifieDe(l)) : null}</td>
                             </tr>
                           );
                         })}
-                        {comptees.length > 1 && (
+                        {(comptees.length > 1 || planifieFamille > 0.01) && (
                           <tr>
                             <td colSpan={4} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
                               Toute la famille
                             </td>
                             <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(chiffreFamille)}</td>
                             <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{reste(resteFamille)}</td>
-                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>
-                              {chiffreFamille > 0 && (
-                                <>
-                                  <Barre part={bilan.totalRealise / chiffreFamille} depasse={resteFamille < -0.01} />{" "}
-                                  <span style={{ fontSize: 12, fontWeight: 800, color: resteFamille < -0.01 ? C.rougeTexte : C.gris }}>
-                                    {Math.round((bilan.totalRealise / chiffreFamille) * 100)} %
-                                  </span>
-                                </>
-                              )}
-                            </td>
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{planifieFamille > 0.01 ? formatHeures(planifieFamille) : "—"}</td>
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{reste(resteFamille - planifieFamille)}</td>
+                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>{chiffreFamille > 0 && jauge(chiffreFamille, bilan.totalRealise, planifieFamille)}</td>
                           </tr>
                         )}
                       </tbody>
