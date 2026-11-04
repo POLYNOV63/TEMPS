@@ -649,51 +649,125 @@ function BilanContenu() {
             {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
             {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
 
-            {/* ---------- commande, avenants, découpages ---------- */}
-            {lignesExcel.length > 0 && (
-              <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Commande, avenants et découpages</h2>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>N°</th>
-                      <th style={th}>Nature</th>
-                      <th style={th}>Statut</th>
-                      <th style={th}>Commande</th>
-                      <th style={th}>Délai</th>
-                      <th style={thN}>Chiffré</th>
-                      <th style={thN}>Imputé sur ce n°</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lignesExcel.map((l) => {
-                      const compte = comptees.includes(l);
-                      const s = l.numero_affaire ? suffixe(l.numero_affaire) : "";
-                      const impute = l.genre === "DEVIS" ? 0 : bilan.parSuffixe.get(s) ?? 0;
-                      return (
-                        <tr key={l.cle} style={{ opacity: l.disparue ? 0.5 : 1 }}>
-                          <td style={{ ...td, fontWeight: 800, whiteSpace: "nowrap" }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</td>
-                          <td style={td}>{libelleGenre(l)}</td>
-                          <td style={td}>
-                            {l.statut ?? "—"}
-                            {!compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenu dans le chiffré</div>}
-                            {l.disparue && <div style={{ fontSize: 12, color: C.gris }}>retirée du classeur</div>}
-                          </td>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
-                          <td style={tdN}>{l.genre === "LOT" || l.genre === "ECHEANCE" ? "découpage" : formatHeures(l.heures_total)}</td>
-                          <td style={tdN}>{impute > 0 ? formatHeures(impute) : "—"}</td>
+            {/* ---------- commande et avenants ---------- */}
+            {/* REPARTITION_FAMILLE : le pointé de la famille remplit la commande, puis chaque avenant dans l'ordre ;
+                le dernier porte le dépassement éventuel. Intention de commande : n° surligné en jaune. */}
+            {lignesExcel.length > 0 &&
+              (() => {
+                const reparti = new Map<string, number>();
+                let restant = bilan.totalRealise;
+                comptees.forEach((l, i) => {
+                  const p = i === comptees.length - 1 ? restant : Math.min(l.heures_total, restant);
+                  reparti.set(l.cle, Math.max(0, p));
+                  restant -= p;
+                });
+                const commandes = lignesExcel.filter((l) => l.genre === "BASE" || l.genre === "AVENANT" || l.genre === "DEVIS");
+                const decoupages = lignesExcel.filter((l) => l.genre === "LOT" || l.genre === "ECHEANCE");
+                const chiffreFamille = comptees.reduce((t, l) => t + l.heures_total, 0);
+                const resteFamille = chiffreFamille - bilan.totalRealise;
+                const surligne: CSSProperties = { background: "#ffe58a", borderRadius: 3, padding: "0 4px" };
+                const thC: CSSProperties = { ...th, textAlign: "center" };
+                const tdC: CSSProperties = { ...td, textAlign: "center", whiteSpace: "nowrap" };
+                const reste = (h: number) =>
+                  h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} dépassé</strong> : formatHeures(h);
+                return (
+                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+                    <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Commande et avenants</h2>
+                    <p style={{ fontSize: 13, color: C.gris, margin: "0 0 12px" }}>
+                      Les heures sont pointées sur la commande de base. Elles remplissent d’abord la commande, puis chaque avenant dans l’ordre ; le dernier
+                      porte le dépassement éventuel.
+                    </p>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>N°</th>
+                          <th style={th}>Statut</th>
+                          <th style={th}>Reçue le</th>
+                          <th style={th}>Délai</th>
+                          <th style={thN}>Chiffré</th>
+                          <th style={thN}>Pointé</th>
+                          <th style={thN}>Reste</th>
+                          <th style={thC}>Consommé</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <p style={{ fontSize: 12, color: C.gris, margin: "10px 0 0" }}>
-                  « Imputé sur ce n° » : heures saisies avec ce numéro exact (CBE{affaire.numero}R2…). La plupart des heures sont
-                  saisies sur le numéro de base : elles sont toutes comptées dans le réalisé de l’affaire.
-                </p>
-              </section>
-            )}
+                      </thead>
+                      <tbody>
+                        {commandes.map((l) => {
+                          const compte = comptees.includes(l);
+                          const intention = l.statut === "Intention de commande";
+                          const pointe = reparti.get(l.cle) ?? 0;
+                          const part = l.heures_total > 0 ? pointe / l.heures_total : 0;
+                          const livreeLigne = l.statut === "Livrée";
+                          return (
+                            <tr key={l.cle} style={{ opacity: l.disparue || (!compte && l.genre !== "DEVIS") ? 0.55 : 1 }}>
+                              <td style={{ ...td, whiteSpace: "nowrap", padding: "12px 8px" }}>
+                                <span title={intention ? "Intention de commande : pas encore commandée" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(intention ? surligne : {}) }}>
+                                  {l.numero_affaire ?? l.numero_devis ?? l.cle}
+                                </span>
+                                <div style={{ fontSize: 12, color: C.gris }}>{libelleGenre(l)}</div>
+                              </td>
+                              <td style={td}>
+                                {l.statut ?? "—"}
+                                {!compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
+                                {l.disparue && <div style={{ fontSize: 12, color: C.gris }}>retirée du classeur</div>}
+                              </td>
+                              <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
+                              <td style={{ ...td, whiteSpace: "nowrap" }}>
+                                {formatDate(livreeLigne && l.date_livraison ? l.date_livraison : l.delai ?? l.date_livraison_estimee)}
+                                {livreeLigne && l.date_livraison && <div style={{ fontSize: 12, color: C.gris }}>livrée</div>}
+                              </td>
+                              <td style={tdN}>{l.genre === "DEVIS" ? "—" : formatHeures(l.heures_total)}</td>
+                              <td style={{ ...tdN, fontWeight: 800 }}>{compte ? formatHeures(pointe) : "—"}</td>
+                              <td style={tdN}>{compte ? reste(l.heures_total - pointe) : "—"}</td>
+                              <td style={tdC}>
+                                {compte && l.heures_total > 0 ? (
+                                  <>
+                                    <Barre part={part} depasse={pointe > l.heures_total + 0.01} />{" "}
+                                    <span style={{ fontSize: 12, fontWeight: 800, color: pointe > l.heures_total + 0.01 ? C.rougeTexte : C.gris }}>{Math.round(part * 100)} %</span>
+                                  </>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {comptees.length > 1 && (
+                          <tr>
+                            <td colSpan={4} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                              Toute la famille
+                            </td>
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(chiffreFamille)}</td>
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{reste(resteFamille)}</td>
+                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>
+                              {chiffreFamille > 0 && (
+                                <>
+                                  <Barre part={bilan.totalRealise / chiffreFamille} depasse={resteFamille < -0.01} />{" "}
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: resteFamille < -0.01 ? C.rougeTexte : C.gris }}>
+                                    {Math.round((bilan.totalRealise / chiffreFamille) * 100)} %
+                                  </span>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    {decoupages.length > 0 && (
+                      <div style={{ marginTop: 14 }}>
+                        <strong style={{ fontSize: 14 }}>Découpages de la facturation</strong>
+                        <span style={{ fontSize: 13, color: C.gris }}> · échéances et lots, sans heures propres</span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                          {decoupages.map((l) => (
+                            <span key={l.cle} style={{ fontSize: 13, border: `1px solid ${C.ligne}`, borderRadius: 8, padding: "4px 10px", background: "#fafbfc" }}>
+                              <strong>{l.numero_affaire ?? l.cle}</strong> · {l.statut ?? "—"}
+                              {l.statut === "Livrée" && l.date_livraison ? ` le ${formatDate(l.date_livraison)}` : (l.delai ?? l.date_livraison_estimee) ? ` · délai ${formatDate(l.delai ?? l.date_livraison_estimee)}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })()}
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
               {/* ---------- par personne ---------- */}
