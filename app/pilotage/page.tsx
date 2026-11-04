@@ -958,44 +958,70 @@ function PortefeuilleContenu() {
 
         {!chargement && !erreur && (
           <>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
-              <Tuile
-                libelle="Commandes en cours"
-                valeur={String(synthese.commandes)}
-                sous={`${synthese.forfaits} au forfait · ${synthese.prestations} en PE / PI (commandes et avenants)`}
-              />
-              <Tuile
-                libelle="Devis à rendre"
-                valeur={String(synthese.devis)}
-                sous={synthese.devisRetard > 0 ? `dont ${synthese.devisRetard} en retard (date de rendu dépassée)` : "aucun en retard"}
-                accent={synthese.devisRetard > 0}
-              />
-              <Tuile
-                libelle="Intentions de commande"
-                valeur={String(synthese.intentions)}
-                sous="commande pas encore reçue : travail à risque, à relancer"
-                accent={synthese.intentions > 0}
-              />
-              <Tuile
-                libelle="Reste à faire (forfaits)"
-                valeur={formatHeures(synthese.reste)}
-                sous={
-                  synthese.chiffre > 0
-                    ? `${Math.round((synthese.reste / synthese.chiffre) * 100)} % du chiffré · ${formatHeures(synthese.realise)} pointées sur ${formatHeures(synthese.chiffre)}`
-                    : "chiffré des forfaits en cours − pointé"
-                }
-              />
-              <Tuile
-                libelle="Dépassements"
-                valeur={String(synthese.depassements)}
-                sous={
-                  synthese.depassements > 0
-                    ? `${formatHeures(synthese.heuresDepassees)} au-delà du chiffré · ${Math.round((synthese.depassements / Math.max(1, synthese.actives)) * 100)} % des affaires actives`
-                    : "aucune affaire active au-delà du chiffré"
-                }
-                accent={synthese.depassements > 0}
-              />
-            </div>
+            {/* TUILES_DYNAMIQUES : les vignettes suivent le bouton Forfait / PE-PI / DBE, sur une seule ligne */}
+            {(() => {
+              const aujourdhuiS = aujourdhuiISO();
+              const prest = (a: AffaireP) => a.imputation === "PE" || a.imputation === "PI";
+              const tuiles: { libelle: string; valeur: string; sous: string; accent?: boolean }[] = [];
+              if (filtreType === "FORFAIT") {
+                const f = lignes.filter((l) => l.affaire.type === "CBE" && !prest(l.affaire));
+                const enCours = f.filter((l) => l.affaire.statut === "EN_COURS");
+                const familles = enCours.filter((l) => !l.dansFamille);
+                const intentions = f.filter((l) => l.affaire.statut === "EN_ATTENTE");
+                const chiffre = familles.reduce((t, l) => t + (l.famille ? l.famille.chiffre : l.totaux.chiffre), 0);
+                const pointe = familles.reduce((t, l) => t + l.totaux.realise, 0);
+                const reste = familles.reduce((t, l) => t + l.totaux.reste, 0);
+                const dep = f.filter((l) => (l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE") && !l.dansFamille && l.totaux.depassement > 0);
+                tuiles.push(
+                  { libelle: "Forfaits en cours", valeur: String(enCours.length), sous: `commandes et avenants · ${familles.length} famille${familles.length > 1 ? "s" : ""}` },
+                  { libelle: "Intentions de commande", valeur: String(intentions.length), sous: "pas encore commandées : travail à risque, à relancer", accent: intentions.length > 0 },
+                  {
+                    libelle: "Reste à faire",
+                    valeur: formatHeures(reste),
+                    sous: chiffre > 0 ? `${Math.round((reste / chiffre) * 100)} % du chiffré · ${formatHeures(pointe)} pointées sur ${formatHeures(chiffre)}` : "chiffré − pointé",
+                  },
+                  {
+                    libelle: "Dépassements",
+                    valeur: String(dep.length),
+                    sous: dep.length > 0 ? `${formatHeures(dep.reduce((t, l) => t + l.totaux.depassement, 0))} au-delà du chiffré` : "aucun forfait au-delà du chiffré",
+                    accent: dep.length > 0,
+                  }
+                );
+              } else if (filtreType === "PEPI") {
+                const p = lignes.filter((l) => l.affaire.type === "CBE" && prest(l.affaire));
+                const enCours = p.filter((l) => l.affaire.statut === "EN_COURS");
+                const attente = p.filter((l) => l.affaire.statut === "EN_ATTENTE");
+                const dorm = p.filter((l) => !estInactive(l.affaire) && dormantes.has(l.affaire.id));
+                tuiles.push(
+                  {
+                    libelle: "PE / PI en cours",
+                    valeur: String(enCours.length),
+                    sous: `${enCours.filter((l) => l.affaire.imputation === "PE").length} PE · ${enCours.filter((l) => l.affaire.imputation === "PI").length} PI (commandes et avenants)`,
+                  },
+                  { libelle: "En attente de commande", valeur: String(attente.length), sous: "intention, ou enveloppe épuisée : commande à obtenir", accent: attente.length > 0 },
+                  { libelle: "Sans activité depuis 3 mois", valeur: String(dorm.length), sous: "commandes ouvertes sans heure au relevé : à relancer", accent: dorm.length > 0 }
+                );
+              } else {
+                const d = lignes.filter((l) => l.affaire.type === "DBE" && l.affaire.statut === "EN_COURS");
+                const retard = d.filter((l) => l.affaire.echeance && l.affaire.echeance < aujourdhuiS);
+                const sansDate = d.filter((l) => !l.affaire.echeance);
+                tuiles.push(
+                  { libelle: "Devis à rendre", valeur: String(d.length), sous: "devis en cours de rédaction" },
+                  { libelle: "En retard", valeur: String(retard.length), sous: retard.length > 0 ? "date de rendu dépassée" : "aucun devis en retard", accent: retard.length > 0 },
+                  { libelle: "Sans date de rendu", valeur: String(sansDate.length), sous: "à affecter (✏️ dans la liste)", accent: sansDate.length > 0 },
+                  { libelle: "Heures passées", valeur: formatHeures(d.reduce((t, l) => t + l.totaux.realise, 0)), sous: "sur les devis en cours" }
+                );
+              }
+              return (
+                <div style={{ display: "flex", flexWrap: "nowrap", gap: 14, marginBottom: 20, overflowX: "auto" }}>
+                  {tuiles.map((t) => (
+                    <div key={t.libelle} style={{ flex: "1 1 0", minWidth: 0, display: "flex" }}>
+                      <Tuile libelle={t.libelle} valeur={t.valeur} sous={t.sous} accent={t.accent} />
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {(alertes.critiques.length > 0 || alertes.surveiller.length > 0) && (
               <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
