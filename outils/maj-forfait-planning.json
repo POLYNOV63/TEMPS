@@ -1,0 +1,20 @@
+[
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Filtre « Forfait » : commandes hors PE / PI",
+  "cherche": "      return a.type === filtreType;\n    },\n    [filtreType]",
+  "remplace": "      // FORFAIT_PLANNING : le bouton CBE devient « Forfait » (commandes hors PE / PI)\n      if (filtreType === \"CBE\") return a.type === \"CBE\" && a.imputation !== \"PE\" && a.imputation !== \"PI\";\n      return a.type === filtreType;\n    },\n    [filtreType]"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Bouton CBE renommé « Forfait »",
+  "cherche": "                {t === \"TOUS\" ? \"Tout\" : t}",
+  "remplace": "                {t === \"TOUS\" ? \"Tout\" : t === \"CBE\" ? \"Forfait\" : t}"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Bouton « Tout déplier » retiré",
+  "cherche": "            <button type=\"button\" style={bouton(false)} onClick={() => setOuvertes(ouvertes.size > 0 ? new Set() : new Set(lignes.map((a) => a.id)))}>\n              {ouvertes.size > 0 ? \"Tout replier\" : \"Tout déplier\"}\n            </button>\n",
+  "remplace": ""
+ }
+]
