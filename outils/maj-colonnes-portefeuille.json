@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Descriptif moins large",
+  "cherche": "{ ...page.td, padding: \"12px 14px\", minWidth: 240, lineHeight: 1.4, fontWeight: 600 }",
+  "remplace": "{ ...page.td, padding: \"12px 14px\", minWidth: 150, maxWidth: 240, lineHeight: 1.35, fontWeight: 600 /* COLONNES_AJUSTEES */ }"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Plus de note « Délai » sous la date",
+  "cherche": "                          ? affaire.type === \"DBE\"\n                            ? \"Remise\"\n                            : \"Délai\"\n                          : \"\"}",
+  "remplace": "                          ? affaire.type === \"DBE\"\n                            ? \"Remise\"\n                            : \"\"\n                          : \"\"}"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Réalisé centré (cellule)",
+  "cherche": "<td style={{ ...tdNum, minWidth: 104 }}>",
+  "remplace": "<td style={{ ...tdNum, minWidth: 104, textAlign: \"center\" }}>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Réalisé centré (barre)",
+  "cherche": "style={{ display: \"flex\", alignItems: \"center\", gap: 4, justifyContent: \"flex-end\", marginTop: 3, maxWidth: \"100%\", overflow: \"hidden\" /* BARRE_SANS_CHEVAUCHEMENT */ }}",
+  "remplace": "style={{ display: \"flex\", alignItems: \"center\", gap: 4, justifyContent: \"center\", marginTop: 3, maxWidth: \"100%\", overflow: \"hidden\" /* BARRE_SANS_CHEVAUCHEMENT */ }}"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Titre de colonne centrable",
+  "cherche": "  function EnTeteTri({ col, libelle, num }: { col: ColonneTri; libelle: string; num?: boolean }) {\n    const actif = tri.col === col;\n    return (\n      <th style={num ? thNum : thCourt}",
+  "remplace": "  function EnTeteTri({ col, libelle, num, centre }: { col: ColonneTri; libelle: string; num?: boolean; centre?: boolean }) {\n    const actif = tri.col === col;\n    return (\n      <th style={centre ? { ...thNum, textAlign: \"center\" } : num ? thNum : thCourt}"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Réalisé centré (titre)",
+  "cherche": "<EnTeteTri col=\"realise\" libelle=\"Réalisé\" num />",
+  "remplace": "<EnTeteTri col=\"realise\" libelle=\"Réalisé\" centre />"
+ }
+]

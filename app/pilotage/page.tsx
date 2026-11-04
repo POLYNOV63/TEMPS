@@ -577,10 +577,10 @@ function PortefeuilleContenu() {
 
   const selectFiltre: CSSProperties = { ...page.entrees, width: "auto", minWidth: 150, maxWidth: 240 };
 
-  function EnTeteTri({ col, libelle, num }: { col: ColonneTri; libelle: string; num?: boolean }) {
+  function EnTeteTri({ col, libelle, num, centre }: { col: ColonneTri; libelle: string; num?: boolean; centre?: boolean }) {
     const actif = tri.col === col;
     return (
-      <th style={num ? thNum : thCourt} aria-sort={actif ? (tri.sens === 1 ? "ascending" : "descending") : "none"}>
+      <th style={centre ? { ...thNum, textAlign: "center" } : num ? thNum : thCourt} aria-sort={actif ? (tri.sens === 1 ? "ascending" : "descending") : "none"}>
         <button
           type="button"
           onClick={() => changerTri(col)}
@@ -622,7 +622,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="resp" libelle="Resp." />
             <EnTeteTri col="echeance" libelle="Délai" />
             <EnTeteTri col="chiffre" libelle="Chiffré" num />
-            <EnTeteTri col="realise" libelle="Réalisé" num />
+            <EnTeteTri col="realise" libelle="Réalisé" centre />
             <EnTeteTri col="reste" libelle="Reste" num />
             <th style={thNum} title="Reste à faire non encore affecté dans le planning">À affecter</th>
             <th style={thCourt}>État / planning</th>
@@ -687,7 +687,7 @@ function PortefeuilleContenu() {
                       )}
                     </div>
                   </td>
-                  <td style={{ ...page.td, padding: "12px 14px", minWidth: 240, lineHeight: 1.4, fontWeight: 600 }}>{affaire.designation}</td>
+                  <td style={{ ...page.td, padding: "12px 14px", minWidth: 150, maxWidth: 240, lineHeight: 1.35, fontWeight: 600 /* COLONNES_AJUSTEES */ }}>{affaire.designation}</td>
                   <td style={{ ...page.td, padding: "12px 14px", maxWidth: 170, color: "#4b5057", fontSize: 14 }}>{client ?? gris("—")}</td>
                   <td style={tdCourt}>
                     <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
@@ -710,7 +710,7 @@ function PortefeuilleContenu() {
                         : affaire.echeance
                           ? affaire.type === "DBE"
                             ? "Remise"
-                            : "Délai"
+                            : ""
                           : ""}
                     </div>
                   </td>
@@ -731,7 +731,7 @@ function PortefeuilleContenu() {
                       gris("—")
                     )}
                   </td>
-                  <td style={{ ...tdNum, minWidth: 104 }}>
+                  <td style={{ ...tdNum, minWidth: 104, textAlign: "center" }}>
                     {l.dansFamille ? (
                       <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">{gris(`dans ${l.dansFamille}`)}</span>
                     ) : totaux.realise > 0 ? (
@@ -747,7 +747,7 @@ function PortefeuilleContenu() {
                         const r = totaux.realise / ch;
                         const couleur = r > 1.0001 ? "#c62828" : r > 0.9 ? "#e08a00" : "#2e7d32";
                         return (
-                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3, maxWidth: "100%", overflow: "hidden" /* BARRE_SANS_CHEVAUCHEMENT */ }}>
+                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", marginTop: 3, maxWidth: "100%", overflow: "hidden" /* BARRE_SANS_CHEVAUCHEMENT */ }}>
                             <span style={{ width: 44, flex: "0 0 44px", height: 6, background: "#eceef1", borderRadius: 3, overflow: "hidden", display: "inline-block" }}>
                               <span style={{ display: "block", width: `${Math.min(100, r * 100)}%`, height: "100%", background: couleur }} />
                             </span>
