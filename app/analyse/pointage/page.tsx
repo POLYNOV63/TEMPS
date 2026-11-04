@@ -204,6 +204,7 @@ function AnalyseChiffreContenu() {
   /* ---------- pointé sur la période, et du début de la période à aujourd'hui (affaires à cheval) ---------- */
   const [surPeriode, setSurPeriode] = useState<Map<string, Agregat>>(new Map());
   const [depuisDebut, setDepuisDebut] = useState<Map<string, Agregat> | null>(null);
+  const [calculPeriode, setCalculPeriode] = useState(false);
   useEffect(() => {
     if (!bornes) {
       setSurPeriode(new Map());
@@ -211,9 +212,14 @@ function AnalyseChiffreContenu() {
       return;
     }
     let actif = true;
-    void chargerPeriode(bornes.du, bornes.au).then((l) => actif && setSurPeriode(agreger(l)));
-    if (bornes.au < aujourdhui) void chargerPeriode(bornes.du, aujourdhui).then((l) => actif && setDepuisDebut(agreger(l)));
-    else setDepuisDebut(null);
+    // TUILES_PERIODE : la période se recharge d'un bloc ; pendant le calcul, les tuiles l'indiquent
+    setCalculPeriode(true);
+    void Promise.all([chargerPeriode(bornes.du, bornes.au), bornes.au < aujourdhui ? chargerPeriode(bornes.du, aujourdhui) : Promise.resolve(null)]).then(([l, d]) => {
+      if (!actif) return;
+      setSurPeriode(agreger(l));
+      setDepuisDebut(d ? agreger(d) : null);
+      setCalculPeriode(false);
+    });
     return () => {
       actif = false;
     };
@@ -488,10 +494,23 @@ function AnalyseChiffreContenu() {
             )}
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, margin: "14px 0" }}>
-              <Tuile libelle="Affaires" valeur={String(lignes.length)} sous={`${formatHeures(totaux.chiffre)} chiffrées`} />
-              <Tuile libelle="Sur la période" valeur={formatHeures(totaux.periode)} sous={libellePeriode || "—"} />
-              <Tuile libelle="Produit à la fin" valeur={formatHeures(totaux.fin)} sous={totaux.chiffre > 0 ? `${pct(totaux.fin / totaux.chiffre)} du chiffré` : ""} />
-              <Tuile libelle="Au-delà du chiffré" valeur={String(totaux.depassees)} sous="affaires dont le cumul dépasse le chiffré" accent={totaux.depassees > 0} />
+              <Tuile
+                libelle="Affaires"
+                valeur={String(lignes.length)}
+                sous={calculPeriode ? "calcul de la période…" : `dont ${lignes.filter((x) => x.v.periode > 0.01).length} pointées sur la période · ${formatHeures(totaux.chiffre)} chiffrées`}
+              />
+              <Tuile libelle="Sur la période" valeur={calculPeriode ? "…" : formatHeures(totaux.periode)} sous={libellePeriode || "—"} />
+              <Tuile
+                libelle="Produit à la fin"
+                valeur={calculPeriode ? "…" : formatHeures(totaux.fin)}
+                sous={bornes ? `cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)}${totaux.chiffre > 0 ? ` · ${pct(totaux.fin / totaux.chiffre)} du chiffré` : ""}` : ""}
+              />
+              <Tuile
+                libelle="Au-delà du chiffré"
+                valeur={calculPeriode ? "…" : String(totaux.depassees)}
+                sous={bornes ? `affaires dont le cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)} dépasse le chiffré` : ""}
+                accent={!calculPeriode && totaux.depassees > 0}
+              />
             </div>
 
             {/* HORS_APPLICATION : heures de la période pointées sur des n° CBE que l'application ne suit pas */}
@@ -584,7 +603,7 @@ function AnalyseChiffreContenu() {
                             >
                               {ouverte ? "▾" : "▸"}
                             </button>{" "}
-                            <Link href={`/affaires/bilan?affaire=CBE${f.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                            <Link href={`/affaires/bilan?affaire=CBE${f.base}`} title={f.membres.some((m) => m.statut === "EN_ATTENTE") ? "Intention de commande (au moins une commande de la famille)" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(f.membres.some((m) => m.statut === "EN_ATTENTE") ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) /* INTENTION_ANALYSE */ }}>
                               {f.base}
                             </Link>
                             {f.numeros.length > 1 && (
@@ -696,7 +715,7 @@ function AnalyseChiffreContenu() {
                                       <tbody>
                                         {f.membres.map((m) => (
                                           <tr key={m.id}>
-                                            <td style={{ ...tdG, padding: "4px 6px", fontWeight: 700 }}>{m.numero}</td>
+                                            <td style={{ ...tdG, padding: "4px 6px", fontWeight: 700 }}><span style={m.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : undefined}>{m.numero}</span></td>
                                             <td style={{ ...tdG, padding: "4px 6px", color: C.gris, fontSize: 12 }}>{libStatut(m.statut)}</td>
                                             <td style={{ ...td, padding: "4px 6px" }}>{formatHeures(m.chiffre)}</td>
                                           </tr>

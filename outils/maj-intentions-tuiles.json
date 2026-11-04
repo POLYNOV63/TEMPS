@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : n° surligné aussi quand un avenant est en intention",
+  "cherche": "<Link href={`/pilotage/affaire/${affaire.id}`} title={affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée\" : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === \"EN_ATTENTE\" ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) }}>",
+  "remplace": "<Link href={`/pilotage/affaire/${affaire.id}`} title={(affaire.statut === \"EN_ATTENTE\" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === \"EN_ATTENTE\")) ? (affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée\" : \"La famille contient une intention de commande (voir le détail ▸)\") : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...((affaire.statut === \"EN_ATTENTE\" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === \"EN_ATTENTE\")) ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) /* INTENTION_FAMILLE */ }}>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : commande en intention surlignée dans le détail de la famille",
+  "cherche": "<Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce }}>",
+  "remplace": "<Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce, ...(m.affaire.statut === \"EN_ATTENTE\" ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) }}>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse : état du calcul de la période",
+  "cherche": "  const [depuisDebut, setDepuisDebut] = useState<Map<string, Agregat> | null>(null);",
+  "remplace": "  const [depuisDebut, setDepuisDebut] = useState<Map<string, Agregat> | null>(null);\n  const [calculPeriode, setCalculPeriode] = useState(false);"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse : la période se recharge d'un bloc",
+  "cherche": "    let actif = true;\n    void chargerPeriode(bornes.du, bornes.au).then((l) => actif && setSurPeriode(agreger(l)));\n    if (bornes.au < aujourdhui) void chargerPeriode(bornes.du, aujourdhui).then((l) => actif && setDepuisDebut(agreger(l)));\n    else setDepuisDebut(null);",
+  "remplace": "    let actif = true;\n    // TUILES_PERIODE : la période se recharge d'un bloc ; pendant le calcul, les tuiles l'indiquent\n    setCalculPeriode(true);\n    void Promise.all([chargerPeriode(bornes.du, bornes.au), bornes.au < aujourdhui ? chargerPeriode(bornes.du, aujourdhui) : Promise.resolve(null)]).then(([l, d]) => {\n      if (!actif) return;\n      setSurPeriode(agreger(l));\n      setDepuisDebut(d ? agreger(d) : null);\n      setCalculPeriode(false);\n    });"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse : tuiles qui suivent la période",
+  "cherche": "              <Tuile libelle=\"Affaires\" valeur={String(lignes.length)} sous={`${formatHeures(totaux.chiffre)} chiffrées`} />\n              <Tuile libelle=\"Sur la période\" valeur={formatHeures(totaux.periode)} sous={libellePeriode || \"—\"} />\n              <Tuile libelle=\"Produit à la fin\" valeur={formatHeures(totaux.fin)} sous={totaux.chiffre > 0 ? `${pct(totaux.fin / totaux.chiffre)} du chiffré` : \"\"} />\n              <Tuile libelle=\"Au-delà du chiffré\" valeur={String(totaux.depassees)} sous=\"affaires dont le cumul dépasse le chiffré\" accent={totaux.depassees > 0} />",
+  "remplace": "              <Tuile\n                libelle=\"Affaires\"\n                valeur={String(lignes.length)}\n                sous={calculPeriode ? \"calcul de la période…\" : `dont ${lignes.filter((x) => x.v.periode > 0.01).length} pointées sur la période · ${formatHeures(totaux.chiffre)} chiffrées`}\n              />\n              <Tuile libelle=\"Sur la période\" valeur={calculPeriode ? \"…\" : formatHeures(totaux.periode)} sous={libellePeriode || \"—\"} />\n              <Tuile\n                libelle=\"Produit à la fin\"\n                valeur={calculPeriode ? \"…\" : formatHeures(totaux.fin)}\n                sous={bornes ? `cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)}${totaux.chiffre > 0 ? ` · ${pct(totaux.fin / totaux.chiffre)} du chiffré` : \"\"}` : \"\"}\n              />\n              <Tuile\n                libelle=\"Au-delà du chiffré\"\n                valeur={calculPeriode ? \"…\" : String(totaux.depassees)}\n                sous={bornes ? `affaires dont le cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)} dépasse le chiffré` : \"\"}\n                accent={!calculPeriode && totaux.depassees > 0}\n              />"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse : n° surligné pour une intention",
+  "cherche": "<Link href={`/affaires/bilan?affaire=CBE${f.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>",
+  "remplace": "<Link href={`/affaires/bilan?affaire=CBE${f.base}`} title={f.membres.some((m) => m.statut === \"EN_ATTENTE\") ? \"Intention de commande (au moins une commande de la famille)\" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(f.membres.some((m) => m.statut === \"EN_ATTENTE\") ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) /* INTENTION_ANALYSE */ }}>"
+ },
+ {
+  "fichier": "app/analyse/pointage/page.tsx",
+  "nom": "Analyse : commande en intention surlignée dans le détail",
+  "cherche": "{m.numero}</td>",
+  "remplace": "<span style={m.statut === \"EN_ATTENTE\" ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : undefined}>{m.numero}</span></td>"
+ }
+]

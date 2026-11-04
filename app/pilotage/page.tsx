@@ -649,7 +649,7 @@ function PortefeuilleContenu() {
                         {ouverte ? "▾" : "▸"}
                       </button>
                       <BadgeType type={affaire.type} />
-                      <Link href={`/pilotage/affaire/${affaire.id}`} title={affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) }}>
+                      <Link href={`/pilotage/affaire/${affaire.id}`} title={(affaire.statut === "EN_ATTENTE" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE")) ? (affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : "La famille contient une intention de commande (voir le détail ▸)") : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...((affaire.statut === "EN_ATTENTE" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE")) ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) /* INTENTION_FAMILLE */ }}>
                         {affaire.numero}
                       </Link>
                       {/* VERS_PLANNING : ouvre l'affaire au planning, dépliée, sur ses affectations */}
@@ -860,7 +860,7 @@ function PortefeuilleContenu() {
                                 {membres.map((m) => (
                                   <tr key={m.affaire.id}>
                                     <td style={{ ...tdCourt, padding: "6px 8px" }}>
-                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce, ...(m.affaire.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) }}>
                                         {m.affaire.numero}
                                       </Link>
                                     </td>
