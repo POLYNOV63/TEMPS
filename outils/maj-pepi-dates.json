@@ -1,0 +1,20 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "PE / PI : n° DBE, statut et dates sur la ligne famille",
+  "cherche": "        client: laBase?.client ?? \"\",\n        designation: laBase?.designation ?? \"\",\n        statut: \"\",",
+  "remplace": "        // PEPI_DATES : n° de devis, statut et dates de la commande de base, comme pour les forfaits\n        devis: laBase && suivi.get(laBase.cle)?.base_devis ? `DBE${String(suivi.get(laBase.cle)?.base_devis).replace(/^DBE/i, \"\")}` : \"\",\n        client: laBase?.client ?? \"\",\n        designation: laBase?.designation ?? \"\",\n        statut: [...new Set(membres.filter((l) => (l.genre === \"BASE\" || l.genre === \"AVENANT\") && recueA(l) && !livreeA(l)).map((l) => l.statut))].join(\", \"),\n        recue: laBase ? fr(recueLe(laBase)) : \"\",\n        delai: laBase ? fr(suivi.get(laBase.cle)?.delai ?? suivi.get(laBase.cle)?.date_livraison_estimee) : \"\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "PE / PI : statut et dates de chaque commande sur les lignes de détail",
+  "cherche": "          designation: x.pourquoi,\n          recue: l ? fr(recueLe(l)) : \"\",",
+  "remplace": "          designation: x.pourquoi,\n          devis: l && suivi.get(l.cle)?.base_devis ? `DBE${String(suivi.get(l.cle)?.base_devis).replace(/^DBE/i, \"\")}` : \"\",\n          statut: l?.statut ?? \"\",\n          recue: l ? fr(recueLe(l)) : \"\",\n          delai: l ? fr(suivi.get(l.cle)?.delai ?? suivi.get(l.cle)?.date_livraison_estimee) : \"\",\n          livree: l ? fr(livreeLe(l)) : \"\","
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Forfaits : n° DBE aussi sur les lignes de détail",
+  "cherche": "          designation: l.designation ?? \"\",\n          statut: l.statut ?? \"\",\n          recue: fr(d?.date_reception_commande),",
+  "remplace": "          devis: d?.base_devis ? `DBE${String(d.base_devis).replace(/^DBE/i, \"\")}` : \"\",\n          designation: l.designation ?? \"\",\n          statut: l.statut ?? \"\",\n          recue: fr(d?.date_reception_commande),"
+ }
+]
