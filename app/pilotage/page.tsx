@@ -634,8 +634,8 @@ function PortefeuilleContenu() {
             const aAffecter = l.aAffecter;
             return (
               <Fragment key={affaire.id}>
-                {/* INTENTION_JAUNE : une intention de commande est surlignée en jaune */}
-                <tr style={affaire.statut === "EN_ATTENTE" ? { background: "#fff6c7" } : undefined} title={affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : undefined}>
+                {/* INTENTION_SURLIGNEE : seul le n° d'une intention de commande est surligné, comme au relevé PE / PI */}
+                <tr>
                   <td style={tdCourt}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                       <button
@@ -648,7 +648,7 @@ function PortefeuilleContenu() {
                         {ouverte ? "▾" : "▸"}
                       </button>
                       <BadgeType type={affaire.type} />
-                      <Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
+                      <Link href={`/pilotage/affaire/${affaire.id}`} title={affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) }}>
                         {affaire.numero}
                       </Link>
                       {/* VERS_PLANNING : ouvre l'affaire au planning, dépliée, sur ses affectations */}

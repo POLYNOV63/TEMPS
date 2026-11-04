@@ -235,12 +235,12 @@ export default function FeuilleDeRouteDashboard() {
                     </thead>
                     <tbody>
                       {s.lignes.map((l) => (
-                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: "#fff6c7" } : undefined}>
+                        <tr key={l.cle}>
                           <td style={td}>
                             {(() => {
                               const m = l.affaireId ? l.titre.match(/^(CBE|DBE)\s*(\S+)$/i) : null;
                               return m ? (
-                                <Link href={lienAffaire(m[1].toUpperCase(), m[2])} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                <Link href={lienAffaire(m[1].toUpperCase(), m[2])} title={l.affaireId && intentions.has(l.affaireId) ? "Intention de commande : pas encore commandée" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(l.affaireId && intentions.has(l.affaireId) ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) /* INTENTION_SURLIGNEE */ }}>
                                   {l.titre}
                                 </Link>
                               ) : (
@@ -255,7 +255,6 @@ export default function FeuilleDeRouteDashboard() {
                                 👤 {responsables.get(l.affaireId)?.tri || responsables.get(l.affaireId)?.nom}
                               </span>
                             )}
-                            {l.affaireId && intentions.has(l.affaireId) && <span title="Intention de commande : pas encore commandée" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: "#7a5b00", background: "#ffe58a", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>INTENTION</span>}
                             {l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}
                             {l.designation && <div style={{ fontSize: 12 }}>{l.designation}</div>}
                             {l.echeance && <div style={{ fontSize: 11, color: l.echeance < s.debut ? "#b3261e" : C.gris }}>délai : {dateCourte(l.echeance)}/{l.echeance.slice(2, 4)}</div>}

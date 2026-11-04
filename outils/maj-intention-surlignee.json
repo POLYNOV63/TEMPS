@@ -1,0 +1,68 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : plus de ligne jaune",
+  "cherche": "              <Fragment key={affaire.id}>\n                {/* INTENTION_JAUNE : une intention de commande est surlignée en jaune */}\n                <tr style={affaire.statut === \"EN_ATTENTE\" ? { background: \"#fff6c7\" } : undefined} title={affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée\" : undefined}>\n                  <td style={tdCourt}>",
+  "remplace": "              <Fragment key={affaire.id}>\n                {/* INTENTION_SURLIGNEE : seul le n° d'une intention de commande est surligné, comme au relevé PE / PI */}\n                <tr>\n                  <td style={tdCourt}>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : n° surligné",
+  "cherche": "<Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>",
+  "remplace": "<Link href={`/pilotage/affaire/${affaire.id}`} title={affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée\" : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === \"EN_ATTENTE\" ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) }}>"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : plus de ligne jaune",
+  "cherche": "style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: \"46px\", background: livree ? \"#f1f2f4\" : affaire.statut === \"EN_ATTENTE\" ? \"#fff6c7\" /* INTENTION_JAUNE */ : \"#f8f9fa\", position: \"relative\" }}",
+  "remplace": "style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: \"46px\", background: livree ? \"#f1f2f4\" : \"#f8f9fa\", position: \"relative\" }}"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : plus de repère INTENTION",
+  "cherche": "                {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}\n                {affaire.statut === \"EN_ATTENTE\" && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}",
+  "remplace": "                {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : n° surligné",
+  "cherche": "title=\"Bilan de l’affaire\" style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>",
+  "remplace": "title={affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée · bilan de l’affaire\" : \"Bilan de l’affaire\"} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === \"EN_ATTENTE\" ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) /* INTENTION_SURLIGNEE */ }}>"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : plus de ligne jaune",
+  "cherche": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: \"#fff6c7\" } : undefined}>",
+  "remplace": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle}>"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : plus de repère INTENTION",
+  "cherche": "{l.affaireId && intentions.has(l.affaireId) && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}\n                            {l.activite && <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>{l.activite}</span>}",
+  "remplace": "{l.activite && <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>{l.activite}</span>}"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : plus de ligne jaune",
+  "cherche": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: \"#fff6c7\" } : undefined}>",
+  "remplace": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle}>"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : plus de repère INTENTION",
+  "cherche": "{l.affaireId && intentions.has(l.affaireId) && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}\n                            {l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}",
+  "remplace": "{l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : n° surligné",
+  "cherche": "<Link href={lienAffaire(m[1].toUpperCase(), m[2])} title=\"Ouvrir la page de l’affaire\" style={{ fontWeight: 800, color: C.rougeFonce }}>",
+  "remplace": "<Link href={lienAffaire(m[1].toUpperCase(), m[2])} title={l.affaireId && intentions.has(l.affaireId) ? \"Intention de commande : pas encore commandée\" : \"Ouvrir la page de l’affaire\"} style={{ fontWeight: 800, color: C.rougeFonce, ...(l.affaireId && intentions.has(l.affaireId) ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) /* INTENTION_SURLIGNEE */ }}>"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : n° surligné",
+  "cherche": "<Link href={lienAffaire(m[1].toUpperCase(), m[2])} style={{ fontWeight: 800, color: C.rougeFonce }}>",
+  "remplace": "<Link href={lienAffaire(m[1].toUpperCase(), m[2])} title={l.affaireId && intentions.has(l.affaireId) ? \"Intention de commande : pas encore commandée\" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(l.affaireId && intentions.has(l.affaireId) ? { background: \"#ffe58a\", borderRadius: 3, padding: \"0 3px\" } : {}) /* INTENTION_SURLIGNEE */ }}>"
+ }
+]

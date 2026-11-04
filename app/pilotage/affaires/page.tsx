@@ -1581,7 +1581,7 @@ function PlanningAffairesContenu() {
           onDoubleClick={(e) => surDoubleClic(e, affaire)}
           onDragOver={(e) => peutAgir && e.preventDefault()}
           onDrop={(e) => surDepot(e, affaire)}
-          style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "46px", background: livree ? "#f1f2f4" : affaire.statut === "EN_ATTENTE" ? "#fff6c7" /* INTENTION_JAUNE */ : "#f8f9fa", position: "relative" }}
+          style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "46px", background: livree ? "#f1f2f4" : "#f8f9fa", position: "relative" }}
         >
           <div style={{ gridColumn: 1, display: "flex", alignItems: "center", gap: 4, padding: "0 4px", minWidth: 0 }}>
             <button
@@ -1604,7 +1604,7 @@ function PlanningAffairesContenu() {
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <BadgeType type={affaire.type} />
                 {/* LIEN_BILAN : le bilan d'affaire, ouvert à tous */}
-                <Link href={`/affaires/bilan?affaire=${affaire.type}${affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero}&commande=${encodeURIComponent(affaire.numero)}`} title="Bilan de l’affaire" style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
+                <Link href={`/affaires/bilan?affaire=${affaire.type}${affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero}&commande=${encodeURIComponent(affaire.numero)}`} title={affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée · bilan de l’affaire" : "Bilan de l’affaire"} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(affaire.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) /* INTENTION_SURLIGNEE */ }}>
                   {affaire.numero}
                 </Link>
                 {/* RESPONSABLE_VIGNETTE : le responsable d'affaire */}
@@ -1620,7 +1620,6 @@ function PlanningAffairesContenu() {
                   ) : null;
                 })()}
                 {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}
-                {affaire.statut === "EN_ATTENTE" && <span title="Intention de commande : pas encore commandée" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: "#7a5b00", background: "#ffe58a", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>INTENTION</span>}
                 {(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
                   <span title="Statut, dates et chiffré suivis depuis le Suivi d’affaire BE (Excel)" style={{ marginLeft: "auto", fontSize: 10, fontWeight: 800, color: "#1d6f42", border: "1px solid #9cc9ae", borderRadius: 4, padding: "0 4px" }}>
                     XLS
