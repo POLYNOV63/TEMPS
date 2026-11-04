@@ -633,6 +633,8 @@ function PlanningAffairesContenu() {
       if (filtreType === "TOUS") return true;
       if (filtreType === "PE") return a.imputation === "PE";
       if (filtreType === "PI") return a.imputation === "PI";
+      // FORFAIT_PLANNING : le bouton CBE devient « Forfait » (commandes hors PE / PI)
+      if (filtreType === "CBE") return a.type === "CBE" && a.imputation !== "PE" && a.imputation !== "PI";
       return a.type === filtreType;
     },
     [filtreType]
@@ -1988,7 +1990,7 @@ function PlanningAffairesContenu() {
             />
             {(["TOUS", "CBE", "DBE", "PE", "PI"] as const).map((t) => (
               <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>
-                {t === "TOUS" ? "Tout" : t}
+                {t === "TOUS" ? "Tout" : t === "CBE" ? "Forfait" : t}
               </button>
             ))}
             <span style={{ width: 8 }} />
@@ -1997,9 +1999,6 @@ function PlanningAffairesContenu() {
                 {n === 52 ? "1 an" : `${n} sem.`}
               </button>
             ))}
-            <button type="button" style={bouton(false)} onClick={() => setOuvertes(ouvertes.size > 0 ? new Set() : new Set(lignes.map((a) => a.id)))}>
-              {ouvertes.size > 0 ? "Tout replier" : "Tout déplier"}
-            </button>
           </div>
         </div>
 
