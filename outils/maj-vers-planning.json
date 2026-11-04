@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : bouton vers le planning",
+  "cherche": "                      {affaire.type === \"CBE\" && devisParCbe.get((affaire.numero.match(/^\\d+/)?.[0] ?? \"\").replace(/^0+/, \"\")) && (",
+  "remplace": "                      {/* VERS_PLANNING : ouvre l'affaire au planning, dépliée, sur ses affectations */}\n                      {!estInactive(affaire) && (\n                        <Link\n                          href={`/pilotage/affaires?ouvrir=${affaire.id}`}\n                          title=\"Voir cette affaire et ses affectations dans le planning\"\n                          aria-label={`Voir ${affaire.type} ${affaire.numero} dans le planning`}\n                          style={{ fontSize: 12, fontWeight: 800, color: \"#34506b\", background: \"#eaf1fa\", border: \"1px solid #9fb6cf\", borderRadius: 999, padding: \"1px 7px\", textDecoration: \"none\", whiteSpace: \"nowrap\" }}\n                        >\n                          📅 planning\n                        </Link>\n                      )}\n                      {affaire.type === \"CBE\" && devisParCbe.get((affaire.numero.match(/^\\d+/)?.[0] ?? \"\").replace(/^0+/, \"\")) && ("
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : descendre jusqu'à l'affaire ouverte depuis le portefeuille",
+  "cherche": "        if (cible) {\n          ouvrirId.current = null;",
+  "remplace": "        if (cible) {\n          ouvrirId.current = null;\n          // VERS_PLANNING : on descend jusqu'à l'affaire, une fois le planning affiché\n          window.setTimeout(() => document.getElementById(`aff-${cible}`)?.scrollIntoView({ behavior: \"smooth\", block: \"start\" }), 900);"
+ }
+]

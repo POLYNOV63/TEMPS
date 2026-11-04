@@ -650,6 +650,17 @@ function PortefeuilleContenu() {
                       <Link href={`/pilotage/affaire/${affaire.id}`} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
                         {affaire.numero}
                       </Link>
+                      {/* VERS_PLANNING : ouvre l'affaire au planning, dépliée, sur ses affectations */}
+                      {!estInactive(affaire) && (
+                        <Link
+                          href={`/pilotage/affaires?ouvrir=${affaire.id}`}
+                          title="Voir cette affaire et ses affectations dans le planning"
+                          aria-label={`Voir ${affaire.type} ${affaire.numero} dans le planning`}
+                          style={{ fontSize: 12, fontWeight: 800, color: "#34506b", background: "#eaf1fa", border: "1px solid #9fb6cf", borderRadius: 999, padding: "1px 7px", textDecoration: "none", whiteSpace: "nowrap" }}
+                        >
+                          📅 planning
+                        </Link>
+                      )}
                       {affaire.type === "CBE" && devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) && (
                         <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 12, fontWeight: 700, color: C.gris }}>
                           DBE{devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, ""))}
