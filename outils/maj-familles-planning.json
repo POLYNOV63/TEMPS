@@ -1,0 +1,62 @@
+[
+ {
+  "fichier": "components/pilotage/AffecterDialog.tsx",
+  "nom": "Fenêtre : pré-remplissage activité et heures",
+  "cherche": "  prefill?: { collaborateurId?: string; debut?: string };",
+  "remplace": "  // PREREMPLI_RESTE : activité et heures proposées (« planifier le reste »)\n  prefill?: { collaborateurId?: string; debut?: string; activiteId?: string; heures?: number };"
+ },
+ {
+  "fichier": "components/pilotage/AffecterDialog.tsx",
+  "nom": "Fenêtre : durée pré-remplie en heures",
+  "cherche": "  const [quantite, setQuantite] = useState(\n    edition ? String(Math.round(heuresExistantes * 100) / 100).replace(\".\", \",\") : \"\"\n  );\n  const [unite, setUnite] = useState<Unite>(edition ? \"HEURES\" : \"JOURS\");",
+  "remplace": "  const [quantite, setQuantite] = useState(\n    edition\n      ? String(Math.round(heuresExistantes * 100) / 100).replace(\".\", \",\")\n      : prefill?.heures\n        ? String(Math.round(prefill.heures * 10) / 10).replace(\".\", \",\")\n        : \"\"\n  );\n  const [unite, setUnite] = useState<Unite>(edition || prefill?.heures ? \"HEURES\" : \"JOURS\");"
+ },
+ {
+  "fichier": "components/pilotage/AffecterDialog.tsx",
+  "nom": "Fenêtre : activité pré-remplie",
+  "cherche": "    if (edition) return edition.affectation.activite_id ?? \"\";",
+  "remplace": "    if (edition) return edition.affectation.activite_id ?? \"\";\n    if (prefill?.activiteId) return prefill.activiteId;"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : Fragment",
+  "cherche": "import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,",
+  "remplace": "import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties,"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : fenêtre pré-remplie (type)",
+  "cherche": "  const [dialogue, setDialogue] = useState<null | {\n    affaire: Affaire;\n    prefill?: { collaborateurId?: string; debut?: string };",
+  "remplace": "  const [dialogue, setDialogue] = useState<null | {\n    affaire: Affaire;\n    prefill?: { collaborateurId?: string; debut?: string; activiteId?: string; heures?: number };"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : pointé par activité",
+  "cherche": "        setRealiseParAffaire(r);",
+  "remplace": "        setRealiseParAffaire(r);\n        // PLANIFIER_LE_RESTE : pointé par famille et par activité\n        const ra = new Map<string, number>();\n        for (const x of re) {\n          const act = (x as { activite_id?: string | null }).activite_id;\n          if (!act) continue;\n          const k = `${x.type_affaire}|${String(x.numero).replace(/^0+/, \"\")}|${act}`;\n          ra.set(k, (ra.get(k) ?? 0) + (Number(x.heures) || 0));\n        }\n        setRealiseActivite(ra);"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : reste à planifier par commande et par activité",
+  "cherche": "  const totalResteAPlanifier = useMemo(() => {",
+  "remplace": "  /* PLANIFIER_LE_RESTE : par commande et par activité, chiffré − pointé (réparti sur la famille, dans l'ordre)\n     − planifié à venir */\n  const resteActivite = useMemo(() => {\n    const m = new Map<string, Map<string, number>>();\n    const futur = new Map<string, number>();\n    for (const a of affectations) {\n      if (!a.affaire_id || !a.activite_id) continue;\n      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour >= aujourdhui).reduce((t, j) => t + j.heures, 0);\n      const k = `${a.affaire_id}|${a.activite_id}`;\n      futur.set(k, (futur.get(k) ?? 0) + h);\n    }\n    const chiffreAct = new Map<string, number>();\n    for (const c of charges) {\n      const k = `${c.affaire_id}|${c.activite_id}`;\n      chiffreAct.set(k, (chiffreAct.get(k) ?? 0) + num(c.heures));\n    }\n    const familles = new Map<string, Affaire[]>();\n    for (const af of toutesAffaires) {\n      if (estPrestation(af) || af.statut === \"ABANDONNEE\") continue;\n      const k = `${af.type}|${(af.numero.match(/^\\d+/)?.[0] ?? af.numero).replace(/^0+/, \"\")}`;\n      familles.set(k, [...(familles.get(k) ?? []), af]);\n    }\n    for (const [k, membres] of familles) {\n      membres.sort((x, y) => x.numero.localeCompare(y.numero, \"fr\", { numeric: true }));\n      const ids = new Set(membres.map((x) => x.id));\n      const acts = new Set(charges.filter((c) => ids.has(c.affaire_id)).map((c) => c.activite_id));\n      for (const act of acts) {\n        let restant = realiseActivite.get(`${k}|${act}`) ?? 0;\n        membres.forEach((af, i) => {\n          const ch = chiffreAct.get(`${af.id}|${act}`) ?? 0;\n          const p = i === membres.length - 1 ? restant : Math.min(ch, restant);\n          restant -= p;\n          const mm = m.get(af.id) ?? new Map<string, number>();\n          mm.set(act, ch - p - (futur.get(`${af.id}|${act}`) ?? 0));\n          m.set(af.id, mm);\n        });\n      }\n    }\n    return m;\n  }, [affectations, joursParAffectation, charges, toutesAffaires, realiseActivite, estPrestation, aujourdhui]);\n\n  const totalResteAPlanifier = useMemo(() => {"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : état du pointé par activité",
+  "cherche": "  const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());",
+  "remplace": "  const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());\n  const [realiseActivite, setRealiseActivite] = useState<Map<string, number>>(new Map());"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : bouton « planifier le reste » sur chaque besoin",
+  "cherche": "                    <Pastille key={id} genre={genre}>\n                      {genre === \"ok\" ? \"✓ \" : \"\"}\n                      {e.nom} {formatHeures(e.affecte)} / {formatHeures(e.chiffre)}\n                    </Pastille>",
+  "remplace": "                    <span key={id} style={{ display: \"inline-flex\", alignItems: \"center\", gap: 4 }}>\n                      <Pastille genre={genre}>\n                        {genre === \"ok\" ? \"✓ \" : \"\"}\n                        {e.nom} {formatHeures(e.affecte)} / {formatHeures(e.chiffre)}\n                      </Pastille>\n                      {(() => {\n                        const resteAct = resteActivite.get(affaire.id)?.get(id) ?? 0;\n                        return peutAgir && !prestation && resteAct > 0.5 ? (\n                          <button\n                            type=\"button\"\n                            title={`Ouvrir l’affectation avec ${formatHeures(resteAct)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}\n                            onClick={() => setDialogue({ affaire, prefill: { debut: aujourdhui, activiteId: id, heures: Math.round(resteAct * 10) / 10 } })}\n                            style={{ minHeight: 26, padding: \"0 8px\", border: `1.5px dashed ${C.rouge}`, background: \"#ffffff\", borderRadius: 6, fontWeight: 800, fontSize: 12, color: C.rougeFonce, cursor: \"pointer\", fontFamily: \"inherit\", whiteSpace: \"nowrap\" }}\n                          >\n                            + planifier {formatHeures(resteAct)}\n                          </button>\n                        ) : null;\n                      })()}\n                    </span>"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : familles regroupées sous un en-tête",
+  "cherche": "              {lignes.map((affaire, indexLigne) => {\n                const groupe = rangGroupe(affaire);\n                const premierDuGroupe = indexLigne === 0 || rangGroupe(lignes[indexLigne - 1]) !== groupe;\n                return rendreAffaire(affaire, premierDuGroupe ? TITRES_GROUPES[groupe] : null, indexLigne === 0);\n              })}",
+  "remplace": "              {lignes.map((affaire, indexLigne) => {\n                const groupe = rangGroupe(affaire);\n                const premierDuGroupe = indexLigne === 0 || rangGroupe(lignes[indexLigne - 1]) !== groupe;\n                // FAMILLES_PLANNING : une commande et ses avenants sous un même en-tête, avec les totaux de la famille\n                const baseDe = (a: Affaire) => `${a.type}|${(a.numero.match(/^\\d+/)?.[0] ?? a.numero).replace(/^0+/, \"\")}`;\n                const cle = baseDe(affaire);\n                const membres = toutesAffaires.filter((a) => baseDe(a) === cle && a.statut !== \"ABANDONNEE\");\n                const enFamille = affaire.type === \"CBE\" && !estPrestation(affaire) && membres.length > 1;\n                const premierDeFamille = enFamille && (premierDuGroupe || baseDe(lignes[indexLigne - 1]) !== cle);\n                const titre = premierDuGroupe ? TITRES_GROUPES[groupe] : null;\n                if (!enFamille) return rendreAffaire(affaire, titre, indexLigne === 0);\n                const rps = membres.map((a) => resteAPlanifier.get(a.id)).filter((x): x is { chiffre: number; pointe: number; planifie: number; reste: number } => Boolean(x));\n                const ch = rps.reduce((t, x) => t + x.chiffre, 0);\n                const pl = rps.reduce((t, x) => t + x.planifie, 0);\n                const pt = realiseParAffaire.get(cle) ?? 0;\n                const rs = ch - pt - pl;\n                const nbLivrees = membres.filter((a) => a.statut === \"LIVREE\").length;\n                const laBase = membres.find((a) => /^\\d+$/.test(a.numero)) ?? membres[0];\n                return (\n                  <Fragment key={affaire.id}>\n                    {premierDeFamille && (\n                      <>\n                        {titre && (\n                          <div style={{ marginTop: indexLigne === 0 ? 8 : 14, padding: \"6px 8px\", background: \"#eef0f3\", fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: \"#3b4046\", borderRadius: 4 }}>\n                            {titre}\n                          </div>\n                        )}\n                        <div style={{ marginTop: 6, padding: \"6px 10px\", background: \"#eef3f9\", borderTop: \"2px solid #9fb6cf\", display: \"flex\", flexWrap: \"wrap\", alignItems: \"baseline\", gap: \"4px 16px\", fontSize: 13 }}>\n                          <strong style={{ color: \"#34506b\" }}>\n                            ⧉ CBE {laBase.numero.match(/^\\d+/)?.[0] ?? laBase.numero} · famille de {membres.length} commandes\n                            {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? \"s\" : \"\"})` : \"\"}\n                          </strong>\n                          <span style={{ color: \"#3b4046\" }}>\n                            {clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : \"\"}\n                            {laBase.designation}\n                          </span>\n                          <span style={{ marginLeft: \"auto\", whiteSpace: \"nowrap\" }}>\n                            chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{\" \"}\n                            <strong style={{ color: rs < -0.5 ? C.rougeTexte : rs > 0.5 ? \"#7a3e00\" : \"#1b5e20\" }}>\n                              {rs < -0.5 ? `+${formatHeures(-rs)} au-delà` : rs > 0.5 ? `reste à planifier ${formatHeures(rs)}` : \"✓ tout est planifié\"}\n                            </strong>\n                          </span>\n                        </div>\n                      </>\n                    )}\n                    <div style={{ boxShadow: \"inset 4px 0 0 #9fb6cf\" }}>{rendreAffaire(affaire, null, false)}</div>\n                  </Fragment>\n                );\n              })}"
+ }
+]

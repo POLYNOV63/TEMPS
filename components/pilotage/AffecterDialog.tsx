@@ -57,7 +57,8 @@ type Props = {
   /* activités chiffrées de l'affaire : heures chiffrées et déjà affectées */
   activites?: { id: string; nom: string; chiffre: number; affecte: number }[];
   limiter: boolean;
-  prefill?: { collaborateurId?: string; debut?: string };
+  // PREREMPLI_RESTE : activité et heures proposées (« planifier le reste »)
+  prefill?: { collaborateurId?: string; debut?: string; activiteId?: string; heures?: number };
   edition?: { affectation: Affectation; jours: JourRow[] };
 };
 
@@ -91,9 +92,13 @@ export default function AffecterDialog({
   // En modification : mêmes heures, même intensité ; on peut simplement recaler la date de début ou la durée
   const heuresExistantes = edition ? edition.jours.reduce((t, j) => t + num(j.heures), 0) : 0;
   const [quantite, setQuantite] = useState(
-    edition ? String(Math.round(heuresExistantes * 100) / 100).replace(".", ",") : ""
+    edition
+      ? String(Math.round(heuresExistantes * 100) / 100).replace(".", ",")
+      : prefill?.heures
+        ? String(Math.round(prefill.heures * 10) / 10).replace(".", ",")
+        : ""
   );
-  const [unite, setUnite] = useState<Unite>(edition ? "HEURES" : "JOURS");
+  const [unite, setUnite] = useState<Unite>(edition || prefill?.heures ? "HEURES" : "JOURS");
   const [pourcent, setPourcent] = useState(
     edition && nbJoursExistant > 0
       ? String(Math.min(100, Math.max(5, Math.round((heuresExistantes / nbJoursExistant / 7.5) * 100))))
@@ -102,6 +107,7 @@ export default function AffecterDialog({
   const [commentaire, setCommentaire] = useState(edition?.affectation.commentaire ?? "");
   const [activiteId, setActiviteId] = useState(() => {
     if (edition) return edition.affectation.activite_id ?? "";
+    if (prefill?.activiteId) return prefill.activiteId;
     const plusGros = [...activites].sort((a, b) => b.chiffre - b.affecte - (a.chiffre - a.affecte))[0];
     return plusGros && plusGros.chiffre - plusGros.affecte > 0 ? plusGros.id : "";
   });

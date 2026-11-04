@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as MouseReact, type PointerEvent as PointerReact, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as MouseReact, type PointerEvent as PointerReact, type ReactNode } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
@@ -194,6 +194,7 @@ function PlanningAffairesContenu() {
   const [livraisonEnCours, setLivraisonEnCours] = useState("");
   const [codesDivers, setCodesDivers] = useState<{ code: string; libelle: string }[]>([]);
   const [realiseParAffaire, setRealiseParAffaire] = useState<Map<string, number>>(new Map());
+  const [realiseActivite, setRealiseActivite] = useState<Map<string, number>>(new Map());
   // toutes les commandes (livrées comprises) : pour répartir le pointé d'une famille base + avenants
   const [toutesAffaires, setToutesAffaires] = useState<Affaire[]>([]);
   // client (nom abrégé du Suivi d'affaire) par commande de base : « CBE|1750 »
@@ -245,7 +246,7 @@ function PlanningAffairesContenu() {
   const [ficheAffaire, setFicheAffaire] = useState<Affaire | null>(null);
   const [dialogue, setDialogue] = useState<null | {
     affaire: Affaire;
-    prefill?: { collaborateurId?: string; debut?: string };
+    prefill?: { collaborateurId?: string; debut?: string; activiteId?: string; heures?: number };
     edition?: { affectation: Affectation; jours: JourRow[] };
   }>(null);
 
@@ -363,6 +364,15 @@ function PlanningAffairesContenu() {
           r.set(k, (r.get(k) ?? 0) + (Number(x.heures) || 0));
         }
         setRealiseParAffaire(r);
+        // PLANIFIER_LE_RESTE : pointé par famille et par activité
+        const ra = new Map<string, number>();
+        for (const x of re) {
+          const act = (x as { activite_id?: string | null }).activite_id;
+          if (!act) continue;
+          const k = `${x.type_affaire}|${String(x.numero).replace(/^0+/, "")}|${act}`;
+          ra.set(k, (ra.get(k) ?? 0) + (Number(x.heures) || 0));
+        }
+        setRealiseActivite(ra);
 
         const factures = new Map<string, number>();
         for (const x of ((fa?.data ?? []) as { affaire_id: string; heures: number | string }[])) factures.set(x.affaire_id, Number(x.heures) || 0);
@@ -594,6 +604,47 @@ function PlanningAffairesContenu() {
     }
     return m;
   }, [toutesAffaires, affectations, joursParAffectation, chiffreParAffaire, realiseParAffaire, estPrestation, aujourdhui]);
+
+  /* PLANIFIER_LE_RESTE : par commande et par activité, chiffré − pointé (réparti sur la famille, dans l'ordre)
+     − planifié à venir */
+  const resteActivite = useMemo(() => {
+    const m = new Map<string, Map<string, number>>();
+    const futur = new Map<string, number>();
+    for (const a of affectations) {
+      if (!a.affaire_id || !a.activite_id) continue;
+      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour >= aujourdhui).reduce((t, j) => t + j.heures, 0);
+      const k = `${a.affaire_id}|${a.activite_id}`;
+      futur.set(k, (futur.get(k) ?? 0) + h);
+    }
+    const chiffreAct = new Map<string, number>();
+    for (const c of charges) {
+      const k = `${c.affaire_id}|${c.activite_id}`;
+      chiffreAct.set(k, (chiffreAct.get(k) ?? 0) + num(c.heures));
+    }
+    const familles = new Map<string, Affaire[]>();
+    for (const af of toutesAffaires) {
+      if (estPrestation(af) || af.statut === "ABANDONNEE") continue;
+      const k = `${af.type}|${(af.numero.match(/^\d+/)?.[0] ?? af.numero).replace(/^0+/, "")}`;
+      familles.set(k, [...(familles.get(k) ?? []), af]);
+    }
+    for (const [k, membres] of familles) {
+      membres.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+      const ids = new Set(membres.map((x) => x.id));
+      const acts = new Set(charges.filter((c) => ids.has(c.affaire_id)).map((c) => c.activite_id));
+      for (const act of acts) {
+        let restant = realiseActivite.get(`${k}|${act}`) ?? 0;
+        membres.forEach((af, i) => {
+          const ch = chiffreAct.get(`${af.id}|${act}`) ?? 0;
+          const p = i === membres.length - 1 ? restant : Math.min(ch, restant);
+          restant -= p;
+          const mm = m.get(af.id) ?? new Map<string, number>();
+          mm.set(act, ch - p - (futur.get(`${af.id}|${act}`) ?? 0));
+          m.set(af.id, mm);
+        });
+      }
+    }
+    return m;
+  }, [affectations, joursParAffectation, charges, toutesAffaires, realiseActivite, estPrestation, aujourdhui]);
 
   const totalResteAPlanifier = useMemo(() => {
     let h = 0;
@@ -1815,10 +1866,25 @@ function PlanningAffairesContenu() {
                   const genre: Genre = reste < -0.5 ? "crit" : reste > 0.5 ? "warn" : "ok";
 
                   return (
-                    <Pastille key={id} genre={genre}>
-                      {genre === "ok" ? "✓ " : ""}
-                      {e.nom} {formatHeures(e.affecte)} / {formatHeures(e.chiffre)}
-                    </Pastille>
+                    <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <Pastille genre={genre}>
+                        {genre === "ok" ? "✓ " : ""}
+                        {e.nom} {formatHeures(e.affecte)} / {formatHeures(e.chiffre)}
+                      </Pastille>
+                      {(() => {
+                        const resteAct = resteActivite.get(affaire.id)?.get(id) ?? 0;
+                        return peutAgir && !prestation && resteAct > 0.5 ? (
+                          <button
+                            type="button"
+                            title={`Ouvrir l’affectation avec ${formatHeures(resteAct)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}
+                            onClick={() => setDialogue({ affaire, prefill: { debut: aujourdhui, activiteId: id, heures: Math.round(resteAct * 10) / 10 } })}
+                            style={{ minHeight: 26, padding: "0 8px", border: `1.5px dashed ${C.rouge}`, background: "#ffffff", borderRadius: 6, fontWeight: 800, fontSize: 12, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                          >
+                            + planifier {formatHeures(resteAct)}
+                          </button>
+                        ) : null;
+                      })()}
+                    </span>
                   );
                 })}
                 {sansActivite > 0.5 && <Pastille genre="info">Sans activité précise {formatHeures(sansActivite)}</Pastille>}
@@ -2294,7 +2360,51 @@ function PlanningAffairesContenu() {
               {lignes.map((affaire, indexLigne) => {
                 const groupe = rangGroupe(affaire);
                 const premierDuGroupe = indexLigne === 0 || rangGroupe(lignes[indexLigne - 1]) !== groupe;
-                return rendreAffaire(affaire, premierDuGroupe ? TITRES_GROUPES[groupe] : null, indexLigne === 0);
+                // FAMILLES_PLANNING : une commande et ses avenants sous un même en-tête, avec les totaux de la famille
+                const baseDe = (a: Affaire) => `${a.type}|${(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "")}`;
+                const cle = baseDe(affaire);
+                const membres = toutesAffaires.filter((a) => baseDe(a) === cle && a.statut !== "ABANDONNEE");
+                const enFamille = affaire.type === "CBE" && !estPrestation(affaire) && membres.length > 1;
+                const premierDeFamille = enFamille && (premierDuGroupe || baseDe(lignes[indexLigne - 1]) !== cle);
+                const titre = premierDuGroupe ? TITRES_GROUPES[groupe] : null;
+                if (!enFamille) return rendreAffaire(affaire, titre, indexLigne === 0);
+                const rps = membres.map((a) => resteAPlanifier.get(a.id)).filter((x): x is { chiffre: number; pointe: number; planifie: number; reste: number } => Boolean(x));
+                const ch = rps.reduce((t, x) => t + x.chiffre, 0);
+                const pl = rps.reduce((t, x) => t + x.planifie, 0);
+                const pt = realiseParAffaire.get(cle) ?? 0;
+                const rs = ch - pt - pl;
+                const nbLivrees = membres.filter((a) => a.statut === "LIVREE").length;
+                const laBase = membres.find((a) => /^\d+$/.test(a.numero)) ?? membres[0];
+                return (
+                  <Fragment key={affaire.id}>
+                    {premierDeFamille && (
+                      <>
+                        {titre && (
+                          <div style={{ marginTop: indexLigne === 0 ? 8 : 14, padding: "6px 8px", background: "#eef0f3", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", borderRadius: 4 }}>
+                            {titre}
+                          </div>
+                        )}
+                        <div style={{ marginTop: 6, padding: "6px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
+                          <strong style={{ color: "#34506b" }}>
+                            ⧉ CBE {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero} · famille de {membres.length} commandes
+                            {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? "s" : ""})` : ""}
+                          </strong>
+                          <span style={{ color: "#3b4046" }}>
+                            {clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : ""}
+                            {laBase.designation}
+                          </span>
+                          <span style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
+                            chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{" "}
+                            <strong style={{ color: rs < -0.5 ? C.rougeTexte : rs > 0.5 ? "#7a3e00" : "#1b5e20" }}>
+                              {rs < -0.5 ? `+${formatHeures(-rs)} au-delà` : rs > 0.5 ? `reste à planifier ${formatHeures(rs)}` : "✓ tout est planifié"}
+                            </strong>
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    <div style={{ boxShadow: "inset 4px 0 0 #9fb6cf" }}>{rendreAffaire(affaire, null, false)}</div>
+                  </Fragment>
+                );
               })}
 
               {/* affaires livrées restées au planning */}
