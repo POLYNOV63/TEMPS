@@ -550,10 +550,11 @@ function PortefeuilleContenu() {
 
 
   // Tableau compact : chiffres et dates sur une seule ligne
-  const thNum: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap", padding: "10px 8px" };
-  const tdNum: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap", padding: "10px 8px" };
-  const thCourt: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "10px 8px" };
-  const tdCourt: CSSProperties = { ...page.td, whiteSpace: "nowrap", padding: "10px 8px" };
+  // PORTEFEUILLE_AERE : plus d'espace entre les colonnes
+  const thNum: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap", padding: "12px 14px" };
+  const tdNum: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap", padding: "12px 14px" };
+  const thCourt: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "12px 14px" };
+  const tdCourt: CSSProperties = { ...page.td, whiteSpace: "nowrap", padding: "12px 14px" };
 
   const bouton = (actif: boolean): CSSProperties => ({
     background: actif ? C.rouge : "#ffffff",
@@ -612,7 +613,7 @@ function PortefeuilleContenu() {
   function rendreTableau(liste: Ligne[]) {
     const nbColonnes = 10;
     return (
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+      <table className="portefeuille-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
         <thead className="portefeuille-entete">
           <tr>
             <EnTeteTri col="numero" libelle="N°" />
@@ -635,7 +636,7 @@ function PortefeuilleContenu() {
             return (
               <Fragment key={affaire.id}>
                 {/* INTENTION_SURLIGNEE : seul le n° d'une intention de commande est surligné, comme au relevé PE / PI */}
-                <tr>
+                <tr className="ligne-affaire">
                   <td style={tdCourt}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                       <button
@@ -686,8 +687,8 @@ function PortefeuilleContenu() {
                       )}
                     </div>
                   </td>
-                  <td style={{ ...page.td, padding: "10px 8px" }}>{affaire.designation}</td>
-                  <td style={{ ...page.td, padding: "10px 8px", maxWidth: 140 }}>{client ?? gris("—")}</td>
+                  <td style={{ ...page.td, padding: "12px 14px", minWidth: 240, lineHeight: 1.4, fontWeight: 600 }}>{affaire.designation}</td>
+                  <td style={{ ...page.td, padding: "12px 14px", maxWidth: 170, color: "#4b5057", fontSize: 14 }}>{client ?? gris("—")}</td>
                   <td style={tdCourt}>
                     <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
                     {affaire.type === "DBE" && !estInactive(affaire) && edDbe?.id !== affaire.id && (
@@ -940,6 +941,15 @@ function PortefeuilleContenu() {
       <OngletsPilotage actif="portefeuille" />
       {/* l'en-tête du tableau reste visible, juste sous les onglets (49 px) */}
       <style>{`
+        .portefeuille-table tr.ligne-affaire > td {
+          padding-top: 14px !important;
+          padding-bottom: 14px !important;
+          vertical-align: middle;
+          border-bottom: 1px solid #e3e6ea;
+        }
+        .portefeuille-table tr.ligne-affaire:hover > td {
+          background: #f6f8fb;
+        }
         .portefeuille-entete th {
           position: sticky;
           top: 49px;
@@ -949,7 +959,7 @@ function PortefeuilleContenu() {
         }
       `}</style>
 
-      <div style={page.contenu}>
+      <div style={{ ...page.contenu, maxWidth: 1500 }}>
         <div
           style={{
             display: "flex",

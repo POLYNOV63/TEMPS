@@ -1,0 +1,44 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Page plus large",
+  "cherche": "      <div style={page.contenu}>",
+  "remplace": "      <div style={{ ...page.contenu, maxWidth: 1500 }}>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Colonnes plus aérées",
+  "cherche": "  const thNum: CSSProperties = { ...page.th, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"10px 8px\" };\n  const tdNum: CSSProperties = { ...page.td, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"10px 8px\" };\n  const thCourt: CSSProperties = { ...page.th, whiteSpace: \"nowrap\", padding: \"10px 8px\" };\n  const tdCourt: CSSProperties = { ...page.td, whiteSpace: \"nowrap\", padding: \"10px 8px\" };",
+  "remplace": "  // PORTEFEUILLE_AERE : plus d'espace entre les colonnes\n  const thNum: CSSProperties = { ...page.th, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"12px 14px\" };\n  const tdNum: CSSProperties = { ...page.td, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"12px 14px\" };\n  const thCourt: CSSProperties = { ...page.th, whiteSpace: \"nowrap\", padding: \"12px 14px\" };\n  const tdCourt: CSSProperties = { ...page.td, whiteSpace: \"nowrap\", padding: \"12px 14px\" };"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Tableau : classe pour la mise en page",
+  "cherche": "      <table style={{ borderCollapse: \"collapse\", width: \"100%\", fontSize: 14 }}>\n        <thead className=\"portefeuille-entete\">",
+  "remplace": "      <table className=\"portefeuille-table\" style={{ borderCollapse: \"collapse\", width: \"100%\", fontSize: 15 }}>\n        <thead className=\"portefeuille-entete\">"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Ligne d'affaire : classe pour le survol",
+  "cherche": "                {/* INTENTION_SURLIGNEE : seul le n° d'une intention de commande est surligné, comme au relevé PE / PI */}\n                <tr>",
+  "remplace": "                {/* INTENTION_SURLIGNEE : seul le n° d'une intention de commande est surligné, comme au relevé PE / PI */}\n                <tr className=\"ligne-affaire\">"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Descriptif lisible",
+  "cherche": "                  <td style={{ ...page.td, padding: \"10px 8px\" }}>{affaire.designation}</td>",
+  "remplace": "                  <td style={{ ...page.td, padding: \"12px 14px\", minWidth: 240, lineHeight: 1.4, fontWeight: 600 }}>{affaire.designation}</td>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Client plus discret",
+  "cherche": "                  <td style={{ ...page.td, padding: \"10px 8px\", maxWidth: 140 }}>{client ?? gris(\"—\")}</td>",
+  "remplace": "                  <td style={{ ...page.td, padding: \"12px 14px\", maxWidth: 170, color: \"#4b5057\", fontSize: 14 }}>{client ?? gris(\"—\")}</td>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Styles : lignes séparées, survol, hauteur",
+  "cherche": "        .portefeuille-entete th {",
+  "remplace": "        .portefeuille-table tr.ligne-affaire > td {\n          padding-top: 14px !important;\n          padding-bottom: 14px !important;\n          vertical-align: middle;\n          border-bottom: 1px solid #e3e6ea;\n        }\n        .portefeuille-table tr.ligne-affaire:hover > td {\n          background: #f6f8fb;\n        }\n        .portefeuille-entete th {"
+ }
+]
