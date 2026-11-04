@@ -172,6 +172,14 @@ function PlanningAffairesContenu() {
   const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("TOUS");
   // RECHERCHE_PLANNING : n°, client, description, imputation, personne affectée ou responsable
   const [recherche, setRecherche] = useState("");
+  // RESTE_CLIQUABLE : liste des commandes qui ont encore des heures à mettre au planning
+  const [resteOuvert, setResteOuvert] = useState(false);
+  function allerAffaire(id: string) {
+    setFiltreType("TOUS");
+    setRecherche("");
+    setOuvertes((s) => new Set(s).add(id));
+    window.setTimeout(() => document.getElementById(`aff-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+  }
   // On a toujours le droit de dépasser le chiffré : les barres ne s'arrêtent jamais au chiffré
   const limiter = false;
   const [drag, setDrag] = useState<DragEtat | null>(null);
@@ -1553,7 +1561,7 @@ function PlanningAffairesContenu() {
     const sansActivite = Math.max(0, affecteReel - besoins.reduce((t, [, e]) => t + e.affecte, 0));
 
     return (
-      <div key={affaire.id}>
+      <div key={affaire.id} id={`aff-${affaire.id}`} style={{ scrollMarginTop: 220 }}>
         {titreGroupe && (
           <div style={{ marginTop: premiere ? 8 : 14, padding: "6px 8px", background: "#eef0f3", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", borderRadius: 4 }}>
             {titreGroupe}
@@ -2005,9 +2013,54 @@ function PlanningAffairesContenu() {
         {/* Présence : d'autres personnes ont le planning ouvert */}
         {!chargement && totalResteAPlanifier.n > 0 && (
           <Message genre="info">
-            <strong>Reste à planifier sur les forfaits en cours : {formatHeures(totalResteAPlanifier.h)}</strong> ({totalResteAPlanifier.n} commande
-            {totalResteAPlanifier.n > 1 ? "s" : ""}) — chiffré, moins ce qui est déjà pointé, moins ce qui est déjà planifié à venir. Le détail est dans
-            la colonne de droite de chaque affaire.
+            <button
+              type="button"
+              aria-expanded={resteOuvert}
+              onClick={() => setResteOuvert((v) => !v)}
+              style={{ all: "unset", cursor: "pointer", fontWeight: 800 }}
+            >
+              {resteOuvert ? "▾" : "▸"} {formatHeures(totalResteAPlanifier.h)} encore à mettre au planning, sur {totalResteAPlanifier.n} commande
+              {totalResteAPlanifier.n > 1 ? "s" : ""} au forfait
+            </button>
+            <span>
+              {" "}
+              : des heures vendues que personne n’a encore au planning (heures chiffrées, moins celles déjà pointées, moins celles déjà planifiées).
+              {!resteOuvert && " Cliquez pour voir les commandes."}
+            </span>
+            {resteOuvert && (
+              <div style={{ display: "grid", gap: 4, marginTop: 8 }}>
+                {affaires
+                  .filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE")
+                  .map((a) => ({ a, rp: resteAPlanifier.get(a.id) }))
+                  .filter((x) => x.rp && x.rp.reste > 0.5)
+                  .sort((x, y) => (y.rp?.reste ?? 0) - (x.rp?.reste ?? 0))
+                  .map(({ a, rp }) => {
+                    const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
+                    const client = clientsParBase.get(`${a.type}|${base}`);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => allerAffaire(a.id)}
+                        title="Aller à cette commande dans le planning"
+                        style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", gap: "2px 10px", alignItems: "baseline" }}
+                      >
+                        <strong style={{ color: C.rougeFonce, textDecoration: "underline" }}>
+                          {a.type} {a.numero}
+                        </strong>
+                        <span>
+                          {client ? `${client} · ` : ""}
+                          {a.designation}
+                        </span>
+                        <strong>{formatHeures(rp?.reste ?? 0)} à planifier</strong>
+                        <span style={{ color: C.gris, fontSize: 13 }}>
+                          (chiffré {formatHeures(rp?.chiffre ?? 0)} − pointé {formatHeures(rp?.pointe ?? 0)} − planifié {formatHeures(rp?.planifie ?? 0)})
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </Message>
         )}
 
