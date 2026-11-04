@@ -99,14 +99,14 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
     f.colonnes.forEach((c, i) => {
       const cell = entete.getCell(i + 1);
       cell.value = c.formule ? `${c.titre} ƒ` : c.titre;
-      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+      cell.font = { name: "Calibri", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ROUGE } };
       cell.alignment = { vertical: "middle", horizontal: numerique(c.format) ? "right" : "left", wrapText: true };
-      cell.border = { bottom: { style: "medium", color: { argb: "FF8F0000" } } };
+      cell.border = { bottom: { style: "thick", color: { argb: "FF8F0000" } } };
       if (c.formule) cell.note = `Formule : =${c.formule.replace(/\[(\w+)\]/g, (_, k: string) => `${f.colonnes.find((x) => x.cle === k)?.titre ?? k}`)}`;
       ws.getColumn(i + 1).width = c.largeur ?? Math.max(12, c.titre.length + 4);
     });
-    entete.height = 30;
+    entete.height = 44; // ENTETE_EPAISSE
 
     // lignes
     f.lignes.forEach((l, k) => {

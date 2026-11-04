@@ -1,0 +1,86 @@
+[
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Famille : colonne N° = commande de base seulement (forfaits)",
+  "cherche": "        numero: commandes.map(numeroDe).join(\", \"),",
+  "remplace": "        numero: numeroDe(laBase),"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Famille : colonne N° = commande de base seulement (PE / PI)",
+  "cherche": "        numero: [...new Set(mois.map((x) => x.numero))].join(\", \"),",
+  "remplace": "        numero: laBase ? numeroDe(laBase) : base,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : l'échéance 1 n'est pas déduite",
+  "cherche": "      const facture = membresRecus.reduce((t, l) => t + factureDe(l), 0);",
+  "remplace": "      // ACOMPTE_ECH1 : une échéance 1 (ECH1) est un acompte : il n'est pas déduit du travail fait (colonne à part)\n      const estAcompte = (l: LigneFin) => l.genre === \"ECHEANCE\" && /ECH0*1$/i.test(l.cle);\n      const facture = membresRecus.filter((l) => !estAcompte(l)).reduce((t, l) => t + factureDe(l), 0);\n      const acomptes = membresRecus.filter(estAcompte).reduce((t, l) => t + factureDe(l), 0);"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : totaux",
+  "cherche": "    const totaux = { forfaits: 0, pepi: 0, avance: 0, negoceAVenir: 0 };",
+  "remplace": "    const totaux = { forfaits: 0, pepi: 0, avance: 0, negoceAVenir: 0, acomptes: 0 };"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : cumul",
+  "cherche": "      totaux.avance += avance;",
+  "remplace": "      totaux.avance += avance;\n      totaux.acomptes += acomptes;"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : valeur sur la ligne famille",
+  "cherche": "        facture: Math.round(facture) || null,",
+  "remplace": "        facture: Math.round(facture) || null,\n        acomptes: Math.round(acomptes) || null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : valeur sur la ligne de l'échéance",
+  "cherche": "          facture: Math.round(factureDe(l)) || null,",
+  "remplace": "          facture: estAcompte(l) ? null : Math.round(factureDe(l)) || null,\n          acomptes: estAcompte(l) ? Math.round(factureDe(l)) || null : null,"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : colonnes",
+  "cherche": "      { titre: \"Déjà facturé (acomptes compris)\", cle: \"facture\", format: \"euros\", largeur: 13, total: true },",
+  "remplace": "      { titre: \"Déjà facturé (hors acompte)\", cle: \"facture\", format: \"euros\", largeur: 13, total: true },\n      { titre: \"Acompte ECH1 (non déduit)\", cle: \"acomptes\", format: \"euros\", largeur: 13, total: true },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Acompte : colonne « au-delà » renommée",
+  "cherche": "      { titre: \"Acompte d’avance\", cle: \"avance\", format: \"euros\", largeur: 12, total: true, formule: \"MAX(0,[facture]-[valeurFaite])\" },",
+  "remplace": "      { titre: \"Facturé au-delà du travail fait\", cle: \"avance\", format: \"euros\", largeur: 12, total: true, formule: \"MAX(0,[facture]-[valeurFaite])\" },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : acomptes pour mémoire",
+  "cherche": "          { poste: \"Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)\", montant: Math.round(totaux.avance) },",
+  "remplace": "          { poste: \"Pour mémoire : acomptes (échéances 1), facturés et non déduits des en-cours\", montant: Math.round(totaux.acomptes) },\n          { poste: \"Pour mémoire : facturé au-delà du travail fait (hors acompte)\", montant: Math.round(totaux.avance) },"
+ },
+ {
+  "fichier": "app/analyse/finances/page.tsx",
+  "nom": "Synthèse : note sur les acomptes",
+  "cherche": "en-cours = valeur du travail fait − tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client.",
+  "remplace": "en-cours = valeur du travail fait − ce qui est déjà facturé, HORS ACOMPTE : une échéance 1 (ECH1) est considérée comme un acompte, elle n’est pas déduite (colonne à part, et ligne pour mémoire). Si le facturé dépasse le travail fait, l’en-cours est nul et l’excédent est donné à part."
+ },
+ {
+  "fichier": "lib/excelPolynov.ts",
+  "nom": "En-tête des tableaux plus épais",
+  "cherche": "    entete.height = 30;",
+  "remplace": "    entete.height = 44; // ENTETE_EPAISSE"
+ },
+ {
+  "fichier": "lib/excelPolynov.ts",
+  "nom": "En-tête : bordure basse épaisse",
+  "cherche": "      cell.border = { bottom: { style: \"medium\", color: { argb: \"FF8F0000\" } } };",
+  "remplace": "      cell.border = { bottom: { style: \"thick\", color: { argb: \"FF8F0000\" } } };"
+ },
+ {
+  "fichier": "lib/excelPolynov.ts",
+  "nom": "En-tête : texte un peu plus grand",
+  "cherche": "      cell.font = { name: \"Calibri\", size: 11, bold: true, color: { argb: \"FFFFFFFF\" } };",
+  "remplace": "      cell.font = { name: \"Calibri\", size: 12, bold: true, color: { argb: \"FFFFFFFF\" } };"
+ }
+]

@@ -924,7 +924,7 @@ function FinancesContenu() {
     const lignes: L[] = [];
     const memoire: L[] = [];
     let numFamille = 0;
-    const totaux = { forfaits: 0, pepi: 0, avance: 0, negoceAVenir: 0 };
+    const totaux = { forfaits: 0, pepi: 0, avance: 0, negoceAVenir: 0, acomptes: 0 };
 
     /* ---------- FORFAITS ---------- */
     for (const [base, membres] of [...familles].sort((x, y) => Number(y[0]) - Number(x[0]))) {
@@ -964,7 +964,10 @@ function FinancesContenu() {
         return parent ? recueA(parent) : true;
       });
       const factureDe = (l: LigneFin) => (!livreeA(l) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : Math.max(0, l.m.montant - decoupe(l.cle)));
-      const facture = membresRecus.reduce((t, l) => t + factureDe(l), 0);
+      // ACOMPTE_ECH1 : une échéance 1 (ECH1) est un acompte : il n'est pas déduit du travail fait (colonne à part)
+      const estAcompte = (l: LigneFin) => l.genre === "ECHEANCE" && /ECH0*1$/i.test(l.cle);
+      const facture = membresRecus.filter((l) => !estAcompte(l)).reduce((t, l) => t + factureDe(l), 0);
+      const acomptes = membresRecus.filter(estAcompte).reduce((t, l) => t + factureDe(l), 0);
       const s = saisies.get(base);
       const avEstime = s?.pct !== null && s?.pct !== undefined ? Math.min(1, s.pct / 100) : null;
       const avRetenu = avEstime ?? (chiffre > 0 ? Math.min(1, pointe / chiffre) : 0);
@@ -978,6 +981,7 @@ function FinancesContenu() {
       numFamille++;
       totaux.forfaits += enCours;
       totaux.avance += avance;
+      totaux.acomptes += acomptes;
       totaux.negoceAVenir += negoce - negoceRecu;
       const dBase = suivi.get(laBase.cle);
       lignes.push({
@@ -985,7 +989,7 @@ function FinancesContenu() {
         niveau: "Famille",
         type: laBase.imputation ?? "Forfait",
         commande: `CBE${base}`,
-        numero: commandes.map(numeroDe).join(", "),
+        numero: numeroDe(laBase),
         nature: "Famille",
         louxor: [...new Set(membresRecus.map(louxorDe).filter(Boolean))].join(", "),
         devis: dBase?.base_devis ? `DBE${String(dBase.base_devis).replace(/^DBE/i, "")}` : "",
@@ -1009,6 +1013,7 @@ function FinancesContenu() {
         negoceRecu: Math.round(negoceRecu),
         valeurFaite: Math.round(valeurFaite),
         facture: Math.round(facture) || null,
+        acomptes: Math.round(acomptes) || null,
         enCours: Math.round(enCours),
         avance: Math.round(avance) || null,
         negoceAVenir: Math.round(negoce - negoceRecu) || null,
@@ -1038,7 +1043,8 @@ function FinancesContenu() {
           negoce: Math.round(l.m.negoce) || null,
           achats: Math.round(l.m.achats) || null,
           chiffre: estDecoupe ? null : Math.round(l.heures_total * 10) / 10 || null,
-          facture: Math.round(factureDe(l)) || null,
+          facture: estAcompte(l) ? null : Math.round(factureDe(l)) || null,
+          acomptes: estAcompte(l) ? Math.round(factureDe(l)) || null : null,
         });
       }
     }
@@ -1116,7 +1122,7 @@ function FinancesContenu() {
         niveau: "Famille",
         type: mois[0]?.imputation ?? "PE / PI",
         commande: `CBE${base}`,
-        numero: [...new Set(mois.map((x) => x.numero))].join(", "),
+        numero: laBase ? numeroDe(laBase) : base,
         nature: "Famille",
         louxor: [...new Set(membres.map(louxorDe).filter(Boolean))].join(", "),
         // PEPI_DATES : n° de devis, statut et dates de la commande de base, comme pour les forfaits
@@ -1181,9 +1187,10 @@ function FinancesContenu() {
       { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 12, total: true },
       { titre: "Négoce reçu", cle: "negoceRecu", format: "euros", largeur: 12, total: true, formule: "IF([achats]>0,MIN([negoce],[achatsRecus]*[negoce]/[achats]),MIN([negoce],[achatsRecus]))" },
       { titre: "Valeur du travail fait", cle: "valeurFaite", format: "euros", largeur: 13, total: true, formule: "[etudesFaites]+[negoceRecu]" },
-      { titre: "Déjà facturé (acomptes compris)", cle: "facture", format: "euros", largeur: 13, total: true },
+      { titre: "Déjà facturé (hors acompte)", cle: "facture", format: "euros", largeur: 13, total: true },
+      { titre: "Acompte ECH1 (non déduit)", cle: "acomptes", format: "euros", largeur: 13, total: true },
       { titre: "En-cours", cle: "enCours", format: "euros", largeur: 13, total: true, formule: "MAX(0,[valeurFaite]-[facture])" },
-      { titre: "Acompte d’avance", cle: "avance", format: "euros", largeur: 12, total: true, formule: "MAX(0,[facture]-[valeurFaite])" },
+      { titre: "Facturé au-delà du travail fait", cle: "avance", format: "euros", largeur: 12, total: true, formule: "MAX(0,[facture]-[valeurFaite])" },
       { titre: "Négoce à venir", cle: "negoceAVenir", format: "euros", largeur: 12, total: true, formule: "[negoce]-[negoceRecu]" },
     ];
 
@@ -1200,13 +1207,14 @@ function FinancesContenu() {
           { poste: "Forfaits : valeur du travail fait − déjà facturé", montant: Math.round(totaux.forfaits) },
           { poste: "PE / PI : travail fait, pas encore facturé", montant: Math.round(totaux.pepi) },
           { poste: "TOTAL DES EN-COURS", montant: Math.round(totaux.forfaits + totaux.pepi) },
-          { poste: "Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)", montant: Math.round(totaux.avance) },
+          { poste: "Pour mémoire : acomptes (échéances 1), facturés et non déduits des en-cours", montant: Math.round(totaux.acomptes) },
+          { poste: "Pour mémoire : facturé au-delà du travail fait (hors acompte)", montant: Math.round(totaux.avance) },
           { poste: "Pour mémoire : négoce à venir, matériel pas encore arrivé (non compté)", montant: Math.round(totaux.negoceAVenir) },
           { poste: "Pour mémoire : hors en-cours (commande pas reçue à la date, intention, PE / PI sans commande)", montant: Math.round(memoire.reduce((t, l) => t + Number(l.montant ?? 0), 0)) },
         ],
         notes: [
           "Seules comptent les commandes REÇUES à la date (date de réception de commande renseignée et antérieure ou égale), pas encore livrées à cette date.",
-          "Forfaits, sur toute la famille (commande, avenants, échéances, acomptes) : valeur du travail fait = études × avancement + négoce reçu ; en-cours = valeur du travail fait − tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client.",
+          "Forfaits, sur toute la famille (commande, avenants, échéances, acomptes) : valeur du travail fait = études × avancement + négoce reçu ; en-cours = valeur du travail fait − ce qui est déjà facturé, HORS ACOMPTE : une échéance 1 (ECH1) est considérée comme un acompte, elle n’est pas déduite (colonne à part, et ligne pour mémoire). Si le facturé dépasse le travail fait, l’en-cours est nul et l’excédent est donné à part.",
           "Avancement = avancement estimé (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées, plafonné à 100 %.",
           "PE / PI : le travail fait jusqu’à la date et pas encore facturé (mois en cours, mois non clôturés, mois reportés), au taux de la ligne.",
           "Onglet « En-cours » : chaque famille (en gras, calculée par formules ƒ), puis ses lignes (en gris) avec leurs montants et n° ARC Louxor. Les totaux ne comptent que les lignes « Famille ».",
