@@ -725,7 +725,7 @@ function PortefeuilleContenu() {
                       gris("—")
                     )}
                   </td>
-                  <td style={tdNum}>
+                  <td style={{ ...tdNum, minWidth: 104 }}>
                     {l.dansFamille ? (
                       <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">{gris(`dans ${l.dansFamille}`)}</span>
                     ) : totaux.realise > 0 ? (
@@ -741,11 +741,11 @@ function PortefeuilleContenu() {
                         const r = totaux.realise / ch;
                         const couleur = r > 1.0001 ? "#c62828" : r > 0.9 ? "#e08a00" : "#2e7d32";
                         return (
-                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
-                            <span style={{ width: 60, height: 6, background: "#eceef1", borderRadius: 3, overflow: "hidden", display: "inline-block" }}>
+                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end", marginTop: 3, maxWidth: "100%", overflow: "hidden" /* BARRE_SANS_CHEVAUCHEMENT */ }}>
+                            <span style={{ width: 44, flex: "0 0 44px", height: 6, background: "#eceef1", borderRadius: 3, overflow: "hidden", display: "inline-block" }}>
                               <span style={{ display: "block", width: `${Math.min(100, r * 100)}%`, height: "100%", background: couleur }} />
                             </span>
-                            <span style={{ fontSize: 11, fontWeight: 800, color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>
+                            <span style={{ fontSize: 11, fontWeight: 800, minWidth: 34, textAlign: "right", color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>
                           </div>
                         );
                       })()}

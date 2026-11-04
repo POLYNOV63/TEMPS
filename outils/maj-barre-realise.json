@@ -1,0 +1,20 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Colonne Réalisé assez large pour sa barre",
+  "cherche": "                  <td style={tdNum}>\n                    {l.dansFamille ? (\n                      <span title=\"Les heures sont pointées sur la commande de base",
+  "remplace": "                  <td style={{ ...tdNum, minWidth: 104 }}>\n                    {l.dansFamille ? (\n                      <span title=\"Les heures sont pointées sur la commande de base"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Barre de progression plus courte, pourcentage aligné",
+  "cherche": "                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: \"flex\", alignItems: \"center\", gap: 4, justifyContent: \"flex-end\", marginTop: 3 }}>\n                            <span style={{ width: 60, height: 6, background: \"#eceef1\", borderRadius: 3, overflow: \"hidden\", display: \"inline-block\" }}>",
+  "remplace": "                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: \"flex\", alignItems: \"center\", gap: 4, justifyContent: \"flex-end\", marginTop: 3, maxWidth: \"100%\", overflow: \"hidden\" /* BARRE_SANS_CHEVAUCHEMENT */ }}>\n                            <span style={{ width: 44, flex: \"0 0 44px\", height: 6, background: \"#eceef1\", borderRadius: 3, overflow: \"hidden\", display: \"inline-block\" }}>"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Pourcentage à largeur fixe",
+  "cherche": "                            <span style={{ fontSize: 11, fontWeight: 800, color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>",
+  "remplace": "                            <span style={{ fontSize: 11, fontWeight: 800, minWidth: 34, textAlign: \"right\", color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>"
+ }
+]
