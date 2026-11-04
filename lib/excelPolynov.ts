@@ -6,13 +6,20 @@
    format « 1 234,56 € », ligne de total, en-tête figé, filtres
    automatiques, lignes en alerte surlignées en jaune.
 
-   FORMULES (v2) : une colonne peut porter une formule Excel, écrite avec
+   FORMULES (v2) · DÉTAIL (v3) : une colonne peut porter une formule Excel, écrite avec
    les clés des autres colonnes entre crochets, par ex.
    « [montant]-[negoce] » ou « MAX(0,[valeur]-[facture]) » (noms de
    fonctions en anglais, séparateur virgule : Excel les affiche en
    français). La valeur calculée par l'application est enregistrée comme
    résultat : le fichier s'ouvre rempli, et Excel recalcule si on change
    une donnée. Une cellule numérique vide reste vraiment vide (comptée 0).
+
+   LIGNES DE DÉTAIL (v3) : une ligne peut porter « _style » (« groupe » :
+   en gras ; « detail » : en gris, en retrait) et « _sansFormule » (« * »
+   ou une liste de clés séparées par des virgules : ces cellules gardent
+   leur valeur au lieu de la formule de la colonne). « totalSi » fait le
+   total des seules lignes dont une colonne vaut une valeur (SOMME.SI),
+   pour ne pas compter deux fois une famille et ses lignes de détail.
 
    Utilise la bibliothèque exceljs (npm install exceljs), chargée
    seulement au moment de l'export.
@@ -42,6 +49,8 @@ export type FeuilleExcel = {
   libelleTotal?: string;
   /* lignes de texte ajoutées sous le tableau (légende, remarques) */
   notes?: string[];
+  /* total des seules lignes dont la colonne « cle » vaut « valeur » */
+  totalSi?: { cle: string; valeur: string };
 };
 
 const ROUGE = "FFC00000";
@@ -107,7 +116,9 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
       f.colonnes.forEach((c, i) => {
         const cell = row.getCell(i + 1);
         const v = l[c.cle];
-        if (c.formule) {
+        const sans = String(l._sansFormule ?? "");
+        const formuleIci = c.formule && !(sans === "*" || sans.split(",").includes(c.cle));
+        if (formuleIci && c.formule) {
           const expr = c.formule.replace(/\[(\w+)\]/g, (_, cle: string) => `${lettres.get(cle) ?? "A"}${numLigne}`);
           cell.value = { formula: expr, result: v === null || v === undefined || v === "" ? undefined : numerique(c.format) ? Number(v) : v } as never;
           if (numerique(c.format)) cell.numFmt = formatNombre(c.format);
@@ -121,8 +132,17 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
           // une cellule numérique vide reste vide (une formule la compte 0) ; le texte vide reste une chaîne vide
           cell.value = v === null || v === undefined || v === "" ? (numerique(c.format) ? null : "") : v;
         }
-        cell.font = c.formule ? { ...police, color: { argb: BLEU_FORMULE } } : police;
-        cell.alignment = { vertical: "top", horizontal: numerique(c.format) ? "right" : "left", wrapText: c.format === "texte" || !c.format };
+        const style = String(l._style ?? "");
+        cell.font =
+          style === "detail"
+            ? { ...police, size: 10, color: { argb: "FF6B7178" } }
+            : { ...police, bold: style === "groupe", color: formuleIci ? { argb: BLEU_FORMULE } : undefined };
+        cell.alignment = {
+          vertical: "top",
+          horizontal: numerique(c.format) ? "right" : "left",
+          wrapText: c.format === "texte" || !c.format,
+          indent: style === "detail" && i === 0 ? 2 : undefined,
+        };
         cell.border = { bottom: { style: "thin", color: { argb: GRIS_BORD } } };
         if (enAlerte) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: JAUNE } };
         else if (k % 2 === 1) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GRIS_LIGNE } };
@@ -138,7 +158,13 @@ export async function exporterExcelPolynov(nomFichier: string, feuilles: Feuille
         const cell = rowT.getCell(i + 1);
         if (c.total) {
           const lettre = ws.getColumn(i + 1).letter;
-          cell.value = { formula: `SUBTOTAL(9,${lettre}${ligneEntete + 1}:${lettre}${derniere})` };
+          const plage = `${lettre}${ligneEntete + 1}:${lettre}${derniere}`;
+          const lettreSi = f.totalSi ? lettres.get(f.totalSi.cle) : undefined;
+          cell.value = {
+            formula: lettreSi
+              ? `SUMIF(${lettreSi}${ligneEntete + 1}:${lettreSi}${derniere},"${f.totalSi?.valeur}",${plage})`
+              : `SUBTOTAL(9,${plage})`,
+          };
           cell.numFmt = formatNombre(c.format);
           cell.alignment = { horizontal: "right" };
         } else if (i === Math.max(0, premiereTotal - 1)) {

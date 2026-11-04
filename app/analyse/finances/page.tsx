@@ -821,36 +821,52 @@ function FinancesContenu() {
     await exporterExcelPolynov(`Finances_${exercice}-${exercice + 1}`, feuilles);
   }
 
-  /* EN_COURS_V2 : les en-cours à la date du jour, détaillés (familles, commandes, heures par activité, PE / PI)
-     - avancement = heures pointées ÷ heures chiffrées de la famille (plafonné à 100 %) ;
-     - en-cours = avancement × montant de la famille − déjà facturé (commandes et échéances livrées) ;
-     - le négoce (revente) et les achats sont donnés à part, à ajouter s'ils sont déjà engagés. */
+  /* EN_COURS_V4 : une seule table, forfaits et PE / PI ensemble. Pour chaque famille (commande, avenants, échéances,
+     lots, acomptes) : une ligne « famille » calculée par formules Excel, suivie de chacune de ses lignes avec ses
+     montants, ses dates et son n° ARC Louxor. Seules entrent dans les en-cours les commandes dont la commande est
+     REÇUE à la date (date de réception renseignée, au plus tard ce jour-là) et pas encore livrée. Le reste (commande
+     reçue après la date, intention, PE / PI sans commande) est listé pour mémoire. */
   async function exporterEnCours(dateRef: string) {
     type L = Record<string, string | number | null | undefined>;
-    const aujourdhui = dateRef;
     const moisRef = dateRef.slice(0, 7);
     const date = new Date(`${dateRef}T00:00:00`).toLocaleDateString("fr-FR");
     const passe = dateRef < new Date().toISOString().slice(0, 10);
-    // dates de toutes les lignes du Suivi d'affaire : pour savoir ce qui était reçu, livré, à la date choisie
-    const datesToutes = new Map(
+    const fr = (d: string | null | undefined) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
+    const baseDe = (n: string | null | undefined) => (String(n ?? "").toUpperCase().replace(/^\s*CBE\s*/, "").match(/^\d+/)?.[0] ?? "").replace(/^0+/, "");
+
+    // le Suivi d'affaire : dates et n° ARC Louxor de chaque ligne
+    type Suivi = {
+      cle: string;
+      numero_affaire: string | null;
+      base_devis: string | null;
+      numero_arc_louxor: string | null;
+      date_ouverture: string | null;
+      date_reception_commande: string | null;
+      delai: string | null;
+      date_livraison_estimee: string | null;
+      date_livraison: string | null;
+    };
+    const suivi = new Map(
       (
-        await chargerTout<{ cle: string; date_ouverture: string | null; date_reception_commande: string | null; date_livraison: string | null }>((a, b) =>
-          supabase.from("suivi_lignes").select("cle,date_ouverture,date_reception_commande,date_livraison").order("cle").range(a, b)
+        await chargerTout<Suivi>((a, b) =>
+          supabase
+            .from("suivi_lignes")
+            .select("cle,numero_affaire,base_devis,numero_arc_louxor,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison")
+            .order("cle")
+            .range(a, b)
         )
       ).map((x) => [x.cle, x])
     );
-    const livreeLe = (l: LigneFin) => (datesToutes.get(l.cle)?.date_livraison ?? l.date_livraison ?? null)?.slice(0, 10) ?? null;
-    // une commande est « en cours » à la date : reçue (ou en intention) à cette date, et pas encore livrée
-    const ouverteA = (l: LigneFin) => {
-      if (["Devis perdu", "Commande annulée"].includes(l.statut ?? "")) return false;
-      const d = datesToutes.get(l.cle);
-      const recue = d?.date_reception_commande
-        ? d.date_reception_commande.slice(0, 10) <= dateRef
-        : ["Commande reçue", "Intention de commande", "Livrée"].includes(l.statut ?? "") && (!d?.date_ouverture || d.date_ouverture.slice(0, 10) <= dateRef);
-      const livree = livreeLe(l);
-      return recue && !(livree && livree <= dateRef);
-    };
-    // heures pointées jusqu'à la date (SQL 73), par famille et par activité ; aujourd'hui : le réalisé complet
+    const livreeLe = (l: LigneFin) => (suivi.get(l.cle)?.date_livraison ?? l.date_livraison ?? null)?.slice(0, 10) ?? null;
+    const recueLe = (l: LigneFin) => suivi.get(l.cle)?.date_reception_commande?.slice(0, 10) ?? null;
+    const recueA = (l: LigneFin) => Boolean(recueLe(l) && (recueLe(l) ?? "") <= dateRef);
+    const livreeA = (l: LigneFin) => Boolean(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef);
+    const numeroDe = (l: LigneFin) => suivi.get(l.cle)?.numero_affaire ?? l.cle;
+    const louxorDe = (l: LigneFin) => suivi.get(l.cle)?.numero_arc_louxor?.trim() ?? "";
+    const libelleGenre = (g: string) => (g === "BASE" ? "Commande" : g === "AVENANT" ? "Avenant" : g === "ECHEANCE" ? "Échéance" : g === "LOT" ? "Lot" : g);
+    const valeurLigne = (d: LigneFin) => d.m.echeances || d.m.montant || d.m.meca + d.m.calcul + d.m.elec_pneu + d.m.scan + d.m.autre + d.m.negoce;
+
+    // heures pointées jusqu'à la date (SQL 73) ; aujourd'hui : le réalisé complet
     const pointeA = new Map<string, ParGroupe>();
     if (passe) {
       const [corr, lignesP] = await Promise.all([
@@ -881,190 +897,176 @@ function FinancesContenu() {
       }
     }
     const pointeDe = (base: string) => (passe ? pointeA.get(base) : realiseGroupes.get(base));
-    // AVANCEMENT_SAISI : % accompli estimé par le responsable (SQL 79), sur la commande de base ; sinon aux heures
-    const { data: avData } = await supabase.from("pilotage_affaires").select("numero,avancement_pct,avancement_le").eq("type", "CBE").not("avancement_pct", "is", null);
-    const avancementsSaisis = new Map(
-      ((avData ?? []) as { numero: string; avancement_pct: number | string; avancement_le: string | null }[])
+
+    // saisies : avancement estimé (SQL 79) et achats reçus (SQL 80), sur la commande de base
+    const { data: saisiesData } = await supabase
+      .from("pilotage_affaires")
+      .select("numero,avancement_pct,avancement_le,achats_recus")
+      .eq("type", "CBE")
+      .or("avancement_pct.not.is.null,achats_recus.not.is.null");
+    const saisies = new Map(
+      ((saisiesData ?? []) as { numero: string; avancement_pct: number | string | null; avancement_le: string | null; achats_recus: number | string | null }[])
         .filter((x) => /^\d+$/.test(x.numero))
-        .map((x) => [x.numero.replace(/^0+/, ""), { pct: Number(x.avancement_pct) || 0, le: x.avancement_le }])
+        .map((x) => [
+          x.numero.replace(/^0+/, ""),
+          { pct: x.avancement_pct === null ? null : Number(x.avancement_pct), le: x.avancement_le, recus: x.achats_recus === null ? null : Number(x.achats_recus) },
+        ])
     );
-    // ETUDES_NEGOCE : achats reçus ou montés (SQL 80), saisis sur la commande de base
-    const { data: arData } = await supabase.from("pilotage_affaires").select("numero,achats_recus,achats_recus_le").eq("type", "CBE").not("achats_recus", "is", null);
-    const achatsRecusSaisis = new Map(
-      ((arData ?? []) as { numero: string; achats_recus: number | string; achats_recus_le: string | null }[])
-        .filter((x) => /^\d+$/.test(x.numero))
-        .map((x) => [x.numero.replace(/^0+/, ""), { montant: Number(x.achats_recus) || 0, le: x.achats_recus_le }])
-    );
-    const cout = coutHoraire(couts, aujourdhui);
-    const fr = (d: string | null | undefined) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
-    // INTENTIONS_A_PART : une intention n'est pas une commande ; elle est listée à part, pour mémoire
-    const vivantes = lignesFin.filter((l) => !l.disparue && !["Devis perdu", "Commande annulée", "Intention de commande"].includes(l.statut ?? ""));
+
+    // familles du Suivi d'affaire
     const familles = new Map<string, LigneFin[]>();
-    for (const l of vivantes) {
-      if (!l.base_affaire) continue;
+    for (const l of lignesFin) {
+      if (l.disparue || !l.base_affaire || ["Devis perdu", "Commande annulée"].includes(l.statut ?? "")) continue;
       const k = l.base_affaire.replace(/^0+/, "");
       familles.set(k, [...(familles.get(k) ?? []), l]);
     }
-    const enCoursFam = [...familles].filter(([, membres]) => {
-      const commandes = membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT");
-      const laBase = commandes.find((l) => l.genre === "BASE") ?? commandes[0];
-      return laBase && !["PE", "PI"].includes(laBase.imputation ?? "") && commandes.some(ouverteA);
-    });
 
-    // dates et n° du Suivi d'affaire (lus au moment de l'export)
-    const basesBrutes = [...new Set(enCoursFam.flatMap(([, m]) => m.map((l) => l.base_affaire).filter((b): b is string => Boolean(b))))];
-    const dates = new Map<string, { numero: string | null; devis: string | null; commande: string | null; delai: string | null; estimee: string | null; livraison: string | null }>();
-    if (basesBrutes.length > 0) {
-      const { data } = await supabase
-        .from("suivi_lignes")
-        .select("cle,numero_affaire,base_devis,date_reception_commande,delai,date_livraison_estimee,date_livraison")
-        .in("base_affaire", basesBrutes);
-      for (const x of (data ?? []) as { cle: string; numero_affaire: string | null; base_devis: string | null; date_reception_commande: string | null; delai: string | null; date_livraison_estimee: string | null; date_livraison: string | null }[])
-        dates.set(x.cle, { numero: x.numero_affaire, devis: x.base_devis, commande: x.date_reception_commande, delai: x.delai, estimee: x.date_livraison_estimee, livraison: x.date_livraison });
-    }
-    const numeroDe = (l: LigneFin) => dates.get(l.cle)?.numero ?? l.cle;
-    const libelleGenre = (g: string) => (g === "BASE" ? "Commande" : g === "AVENANT" ? "Avenant" : g === "ECHEANCE" ? "Échéance" : g === "LOT" ? "Lot" : g);
-    const disciplines = ["meca", "calcul", "elec", "pneu", "scan", "autre"] as const;
+    const lignes: L[] = [];
+    const memoire: L[] = [];
+    let numFamille = 0;
+    const totaux = { forfaits: 0, pepi: 0, avance: 0, negoceAVenir: 0 };
 
-    const lignesFam: L[] = [];
-    const lignesCmd: L[] = [];
-    const lignesAct: L[] = [];
-    for (const [base, membres] of enCoursFam) {
-      const commandes = membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").sort((x, y) => numeroDe(x).localeCompare(numeroDe(y), "fr", { numeric: true }));
-      const laBase = commandes.find((l) => l.genre === "BASE") ?? commandes[0];
-      const nonLivrees = commandes.filter(ouverteA);
-      const montant = commandes.reduce((t, l) => t + l.m.montant, 0);
-      // NEGOCE_ECHEANCES : le négoce et les achats d'une commande sont sur elle, ou répartis sur ses échéances / lots
+    /* ---------- FORFAITS ---------- */
+    for (const [base, membres] of [...familles].sort((x, y) => Number(y[0]) - Number(x[0]))) {
+      const tousCommandes = membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT");
+      const laBase = tousCommandes.find((l) => l.genre === "BASE") ?? tousCommandes[0];
+      if (!laBase || ["PE", "PI"].includes(laBase.imputation ?? "")) continue;
+      // commandes reçues à la date (seules elles comptent) ; en cours si l'une d'elles n'est pas livrée à la date
+      const commandes = tousCommandes.filter(recueA);
+      const ouvertes = commandes.filter((l) => !livreeA(l));
+      const enAttente = tousCommandes.filter((l) => !recueA(l) && !livreeA(l) && (l.statut === "Commande reçue" || l.statut === "Intention de commande"));
+      for (const l of enAttente)
+        memoire.push({
+          commande: `CBE${base}`,
+          numero: numeroDe(l),
+          louxor: louxorDe(l),
+          client: laBase.client ?? "",
+          designation: l.designation ?? laBase.designation ?? "",
+          statut: l.statut ?? "",
+          raison: l.statut === "Intention de commande" ? "intention de commande (pas une commande)" : recueLe(l) ? `commande reçue le ${fr(recueLe(l))}, après la date` : "date de réception de commande non renseignée",
+          montant: Math.round(l.m.montant) || null,
+        });
+      if (ouvertes.length === 0) continue;
+
       const enfants = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle);
       const negoceCmd = (c: LigneFin) => (c.m.negoce > 0 ? c.m.negoce : enfants(c.cle).reduce((t, d) => t + d.m.negoce, 0));
       const achatsCmd = (c: LigneFin) => (c.m.achats > 0 ? c.m.achats : enfants(c.cle).reduce((t, d) => t + d.m.achats, 0));
+      const montant = commandes.reduce((t, l) => t + l.m.montant, 0);
       const negoce = commandes.reduce((t, l) => t + negoceCmd(l), 0);
       const achats = commandes.reduce((t, l) => t + achatsCmd(l), 0);
       const chiffre = commandes.reduce((t, l) => t + l.heures_total, 0);
       const g = pointeDe(base);
       const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;
-      const valeurLigne = (d: LigneFin) => d.m.echeances || d.m.montant || d.m.meca + d.m.calcul + d.m.elec_pneu + d.m.scan + d.m.autre + d.m.negoce;
-      const decoupe = (cle: string) => membres.filter((d) => (d.genre === "ECHEANCE" || d.genre === "LOT") && d.parent_cle === cle).reduce((t, d) => t + valeurLigne(d), 0);
-      const factureDe = (l: LigneFin) =>
-        !(livreeLe(l) && (livreeLe(l) ?? "") <= dateRef) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : Math.max(0, l.m.montant - decoupe(l.cle));
-      const facture = membres.reduce((t, l) => t + factureDe(l), 0);
-      const saisi = avancementsSaisis.get(base);
-      const avancement = saisi ? Math.min(1, saisi.pct / 100) : chiffre > 0 ? Math.min(1, pointe / chiffre) : null;
-      // FAMILLE_GLOBALE : comme pour les avenants, tout se totalise sur la famille (commande, avenants, échéances) :
-      // valeur faite = études × avancement + négoce reçu ou monté (au prix de revente) ; en-cours = valeur faite − tout le
-      // facturé (acomptes compris) ; un acompte au-delà du travail fait est une avance du client, pas un en-cours
+      const decoupe = (cle: string) => enfants(cle).reduce((t, d) => t + valeurLigne(d), 0);
+      const membresRecus = membres.filter((l) => {
+        if (l.genre === "BASE" || l.genre === "AVENANT") return recueA(l);
+        const parent = membres.find((p) => p.cle === l.parent_cle);
+        return parent ? recueA(parent) : true;
+      });
+      const factureDe = (l: LigneFin) => (!livreeA(l) ? 0 : l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : Math.max(0, l.m.montant - decoupe(l.cle)));
+      const facture = membresRecus.reduce((t, l) => t + factureDe(l), 0);
+      const s = saisies.get(base);
+      const avEstime = s?.pct !== null && s?.pct !== undefined ? Math.min(1, s.pct / 100) : null;
+      const avRetenu = avEstime ?? (chiffre > 0 ? Math.min(1, pointe / chiffre) : 0);
       const etudes = Math.max(0, montant - negoce);
-      const recus = achatsRecusSaisis.get(base);
-      const valeurNegoce = negoce > 0 && recus ? Math.min(negoce, achats > 0 ? recus.montant * (negoce / achats) : recus.montant) : 0;
-      const enCoursEtudes = avancement === null ? null : avancement * etudes; // valeur des études faites
-      const enCoursNegoce = valeurNegoce; // valeur du négoce reçu
-      const enCoursBrut = enCoursEtudes === null ? null : enCoursEtudes + enCoursNegoce - facture;
-      const enCours = enCoursBrut === null ? null : Math.max(0, enCoursBrut);
-      const avance = enCoursBrut !== null && enCoursBrut < 0 ? -enCoursBrut : 0;
-      const dBase = dates.get(laBase.cle);
-      const estimees = nonLivrees.map((l) => dates.get(l.cle)?.estimee ?? l.date_estimee).filter(Boolean).sort() as string[];
-      lignesFam.push({
+      const recus = s?.recus ?? null;
+      const negoceRecu = negoce > 0 && recus ? Math.min(negoce, achats > 0 ? recus * (negoce / achats) : recus) : 0;
+      const valeurFaite = etudes * avRetenu + negoceRecu;
+      const enCours = Math.max(0, valeurFaite - facture);
+      const avance = Math.max(0, facture - valeurFaite);
+      if (enCours < 0.5 && avance < 0.5) continue;
+      numFamille++;
+      totaux.forfaits += enCours;
+      totaux.avance += avance;
+      totaux.negoceAVenir += negoce - negoceRecu;
+      const dBase = suivi.get(laBase.cle);
+      lignes.push({
+        _style: "groupe",
+        niveau: "Famille",
+        type: laBase.imputation ?? "Forfait",
         commande: `CBE${base}`,
-        devis: dBase?.devis ? `DBE${String(dBase.devis).replace(/^DBE/i, "")}` : "",
-        famille: commandes.map(numeroDe).join(", "),
-        imputation: laBase.imputation ?? "",
+        numero: commandes.map(numeroDe).join(", "),
+        nature: "Famille",
+        louxor: [...new Set(membresRecus.map(louxorDe).filter(Boolean))].join(", "),
+        devis: dBase?.base_devis ? `DBE${String(dBase.base_devis).replace(/^DBE/i, "")}` : "",
         client: laBase.client ?? "",
         designation: laBase.designation ?? "",
-        statut: [...new Set(nonLivrees.map((l) => l.statut))].join(", "),
-        dateCommande: fr(dBase?.commande),
+        statut: [...new Set(ouvertes.map((l) => l.statut))].join(", "),
+        recue: fr(recueLe(laBase)),
         delai: fr(dBase?.delai),
-        estimee: fr(estimees[estimees.length - 1]),
+        livree: "",
         montant: Math.round(montant),
         negoce: Math.round(negoce) || null,
         achats: Math.round(achats) || null,
-        facture: Math.round(facture) || null,
+        etudes: Math.round(etudes),
         chiffre: Math.round(chiffre * 10) / 10 || null,
         pointe: Math.round(pointe * 10) / 10 || null,
-        reste: chiffre > 0 ? Math.round((chiffre - pointe) * 10) / 10 : null,
-        avancement: avancement === null ? "chiffré inconnu" : `${Math.round(avancement * 100)} %`,
-        mesure: saisi ? `estimé${saisi.le ? ` le ${fr(saisi.le)}` : ""}` : chiffre > 0 ? "aux heures" : "",
-        enCoursEtudes: enCoursEtudes === null ? null : Math.round(enCoursEtudes),
-        achatsRecus: recus ? Math.round(recus.montant) : null,
-        enCoursNegoce: negoce > 0 ? Math.round(enCoursNegoce) : null,
-        negoceAttente: negoce > 0 ? Math.round(negoce - valeurNegoce) || null : null,
-        enCours: enCours === null ? null : Math.round(enCours),
-        avance: avance > 0.5 ? Math.round(avance) : null,
-        // FORMULES_EN_COURS : valeurs des colonnes calculées (le fichier les recalcule par formule)
-        etudes: Math.round(etudes),
-        avEstime: saisi ? saisi.pct / 100 : null,
-        avRetenu: avancement,
-        etudesFaites: enCoursEtudes === null ? null : Math.round(enCoursEtudes),
-        negoceRecu: Math.round(valeurNegoce),
-        valeurFaite: enCoursEtudes === null ? null : Math.round(enCoursEtudes + valeurNegoce),
+        avEstime,
+        avRetenu,
+        mesure: avEstime !== null ? `estimé${s?.le ? ` le ${fr(s.le)}` : ""}` : "aux heures",
+        etudesFaites: Math.round(etudes * avRetenu),
+        achatsRecus: recus,
+        negoceRecu: Math.round(negoceRecu),
+        valeurFaite: Math.round(valeurFaite),
+        facture: Math.round(facture) || null,
+        enCours: Math.round(enCours),
+        avance: Math.round(avance) || null,
+        negoceAVenir: Math.round(negoce - negoceRecu) || null,
+        _alerte: avEstime === null && chiffre > 0 && pointe >= chiffre ? "oui" : "",
       });
-
-      // une ligne par commande, avenant, échéance ou lot
-      for (const l of [...membres].sort((x, y) => numeroDe(x).localeCompare(numeroDe(y), "fr", { numeric: true }))) {
-        const d = dates.get(l.cle);
-        lignesCmd.push({
-          famille: `CBE${base}`,
+      // les lignes de la famille, avec leurs montants
+      for (const l of [...membresRecus].sort((x, y) => numeroDe(x).localeCompare(numeroDe(y), "fr", { numeric: true }))) {
+        const d = suivi.get(l.cle);
+        const estDecoupe = l.genre === "ECHEANCE" || l.genre === "LOT";
+        lignes.push({
+          _style: "detail",
+          _sansFormule: "*",
+          niveau: "Détail",
+          type: "",
+          commande: `CBE${base}`,
           numero: numeroDe(l),
-          genre: libelleGenre(l.genre),
+          nature: libelleGenre(l.genre),
+          louxor: louxorDe(l),
+          client: "",
+          designation: l.designation ?? "",
           statut: l.statut ?? "",
-          montant: Math.round(l.genre === "ECHEANCE" || l.genre === "LOT" ? valeurLigne(l) : l.m.montant) || null,
+          recue: fr(d?.date_reception_commande),
+          delai: fr(d?.delai ?? d?.date_livraison_estimee),
+          livree: fr(livreeLe(l)),
+          montant: Math.round(estDecoupe ? valeurLigne(l) : l.m.montant) || null,
           negoce: Math.round(l.m.negoce) || null,
           achats: Math.round(l.m.achats) || null,
-          chiffre: l.genre === "BASE" || l.genre === "AVENANT" ? Math.round(l.heures_total * 10) / 10 || null : null,
-          dateCommande: fr(d?.commande),
-          delai: fr(d?.delai),
-          estimee: fr(d?.estimee ?? l.date_estimee),
-          livraison: fr(d?.livraison ?? l.date_livraison),
+          chiffre: estDecoupe ? null : Math.round(l.heures_total * 10) / 10 || null,
           facture: Math.round(factureDe(l)) || null,
         });
       }
-
-      // heures par activité : chiffré (colonnes du classeur) face au pointé
-      const chiffreGroupe = new Map<string, number>();
-      for (const l of commandes) {
-        let ventile = 0;
-        for (const dd of disciplines) {
-          const h = l.heures[dd] ?? 0;
-          ventile += h;
-          const grp = GROUPE_DISCIPLINE[dd];
-          chiffreGroupe.set(grp, (chiffreGroupe.get(grp) ?? 0) + h);
-        }
-        if (l.heures_total - ventile > 0.01) chiffreGroupe.set("Non ventilé", (chiffreGroupe.get("Non ventilé") ?? 0) + l.heures_total - ventile);
-      }
-      for (const grp of GROUPES) {
-        const c = chiffreGroupe.get(grp) ?? 0;
-        const p = g ? g[grp] : 0;
-        if (c < 0.01 && p < 0.01) continue;
-        lignesAct.push({
-          famille: `CBE${base}`,
-          client: laBase.client ?? "",
-          activite: grp,
-          chiffre: Math.round(c * 10) / 10 || null,
-          pointe: Math.round(p * 10) / 10 || null,
-          reste: c > 0 ? Math.round((c - p) * 10) / 10 : null,
-          avancement: c > 0 ? `${Math.round((p / c) * 100)} %` : "non chiffré",
-        });
-      }
     }
-    lignesFam.sort((x, y) => Number(y.enCours ?? 0) - Number(x.enCours ?? 0));
-    // SANS_ZERO : une commande sans travail fait (ou déjà facturé) n'a pas d'en-cours : elle n'est pas listée
-    const garder = (l: L) => Number(l.enCours ?? 0) > 0.5 || Number(l.avance ?? 0) > 0.5 || l.avancement === "chiffré inconnu"; // GARDER_ACOMPTES
-    const famillesRetenues = new Set(lignesFam.filter(garder).map((l) => String(l.commande)));
-    const nbSansEnCours = lignesFam.length - famillesRetenues.size;
 
-    const pepi = reportsPEPI.filter((r) => r.m <= moisRef && !(r.facture && r.factureValide && r.facture <= moisRef)).sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
-    const totalForfaits = lignesFam.reduce((t, l) => t + Number(l.enCours ?? 0), 0);
-    const totalNegoce = lignesFam.reduce((t, l) => t + Number(l.negoceAttente ?? 0), 0);
-    const totalAvance = lignesFam.reduce((t, l) => t + Number(l.avance ?? 0), 0);
-    // PEPI_A_FACTURER : tout le travail des PE / PI fait jusqu'à la date et pas encore facturé À CETTE DATE :
-    // mois reportés (ci-dessus), plus les mois non reportés pas encore clôturés à la date (dont le mois en cours)
-    const pepiTout: { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string }[] = pepi.map((r) => ({
-      numero: r.numero,
-      imputation: r.imputation,
-      m: r.m,
-      heures: r.heures,
-      montant: r.montant,
-      pourquoi: r.auto ? "commande pas encore reçue" : "reporté à la main",
-    }));
+    /* ---------- PE / PI : travail fait jusqu'à la date et pas encore facturé, commandes reçues ---------- */
+    type MoisPE = { numero: string; imputation: string | null; m: string; heures: number; montant: number; pourquoi: string };
+    const parBasePE = new Map<string, MoisPE[]>();
+    const ajouterPE = (x: MoisPE) => {
+      const b = baseDe(x.numero);
+      parBasePE.set(b, [...(parBasePE.get(b) ?? []), x]);
+    };
+    // la ligne du Suivi d'une commande PE / PI (« 1604R2 »)
+    const ligneDeCommande = new Map<string, LigneFin>();
+    for (const l of lignesFin) {
+      const n = suivi.get(l.cle)?.numero_affaire;
+      if (n && (l.genre === "BASE" || l.genre === "AVENANT")) ligneDeCommande.set(n.toUpperCase().replace(/^\s*CBE\s*/, "").replace(/^0+/, ""), l);
+    }
+    const commandeRecue = (numero: string) => {
+      const l = ligneDeCommande.get(numero.toUpperCase().replace(/^0+/, ""));
+      return l ? recueA(l) : false;
+    };
+    for (const r of reportsPEPI) {
+      if (r.m > moisRef || (r.facture && r.factureValide && r.facture <= moisRef)) continue;
+      if (r.auto || !commandeRecue(r.numero)) {
+        memoire.push({ commande: `CBE${r.numero}`, numero: libMois(r.m), louxor: "", client: "", designation: "", statut: "", raison: "PE / PI faite sans commande reçue", montant: Math.round(r.montant) });
+        continue;
+      }
+      ajouterPE({ numero: r.numero, imputation: r.imputation, m: r.m, heures: r.heures, montant: r.montant, pourquoi: "mois reporté à la main" });
+    }
     if (donneesReport) {
       const debutFenetre = new Date(Date.UTC(Number(moisRef.slice(0, 4)), Number(moisRef.slice(5, 7)) - 13, 1)).toISOString().slice(0, 10);
       const [pmD, saD] = await Promise.all([
@@ -1077,203 +1079,159 @@ function FinancesContenu() {
       ]);
       const etat = new Map(pmD.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));
       const parLigneMois = new Map<string, number>();
-      for (const s of saD) {
-        const hs = Number(s.heures) || 0;
-        if (hs <= 0) continue;
-        const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
-        parLigneMois.set(k, (parLigneMois.get(k) ?? 0) + hs);
+      for (const x of saD) {
+        const h = Number(x.heures) || 0;
+        if (h <= 0) continue;
+        const k = `${x.ligne_id}|${x.jour.slice(0, 7)}`;
+        parLigneMois.set(k, (parLigneMois.get(k) ?? 0) + h);
       }
       const lignesP = new Map(donneesReport.lignes.map((l) => [l.id, l]));
-      for (const [k, hs] of parLigneMois) {
+      for (const [k, h] of parLigneMois) {
         const [lid, m] = k.split("|");
         const l = lignesP.get(lid);
         const a = l ? donneesReport.affaires.get(l.affaire_id) : undefined;
         if (!l || !a || l.taux === null) continue;
         const e = etat.get(k);
-        if (e ? Boolean(e.reporte) : a.statut === "EN_ATTENTE") continue; // déjà compté dans les reports
+        if (e ? Boolean(e.reporte) : a.statut === "EN_ATTENTE") continue; // reports : ci-dessus
         if (e?.valide && (!e.valide_le || String(e.valide_le).slice(0, 10) <= dateRef)) continue; // facturé à la date
         const tauxH = l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
-        pepiTout.push({
-          numero: a.numero,
-          imputation: a.imputation,
-          m,
-          heures: hs,
-          montant: Math.round(hs * tauxH * 100) / 100,
-          pourquoi: m === moisRef ? "mois en cours : facturé en fin de mois" : "mois terminé, pas encore clôturé à la date",
+        const x = { numero: a.numero, imputation: a.imputation, m, heures: h, montant: Math.round(h * tauxH * 100) / 100, pourquoi: m === moisRef ? "mois en cours, facturé en fin de mois" : "mois terminé, pas encore clôturé à la date" };
+        if (!commandeRecue(a.numero)) {
+          memoire.push({ commande: `CBE${a.numero}`, numero: libMois(m), louxor: "", client: "", designation: "", statut: "", raison: "PE / PI faite sans commande reçue", montant: Math.round(x.montant) });
+          continue;
+        }
+        ajouterPE(x);
+      }
+    }
+    for (const [base, mois] of [...parBasePE].sort((x, y) => Number(y[0]) - Number(x[0]))) {
+      const membres = familles.get(base) ?? [];
+      const laBase = membres.find((l) => l.genre === "BASE") ?? membres[0];
+      const valeur = mois.reduce((t, x) => t + x.montant, 0);
+      numFamille++;
+      totaux.pepi += valeur;
+      lignes.push({
+        _style: "groupe",
+        _sansFormule: "etudes,avRetenu,etudesFaites,negoceRecu,valeurFaite,negoceAVenir",
+        niveau: "Famille",
+        type: mois[0]?.imputation ?? "PE / PI",
+        commande: `CBE${base}`,
+        numero: [...new Set(mois.map((x) => x.numero))].join(", "),
+        nature: "Famille",
+        louxor: [...new Set(membres.map(louxorDe).filter(Boolean))].join(", "),
+        client: laBase?.client ?? "",
+        designation: laBase?.designation ?? "",
+        statut: "",
+        montant: laBase ? Math.round(membres.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").reduce((t, l) => t + l.m.montant, 0)) : null,
+        pointe: Math.round(mois.reduce((t, x) => t + x.heures, 0) * 10) / 10,
+        mesure: "au temps passé",
+        valeurFaite: Math.round(valeur),
+        enCours: Math.round(valeur),
+      });
+      for (const x of mois.sort((a, b) => a.m.localeCompare(b.m) || a.numero.localeCompare(b.numero, "fr", { numeric: true }))) {
+        const l = ligneDeCommande.get(x.numero.toUpperCase().replace(/^0+/, ""));
+        lignes.push({
+          _style: "detail",
+          _sansFormule: "*",
+          niveau: "Détail",
+          commande: `CBE${base}`,
+          numero: x.numero,
+          nature: `Travail de ${libMois(x.m)}`,
+          louxor: l ? louxorDe(l) : "",
+          designation: x.pourquoi,
+          recue: l ? fr(recueLe(l)) : "",
+          pointe: Math.round(x.heures * 100) / 100,
+          valeurFaite: Math.round(x.montant),
         });
       }
-      pepiTout.sort((x, y) => x.m.localeCompare(y.m) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
     }
-    const totalPepi = pepiTout.reduce((t, r) => t + r.montant, 0);
-    const intentions = lignesFin
-      .filter((l) => !l.disparue && l.statut === "Intention de commande" && (l.genre === "BASE" || l.genre === "AVENANT") && !["PE", "PI"].includes(l.imputation ?? ""))
-      .filter((l) => {
-        const d = datesToutes.get(l.cle)?.date_ouverture;
-        return !d || d.slice(0, 10) <= dateRef;
-      })
-      .map((l) => {
-        const g = pointeDe((l.base_affaire ?? "").replace(/^0+/, ""));
-        const pointe = g ? GROUPES.reduce((t, x) => t + g[x], 0) : 0;
-        const av = l.heures_total > 0 ? Math.min(1, pointe / l.heures_total) : null;
-        return {
-          commande: l.cle,
-          client: l.client ?? "",
-          designation: l.designation ?? "",
-          montant: Math.round(l.m.montant) || null,
-          chiffre: Math.round(l.heures_total * 10) / 10 || null,
-          pointe: Math.round(pointe * 10) / 10 || null,
-          avancement: av === null ? "chiffré inconnu" : `${Math.round(av * 100)} %`,
-          valeur: av === null ? null : Math.round(av * l.m.montant),
-        };
-      });
-    const totalIntentions = intentions.reduce((t, l) => t + Number(l.valeur ?? 0), 0);
 
-    await exporterExcelPolynov(`En-cours_${aujourdhui}`, [
+    const colonnes: ColonneExcel[] = [
+      { titre: "Niveau", cle: "niveau", largeur: 9 },
+      { titre: "Type", cle: "type", largeur: 8 },
+      { titre: "Famille", cle: "commande", largeur: 10 },
+      { titre: "N°", cle: "numero", largeur: 16 },
+      { titre: "Nature", cle: "nature", largeur: 14 },
+      { titre: "N° ARC Louxor", cle: "louxor", largeur: 14 },
+      { titre: "N° DBE", cle: "devis", largeur: 10 },
+      { titre: "Client", cle: "client", largeur: 14 },
+      { titre: "Désignation", cle: "designation", largeur: 28 },
+      { titre: "Statut", cle: "statut", largeur: 14 },
+      { titre: "Commande reçue le", cle: "recue", largeur: 11 },
+      { titre: "Délai", cle: "delai", largeur: 11 },
+      { titre: "Livrée le", cle: "livree", largeur: 11 },
+      { titre: "Montant", cle: "montant", format: "euros", largeur: 13, total: true },
+      { titre: "dont négoce", cle: "negoce", format: "euros", largeur: 12, total: true },
+      { titre: "Achats", cle: "achats", format: "euros", largeur: 12, total: true },
+      { titre: "Études", cle: "etudes", format: "euros", largeur: 12, total: true, formule: "[montant]-[negoce]" },
+      { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 10, total: true },
+      { titre: "H. pointées", cle: "pointe", format: "nombre", largeur: 10, total: true },
+      { titre: "Avancement estimé (saisi)", cle: "avEstime", format: "pourcent", largeur: 10 },
+      { titre: "Avancement retenu", cle: "avRetenu", format: "pourcent", largeur: 10, formule: 'IF([avEstime]<>"",[avEstime],IF([chiffre]>0,MIN(1,[pointe]/[chiffre]),0))' },
+      { titre: "Mesuré", cle: "mesure", largeur: 14 },
+      { titre: "Études faites", cle: "etudesFaites", format: "euros", largeur: 13, total: true, formule: "[etudes]*[avRetenu]" },
+      { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 12, total: true },
+      { titre: "Négoce reçu", cle: "negoceRecu", format: "euros", largeur: 12, total: true, formule: "IF([achats]>0,MIN([negoce],[achatsRecus]*[negoce]/[achats]),MIN([negoce],[achatsRecus]))" },
+      { titre: "Valeur du travail fait", cle: "valeurFaite", format: "euros", largeur: 13, total: true, formule: "[etudesFaites]+[negoceRecu]" },
+      { titre: "Déjà facturé (acomptes compris)", cle: "facture", format: "euros", largeur: 13, total: true },
+      { titre: "En-cours", cle: "enCours", format: "euros", largeur: 13, total: true, formule: "MAX(0,[valeurFaite]-[facture])" },
+      { titre: "Acompte d’avance", cle: "avance", format: "euros", largeur: 12, total: true, formule: "MAX(0,[facture]-[valeurFaite])" },
+      { titre: "Négoce à venir", cle: "negoceAVenir", format: "euros", largeur: 12, total: true, formule: "[negoce]-[negoceRecu]" },
+    ];
+
+    await exporterExcelPolynov(`En-cours_${dateRef}`, [
       {
         nom: "Synthèse",
         titre: `En-cours au ${date}`,
-        sousTitre: "Travail fait et pas encore facturé : forfaits à l’avancement des heures, PE / PI reportées",
+        sousTitre: "Travail fait et pas encore facturé, sur les seules commandes reçues à cette date",
         colonnes: [
-          { titre: "Poste", cle: "poste", largeur: 64 },
+          { titre: "Poste", cle: "poste", largeur: 70 },
           { titre: "Montant", cle: "montant", format: "euros", largeur: 16 },
-          { titre: "Lignes", cle: "lignes", format: "nombre", largeur: 10 },
         ],
         lignes: [
-          { poste: "Forfaits en cours, à l’avancement", montant: Math.round(totalForfaits), lignes: famillesRetenues.size },
-          { poste: "PE / PI faites, pas encore facturées", montant: Math.round(totalPepi), lignes: pepiTout.length },
-          { poste: "TOTAL DES EN-COURS", montant: Math.round(totalForfaits + totalPepi), lignes: null },
-          { poste: "Pour mémoire : négoce à venir, matériel pas encore arrivé (non compté dans les en-cours)", montant: Math.round(totalNegoce), lignes: null },
-          { poste: "Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)", montant: Math.round(totalAvance), lignes: null },
-          { poste: "Pour mémoire : intentions de commande (pas des commandes), travail fait à l’avancement des heures", montant: Math.round(totalIntentions), lignes: intentions.length },
+          { poste: "Forfaits : valeur du travail fait − déjà facturé", montant: Math.round(totaux.forfaits) },
+          { poste: "PE / PI : travail fait, pas encore facturé", montant: Math.round(totaux.pepi) },
+          { poste: "TOTAL DES EN-COURS", montant: Math.round(totaux.forfaits + totaux.pepi) },
+          { poste: "Pour mémoire : acomptes facturés au-delà du travail fait (avances des clients)", montant: Math.round(totaux.avance) },
+          { poste: "Pour mémoire : négoce à venir, matériel pas encore arrivé (non compté)", montant: Math.round(totaux.negoceAVenir) },
+          { poste: "Pour mémoire : hors en-cours (commande pas reçue à la date, intention, PE / PI sans commande)", montant: Math.round(memoire.reduce((t, l) => t + Number(l.montant ?? 0), 0)) },
         ],
         notes: [
-          "Avancement = % accompli estimé par le responsable (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées de la famille, plafonné à 100 %. La colonne « Mesuré » dit lequel.",
-          "En-cours d’un forfait, sur toute la famille (commande, avenants, échéances, acomptes) : valeur des études faites (études × avancement) + valeur du négoce reçu ou monté, moins tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client (colonne « Acompte d’avance »).",
-          "Achats reçus ou montés : le TOTAL arrivé ou monté sur l’affaire, saisi à la main dans l’Analyse du chiffré, au prix d’achat ; il compte au prix de revente (× négoce ÷ achats). Négoce et achats se totalisent sur la commande, ses avenants et ses échéances.",
-          "Les intentions de commande ne sont pas des commandes (rien n’oblige le client à les passer) : hors total, onglet « Intentions (mémoire) ».",
-          "PE / PI : tout le travail fait jusqu’à la date et pas encore facturé à cette date (mois reportés, mois non clôturés, mois en cours), au taux de la ligne.",
-          "Onglets : Forfaits en cours (une ligne par famille) · Détail des commandes · Heures par activité · PE PI à facturer.",
+          "Seules comptent les commandes REÇUES à la date (date de réception de commande renseignée et antérieure ou égale), pas encore livrées à cette date.",
+          "Forfaits, sur toute la famille (commande, avenants, échéances, acomptes) : valeur du travail fait = études × avancement + négoce reçu ; en-cours = valeur du travail fait − tout ce qui est déjà facturé. Si les acomptes dépassent le travail fait, l’en-cours est nul et l’excédent est une avance du client.",
+          "Avancement = avancement estimé (saisi dans l’Analyse du chiffré) s’il existe, sinon heures pointées ÷ heures chiffrées, plafonné à 100 %.",
+          "PE / PI : le travail fait jusqu’à la date et pas encore facturé (mois en cours, mois non clôturés, mois reportés), au taux de la ligne.",
+          "Onglet « En-cours » : chaque famille (en gras, calculée par formules ƒ), puis ses lignes (en gris) avec leurs montants et n° ARC Louxor. Les totaux ne comptent que les lignes « Famille ».",
         ],
       },
       {
-        nom: "Forfaits en cours",
-        titre: `Forfaits en cours au ${date}`,
-        sousTitre: "Une ligne par famille de commandes (base et avenants) dont une commande au moins n’est pas livrée",
+        nom: "En-cours",
+        titre: `En-cours au ${date}, forfaits et PE / PI`,
+        sousTitre: "Une ligne par famille (gras, formules en bleu), suivie de ses commandes, avenants, échéances et lots (gris)",
+        colonnes,
+        lignes,
+        totalSi: { cle: "niveau", valeur: "Famille" },
+        alerte: (l) => l._alerte === "oui",
+        libelleTotal: "Total des familles",
+        notes: [
+          `${numFamille} famille(s). En jaune : toutes les heures chiffrées sont consommées alors que la commande n’est pas livrée (comptée terminée) ; saisissez son avancement estimé si ce n’est pas le cas.`,
+          "Colonnes ƒ (chiffres en bleu) : calculées par formule Excel ; modifiez un avancement estimé ou des achats reçus, la ligne et les totaux se recalculent.",
+        ],
+      },
+      {
+        nom: "Hors en-cours (mémoire)",
+        titre: `Hors en-cours au ${date} — pour mémoire`,
+        sousTitre: "Commandes pas encore reçues à la date, intentions de commande, PE / PI faites sans commande",
         colonnes: [
-          { titre: "Commande", cle: "commande", largeur: 11 },
-          { titre: "N° DBE", cle: "devis", largeur: 10 },
-          { titre: "Commandes de la famille", cle: "famille", largeur: 20 },
-          { titre: "Imputation", cle: "imputation", largeur: 10 },
-          { titre: "Client", cle: "client", largeur: 15 },
+          { titre: "Famille", cle: "commande", largeur: 11 },
+          { titre: "N° / mois", cle: "numero", largeur: 16 },
+          { titre: "N° ARC Louxor", cle: "louxor", largeur: 14 },
+          { titre: "Client", cle: "client", largeur: 14 },
           { titre: "Désignation", cle: "designation", largeur: 30 },
-          { titre: "Statut", cle: "statut", largeur: 15 },
-          { titre: "Commande reçue le", cle: "dateCommande", largeur: 12 },
-          { titre: "Délai", cle: "delai", largeur: 11 },
-          { titre: "Livraison estimée", cle: "estimee", largeur: 12 },
-          { titre: "Montant (famille)", cle: "montant", format: "euros", largeur: 13, total: true },
-          { titre: "dont négoce", cle: "negoce", format: "euros", largeur: 12, total: true },
-          { titre: "Achats", cle: "achats", format: "euros", largeur: 12, total: true },
-          { titre: "Études", cle: "etudes", format: "euros", largeur: 12, total: true, formule: "[montant]-[negoce]" },
-          { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 10, total: true },
-          { titre: "H. pointées", cle: "pointe", format: "nombre", largeur: 10, total: true },
-          { titre: "Avancement estimé (saisi)", cle: "avEstime", format: "pourcent", largeur: 11 },
-          { titre: "Avancement retenu", cle: "avRetenu", format: "pourcent", largeur: 11, formule: 'IF([avEstime]<>"",[avEstime],IF([chiffre]>0,MIN(1,[pointe]/[chiffre]),0))' },
-          { titre: "Études faites", cle: "etudesFaites", format: "euros", largeur: 13, total: true, formule: "[etudes]*[avRetenu]" },
-          { titre: "Achats reçus (saisis)", cle: "achatsRecus", format: "euros", largeur: 13, total: true },
-          { titre: "Négoce reçu", cle: "negoceRecu", format: "euros", largeur: 12, total: true, formule: "IF([achats]>0,MIN([negoce],[achatsRecus]*[negoce]/[achats]),MIN([negoce],[achatsRecus]))" },
-          { titre: "Valeur du travail fait", cle: "valeurFaite", format: "euros", largeur: 13, total: true, formule: "[etudesFaites]+[negoceRecu]" },
-          { titre: "Déjà facturé (acomptes compris)", cle: "facture", format: "euros", largeur: 13, total: true },
-          { titre: "En-cours", cle: "enCours", format: "euros", largeur: 13, total: true, formule: "MAX(0,[valeurFaite]-[facture])" },
-          { titre: "Acompte d’avance", cle: "avance", format: "euros", largeur: 13, total: true, formule: "MAX(0,[facture]-[valeurFaite])" },
-          { titre: "Négoce à venir", cle: "negoceAttente", format: "euros", largeur: 12, total: true, formule: "[negoce]-[negoceRecu]" },
-        ],
-        lignes: lignesFam.filter(garder),
-        // SANS_COUT_ENGAGE : en jaune, une commande comptée comme terminée parce que toutes ses heures sont consommées
-        alerte: (l) => l.avancement === "chiffré inconnu" || (l.avancement === "100 %" && l.mesure === "aux heures"),
-        libelleTotal: "Total",
-        notes: [
-          "En jaune : toutes les heures chiffrées sont consommées alors que la commande n’est pas livrée. Elle compte comme terminée à 100 % ; si ce n’est pas le cas (dépassement), saisissez son avancement estimé dans l’Analyse du chiffré.",
-          "Colonnes marquées ƒ (chiffres en bleu) : calculées par formule Excel (formule au survol du titre). Modifiez un avancement estimé ou des achats reçus dans le fichier : la ligne et les totaux se recalculent.",
-          `${nbSansEnCours} commande(s) en cours sans en-cours ni acompte d’avance (aucun travail fait, ou facturé au plus juste) : non listées.`,
-        ],
-      },
-      {
-        nom: "Détail des commandes",
-        titre: `Détail des commandes en cours au ${date}`,
-        sousTitre: "Chaque commande, avenant, échéance ou lot des familles en cours, avec ses dates",
-        colonnes: [
-          { titre: "Famille", cle: "famille", largeur: 11 },
-          { titre: "N°", cle: "numero", largeur: 14 },
-          { titre: "Nature", cle: "genre", largeur: 10 },
-          { titre: "Statut", cle: "statut", largeur: 18 },
-          { titre: "Montant", cle: "montant", format: "euros", largeur: 13 },
-          { titre: "dont négoce", cle: "negoce", format: "euros", largeur: 12 },
-          { titre: "Achats", cle: "achats", format: "euros", largeur: 12 },
-          { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 10 },
-          { titre: "Commande reçue le", cle: "dateCommande", largeur: 12 },
-          { titre: "Délai", cle: "delai", largeur: 11 },
-          { titre: "Livraison estimée", cle: "estimee", largeur: 12 },
-          { titre: "Livrée le", cle: "livraison", largeur: 11 },
-          { titre: "Facturé", cle: "facture", format: "euros", largeur: 13, total: true },
-        ],
-        lignes: lignesCmd.filter((l) => famillesRetenues.has(String(l.famille))),
-        libelleTotal: "Total facturé",
-      },
-      {
-        nom: "Heures par activité",
-        titre: `Heures par activité des forfaits en cours au ${date}`,
-        sousTitre: "Chiffré (colonnes du Suivi d’affaire) face au pointé (feuilles d’heures et historique), par famille",
-        colonnes: [
-          { titre: "Famille", cle: "famille", largeur: 11 },
-          { titre: "Client", cle: "client", largeur: 15 },
-          { titre: "Activité", cle: "activite", largeur: 16 },
-          { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 12, total: true },
-          { titre: "H. pointées", cle: "pointe", format: "nombre", largeur: 12, total: true },
-          { titre: "H. restantes", cle: "reste", format: "nombre", largeur: 12, total: true },
-          { titre: "Avancement", cle: "avancement", largeur: 12 },
-        ],
-        lignes: lignesAct.filter((l) => famillesRetenues.has(String(l.famille))),
-        alerte: (l) => Number(l.reste ?? 0) < 0,
-        libelleTotal: "Total",
-        notes: ["En jaune : activité dont le pointé dépasse le chiffré."],
-      },
-      {
-        nom: "PE PI à facturer",
-        titre: `PE / PI faites, pas encore facturées, au ${date}`,
-        sousTitre: "Travail fait jusqu’à la date et pas encore facturé à cette date : mois en cours, mois non clôturés, mois reportés · montant = heures × taux",
-        colonnes: [
-          { titre: "Commande", cle: "commande", largeur: 14 },
-          { titre: "Imputation", cle: "imp", largeur: 11 },
-          { titre: "Travail de", cle: "mois", largeur: 12 },
-          { titre: "Heures", cle: "heures", format: "nombre", largeur: 10, total: true },
-          { titre: "Montant estimé", cle: "montant", format: "euros", largeur: 15, total: true },
-          { titre: "Pourquoi", cle: "pourquoi", largeur: 28 },
-        ],
-        lignes: pepiTout.map((r) => ({
-          commande: `CBE${r.numero}`,
-          imp: r.imputation ?? "",
-          mois: libMois(r.m),
-          heures: Math.round(r.heures * 100) / 100,
-          montant: Math.round(r.montant * 100) / 100,
-          pourquoi: r.pourquoi,
-        })),
-        libelleTotal: "Total",
-      },
-      {
-        nom: "Intentions (mémoire)",
-        titre: `Intentions de commande au ${date} — pour mémoire`,
-        sousTitre: "Pas encore des commandes : rien n’oblige le client à les passer. Hors total des en-cours.",
-        colonnes: [
-          { titre: "Ligne", cle: "commande", largeur: 14 },
-          { titre: "Client", cle: "client", largeur: 16 },
-          { titre: "Désignation", cle: "designation", largeur: 34 },
+          { titre: "Statut", cle: "statut", largeur: 16 },
+          { titre: "Pourquoi hors en-cours", cle: "raison", largeur: 36 },
           { titre: "Montant", cle: "montant", format: "euros", largeur: 13, total: true },
-          { titre: "H. chiffrées", cle: "chiffre", format: "nombre", largeur: 11, total: true },
-          { titre: "H. pointées (famille)", cle: "pointe", format: "nombre", largeur: 13 },
-          { titre: "Avancement", cle: "avancement", largeur: 11 },
-          { titre: "Travail fait (valeur)", cle: "valeur", format: "euros", largeur: 15, total: true },
         ],
-        lignes: intentions,
+        lignes: memoire,
         libelleTotal: "Total",
       },
     ]);
