@@ -634,7 +634,8 @@ function PortefeuilleContenu() {
             const aAffecter = l.aAffecter;
             return (
               <Fragment key={affaire.id}>
-                <tr>
+                {/* INTENTION_JAUNE : une intention de commande est surlignée en jaune */}
+                <tr style={affaire.statut === "EN_ATTENTE" ? { background: "#fff6c7" } : undefined} title={affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : undefined}>
                   <td style={tdCourt}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                       <button

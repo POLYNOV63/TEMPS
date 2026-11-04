@@ -65,13 +65,15 @@ export default function FeuilleDeRouteDashboard() {
   const [activites, setActivites] = useState<Map<string, string>>(new Map());
   // RESPONSABLE_AFFAIRE : le responsable de chaque affaire de la feuille de route
   const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());
+  // INTENTION_JAUNE : affaires en intention de commande
+  const [intentions, setIntentions] = useState<Set<string>>(new Set());
   useEffect(() => {
     const ids = [...new Set(lignes.map((l) => l.affaire_id).filter((x): x is string => Boolean(x)))];
     if (ids.length === 0) return;
     let actif = true;
     void (async () => {
-      const { data: af } = await supabase.from("pilotage_affaires").select("id,responsable_id").in("id", ids);
-      const liste = (af ?? []) as { id: string; responsable_id: string | null }[];
+      const { data: af } = await supabase.from("pilotage_affaires").select("id,responsable_id,statut").in("id", ids);
+      const liste = (af ?? []) as { id: string; responsable_id: string | null; statut: string | null }[];
       const resp = [...new Set(liste.map((a) => a.responsable_id).filter((x): x is string => Boolean(x)))];
       const { data: co } = resp.length > 0 ? await supabase.from("collaborateurs").select("id,trigramme,prenom,nom").in("id", resp) : { data: [] };
       if (!actif) return;
@@ -87,6 +89,7 @@ export default function FeuilleDeRouteDashboard() {
         if (p) m.set(a.id, p);
       }
       setResponsables(m);
+      setIntentions(new Set(liste.filter((a) => a.statut === "EN_ATTENTE").map((a) => a.id)));
     })();
     return () => {
       actif = false;
@@ -232,7 +235,7 @@ export default function FeuilleDeRouteDashboard() {
                     </thead>
                     <tbody>
                       {s.lignes.map((l) => (
-                        <tr key={l.cle}>
+                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: "#fff6c7" } : undefined}>
                           <td style={td}>
                             {(() => {
                               const m = l.affaireId ? l.titre.match(/^(CBE|DBE)\s*(\S+)$/i) : null;
@@ -252,6 +255,7 @@ export default function FeuilleDeRouteDashboard() {
                                 👤 {responsables.get(l.affaireId)?.tri || responsables.get(l.affaireId)?.nom}
                               </span>
                             )}
+                            {l.affaireId && intentions.has(l.affaireId) && <span title="Intention de commande : pas encore commandée" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: "#7a5b00", background: "#ffe58a", borderRadius: 4, padding: "0 5px", whiteSpace: "nowrap" }}>INTENTION</span>}
                             {l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}
                             {l.designation && <div style={{ fontSize: 12 }}>{l.designation}</div>}
                             {l.echeance && <div style={{ fontSize: 11, color: l.echeance < s.debut ? "#b3261e" : C.gris }}>délai : {dateCourte(l.echeance)}/{l.echeance.slice(2, 4)}</div>}

@@ -1,0 +1,80 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Portefeuille : ligne en jaune pour une intention",
+  "cherche": "              <Fragment key={affaire.id}>\n                <tr>\n                  <td style={tdCourt}>",
+  "remplace": "              <Fragment key={affaire.id}>\n                {/* INTENTION_JAUNE : une intention de commande est surlignée en jaune */}\n                <tr style={affaire.statut === \"EN_ATTENTE\" ? { background: \"#fff6c7\" } : undefined} title={affaire.statut === \"EN_ATTENTE\" ? \"Intention de commande : pas encore commandée\" : undefined}>\n                  <td style={tdCourt}>"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : ligne en jaune pour une intention",
+  "cherche": "style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: \"46px\", background: livree ? \"#f1f2f4\" : \"#f8f9fa\", position: \"relative\" }}",
+  "remplace": "style={{ display: \"grid\", gridTemplateColumns: gabarit, gridTemplateRows: \"46px\", background: livree ? \"#f1f2f4\" : affaire.statut === \"EN_ATTENTE\" ? \"#fff6c7\" /* INTENTION_JAUNE */ : \"#f8f9fa\", position: \"relative\" }}"
+ },
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning : repère INTENTION",
+  "cherche": "                {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}",
+  "remplace": "                {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}\n                {affaire.statut === \"EN_ATTENTE\" && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : état des intentions",
+  "cherche": "  const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());",
+  "remplace": "  const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());\n  // INTENTION_JAUNE : affaires en intention de commande\n  const [intentions, setIntentions] = useState<Set<string>>(new Set());"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : statut lu avec le responsable",
+  "cherche": "      const { data: af } = await supabase.from(\"pilotage_affaires\").select(\"id,responsable_id\").in(\"id\", ids);\n      const liste = (af ?? []) as { id: string; responsable_id: string | null }[];",
+  "remplace": "      const { data: af } = await supabase.from(\"pilotage_affaires\").select(\"id,responsable_id,statut\").in(\"id\", ids);\n      const liste = (af ?? []) as { id: string; responsable_id: string | null; statut: string | null }[];"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : intentions retenues",
+  "cherche": "      setResponsables(m);",
+  "remplace": "      setResponsables(m);\n      setIntentions(new Set(liste.filter((a) => a.statut === \"EN_ATTENTE\").map((a) => a.id)));"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : ligne en jaune",
+  "cherche": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle}>",
+  "remplace": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: \"#fff6c7\" } : undefined}>"
+ },
+ {
+  "fichier": "app/ma-feuille-de-route/page.tsx",
+  "nom": "Feuille de route : repère INTENTION",
+  "cherche": "{l.activite && <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>{l.activite}</span>}",
+  "remplace": "{l.affaireId && intentions.has(l.affaireId) && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}\n                            {l.activite && <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: C.gris }}>{l.activite}</span>}"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : état des intentions",
+  "cherche": "  const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());",
+  "remplace": "  const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());\n  // INTENTION_JAUNE : affaires en intention de commande\n  const [intentions, setIntentions] = useState<Set<string>>(new Set());"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : statut lu avec le responsable",
+  "cherche": "      const { data: af } = await supabase.from(\"pilotage_affaires\").select(\"id,responsable_id\").in(\"id\", ids);\n      const liste = (af ?? []) as { id: string; responsable_id: string | null }[];",
+  "remplace": "      const { data: af } = await supabase.from(\"pilotage_affaires\").select(\"id,responsable_id,statut\").in(\"id\", ids);\n      const liste = (af ?? []) as { id: string; responsable_id: string | null; statut: string | null }[];"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : intentions retenues",
+  "cherche": "      setResponsables(m);",
+  "remplace": "      setResponsables(m);\n      setIntentions(new Set(liste.filter((a) => a.statut === \"EN_ATTENTE\").map((a) => a.id)));"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : ligne en jaune",
+  "cherche": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle}>",
+  "remplace": "                      {s.lignes.map((l) => (\n                        <tr key={l.cle} style={l.affaireId && intentions.has(l.affaireId) ? { background: \"#fff6c7\" } : undefined}>"
+ },
+ {
+  "fichier": "components/FeuilleDeRouteDashboard.tsx",
+  "nom": "Tableau de bord : repère INTENTION",
+  "cherche": "{l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}",
+  "remplace": "{l.affaireId && intentions.has(l.affaireId) && <span title=\"Intention de commande : pas encore commandée\" style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, color: \"#7a5b00\", background: \"#ffe58a\", borderRadius: 4, padding: \"0 5px\", whiteSpace: \"nowrap\" }}>INTENTION</span>}\n                            {l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}"
+ }
+]
