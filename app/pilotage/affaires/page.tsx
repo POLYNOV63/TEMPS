@@ -376,6 +376,12 @@ function PlanningAffairesContenu() {
           ouvrirId.current = null;
           // VERS_PLANNING : on descend jusqu'à l'affaire, une fois le planning affiché
           window.setTimeout(() => document.getElementById(`aff-${cible}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 900);
+          // FILTRE_AFFAIRE : le planning ne montre que cette affaire (et ses avenants) ; vider la recherche pour tout revoir
+          const laCible = af.find((x) => x.id === cible);
+          if (laCible) {
+            setFiltreType("TOUS");
+            setRecherche(`${laCible.type}${laCible.numero.match(/^\d+/)?.[0] ?? laCible.numero}`);
+          }
           const premiers = pl.affectations.filter((a) => a.affaire_id === cible).map((a) => a.date_debut).sort();
           if (premiers.length > 0) setLundi(lundiDe(premiers[0] > aISO(new Date()) ? premiers[0] : aISO(new Date())));
         }
