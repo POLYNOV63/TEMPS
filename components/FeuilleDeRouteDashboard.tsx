@@ -63,6 +63,35 @@ export default function FeuilleDeRouteDashboard() {
   const [conges, setConges] = useState<Conge[]>([]);
   const [devis, setDevis] = useState<Devis[]>([]);
   const [activites, setActivites] = useState<Map<string, string>>(new Map());
+  // RESPONSABLE_AFFAIRE : le responsable de chaque affaire de la feuille de route
+  const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());
+  useEffect(() => {
+    const ids = [...new Set(lignes.map((l) => l.affaire_id).filter((x): x is string => Boolean(x)))];
+    if (ids.length === 0) return;
+    let actif = true;
+    void (async () => {
+      const { data: af } = await supabase.from("pilotage_affaires").select("id,responsable_id").in("id", ids);
+      const liste = (af ?? []) as { id: string; responsable_id: string | null }[];
+      const resp = [...new Set(liste.map((a) => a.responsable_id).filter((x): x is string => Boolean(x)))];
+      const { data: co } = resp.length > 0 ? await supabase.from("collaborateurs").select("id,trigramme,prenom,nom").in("id", resp) : { data: [] };
+      if (!actif) return;
+      const personnes = new Map(
+        ((co ?? []) as { id: string; trigramme: string | null; prenom: string | null; nom: string | null }[]).map((c) => [
+          c.id,
+          { tri: c.trigramme ?? "", nom: `${c.prenom ?? ""} ${c.nom ?? ""}`.trim() },
+        ])
+      );
+      const m = new Map<string, { tri: string; nom: string }>();
+      for (const a of liste) {
+        const p = a.responsable_id ? personnes.get(a.responsable_id) : undefined;
+        if (p) m.set(a.id, p);
+      }
+      setResponsables(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [lignes]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
@@ -215,6 +244,14 @@ export default function FeuilleDeRouteDashboard() {
                                 <strong style={{ color: C.rougeFonce }}>{l.titre}</strong>
                               );
                             })()}
+                            {l.affaireId && responsables.get(l.affaireId) && (
+                              <span
+                                title={`Responsable d’affaire : ${responsables.get(l.affaireId)?.nom || responsables.get(l.affaireId)?.tri}`}
+                                style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#34506b", background: "#eaf1fa", border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px", whiteSpace: "nowrap" }}
+                              >
+                                👤 {responsables.get(l.affaireId)?.tri || responsables.get(l.affaireId)?.nom}
+                              </span>
+                            )}
                             {l.activite && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>{l.activite}</span>}
                             {l.designation && <div style={{ fontSize: 12 }}>{l.designation}</div>}
                             {l.echeance && <div style={{ fontSize: 11, color: l.echeance < s.debut ? "#b3261e" : C.gris }}>délai : {dateCourte(l.echeance)}/{l.echeance.slice(2, 4)}</div>}

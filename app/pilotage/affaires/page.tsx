@@ -1599,6 +1599,18 @@ function PlanningAffairesContenu() {
                 <Link href={`/affaires/bilan?affaire=${affaire.type}${affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero}&commande=${encodeURIComponent(affaire.numero)}`} title="Bilan de l’affaire" style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce }}>
                   {affaire.numero}
                 </Link>
+                {/* RESPONSABLE_VIGNETTE : le responsable d'affaire */}
+                {affaire.responsable_id && (() => {
+                  const r = annuaire.find((c) => c.id === affaire.responsable_id);
+                  return r ? (
+                    <span
+                      title={`Responsable d’affaire : ${`${r.prenom ?? ""} ${r.nom ?? ""}`.trim() || nomCollab(r)}`}
+                      style={{ fontSize: 11, fontWeight: 800, color: "#34506b", background: "#eaf1fa", border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px", whiteSpace: "nowrap" }}
+                    >
+                      👤 {nomCollab(r)}
+                    </span>
+                  ) : null;
+                })()}
                 {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}
                 {(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
                   <span title="Statut, dates et chiffré suivis depuis le Suivi d’affaire BE (Excel)" style={{ marginLeft: "auto", fontSize: 10, fontWeight: 800, color: "#1d6f42", border: "1px solid #9cc9ae", borderRadius: 4, padding: "0 4px" }}>
