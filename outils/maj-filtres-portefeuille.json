@@ -1,0 +1,38 @@
+[
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Switch : trois types",
+  "cherche": "type FiltreType = \"TOUS\" | \"DBE\" | \"CBE\";",
+  "remplace": "// TYPE_FORFAIT_PEPI : forfaits (CBE hors PE / PI), PE / PI, devis\ntype FiltreType = \"FORFAIT\" | \"PEPI\" | \"DBE\";"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Switch : forfaits par défaut",
+  "cherche": "  const [filtreType, setFiltreType] = useState<FiltreType>(\"CBE\");",
+  "remplace": "  const [filtreType, setFiltreType] = useState<FiltreType>(\"FORFAIT\");"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Filtre : forfait / PE-PI / DBE ; une recherche réunit tout",
+  "cherche": "      if (filtreType !== \"TOUS\" && affaire.type !== filtreType) return false;",
+  "remplace": "      const prestation = affaire.imputation === \"PE\" || affaire.imputation === \"PI\";\n      // pendant une recherche, tous types réunis (comme tous statuts)\n      if (!q && (filtreType === \"DBE\" ? affaire.type !== \"DBE\" : affaire.type !== \"CBE\" || (filtreType === \"PEPI\") !== prestation)) return false;"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Filtres actifs : nouvelle valeur par défaut",
+  "cherche": "    filtreType !== \"CBE\" || recherche !== \"\"",
+  "remplace": "    filtreType !== \"FORFAIT\" || recherche !== \"\""
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Réinitialisation : nouvelle valeur par défaut",
+  "cherche": "    setFiltreType(\"CBE\");",
+  "remplace": "    setFiltreType(\"FORFAIT\");"
+ },
+ {
+  "fichier": "app/pilotage/page.tsx",
+  "nom": "Barre de filtres simplifiée",
+  "cherche": "              <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 8, alignItems: \"center\" }}>\n                {([\"TOUS\", \"DBE\", \"CBE\"] as FiltreType[]).map((t) => (\n                  <button key={t} type=\"button\" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>\n                    {t === \"TOUS\" ? \"DBE + CBE\" : t}\n                  </button>\n                ))}\n\n                <span style={{ width: 8 }} />\n\n                {statutsFiltres.map((st) => (\n                  <button\n                    key={st.valeur}\n                    type=\"button\"\n                    aria-pressed={filtreStatut === st.valeur}\n                    style={bouton(filtreStatut === st.valeur)}\n                    onClick={() => setFiltreStatut(st.valeur)}\n                  >\n                    {st.libelle}\n                  </button>\n                ))}\n\n                <span style={{ width: 8 }} />\n\n                <button\n                  type=\"button\"\n                  aria-pressed={depassementSeul}\n                  style={bouton(depassementSeul)}\n                  onClick={() => setDepassementSeul((v) => !v)}\n                >\n                  Dépassements\n                </button>\n              </div>\n\n              <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 12, alignItems: \"center\", margin: \"12px 0\" }}>\n                <input\n                  type=\"search\"\n                  aria-label=\"Rechercher une affaire\"\n                  placeholder=\"Rechercher : n° de commande ou de devis (DBE), descriptif, client…\"\n                  value={recherche}\n                  onChange={(e) => setRecherche(e.target.value)}\n                  style={{ ...page.entrees, maxWidth: 340 }}\n                />\n                <select aria-label=\"Filtrer par client\" value={filtreClient} onChange={(e) => setFiltreClient(e.target.value)} style={selectFiltre}>\n                  <option value=\"\">Tous les clients</option>\n                  {choixClients.map((c) => (\n                    <option key={c} value={c}>{c}</option>\n                  ))}\n                </select>\n                <select aria-label=\"Filtrer par imputation\" value={filtreImputation} onChange={(e) => setFiltreImputation(e.target.value)} style={selectFiltre}>\n                  <option value=\"\">Toutes les imputations</option>\n                  {choixImputations.map((c) => (\n                    <option key={c} value={c}>{c}</option>\n                  ))}\n                </select>\n                <select aria-label=\"Filtrer par responsable\" value={filtreResp} onChange={(e) => setFiltreResp(e.target.value)} style={selectFiltre}>\n                  <option value=\"\">Tous les responsables</option>\n                  {choixResp.map((r) => (\n                    <option key={r.id} value={r.id}>{r.nom}</option>\n                  ))}\n                </select>\n                {filtresActifs && (\n                  <button type=\"button\" onClick={reinitialiserFiltres} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>\n                    Effacer les filtres\n                  </button>\n                )}\n              </div>",
+  "remplace": "              {/* FILTRES_SIMPLES : forfait / PE-PI / devis, et la recherche ; toujours toutes les affaires actives */}\n              <div style={{ display: \"flex\", flexWrap: \"wrap\", gap: 8, alignItems: \"center\", marginBottom: 12 }}>\n                {(\n                  [\n                    [\"FORFAIT\", \"Forfait\"],\n                    [\"PEPI\", \"PE / PI\"],\n                    [\"DBE\", \"DBE\"],\n                  ] as [FiltreType, string][]\n                ).map(([t, libelle]) => (\n                  <button key={t} type=\"button\" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>\n                    {libelle}\n                  </button>\n                ))}\n                <span style={{ width: 8 }} />\n                <input\n                  type=\"search\"\n                  aria-label=\"Rechercher une affaire\"\n                  placeholder=\"Rechercher : n° de commande ou de devis (DBE), descriptif, client…\"\n                  value={recherche}\n                  onChange={(e) => setRecherche(e.target.value)}\n                  style={{ ...page.entrees, maxWidth: 380, minHeight: 44 }}\n                />\n                {recherche && (\n                  <button type=\"button\" onClick={() => setRecherche(\"\")} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>\n                    Effacer la recherche\n                  </button>\n                )}\n              </div>"
+ }
+]

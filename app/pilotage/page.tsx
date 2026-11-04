@@ -74,7 +74,8 @@ type Ligne = {
 type FiltreStatut = "ACTIVES" | "EN_COURS" | "EN_ATTENTE";
 type FiltrePlanning = "TOUS" | "AU" | "HORS";
 type ColonneTri = "numero" | "designation" | "client" | "imputation" | "resp" | "echeance" | "chiffre" | "realise" | "reste";
-type FiltreType = "TOUS" | "DBE" | "CBE";
+// TYPE_FORFAIT_PEPI : forfaits (CBE hors PE / PI), PE / PI, devis
+type FiltreType = "FORFAIT" | "PEPI" | "DBE";
 
 function normaliser(texte: string) {
   return texte
@@ -96,7 +97,7 @@ function PortefeuilleContenu() {
   const [erreur, setErreur] = useState("");
 
   // CBE_PAR_DEFAUT : le portefeuille s'ouvre sur les commandes
-  const [filtreType, setFiltreType] = useState<FiltreType>("CBE");
+  const [filtreType, setFiltreType] = useState<FiltreType>("FORFAIT");
   const [filtreStatut, setFiltreStatut] = useState<FiltreStatut>("ACTIVES");
   const [filtrePlanning, setFiltrePlanning] = useState<FiltrePlanning>("TOUS");
   const [depassementSeul, setDepassementSeul] = useState(false);
@@ -362,7 +363,9 @@ function PortefeuilleContenu() {
     const q = normaliser(recherche.trim());
 
     return lignes.filter(({ affaire, totaux, client, famille }) => {
-      if (filtreType !== "TOUS" && affaire.type !== filtreType) return false;
+      const prestation = affaire.imputation === "PE" || affaire.imputation === "PI";
+      // pendant une recherche, tous types réunis (comme tous statuts)
+      if (!q && (filtreType === "DBE" ? affaire.type !== "DBE" : affaire.type !== "CBE" || (filtreType === "PEPI") !== prestation)) return false;
       // RECHERCHE_DEVIS : on retrouve une commande par son n° de devis d'origine (DBE2835 ou 2835)
       const devisNum = affaire.type === "CBE" ? devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) : undefined;
       if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(" ") ?? ""} ${devisNum ? `dbe${devisNum} ${devisNum}` : ""} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
@@ -440,11 +443,11 @@ function PortefeuilleContenu() {
   }, [lignes, collabs]);
 
   const filtresActifs =
-    filtreType !== "CBE" || recherche !== "" || filtreImputation !== "" || filtreClient !== "" || filtreResp !== "" ||
+    filtreType !== "FORFAIT" || recherche !== "" || filtreImputation !== "" || filtreClient !== "" || filtreResp !== "" ||
     filtrePlanning !== "TOUS" || depassementSeul || filtreStatut !== "ACTIVES";
 
   function reinitialiserFiltres() {
-    setFiltreType("CBE");
+    setFiltreType("FORFAIT");
     setRecherche("");
     setFiltreImputation("");
     setFiltreClient("");
@@ -1018,69 +1021,31 @@ function PortefeuilleContenu() {
 
             <section style={{ ...page.carte, padding: 16 }}>
               {/* ---------- Filtres ---------- */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                {(["TOUS", "DBE", "CBE"] as FiltreType[]).map((t) => (
+              {/* FILTRES_SIMPLES : forfait / PE-PI / devis, et la recherche ; toujours toutes les affaires actives */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
+                {(
+                  [
+                    ["FORFAIT", "Forfait"],
+                    ["PEPI", "PE / PI"],
+                    ["DBE", "DBE"],
+                  ] as [FiltreType, string][]
+                ).map(([t, libelle]) => (
                   <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>
-                    {t === "TOUS" ? "DBE + CBE" : t}
+                    {libelle}
                   </button>
                 ))}
-
                 <span style={{ width: 8 }} />
-
-                {statutsFiltres.map((st) => (
-                  <button
-                    key={st.valeur}
-                    type="button"
-                    aria-pressed={filtreStatut === st.valeur}
-                    style={bouton(filtreStatut === st.valeur)}
-                    onClick={() => setFiltreStatut(st.valeur)}
-                  >
-                    {st.libelle}
-                  </button>
-                ))}
-
-                <span style={{ width: 8 }} />
-
-                <button
-                  type="button"
-                  aria-pressed={depassementSeul}
-                  style={bouton(depassementSeul)}
-                  onClick={() => setDepassementSeul((v) => !v)}
-                >
-                  Dépassements
-                </button>
-              </div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", margin: "12px 0" }}>
                 <input
                   type="search"
                   aria-label="Rechercher une affaire"
                   placeholder="Rechercher : n° de commande ou de devis (DBE), descriptif, client…"
                   value={recherche}
                   onChange={(e) => setRecherche(e.target.value)}
-                  style={{ ...page.entrees, maxWidth: 340 }}
+                  style={{ ...page.entrees, maxWidth: 380, minHeight: 44 }}
                 />
-                <select aria-label="Filtrer par client" value={filtreClient} onChange={(e) => setFiltreClient(e.target.value)} style={selectFiltre}>
-                  <option value="">Tous les clients</option>
-                  {choixClients.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <select aria-label="Filtrer par imputation" value={filtreImputation} onChange={(e) => setFiltreImputation(e.target.value)} style={selectFiltre}>
-                  <option value="">Toutes les imputations</option>
-                  {choixImputations.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <select aria-label="Filtrer par responsable" value={filtreResp} onChange={(e) => setFiltreResp(e.target.value)} style={selectFiltre}>
-                  <option value="">Tous les responsables</option>
-                  {choixResp.map((r) => (
-                    <option key={r.id} value={r.id}>{r.nom}</option>
-                  ))}
-                </select>
-                {filtresActifs && (
-                  <button type="button" onClick={reinitialiserFiltres} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>
-                    Effacer les filtres
+                {recherche && (
+                  <button type="button" onClick={() => setRecherche("")} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>
+                    Effacer la recherche
                   </button>
                 )}
               </div>
