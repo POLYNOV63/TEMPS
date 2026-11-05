@@ -111,6 +111,9 @@ function SuiviRHContenu() {
   const [rechargement, setRechargement] = useState(0);
   // formulaire des droits de l'exercice (ouvert pour une personne)
   const [formDroits, setFormDroits] = useState<{ id: string; f: FormDroits } | null>(null);
+  // SOLDES_RH : saisie, pour tout le monde d'un coup, des soldes donnés par le service RH
+  const [saisieSoldes, setSaisieSoldes] = useState<Record<string, { cp: string; rtt: string; compteur: string }> | null>(null);
+  const [enregSoldes, setEnregSoldes] = useState(false);
 
   // arrivée depuis Collaborateurs (« Suivi RH → » ou création) : la ligne de la personne s'ouvre
   const [depuisLien, setDepuisLien] = useState<string | null>(null);
@@ -337,6 +340,81 @@ function SuiviRHContenu() {
     setRechargement((x) => x + 1);
   }
 
+  const vers = (x: number) => String(Math.round(x * 100) / 100).replace(".", ",");
+  const lu = (x: string) => {
+    const v = Number(String(x).replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(v) ? v : null;
+  };
+
+  function ouvrirSoldes() {
+    const s: Record<string, { cp: string; rtt: string; compteur: string }> = {};
+    for (const l of lignes) s[l.c.id] = { cp: vers(l.cpSolde), rtt: vers(l.rttSolde), compteur: vers(l.compteur) };
+    setSaisieSoldes(s);
+    setInfo("");
+    setErreur("");
+  }
+
+  /* Le solde saisi devient le solde affiché aujourd'hui : les droits de l'exercice sont posés à
+     « solde + ce qui est déjà pris ou demandé dans l'application cet exercice », pour que les
+     demandes suivantes se décomptent normalement. Le compteur est recalé par un ajustement
+     (motivé, dans l'historique) s'il y a déjà des feuilles validées, sinon par le compteur initial. */
+  async function enregistrerSoldes() {
+    if (!saisieSoldes) return;
+    setEnregSoldes(true);
+    setErreur("");
+    let nb = 0;
+    try {
+      for (const l of lignes) {
+        const s = saisieSoldes[l.c.id];
+        if (!s) continue;
+        const cp = lu(s.cp);
+        const rtt = lu(s.rtt);
+        const cpt = lu(s.compteur);
+        if (cp === null || rtt === null || cpt === null) throw new Error(`${l.c.trigramme} : valeur illisible (chiffres seulement, ex. 12,5).`);
+        const cpChange = Math.abs(cp - l.cpSolde) > 0.001;
+        const rttChange = Math.abs(rtt - l.rttSolde) > 0.001;
+        const cptChange = Math.abs(cpt - l.compteur) > 0.001;
+        if (!cpChange && !rttChange && !cptChange) continue;
+        const aDesFeuilles = feuilles.some((f) => f.collaborateur_id === l.c.id && f.statut === "A_TRAITER");
+        if (cpChange || rttChange || (cptChange && !aDesFeuilles)) {
+          const { error } = await supabase.from("rh_droits").upsert(
+            {
+              collaborateur_id: l.c.id,
+              exercice,
+              cp_reportes: cpChange ? 0 : n(l.d?.cp_reportes),
+              cp_acquis: cpChange ? Math.round((cp + l.cpPris + l.cpAttente) * 100) / 100 : n(l.d?.cp_acquis),
+              cp_anciennete: cpChange ? 0 : n(l.d?.cp_anciennete),
+              cp_exceptionnels_avec_justificatif: cpChange ? 0 : n(l.d?.cp_exceptionnels_avec_justificatif),
+              cp_exceptionnels_sans_justificatif: cpChange ? 0 : n(l.d?.cp_exceptionnels_sans_justificatif),
+              rtt_acquis: rttChange ? Math.round((rtt + l.rttPris + l.rttAttente) * 100) / 100 : n(l.d?.rtt_acquis),
+              compteur_recuperation_initial: cptChange && !aDesFeuilles ? cpt : n(l.d?.compteur_recuperation_initial),
+              cp_periode_debut: l.d?.cp_periode_debut ?? `${exercice}-04-01`,
+              cp_periode_fin: l.d?.cp_periode_fin ?? `${exercice + 1}-05-31`,
+            },
+            { onConflict: "collaborateur_id,exercice" }
+          );
+          if (error) throw new Error(`${l.c.trigramme} : ${error.message}`);
+        }
+        if (cptChange && aDesFeuilles) {
+          const { error } = await supabase.rpc("rh_regulariser_compteur", {
+            p_collaborateur_id: l.c.id,
+            p_heures: Math.round((cpt - l.compteur) * 100) / 100,
+            p_motif: "Reprise du compteur donné par le service RH",
+          });
+          if (error) throw new Error(`${l.c.trigramme} : ${error.message}`);
+        }
+        nb++;
+      }
+      setSaisieSoldes(null);
+      setInfo(nb > 0 ? `Soldes enregistrés pour ${nb} collaborateur${nb > 1 ? "s" : ""}.` : "Aucun solde n’a changé.");
+      setRechargement((x) => x + 1);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "Enregistrement impossible.");
+    } finally {
+      setEnregSoldes(false);
+    }
+  }
+
   const totaux = useMemo(
     () => ({
       cpSolde: lignes.reduce((t, l) => t + l.cpSolde, 0),
@@ -383,6 +461,79 @@ function SuiviRHContenu() {
               <Tuile libelle="Compteurs cumulés" valeur={`${fmt(totaux.compteur)} h`} sous={`${totaux.auDela} au-delà de 30 h`} accent={totaux.auDela > 0} />
               <Tuile libelle="Droits non saisis" valeur={String(totaux.sansDroits)} sous="pour cet exercice" accent={totaux.sansDroits > 0} />
             </div>
+
+            {/* SOLDES_RH : les soldes du service RH, pour tout le monde */}
+            <section style={{ ...page.carte, padding: 14, marginBottom: 14 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                <strong style={{ fontSize: 16 }}>Soldes donnés par le service RH</strong>
+                <span style={{ fontSize: 13, color: C.gris }}>CP, RTT (cadres au forfait) et compteur de récupération de chacun, saisis d’un coup</span>
+                <span style={{ flex: 1 }} />
+                {!saisieSoldes && (
+                  <button type="button" style={page.btnPrimaire} onClick={ouvrirSoldes}>
+                    Saisir les soldes
+                  </button>
+                )}
+              </div>
+              {saisieSoldes && (
+                <>
+                  <p style={{ fontSize: 13, color: C.gris, margin: "8px 0" }}>
+                    Chaque case est pré-remplie avec le solde actuel de l’application : ne changez que ce qui diffère du relevé du service RH. Le
+                    solde saisi devient le solde d’aujourd’hui ; les prochaines demandes s’en déduiront. Laissez le RTT à 0 pour ceux qui n’en ont pas.
+                  </p>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", fontSize: 14, minWidth: 620 }}>
+                      <thead>
+                        <tr>
+                          <th style={thG}>Collaborateur</th>
+                          <th style={th}>Solde CP (j)</th>
+                          <th style={th}>Solde RTT (j)</th>
+                          <th style={th}>Compteur récup. (h)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lignes.map((l) => {
+                          const s = saisieSoldes[l.c.id] ?? { cp: "", rtt: "", compteur: "" };
+                          const maj = (cle: "cp" | "rtt" | "compteur", v: string) =>
+                            setSaisieSoldes((x) => (x ? { ...x, [l.c.id]: { ...s, [cle]: v.replace(/[^0-9.,\-]/g, "") } } : x));
+                          const change = (v: string, actuel: number) => lu(v) !== null && Math.abs((lu(v) ?? 0) - actuel) > 0.001;
+                          const champSolde = (cle: "cp" | "rtt" | "compteur", actuel: number, unite: string) => (
+                            <td style={{ ...td, padding: "4px 6px" }}>
+                              <input
+                                value={s[cle]}
+                                onChange={(e) => maj(cle, e.target.value)}
+                                inputMode="decimal"
+                                aria-label={`${l.c.trigramme} ${cle}`}
+                                title={`Actuellement : ${fmt(actuel)} ${unite}`}
+                                style={{ ...champ, width: 100, minHeight: 34, textAlign: "right", fontWeight: change(s[cle], actuel) ? 800 : 400, background: change(s[cle], actuel) ? "#fff7d6" : undefined }}
+                              />
+                            </td>
+                          );
+                          return (
+                            <tr key={l.c.id}>
+                              <td style={tdG}>
+                                <strong>{l.c.trigramme}</strong> <span style={{ color: C.gris }}>{nomDe(l.c)}</span>
+                              </td>
+                              {champSolde("cp", l.cpSolde, "j")}
+                              {champSolde("rtt", l.rttSolde, "j")}
+                              {champSolde("compteur", l.compteur, "h")}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13, color: C.gris, alignSelf: "center" }}>En jaune : les valeurs modifiées.</span>
+                    <button type="button" style={page.btnSecondaire} onClick={() => setSaisieSoldes(null)} disabled={enregSoldes}>
+                      Annuler
+                    </button>
+                    <button type="button" style={page.btnPrimaire} onClick={() => void enregistrerSoldes()} disabled={enregSoldes}>
+                      {enregSoldes ? "Enregistrement…" : "Enregistrer les soldes"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
 
             <section style={{ ...page.carte, padding: 14, overflowX: "auto" }}>
               <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher un collaborateur…" aria-label="Rechercher" style={{ ...champ, maxWidth: 280, marginBottom: 10 }} />
