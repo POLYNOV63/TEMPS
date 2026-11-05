@@ -1515,7 +1515,7 @@ export default function RHPage() {
         className="rh-grille"
         style={{
           ...styles.grid,
-          gridTemplateColumns: forfaitJour ? "repeat(2,minmax(0,1fr))" : "repeat(5,minmax(0,1fr))",
+          gridTemplateColumns: forfaitJour ? "repeat(4,minmax(0,1fr))" : "repeat(6,minmax(0,1fr))", // TUILES_EN_HAUT
         }}
       >
         {!forfaitJour && (
@@ -1632,14 +1632,13 @@ export default function RHPage() {
           </small>
         </div>
         )}
-      </section>
 
-      <section className="rh-grille" style={styles.grid}>
         <div
           className="rh-large"
           style={{
             ...styles.card,
-            gridColumn: forfaitJour ? "span 3" : "span 4",
+            gridColumn: "span 1",
+            order: -2,
           }}
         >
           <div style={styles.cardTitle}>
@@ -1648,88 +1647,19 @@ export default function RHPage() {
 
           {droit ? (
             <>
-              <div
-                style={styles.cpTotal}
-              >
-                {fmt(
-                  Math.max(0, resteCP)
-                )}{" "}
-                <span>
-                  jours disponibles
-                </span>
+              <div style={{ ...styles.big, color: resteCP < 0 ? rouge : undefined }}>
+                {fmt(resteCP)} <span style={styles.unit}>j disponibles</span>
               </div>
-
-              <div className="rh-cp" style={{ ...styles.cpGrid, gridTemplateColumns: "repeat(2,1fr)" }}>
-                <Mini
-                  label="Droits de l’exercice"
-                  value={
-                    droit.cp_acquis
-                  }
-                />
-
-                <Mini
-                  label="Exceptionnels"
-                  value={
-                    Number(
-                      droit.cp_exceptionnels_avec_justificatif ||
-                        0
-                    ) +
-                    Number(
-                      droit.cp_exceptionnels_sans_justificatif ||
-                        0
-                    )
-                  }
-                />
+              <div style={styles.muted}>
+                Droits : {fmt(totalCP)} j
+                {Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0) > 0
+                  ? ` (dont ${fmt(Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0))} j exceptionnels)`
+                  : ""}{" "}
+                · Pris : {fmt(prisesCP)} j · En validation : {fmt(attenteCP)} j
               </div>
-
-              <div
-                style={{
-                  ...styles.balance,
-                  marginTop: 8,
-                }}
-              >
-                <span>
-                  Pris :{" "}
-                  <strong>
-                    {fmt(
-                      prisesCP
-                    )}{" "}
-                    j
-                  </strong>
-                </span>
-
-                <span>
-                  En validation :{" "}
-                  <strong>
-                    {fmt(
-                      attenteCP
-                    )}{" "}
-                    j
-                  </strong>
-                </span>
-
-                <span>
-                  Total :{" "}
-                  <strong>
-                    {fmt(totalCP)} j
-                  </strong>
-                </span>
-              </div>
-
-              <div style={styles.period}>
-                <strong>
-                  Période CP paramétrée : {exercice} → {exercice + 1}
-                </strong>
-                <br />
-                <span style={{ fontSize: 11, color: "#777" }}>
-                  {droit.cp_periode_debut
-                    ? dateFR(droit.cp_periode_debut)
-                    : `01/04/${exercice}`}
-                  {" → "}
-                  {droit.cp_periode_fin
-                    ? dateFR(droit.cp_periode_fin)
-                    : `31/05/${exercice + 1}`}
-                </span>
+              <div style={{ ...styles.muted, fontSize: 11, marginTop: 6 }}>
+                Période CP : {droit.cp_periode_debut ? dateFR(droit.cp_periode_debut) : `01/04/${exercice}`} →{" "}
+                {droit.cp_periode_fin ? dateFR(droit.cp_periode_fin) : `31/05/${exercice + 1}`}
               </div>
             </>
           ) : (
@@ -1745,7 +1675,7 @@ export default function RHPage() {
         </div>
 
         {forfaitJour && (
-        <div className="rh-large" style={styles.card}>
+        <div className="rh-large" style={{ ...styles.card, order: -1 }}>
           <div style={styles.cardTitle}>
             📅 RTT
           </div>

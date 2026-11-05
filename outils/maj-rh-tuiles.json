@@ -1,0 +1,32 @@
+[
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Une seule rangée de tuiles (colonnes)",
+  "cherche": "gridTemplateColumns: forfaitJour ? \"repeat(2,minmax(0,1fr))\" : \"repeat(5,minmax(0,1fr))\",",
+  "remplace": "gridTemplateColumns: forfaitJour ? \"repeat(4,minmax(0,1fr))\" : \"repeat(6,minmax(0,1fr))\", // TUILES_EN_HAUT"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Une seule rangée de tuiles (les deux blocs réunis)",
+  "cherche": "        )}\n      </section>\n\n      <section className=\"rh-grille\" style={styles.grid}>",
+  "remplace": "        )}\n"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Congés payés : une tuile, en premier",
+  "cherche": "            gridColumn: forfaitJour ? \"span 3\" : \"span 4\",",
+  "remplace": "            gridColumn: \"span 1\",\n            order: -2,"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "RTT : juste après les congés",
+  "cherche": "        {forfaitJour && (\n        <div className=\"rh-large\" style={styles.card}>",
+  "remplace": "        {forfaitJour && (\n        <div className=\"rh-large\" style={{ ...styles.card, order: -1 }}>"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Congés payés : contenu resserré",
+  "cherche": "@@DEBUT@@          {droit ? (\n            <>\n              <div\n                style={styles.cpTotal}\n              >@@FIN@@          ) : (\n            <div\n              style={styles.warning}\n            >",
+  "remplace": "          {droit ? (\n            <>\n              <div style={{ ...styles.big, color: resteCP < 0 ? rouge : undefined }}>\n                {fmt(resteCP)} <span style={styles.unit}>j disponibles</span>\n              </div>\n              <div style={styles.muted}>\n                Droits : {fmt(totalCP)} j\n                {Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0) > 0\n                  ? ` (dont ${fmt(Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0))} j exceptionnels)`\n                  : \"\"}{\" \"}\n                · Pris : {fmt(prisesCP)} j · En validation : {fmt(attenteCP)} j\n              </div>\n              <div style={{ ...styles.muted, fontSize: 11, marginTop: 6 }}>\n                Période CP : {droit.cp_periode_debut ? dateFR(droit.cp_periode_debut) : `01/04/${exercice}`} →{\" \"}\n                {droit.cp_periode_fin ? dateFR(droit.cp_periode_fin) : `31/05/${exercice + 1}`}\n              </div>\n            </>\n"
+ }
+]
