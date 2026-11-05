@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Feuilles : statut lu",
+  "cherche": "          \"id,semaine_debut,total_re,compteur_avant,compteur_apres,heures_supplementaires\"",
+  "remplace": "          \"id,semaine_debut,statut,total_re,compteur_avant,compteur_apres,heures_supplementaires\""
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Compteur : dernière feuille validée, sinon compteur initial",
+  "cherche": "  const compteur = Number(\n    feuilles.length > 0\n      ? (feuilles[0].compteur_apres ?? 0)\n      : (droit?.compteur_recuperation_initial ??\n          collab?.compteur_recuperation ??\n          0)\n  );",
+  "remplace": "  // COMPTEUR_VALIDE : comme dans le Suivi RH, la dernière feuille VALIDÉE (une feuille en cours de saisie\n  // n'est pas encore comptée), sinon le compteur initial saisi par l'administration\n  const derniereValidee = feuilles.find((f: any) => f.statut === \"A_TRAITER\");\n  const compteur = Number(\n    derniereValidee\n      ? (derniereValidee.compteur_apres ?? 0)\n      : (droit?.compteur_recuperation_initial ??\n          collab?.compteur_recuperation ??\n          0)\n  );"
+ }
+]

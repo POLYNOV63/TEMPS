@@ -823,7 +823,7 @@ export default function RHPage() {
       } = await supabase
         .from("feuilles_heures")
         .select(
-          "id,semaine_debut,total_re,compteur_avant,compteur_apres,heures_supplementaires"
+          "id,semaine_debut,statut,total_re,compteur_avant,compteur_apres,heures_supplementaires"
         )
         .eq(
           "collaborateur_id",
@@ -1034,9 +1034,12 @@ export default function RHPage() {
   // Le compteur affiché est le compteur réel en fin de dernière feuille.
   // S'il n'existe encore aucune feuille, on reprend la valeur initiale RH,
   // puis seulement en dernier recours la valeur historique du collaborateur.
+  // COMPTEUR_VALIDE : comme dans le Suivi RH, la dernière feuille VALIDÉE (une feuille en cours de saisie
+  // n'est pas encore comptée), sinon le compteur initial saisi par l'administration
+  const derniereValidee = feuilles.find((f: any) => f.statut === "A_TRAITER");
   const compteur = Number(
-    feuilles.length > 0
-      ? (feuilles[0].compteur_apres ?? 0)
+    derniereValidee
+      ? (derniereValidee.compteur_apres ?? 0)
       : (droit?.compteur_recuperation_initial ??
           collab?.compteur_recuperation ??
           0)
