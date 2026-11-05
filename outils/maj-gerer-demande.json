@@ -1,0 +1,20 @@
+[
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "Liste : un bouton « Traiter » / « Ouvrir », plus de croix",
+  "cherche": "<td><div style={{display:\"flex\",gap:6,justifyContent:\"center\",flexWrap:\"wrap\"}}><button style={styles.small} onClick={()=>setSelection(d)}>Détails</button><button style={styles.delete} disabled={!!action} onClick={()=>supprimer(d)} title=\"Supprimer définitivement\">×</button></div></td>",
+  "remplace": "<td>{/* GERER_DEMANDE : un seul bouton ; la suppression se fait dans la fenêtre, avec confirmation forte */}<button style={d.statut===\"EN_ATTENTE\"?{...styles.primary,padding:\"9px 16px\"}:styles.small} onClick={()=>setSelection(d)} title={d.statut===\"EN_ATTENTE\"?\"Valider ou refuser cette demande\":\"Voir, transmettre ou annuler cette demande\"}>{d.statut===\"EN_ATTENTE\"?\"Traiter →\":\"Ouvrir\"}</button></td>"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "Suppression : confirmation en tapant SUPPRIMER",
+  "cherche": "   if(!window.confirm(\"Supprimer définitivement cette demande ?\\n\\nElle sera retirée de l’archive et de la base de données.\"))return;",
+  "remplace": "   const saisie=window.prompt(`Suppression DÉFINITIVE de la demande de ${d.prenom||\"\"} ${d.nom||\"\"} (${type(d.type_demande)}, ${dateFR(d.date_debut)}).\\n\\nElle disparaîtra de l’archive et de la base, sans aucune trace. Pour garder une trace, utilisez plutôt « Annuler la demande ».\\n\\nPour confirmer, tapez SUPPRIMER :`,\"\");\n   if((saisie||\"\").trim().toUpperCase()!==\"SUPPRIMER\")return;"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "Fenêtre : suppression discrète, en bas",
+  "cherche": "<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>",
+  "remplace": "<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>\n   <div style={{marginTop:22,paddingTop:12,borderTop:\"1px solid #eee\",display:\"flex\",justifyContent:\"space-between\",alignItems:\"center\",gap:10,flexWrap:\"wrap\"}}><small style={{color:\"#888\"}}>Pour retirer une demande en gardant une trace, utilisez « Annuler la demande ».</small><button type=\"button\" disabled={!!action} onClick={()=>supprimer(selection)} style={{border:0,background:\"transparent\",color:\"#a51d1d\",textDecoration:\"underline\",fontSize:12,cursor:\"pointer\",padding:4}}>Supprimer définitivement…</button></div>"
+ }
+]

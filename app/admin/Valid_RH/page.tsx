@@ -137,7 +137,8 @@ export default function ValidRHPage(){
    finally{setAction("");}
  }
  async function supprimer(d:Demande){
-   if(!window.confirm("Supprimer définitivement cette demande ?\n\nElle sera retirée de l’archive et de la base de données."))return;
+   const saisie=window.prompt(`Suppression DÉFINITIVE de la demande de ${d.prenom||""} ${d.nom||""} (${type(d.type_demande)}, ${dateFR(d.date_debut)}).\n\nElle disparaîtra de l’archive et de la base, sans aucune trace. Pour garder une trace, utilisez plutôt « Annuler la demande ».\n\nPour confirmer, tapez SUPPRIMER :`,"");
+   if((saisie||"").trim().toUpperCase()!=="SUPPRIMER")return;
    setAction("delete");setErreur("");
    try{
      const {error}=await supabase.from("rh_demandes").delete().eq("id",d.id);
@@ -225,7 +226,7 @@ export default function ValidRHPage(){
               <td><span style={{...styles.badge,background:b[0],color:b[1]}}>{b[2]}</span></td>
               <td>{d.validateur_trigramme||"—"}</td>
               <td><span style={{...styles.badge,background:d.rh_transmise?"#e7f6ec":"#f3f3f3",color:d.rh_transmise?"#18713b":"#777"}}>{d.rh_transmise?"✓ Transmise au RH":"— Non transmise"}</span>{d.rh_transmise_le&&<div style={{fontSize:10,color:"#888",marginTop:3}}>{new Date(d.rh_transmise_le).toLocaleString("fr-FR")}</div>}</td>
-              <td><div style={{display:"flex",gap:6,justifyContent:"center",flexWrap:"wrap"}}><button style={styles.small} onClick={()=>setSelection(d)}>Détails</button><button style={styles.delete} disabled={!!action} onClick={()=>supprimer(d)} title="Supprimer définitivement">×</button></div></td>
+              <td>{/* GERER_DEMANDE : un seul bouton ; la suppression se fait dans la fenêtre, avec confirmation forte */}<button style={d.statut==="EN_ATTENTE"?{...styles.primary,padding:"9px 16px"}:styles.small} onClick={()=>setSelection(d)} title={d.statut==="EN_ATTENTE"?"Valider ou refuser cette demande":"Voir, transmettre ou annuler cette demande"}>{d.statut==="EN_ATTENTE"?"Traiter →":"Ouvrir"}</button></td>
              </tr>})}</tbody>
             </table>
            </div>
@@ -247,6 +248,7 @@ export default function ValidRHPage(){
     </div>
     <label style={styles.label}>Motif si refus</label><textarea style={{...styles.input,width:"100%",minHeight:70}} value={motif} onChange={e=>setMotif(e.target.value)} placeholder="Obligatoire en cas de refus"/></div>}
    <div className="vr-actions" style={styles.actions}>{selection.statut==="EN_ATTENTE"&&<><button style={styles.danger} disabled={!!action} onClick={()=>refuser(selection)}>Refuser</button><button className="vr-valider" style={styles.primary} disabled={!!action} onClick={()=>valider(selection)}>Valider pour moi</button></>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<input style={{...styles.input,marginTop:0,minWidth:240}} value={emailEnvoi} onChange={e=>setEmailEnvoi(e.target.value)} aria-label="Adresse d’envoi" placeholder="adresse e-mail"/>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<button style={styles.primary} disabled={!!action} onClick={()=>envoyerRH(selection)}>{action==="email"?"Envoi…":selection.statut==="VALIDEE"?"Transmettre l’accord":"Transmettre le refus"}</button>}{selection.rh_transmise&&<div style={{...styles.note,background:"#eaf7ee",color:"#176f3a"}}>✓ Demande transmise au RH{selection.rh_transmise_le?` le ${new Date(selection.rh_transmise_le).toLocaleString("fr-FR")}`:""}</div>}{["EN_ATTENTE","VALIDEE","ENVOYEE_RH","REFUSEE"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>{action==="annulation"?"Annulation…":"Annuler la demande"}</button>}<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>
+   <div style={{marginTop:22,paddingTop:12,borderTop:"1px solid #eee",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}><small style={{color:"#888"}}>Pour retirer une demande en gardant une trace, utilisez « Annuler la demande ».</small><button type="button" disabled={!!action} onClick={()=>supprimer(selection)} style={{border:0,background:"transparent",color:"#a51d1d",textDecoration:"underline",fontSize:12,cursor:"pointer",padding:4}}>Supprimer définitivement…</button></div>
   </div></div>}
  </main>;
 }
