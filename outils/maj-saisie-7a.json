@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Saisie « 7A » = 7 h absent facturées",
+  "cherche": "    return { heures: Math.min(744, Number(x)), code: y.toUpperCase().slice(0, 6) };",
+  "remplace": "    // SAISIE_7A : « 7A » (ou 7 Abs.) = absent, facturé quand même\n    const code = y.toUpperCase().slice(0, 6);\n    return { heures: Math.min(744, Number(x)), code: [\"A\", \"AB\", \"ABS\"].includes(code) ? \"ABS\" : code };"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Aide : « 7A »",
+  "cherche": "<strong>« 7 Abs. »</strong> = absent mais facturé quand même (pas au planning).",
+  "remplace": "<strong>« 7A »</strong> = absent mais facturé quand même (pas au planning)."
+ }
+]

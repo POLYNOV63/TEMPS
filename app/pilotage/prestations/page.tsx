@@ -138,7 +138,9 @@ function lireValeur(texte: string): { heures: number | null; code: string | null
   const avecCode = t.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]{1,6})\.?$/) ?? t.match(/^([A-Za-z]{1,6})\.?\s*(\d+(?:\.\d+)?)$/); // ABS_FACTURE
   if (avecCode) {
     const [x, y] = /^\d/.test(avecCode[1]) ? [avecCode[1], avecCode[2]] : [avecCode[2], avecCode[1]];
-    return { heures: Math.min(744, Number(x)), code: y.toUpperCase().slice(0, 6) };
+    // SAISIE_7A : « 7A » (ou 7 Abs.) = absent, facturé quand même
+    const code = y.toUpperCase().slice(0, 6);
+    return { heures: Math.min(744, Number(x)), code: ["A", "AB", "ABS"].includes(code) ? "ABS" : code };
   }
   return { heures: null, code: t.toUpperCase().slice(0, 6) };
 }
@@ -1403,7 +1405,7 @@ function PrestationsContenu() {
             <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
             <p style={page.sousTitre}>
               Ce relevé fait foi et alimente le planning. <strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: "#ffe94d", padding: "0 3px" }}>en jaune</span> = dernier jour planifié · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
-              une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose · <strong>« 7 Abs. »</strong> = absent mais facturé quand même (pas au planning).
+              une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose · <strong>« 7A »</strong> = absent mais facturé quand même (pas au planning).
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
