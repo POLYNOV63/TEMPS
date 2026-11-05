@@ -1,0 +1,8 @@
+[
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Mon espace RH : accès à « Mes notes de frais »",
+  "cherche": "        titre=\"Mon espace RH\"\n        description={`${collab?.prenom ?? \"\"} ${collab?.nom ?? \"\"} · ${collab?.trigramme ?? \"\"}`}\n      />",
+  "remplace": "        titre=\"Mon espace RH\"\n        description={`${collab?.prenom ?? \"\"} ${collab?.nom ?? \"\"} · ${collab?.trigramme ?? \"\"}`}\n      />\n\n      {/* LIEN_NOTES_FRAIS */}\n      <a\n        href=\"/notes-frais\"\n        style={{ display: \"flex\", alignItems: \"center\", justifyContent: \"space-between\", gap: 12, background: \"#fff\", border: \"1px solid #e2e5e9\", borderLeft: `5px solid ${rouge}`, borderRadius: 14, padding: \"14px 18px\", marginBottom: 18, textDecoration: \"none\", color: \"#252525\", boxShadow: \"0 2px 8px rgba(0,0,0,.05)\" }}\n      >\n        <span>\n          <strong style={{ fontSize: 17 }}>🧾 Mes notes de frais</strong>\n          <br />\n          <span style={{ fontSize: 13, color: \"#6d737a\" }}>Remplir ma note du mois et la transmettre au service RH</span>\n        </span>\n        <strong style={{ color: rouge, whiteSpace: \"nowrap\" }}>Ouvrir →</strong>\n      </a>"
+ }
+]

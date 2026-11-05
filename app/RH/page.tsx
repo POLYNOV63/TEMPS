@@ -1502,6 +1502,19 @@ export default function RHPage() {
         description={`${collab?.prenom ?? ""} ${collab?.nom ?? ""} · ${collab?.trigramme ?? ""}`}
       />
 
+      {/* LIEN_NOTES_FRAIS */}
+      <a
+        href="/notes-frais"
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fff", border: "1px solid #e2e5e9", borderLeft: `5px solid ${rouge}`, borderRadius: 14, padding: "14px 18px", marginBottom: 18, textDecoration: "none", color: "#252525", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}
+      >
+        <span>
+          <strong style={{ fontSize: 17 }}>🧾 Mes notes de frais</strong>
+          <br />
+          <span style={{ fontSize: 13, color: "#6d737a" }}>Remplir ma note du mois et la transmettre au service RH</span>
+        </span>
+        <strong style={{ color: rouge, whiteSpace: "nowrap" }}>Ouvrir →</strong>
+      </a>
+
       {erreur && (
         <div style={styles.alert}>
           {erreur}
