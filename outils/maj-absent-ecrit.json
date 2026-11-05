@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/pilotage/affaires/page.tsx",
+  "nom": "Planning des affaires : « Absent » / « Férié » dans les cases grises",
+  "cherche": "              style={{ gridColumn: col(k), gridRow: 1, alignSelf: \"center\", height: 28, margin: \"0 1px\", borderRadius: 4, background: \"repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)\", border: \"1px solid #6b6f75\", boxSizing: \"border-box\", zIndex: 2, pointerEvents: \"none\" }}\n            />",
+  "remplace": "              style={{ gridColumn: col(k), gridRow: 1, alignSelf: \"center\", height: 28, margin: \"0 1px\", borderRadius: 4, background: \"repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)\", border: \"1px solid #6b6f75\", boxSizing: \"border-box\", zIndex: 2, pointerEvents: \"none\", display: \"flex\", alignItems: \"center\", justifyContent: \"center\", overflow: \"hidden\", fontSize: 9, fontWeight: 800, color: \"#3b4046\", letterSpacing: \".2px\" /* ABSENT_ECRIT */ }}\n            >\n              {m.motif === \"ferie\" ? \"Férié\" : \"Absent\"}\n            </div>"
+ },
+ {
+  "fichier": "app/pilotage/planning-ressources/page.tsx",
+  "nom": "Planning par ressource : jours d’absence marqués « Absent »",
+  "cherche": "                  {l.segments.map((s) => {",
+  "remplace": "                  {/* ABSENT_ECRIT : jour de congé validé (capacité nulle un jour normalement travaillé) */}\n                  {colonnes.map((j, i) => {\n                    const cj = capacites.get(l.collab.id)?.get(j);\n                    if (!cj || cj.ferie || cj.theorique <= 0 || cj.net > 0) return null;\n                    return (\n                      <div\n                        key={`abs-${j}`}\n                        title={`${nomCollab(l.collab)} absent le ${formatDate(j)} (congé validé)`}\n                        style={{\n                          gridColumn: col(i),\n                          gridRow: `1 / span ${Math.max(2, l.voies)}`,\n                          margin: \"0 1px\",\n                          borderRadius: 4,\n                          background: \"repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)\",\n                          border: \"1px solid #9aa0a6\",\n                          display: \"flex\",\n                          alignItems: \"center\",\n                          justifyContent: \"center\",\n                          overflow: \"hidden\",\n                          fontSize: 9,\n                          fontWeight: 800,\n                          color: \"#3b4046\",\n                          writingMode: \"vertical-rl\",\n                          transform: \"rotate(180deg)\",\n                          zIndex: 0,\n                        }}\n                      >\n                        Absent\n                      </div>\n                    );\n                  })}\n                  {l.segments.map((s) => {"
+ }
+]

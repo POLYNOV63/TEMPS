@@ -1420,8 +1420,10 @@ function PlanningAffairesContenu() {
             <div
               key={`m-${b.affectation.id}-${m.jour}`}
               title={m.motif === "ferie" ? `Jour férié le ${formatDate(m.jour)}` : `Congé validé le ${formatDate(m.jour)}`}
-              style={{ gridColumn: col(k), gridRow: 1, alignSelf: "center", height: 28, margin: "0 1px", borderRadius: 4, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75", boxSizing: "border-box", zIndex: 2, pointerEvents: "none" }}
-            />
+              style={{ gridColumn: col(k), gridRow: 1, alignSelf: "center", height: 28, margin: "0 1px", borderRadius: 4, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75", boxSizing: "border-box", zIndex: 2, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", fontSize: 9, fontWeight: 800, color: "#3b4046", letterSpacing: ".2px" /* ABSENT_ECRIT */ }}
+            >
+              {m.motif === "ferie" ? "Férié" : "Absent"}
+            </div>
           );
         })}
         {horsBornes.map((k) => (

@@ -498,6 +498,37 @@ function PlanningRessourcesContenu() {
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                   </div>
 
+                  {/* ABSENT_ECRIT : jour de congé validé (capacité nulle un jour normalement travaillé) */}
+                  {colonnes.map((j, i) => {
+                    const cj = capacites.get(l.collab.id)?.get(j);
+                    if (!cj || cj.ferie || cj.theorique <= 0 || cj.net > 0) return null;
+                    return (
+                      <div
+                        key={`abs-${j}`}
+                        title={`${nomCollab(l.collab)} absent le ${formatDate(j)} (congé validé)`}
+                        style={{
+                          gridColumn: col(i),
+                          gridRow: `1 / span ${Math.max(2, l.voies)}`,
+                          margin: "0 1px",
+                          borderRadius: 4,
+                          background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)",
+                          border: "1px solid #9aa0a6",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          overflow: "hidden",
+                          fontSize: 9,
+                          fontWeight: 800,
+                          color: "#3b4046",
+                          writingMode: "vertical-rl",
+                          transform: "rotate(180deg)",
+                          zIndex: 0,
+                        }}
+                      >
+                        Absent
+                      </div>
+                    );
+                  })}
                   {l.segments.map((s) => {
                     const nb = s.fin - s.debut + 1;
                     return (
