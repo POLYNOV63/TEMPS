@@ -157,6 +157,14 @@ function BilanContenu() {
   const [suggestions, setSuggestions] = useState<{ cle: string; libelle: string }[]>([]);
   const [voirDetail, setVoirDetail] = useState(false);
   const [filtrePersonne, setFiltrePersonne] = useState("");
+  /* PAR_CODE : libellé de chaque code d'imputation (EM, MP, DT…) */
+  const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("codes_imputation")
+      .select("code,libelle")
+      .then(({ data }) => setLibellesCodes(new Map(((data ?? []) as { code: string; libelle: string | null }[]).map((c) => [c.code.toUpperCase(), c.libelle ?? ""]))));
+  }, []);
 
   /* Référentiels + liste des affaires pour la saisie assistée */
   useEffect(() => {
@@ -678,6 +686,65 @@ function BilanContenu() {
                 </p>
               )}
             </section>
+
+            {/* ---------- par code d'imputation ---------- */}
+            {imputations.length > 0 &&
+              (() => {
+                const parCode = new Map<string, { heures: number; activites: Map<string, number>; personnes: Set<string> }>();
+                for (const i of imputations) {
+                  const code = (i.code || "—").toUpperCase();
+                  const e = parCode.get(code) ?? { heures: 0, activites: new Map<string, number>(), personnes: new Set<string>() };
+                  e.heures += i.heures;
+                  const act = i.activite_id ?? SANS_ACTIVITE;
+                  e.activites.set(act, (e.activites.get(act) ?? 0) + i.heures);
+                  e.personnes.add(i.collaborateur_id ?? i.trigramme ?? "?");
+                  parCode.set(code, e);
+                }
+                const liste = [...parCode.entries()].sort((a, b) => b[1].heures - a[1].heures);
+                const total = liste.reduce((t, [, e]) => t + e.heures, 0);
+                return (
+                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+                    <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par code</h2>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>Code</th>
+                          <th style={th}>Libellé</th>
+                          <th style={th}>Activité</th>
+                          <th style={thN}>Heures</th>
+                          <th style={thN}>Part du réalisé</th>
+                          <th style={thN}>Personnes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liste.map(([code, e]) => (
+                          <tr key={code}>
+                            <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{code}</td>
+                            <td style={td}>{libellesCodes.get(code) || "—"}</td>
+                            <td style={{ ...td, fontSize: 12.5 }}>
+                              {[...e.activites.entries()]
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([a, h]) => (e.activites.size > 1 ? `${nomActivite(a).replace(" (code non rattaché)", "")} ${formatHeures(h)}` : nomActivite(a).replace(" (code non rattaché)", "")))
+                                .join(" · ")}
+                            </td>
+                            <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(e.heures)}</td>
+                            <td style={tdN}>{total > 0 ? `${Math.round((e.heures / total) * 100)} %` : "—"}</td>
+                            <td style={tdN}>{e.personnes.size}</td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td colSpan={3} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                            Total
+                          </td>
+                          <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(total)}</td>
+                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }}>100 %</td>
+                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }} />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </section>
+                );
+              })()}
 
             {/* ---------- heures par sous-dossier (saisi dans les feuilles d'heures) ---------- */}
             <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
