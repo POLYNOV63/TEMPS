@@ -1,10 +1,14 @@
 // supabase/functions/notifier-demande-rh/index.ts
 // Prévient AMA et PLG qu'une nouvelle demande RH a été déposée. Envoi par Microsoft 365 (Microsoft Graph).
+// LIEN_VALIDATION : l'e-mail contient un bouton qui ouvre directement la demande dans Validation RH.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const cors={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,x-client-info,apikey,content-type"};
 function esc(v:unknown){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
 function dateFR(v:string|null){return v?new Date(`${v}T00:00:00`).toLocaleDateString("fr-FR"):"—";}
+// Adresse de l'application (secret facultatif APP_URL, sinon l'adresse Vercel)
+const APP_URL=(Deno.env.get("APP_URL")||"https://temps-rho.vercel.app").replace(/\/+$/,"");
+const LIBELLES:Record<string,string>={CP:"Congé payé",RTT:"RTT",RE:"Récupération",CP_EXCEPTIONNEL_AVEC_JUSTIFICATIF:"CP exceptionnel avec justificatif",CP_EXCEPTIONNEL_SANS_JUSTIFICATIF:"CP exceptionnel sans justificatif"};
 
 // ---- Envoi via Microsoft 365 (Microsoft Graph) : début
 // Secrets Supabase nécessaires : M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET, M365_EXPEDITEUR
@@ -42,8 +46,19 @@ Deno.serve(async(req)=>{
   if(!requester || requester.auth_user_id!==user.id) throw new Error("Accès refusé.");
   const {data:admins}=await admin.from("collaborateurs").select("email,trigramme,prenom,nom").eq("role","ADMIN").eq("actif",true).in("trigramme",["AMA","PLG"]);
   const to=(admins||[]).map((x:any)=>x.email).filter(Boolean); if(!to.length) throw new Error("Aucun destinataire AMA/PLG configuré.");
-  const subject=`POLYNOV – Nouvelle demande RH – ${d.prenom} ${d.nom}`;
-  const html=`<h2>Nouvelle demande RH POLYNOV</h2><p><strong>Collaborateur :</strong> ${esc(d.prenom)} ${esc(d.nom)} (${esc(d.trigramme||"")})</p><p><strong>Type :</strong> ${esc(d.type_demande)}</p><p><strong>Période :</strong> ${esc(dateFR(d.date_debut))}${d.date_fin&&d.date_fin!==d.date_debut?` → ${esc(dateFR(d.date_fin))}`:""}</p><p><strong>Durée :</strong> ${d.type_demande==="RE"?`${esc(d.heures_re)} h`:`${esc(d.duree_jours)} jour(s)`}</p>${d.commentaire?`<p><strong>Commentaire :</strong> ${esc(d.commentaire)}</p>`:""}<p>La demande est en attente de traitement dans Validation RH.</p>`;
+  const lien=`${APP_URL}/admin/Valid_RH?demande=${encodeURIComponent(demandeId)}`;
+  const type=LIBELLES[String(d.type_demande)]||String(d.type_demande);
+  const subject=`POLYNOV – Nouvelle demande RH – ${d.prenom} ${d.nom} – ${type}`;
+  const html=`<div style="font-family:Calibri,Arial,sans-serif;font-size:15px;color:#222">`
+   +`<h2 style="color:#c00000;margin:0 0 12px">Nouvelle demande RH POLYNOV</h2>`
+   +`<p><strong>Collaborateur :</strong> ${esc(d.prenom)} ${esc(d.nom)} (${esc(d.trigramme||"")})</p>`
+   +`<p><strong>Type :</strong> ${esc(type)}</p>`
+   +`<p><strong>Période :</strong> ${esc(dateFR(d.date_debut))}${d.date_fin&&d.date_fin!==d.date_debut?` → ${esc(dateFR(d.date_fin))}`:""}</p>`
+   +`<p><strong>Durée :</strong> ${d.type_demande==="RE"?`${esc(d.heures_re)} h`:`${esc(d.duree_jours)} jour(s)`}</p>`
+   +`${d.commentaire?`<p><strong>Commentaire :</strong> ${esc(d.commentaire)}</p>`:""}`
+   +`<p style="margin:22px 0"><a href="${esc(lien)}" style="display:inline-block;background:#c00000;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:8px">Valider ou refuser cette demande →</a></p>`
+   +`<p style="font-size:12px;color:#777">Si le bouton ne s’affiche pas, copiez cette adresse dans votre navigateur :<br><a href="${esc(lien)}" style="color:#8f0000">${esc(lien)}</a></p>`
+   +`</div>`;
   await envoyerMail({to,subject,html});
   await admin.from("rh_demandes").update({notification_admin_envoyee_le:new Date().toISOString(),notification_admin_message_id:null,notification_reponse_erreur:null}).eq("id",demandeId);
   return new Response(JSON.stringify({ok:true}),{headers:{...cors,"Content-Type":"application/json"}});
