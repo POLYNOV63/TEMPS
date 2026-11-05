@@ -1027,6 +1027,10 @@ export default function RHPage() {
     prisesRTT -
     attenteRTT;
 
+  // FORFAIT_JOUR : un cadre au forfait jours a des RTT (droits saisis, ou RTT déjà posés) ; il n'a ni heures
+  // supplémentaires ni compteur de récupération. Les autres n'ont pas de RTT.
+  const forfaitJour = Number(droit?.rtt_acquis || 0) !== 0 || prisesRTT + attenteRTT > 0;
+
   // Le compteur affiché est le compteur réel en fin de dernière feuille.
   // S'il n'existe encore aucune feuille, on reprend la valeur initiale RH,
   // puis seulement en dernier recours la valeur historique du collaborateur.
@@ -1511,10 +1515,10 @@ export default function RHPage() {
         className="rh-grille"
         style={{
           ...styles.grid,
-          gridTemplateColumns:
-            "repeat(5,minmax(0,1fr))",
+          gridTemplateColumns: forfaitJour ? "repeat(2,minmax(0,1fr))" : "repeat(5,minmax(0,1fr))",
         }}
       >
+        {!forfaitJour && (
         <div
           className="rh-large"
           style={{
@@ -1575,6 +1579,8 @@ export default function RHPage() {
           </small>
         </div>
 
+        )}
+
         <div style={styles.card}>
           <div style={styles.cardTitle}>
             🍽 Tickets restaurant
@@ -1603,6 +1609,7 @@ export default function RHPage() {
           </small>
         </div>
 
+        {!forfaitJour && (
         <div style={styles.card}>
           <div style={styles.cardTitle}>
             ⏱️ Heures supplémentaires
@@ -1624,6 +1631,7 @@ export default function RHPage() {
             {exercice + 1}
           </small>
         </div>
+        )}
       </section>
 
       <section className="rh-grille" style={styles.grid}>
@@ -1631,7 +1639,7 @@ export default function RHPage() {
           className="rh-large"
           style={{
             ...styles.card,
-            gridColumn: "span 3",
+            gridColumn: forfaitJour ? "span 3" : "span 4",
           }}
         >
           <div style={styles.cardTitle}>
@@ -1651,25 +1659,11 @@ export default function RHPage() {
                 </span>
               </div>
 
-              <div className="rh-cp" style={styles.cpGrid}>
+              <div className="rh-cp" style={{ ...styles.cpGrid, gridTemplateColumns: "repeat(2,1fr)" }}>
                 <Mini
-                  label="CP reportés — année précédente"
-                  value={
-                    droit.cp_reportes
-                  }
-                />
-
-                <Mini
-                  label="CP acquis — année courante"
+                  label="Droits de l’exercice"
                   value={
                     droit.cp_acquis
-                  }
-                />
-
-                <Mini
-                  label="Ancienneté"
-                  value={
-                    droit.cp_anciennete
                   }
                 />
 
@@ -1694,16 +1688,6 @@ export default function RHPage() {
                   marginTop: 8,
                 }}
               >
-                <span>
-                  Dont ancienneté :{" "}
-                  <strong>
-                    {fmt(
-                      droit.cp_anciennete
-                    )}{" "}
-                    j
-                  </strong>
-                </span>
-
                 <span>
                   Pris :{" "}
                   <strong>
@@ -1760,6 +1744,7 @@ export default function RHPage() {
           )}
         </div>
 
+        {forfaitJour && (
         <div className="rh-large" style={styles.card}>
           <div style={styles.cardTitle}>
             📅 RTT
@@ -1791,6 +1776,7 @@ export default function RHPage() {
             j
           </div>
         </div>
+        )}
       </section>
 
       <section
@@ -1837,13 +1823,17 @@ export default function RHPage() {
                   CP normal
                 </option>
 
-                <option value="RTT">
-                  RTT
-                </option>
+                {forfaitJour && (
+                  <option value="RTT">
+                    RTT
+                  </option>
+                )}
 
-                <option value="RE">
-                  Récupération
-                </option>
+                {!forfaitJour && (
+                  <option value="RE">
+                    Récupération
+                  </option>
+                )}
 
                 <option value="CP_EXCEPTIONNEL_SANS_JUSTIFICATIF">
                   CP exceptionnel sans

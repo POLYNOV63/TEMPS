@@ -1,0 +1,98 @@
+[
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Forfait jour : qui est concerné",
+  "cherche": "  const resteRTT =\n    Number(droit?.rtt_acquis || 0) -\n    prisesRTT -\n    attenteRTT;",
+  "remplace": "  const resteRTT =\n    Number(droit?.rtt_acquis || 0) -\n    prisesRTT -\n    attenteRTT;\n\n  // FORFAIT_JOUR : un cadre au forfait jours a des RTT (droits saisis, ou RTT déjà posés) ; il n'a ni heures\n  // supplémentaires ni compteur de récupération. Les autres n'ont pas de RTT.\n  const forfaitJour = Number(droit?.rtt_acquis || 0) !== 0 || prisesRTT + attenteRTT > 0;"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Première ligne : deux tuiles pour un forfait jours",
+  "cherche": "          gridTemplateColumns:\n            \"repeat(5,minmax(0,1fr))\",",
+  "remplace": "          gridTemplateColumns: forfaitJour ? \"repeat(2,minmax(0,1fr))\" : \"repeat(5,minmax(0,1fr))\","
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Compteur : masqué pour un forfait jours (début)",
+  "cherche": "        <div\n          className=\"rh-large\"\n          style={{\n            ...styles.card,\n            gridColumn: \"span 2\",\n          }}\n        >\n          <div style={styles.cardTitle}>\n            🕐 Compteur de récupération",
+  "remplace": "        {!forfaitJour && (\n        <div\n          className=\"rh-large\"\n          style={{\n            ...styles.card,\n            gridColumn: \"span 2\",\n          }}\n        >\n          <div style={styles.cardTitle}>\n            🕐 Compteur de récupération"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Compteur : masqué pour un forfait jours (fin)",
+  "cherche": "        <div style={styles.card}>\n          <div style={styles.cardTitle}>\n            🍽 Tickets restaurant",
+  "remplace": "        )}\n\n        <div style={styles.card}>\n          <div style={styles.cardTitle}>\n            🍽 Tickets restaurant"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Heures sup : masquées pour un forfait jours (début)",
+  "cherche": "        <div style={styles.card}>\n          <div style={styles.cardTitle}>\n            ⏱️ Heures supplémentaires",
+  "remplace": "        {!forfaitJour && (\n        <div style={styles.card}>\n          <div style={styles.cardTitle}>\n            ⏱️ Heures supplémentaires"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Heures sup : masquées pour un forfait jours (fin)",
+  "cherche": "      </section>\n\n      <section className=\"rh-grille\" style={styles.grid}>",
+  "remplace": "        )}\n      </section>\n\n      <section className=\"rh-grille\" style={styles.grid}>"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Congés payés : toute la largeur sans RTT",
+  "cherche": "            gridColumn: \"span 3\",",
+  "remplace": "            gridColumn: forfaitJour ? \"span 3\" : \"span 4\","
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "RTT : seulement pour un forfait jours (début)",
+  "cherche": "        <div className=\"rh-large\" style={styles.card}>\n          <div style={styles.cardTitle}>\n            📅 RTT",
+  "remplace": "        {forfaitJour && (\n        <div className=\"rh-large\" style={styles.card}>\n          <div style={styles.cardTitle}>\n            📅 RTT"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "RTT : seulement pour un forfait jours (fin)",
+  "cherche": "      </section>\n\n      <section\n        style={{\n          ...styles.card,\n          marginBottom: 24,\n        }}\n      >",
+  "remplace": "        )}\n      </section>\n\n      <section\n        style={{\n          ...styles.card,\n          marginBottom: 24,\n        }}\n      >"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Tuile « CP reportés » retirée",
+  "cherche": "                <Mini\n                  label=\"CP reportés — année précédente\"\n                  value={\n                    droit.cp_reportes\n                  }\n                />\n\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Tuile « Ancienneté » retirée",
+  "cherche": "                <Mini\n                  label=\"Ancienneté\"\n                  value={\n                    droit.cp_anciennete\n                  }\n                />\n\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Tuile des droits renommée",
+  "cherche": "                  label=\"CP acquis — année courante\"",
+  "remplace": "                  label=\"Droits de l’exercice\""
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Tuiles CP sur deux colonnes",
+  "cherche": "<div className=\"rh-cp\" style={styles.cpGrid}>",
+  "remplace": "<div className=\"rh-cp\" style={{ ...styles.cpGrid, gridTemplateColumns: \"repeat(2,1fr)\" }}>"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Mention « dont ancienneté » retirée",
+  "cherche": "                <span>\n                  Dont ancienneté :{\" \"}\n                  <strong>\n                    {fmt(\n                      droit.cp_anciennete\n                    )}{\" \"}\n                    j\n                  </strong>\n                </span>\n\n",
+  "remplace": ""
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Demande : RTT seulement pour un forfait jours",
+  "cherche": "                <option value=\"RTT\">\n                  RTT\n                </option>",
+  "remplace": "                {forfaitJour && (\n                  <option value=\"RTT\">\n                    RTT\n                  </option>\n                )}"
+ },
+ {
+  "fichier": "app/RH/page.tsx",
+  "nom": "Demande : récupération seulement hors forfait jours",
+  "cherche": "                <option value=\"RE\">\n                  Récupération\n                </option>",
+  "remplace": "                {!forfaitJour && (\n                  <option value=\"RE\">\n                    Récupération\n                  </option>\n                )}"
+ }
+]
