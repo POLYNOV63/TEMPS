@@ -212,7 +212,8 @@ function SuiviRHContenu() {
           compteur,
         };
       })
-      .sort((x, y) => (x.c.trigramme ?? "").localeCompare(y.c.trigramme ?? ""));
+      // TRI_NOM_FAMILLE : par nom de famille, puis prénom
+      .sort((x, y) => (x.c.nom ?? "").localeCompare(y.c.nom ?? "", "fr", { sensitivity: "base" }) || (x.c.prenom ?? "").localeCompare(y.c.prenom ?? "", "fr", { sensitivity: "base" }));
   }, [collabs, droits, demandes, feuilles, regs, recherche, debutEx, finEx]);
 
   /* historique d'un collaborateur */
