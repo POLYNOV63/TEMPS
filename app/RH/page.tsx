@@ -1661,7 +1661,7 @@ export default function RHPage() {
                 · Pris : {fmt(prisesCP)} j · En validation : {fmt(attenteCP)} j
               </div>
               <div style={{ ...styles.muted, fontSize: 11, marginTop: 6 }}>
-                Période CP : {droit.cp_periode_debut ? dateFR(droit.cp_periode_debut) : `01/04/${exercice}`} →{" "}
+                {/* PERIODE_CP_JUIN */}Période d’acquisition : {droit.cp_periode_debut ? dateFR(droit.cp_periode_debut) : `01/06/${exercice}`} →{" "}
                 {droit.cp_periode_fin ? dateFR(droit.cp_periode_fin) : `31/05/${exercice + 1}`}
               </div>
             </>

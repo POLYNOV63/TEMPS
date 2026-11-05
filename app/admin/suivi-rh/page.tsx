@@ -307,7 +307,7 @@ function SuiviRHContenu() {
         cp_exceptionnels_avec_justificatif: v(d?.cp_exceptionnels_avec_justificatif),
         cp_exceptionnels_sans_justificatif: v(d?.cp_exceptionnels_sans_justificatif),
         compteur_recuperation_initial: v(d?.compteur_recuperation_initial),
-        cp_periode_debut: d?.cp_periode_debut ?? `${exercice}-04-01`,
+        cp_periode_debut: d?.cp_periode_debut ?? `${exercice}-06-01`, // PERIODE_CP_JUIN
         cp_periode_fin: d?.cp_periode_fin ?? `${exercice + 1}-05-31`,
       },
     });
@@ -389,7 +389,7 @@ function SuiviRHContenu() {
               cp_exceptionnels_sans_justificatif: cpChange ? 0 : n(l.d?.cp_exceptionnels_sans_justificatif),
               rtt_acquis: rttChange ? Math.round((rtt + l.rttPris + l.rttAttente) * 100) / 100 : n(l.d?.rtt_acquis),
               compteur_recuperation_initial: cptChange && !aDesFeuilles ? cpt : n(l.d?.compteur_recuperation_initial),
-              cp_periode_debut: l.d?.cp_periode_debut ?? `${exercice}-04-01`,
+              cp_periode_debut: l.d?.cp_periode_debut ?? `${exercice}-06-01`,
               cp_periode_fin: l.d?.cp_periode_fin ?? `${exercice + 1}-05-31`,
             },
             { onConflict: "collaborateur_id,exercice" }
