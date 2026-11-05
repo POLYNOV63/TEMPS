@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
+import ImpactCongePlanning from "@/components/rh/ImpactCongePlanning";
 
 type Demande={
  id:string;collaborateur_id:string;exercice:number;type_demande:string;date_debut:string;date_fin:string;duree_jours:number;heures_re:number|null;commentaire:string|null;justificatif_nom:string|null;justificatif_url:string|null;statut:string;traitee_par:string|null;traitee_le:string|null;motif_refus:string|null;email_rh:string;email_envoye_le:string|null;created_at:string;validateur_id:string|null;date_validation:string|null;validation_trigramme:string|null;signature_demandeur:string|null;signature_validateur:string|null;rh_transmise:boolean;rh_transmise_le:string|null;rh_transmise_par:string|null;trigramme:string|null;prenom:string|null;nom:string|null;collaborateur_email:string|null;validateur_trigramme:string|null;validateur_prenom:string|null;validateur_nom:string|null;
@@ -43,6 +44,8 @@ function groupesArchives(demandes:Demande[]){
 
 export default function ValidRHPage(){
  const [demandes,setDemandes]=useState<Demande[]>([]);const [filtre,setFiltre]=useState("EN_ATTENTE");const [filtreTransmission,setFiltreTransmission]=useState("TOUTES");const [chargement,setChargement]=useState(true);const [erreur,setErreur]=useState("");const [selection,setSelection]=useState<Demande|null>(null);const [motif,setMotif]=useState("");const [emailRH,setEmailRH]=useState(ADRESSES_PAR_DEFAUT);const [action,setAction]=useState("");const [me,setMe]=useState<any>(null);const [infosAnnulation,setInfosAnnulation]=useState<any>(null);
+ /* CONGE_PLANNING : effet d’un congé validé sur le planning des affaires et le relevé PE / PI */
+ const [impact,setImpact]=useState<null|{collaborateurId:string;nom:string;debut:string;fin:string}>(null);
  // Transmission de la décision dès la validation (ou le refus), à l'adresse libre de la fenêtre
  const [emailEnvoi,setEmailEnvoi]=useState("");
  // ouverture directe d'une demande depuis la cloche du tableau de bord (?demande=<id>), une seule fois
@@ -93,6 +96,7 @@ export default function ValidRHPage(){
      const problemeEnvoi=await transmettreApresDecision(d);
      setSelection(null);
      await charger();
+     if(d.type_demande!=="RE")setImpact({collaborateurId:d.collaborateur_id,nom:`${d.prenom||""} ${d.nom||""}`.trim(),debut:d.date_debut,fin:d.date_fin});
      const problemeCollab=notification.error?` L’e-mail au collaborateur n’a pas pu être envoyé : ${await motifFonction(notification.error)}`:"";
      if(problemeCollab||problemeEnvoi){setErreur(`Demande validée.${problemeCollab}${problemeEnvoi}`);}
    }catch(e:any){setErreur(e?.message||"Validation impossible.");}
@@ -247,9 +251,10 @@ export default function ValidRHPage(){
      <small style={{color:"#555"}}>En copie : {selection.prenom} {selection.nom}{selection.collaborateur_email?` (${selection.collaborateur_email})`:""}, PLG et AMA.</small>
     </div>
     <label style={styles.label}>Motif si refus</label><textarea style={{...styles.input,width:"100%",minHeight:70}} value={motif} onChange={e=>setMotif(e.target.value)} placeholder="Obligatoire en cas de refus"/></div>}
-   <div className="vr-actions" style={styles.actions}>{selection.statut==="EN_ATTENTE"&&<><button style={styles.danger} disabled={!!action} onClick={()=>refuser(selection)}>Refuser</button><button className="vr-valider" style={styles.primary} disabled={!!action} onClick={()=>valider(selection)}>Valider pour moi</button></>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<input style={{...styles.input,marginTop:0,minWidth:240}} value={emailEnvoi} onChange={e=>setEmailEnvoi(e.target.value)} aria-label="Adresse d’envoi" placeholder="adresse e-mail"/>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<button style={styles.primary} disabled={!!action} onClick={()=>envoyerRH(selection)}>{action==="email"?"Envoi…":selection.statut==="VALIDEE"?"Transmettre l’accord":"Transmettre le refus"}</button>}{selection.rh_transmise&&<div style={{...styles.note,background:"#eaf7ee",color:"#176f3a"}}>✓ Demande transmise au RH{selection.rh_transmise_le?` le ${new Date(selection.rh_transmise_le).toLocaleString("fr-FR")}`:""}</div>}{["EN_ATTENTE","VALIDEE","ENVOYEE_RH","REFUSEE"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>{action==="annulation"?"Annulation…":"Annuler la demande"}</button>}<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>
+   <div className="vr-actions" style={styles.actions}>{selection.statut==="EN_ATTENTE"&&<><button style={styles.danger} disabled={!!action} onClick={()=>refuser(selection)}>Refuser</button><button className="vr-valider" style={styles.primary} disabled={!!action} onClick={()=>valider(selection)}>Valider pour moi</button></>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<input style={{...styles.input,marginTop:0,minWidth:240}} value={emailEnvoi} onChange={e=>setEmailEnvoi(e.target.value)} aria-label="Adresse d’envoi" placeholder="adresse e-mail"/>}{["VALIDEE","REFUSEE"].includes(selection.statut)&&!selection.rh_transmise&&<button style={styles.primary} disabled={!!action} onClick={()=>envoyerRH(selection)}>{action==="email"?"Envoi…":selection.statut==="VALIDEE"?"Transmettre l’accord":"Transmettre le refus"}</button>}{selection.rh_transmise&&<div style={{...styles.note,background:"#eaf7ee",color:"#176f3a"}}>✓ Demande transmise au RH{selection.rh_transmise_le?` le ${new Date(selection.rh_transmise_le).toLocaleString("fr-FR")}`:""}</div>}{["VALIDEE","ENVOYEE_RH"].includes(selection.statut)&&selection.type_demande!=="RE"&&<button style={styles.secondary} disabled={!!action} title="Retirer ou décaler ce qui était prévu pendant ce congé (planning des affaires, relevé PE / PI)" onClick={()=>{const s=selection;setSelection(null);setImpact({collaborateurId:s.collaborateur_id,nom:`${s.prenom||""} ${s.nom||""}`.trim(),debut:s.date_debut,fin:s.date_fin});}}>📅 Planning</button>}{["EN_ATTENTE","VALIDEE","ENVOYEE_RH","REFUSEE"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>{action==="annulation"?"Annulation…":"Annuler la demande"}</button>}<button style={styles.secondary} onClick={()=>setSelection(null)}>Fermer</button></div>
    <div style={{marginTop:22,paddingTop:12,borderTop:"1px solid #eee",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}><small style={{color:"#888"}}>Pour retirer une demande en gardant une trace, utilisez « Annuler la demande ».</small><button type="button" disabled={!!action} onClick={()=>supprimer(selection)} style={{border:0,background:"transparent",color:"#a51d1d",textDecoration:"underline",fontSize:12,cursor:"pointer",padding:4}}>Supprimer définitivement…</button></div>
   </div></div>}
+  {impact&&<ImpactCongePlanning collaborateurId={impact.collaborateurId} nom={impact.nom} debut={impact.debut} fin={impact.fin} onFermer={()=>setImpact(null)}/>}
  </main>;
 }
 function Info({l,v}:{l:string,v:string}){return <div style={styles.info}><span>{l}</span><strong>{v}</strong></div>}

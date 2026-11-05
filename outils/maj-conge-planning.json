@@ -1,0 +1,32 @@
+[
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "Import de la fenêtre « congé dans le planning »",
+  "cherche": "import EnTetePage from \"@/components/EnTetePage\";",
+  "remplace": "import EnTetePage from \"@/components/EnTetePage\";\nimport ImpactCongePlanning from \"@/components/rh/ImpactCongePlanning\";"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "État de la fenêtre",
+  "cherche": "const [infosAnnulation,setInfosAnnulation]=useState<any>(null);",
+  "remplace": "const [infosAnnulation,setInfosAnnulation]=useState<any>(null);\n /* CONGE_PLANNING : effet d’un congé validé sur le planning des affaires et le relevé PE / PI */\n const [impact,setImpact]=useState<null|{collaborateurId:string;nom:string;debut:string;fin:string}>(null);"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "À la validation : la fenêtre s’ouvre",
+  "cherche": "     const problemeEnvoi=await transmettreApresDecision(d);\n     setSelection(null);\n     await charger();",
+  "remplace": "     const problemeEnvoi=await transmettreApresDecision(d);\n     setSelection(null);\n     await charger();\n     if(d.type_demande!==\"RE\")setImpact({collaborateurId:d.collaborateur_id,nom:`${d.prenom||\"\"} ${d.nom||\"\"}`.trim(),debut:d.date_debut,fin:d.date_fin});"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "Bouton « Planning » sur un congé déjà validé",
+  "cherche": "{[\"EN_ATTENTE\",\"VALIDEE\",\"ENVOYEE_RH\",\"REFUSEE\"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>",
+  "remplace": "{[\"VALIDEE\",\"ENVOYEE_RH\"].includes(selection.statut)&&selection.type_demande!==\"RE\"&&<button style={styles.secondary} disabled={!!action} title=\"Retirer ou décaler ce qui était prévu pendant ce congé (planning des affaires, relevé PE / PI)\" onClick={()=>{const s=selection;setSelection(null);setImpact({collaborateurId:s.collaborateur_id,nom:`${s.prenom||\"\"} ${s.nom||\"\"}`.trim(),debut:s.date_debut,fin:s.date_fin});}}>📅 Planning</button>}{[\"EN_ATTENTE\",\"VALIDEE\",\"ENVOYEE_RH\",\"REFUSEE\"].includes(selection.statut)&&<button style={styles.delete} disabled={!!action} onClick={()=>annuler(selection)}>"
+ },
+ {
+  "fichier": "app/admin/Valid_RH/page.tsx",
+  "nom": "La fenêtre dans la page",
+  "cherche": " </main>;\n}\nfunction Info(",
+  "remplace": "  {impact&&<ImpactCongePlanning collaborateurId={impact.collaborateurId} nom={impact.nom} debut={impact.debut} fin={impact.fin} onFermer={()=>setImpact(null)}/>}\n </main>;\n}\nfunction Info("
+ }
+]
