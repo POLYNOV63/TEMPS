@@ -135,7 +135,7 @@ function lireValeur(texte: string): { heures: number | null; code: string | null
   if (t === "") return null;
   if (/^\d+(\.\d+)?$/.test(t)) return { heures: Math.min(744, Number(t)), code: null };
   // CP_FACTURE : « 7 CP » (ou « CP 7 ») = absent, mais facturé quand même ; pas reporté au planning
-  const avecCode = t.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]{1,6})$/) ?? t.match(/^([A-Za-z]{1,6})\s*(\d+(?:\.\d+)?)$/);
+  const avecCode = t.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]{1,6})\.?$/) ?? t.match(/^([A-Za-z]{1,6})\.?\s*(\d+(?:\.\d+)?)$/); // ABS_FACTURE
   if (avecCode) {
     const [x, y] = /^\d/.test(avecCode[1]) ? [avecCode[1], avecCode[2]] : [avecCode[2], avecCode[1]];
     return { heures: Math.min(744, Number(x)), code: y.toUpperCase().slice(0, 6) };
@@ -1403,7 +1403,7 @@ function PrestationsContenu() {
             <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
             <p style={page.sousTitre}>
               Ce relevé fait foi et alimente le planning. <strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: "#ffe94d", padding: "0 3px" }}>en jaune</span> = dernier jour planifié · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
-              une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose · <strong>« 7 CP »</strong> = absent mais facturé quand même (pas au planning).
+              une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose · <strong>« 7 Abs. »</strong> = absent mais facturé quand même (pas au planning).
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -2053,7 +2053,7 @@ function PrestationsContenu() {
                               {jours.map((j) => {
                                 const s = saisieParCle.get(`${l.id}|${j.date}`);
                                 const force = Boolean(s?.code && (s?.heures ?? 0) > 0);
-                                const texte = s ? (force ? `${texteHeures(s.heures ?? 0)} ${s.code}` : s.code ?? (s.heures !== null ? texteHeures(s.heures) : "")) : "";
+                                const texte = s ? (force ? `${texteHeures(s.heures ?? 0)} ${s.code === "ABS" ? "Abs." : s.code}` : s.code ?? (s.heures !== null ? texteHeures(s.heures) : "")) : "";
                                 const factureH = s?.heures ?? 0;
                                 const r = reelDe(l, j.date);
                                 const different = Math.abs(factureH - r) > 0.01 && (factureH > 0 || r > 0);
@@ -2067,7 +2067,7 @@ function PrestationsContenu() {
                                     key={j.date}
                                     onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
                                     onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
-                                    title={force ? `${s?.code} facturé quand même (${texteHeures(s?.heures ?? 0)} h) : compté dans la facture, mais la personne reste absente au planning` : dernierPlanifie ? "Dernier jour planifié de cette ligne" : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
+                                    title={force ? `${s?.code === "ABS" ? "Absent" : s?.code}, facturé quand même (${texteHeures(s?.heures ?? 0)} h) : compté dans la facture, mais la personne reste absente au planning` : dernierPlanifie ? "Dernier jour planifié de cette ligne" : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
                                     style={{
                                       ...bordHaut,
                                       padding: 0,

@@ -1,0 +1,26 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Saisie « 7 Abs. » acceptée (point final permis)",
+  "cherche": "const avecCode = t.match(/^(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]{1,6})$/) ?? t.match(/^([A-Za-z]{1,6})\\s*(\\d+(?:\\.\\d+)?)$/);",
+  "remplace": "const avecCode = t.match(/^(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]{1,6})\\.?$/) ?? t.match(/^([A-Za-z]{1,6})\\.?\\s*(\\d+(?:\\.\\d+)?)$/); // ABS_FACTURE"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Case : affichage « 7 Abs. »",
+  "cherche": "`${texteHeures(s.heures ?? 0)} ${s.code}`",
+  "remplace": "`${texteHeures(s.heures ?? 0)} ${s.code === \"ABS\" ? \"Abs.\" : s.code}`"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Case : bulle « Absent, facturé quand même »",
+  "cherche": "`${s?.code} facturé quand même (",
+  "remplace": "`${s?.code === \"ABS\" ? \"Absent\" : s?.code}, facturé quand même ("
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Aide : « 7 Abs. »",
+  "cherche": "<strong>« 7 CP »</strong> = absent mais facturé quand même (pas au planning).",
+  "remplace": "<strong>« 7 Abs. »</strong> = absent mais facturé quand même (pas au planning)."
+ }
+]
