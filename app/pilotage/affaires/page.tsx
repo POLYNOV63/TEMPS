@@ -2186,6 +2186,43 @@ function PlanningAffairesContenu() {
           </div>
         )}
 
+        {/* CONFLITS_CONGES : une affectation qui tombe sur un congé validé (capacité nulle, hors férié) */}
+        {!chargement &&
+          (() => {
+            const conflits: { cle: string; qui: string; affaire: string; jours: string[]; heures: number }[] = [];
+            for (const a of affectations) {
+              if (!a.affaire_id) continue;
+              const cap = capacites.get(a.collaborateur_id);
+              if (!cap) continue;
+              const js = (joursParAffectation.get(a.id) ?? []).filter((j) => j.heures > 0 && colonnes.includes(j.jour) && !estFerie(j.jour) && (cap.get(j.jour)?.net ?? 1) <= 0);
+              if (js.length === 0) continue;
+              const af = affairesParId.get(a.affaire_id);
+              conflits.push({
+                cle: a.id,
+                qui: nomCollab(annuaire.find((c) => c.id === a.collaborateur_id)),
+                affaire: af ? `${af.type} ${af.numero}` : "Affaire",
+                jours: js.map((j) => j.jour),
+                heures: js.reduce((t, j) => t + j.heures, 0),
+              });
+            }
+            if (conflits.length === 0) return null;
+            return (
+              <Message genre="erreur">
+                <strong>
+                  ⚠ {conflits.length} affectation{conflits.length > 1 ? "s tombent" : " tombe"} sur un congé validé
+                </strong>{" "}
+                (sur la période affichée). Pour la régler : double-clic sur la barre puis « Affecter » (le calcul saute les congés et repousse la fin), ou « 📅
+                Planning » dans Validation RH.
+                <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+                  {conflits.map((x) => (
+                    <li key={x.cle}>
+                      <strong>{x.qui}</strong> · {x.affaire} · {formatHeures(x.heures)} {x.jours.length > 1 ? "les" : "le"} {x.jours.map((j) => formatDate(j)).join(", ")}
+                    </li>
+                  ))}
+                </ul>
+              </Message>
+            );
+          })()}
         {chargement && <Message genre="info">Chargement du planning…</Message>}
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
