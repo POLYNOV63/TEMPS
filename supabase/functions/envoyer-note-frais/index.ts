@@ -13,8 +13,9 @@ const euros=(n:number)=>(Math.round((Number(n)||0)*100)/100).toLocaleString("fr-
 const nb=(n:unknown)=>(Number(n)||0).toLocaleString("fr-FR",{maximumFractionDigits:2});
 const dateFR=(v:string|null)=>v?new Date(`${String(v).slice(0,10)}T00:00:00Z`).toLocaleDateString("fr-FR",{timeZone:"UTC"}):"—";
 const moisLong=(v:string)=>new Date(`${v.slice(0,10)}T00:00:00Z`).toLocaleDateString("fr-FR",{month:"long",year:"numeric",timeZone:"UTC"});
-// adresses du service RH : secret NF_EMAIL_RH, sinon celles de Validation RH
-const EMAIL_RH=(Deno.env.get("NF_EMAIL_RH")||"a.loyer@sibim.fr, e.lavin@sibim.fr").split(/[;,\s]+/).map((a)=>a.trim()).filter(Boolean);
+// adresses du service RH : réglées par les administrateurs (Paramètres des notes de frais, table nf_parametres)
+const EMAIL_RH_DEFAUT="a.loyer@sibim.fr, e.lavin@sibim.fr";
+const listeAdresses=(t:string)=>[...new Set(t.split(/[;,\s]+/).map((a)=>a.trim()).filter((a)=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)))];
 const TAILLE_MAX=3_400_000; // Microsoft 365 : environ 3 Mo de pièces jointes par envoi direct
 
 function base64(octets:Uint8Array){let s="";const p=0x8000;for(let i=0;i<octets.length;i+=p)s+=String.fromCharCode(...octets.subarray(i,i+p));return btoa(s);}
@@ -112,6 +113,9 @@ Deno.serve(async(req)=>{
    <p style="font-size:13px;color:#555">Les kilomètres sont indemnisés au-delà de la distance domicile → Polynov (aller et retour) quand le départ est le domicile.<br>En pièces jointes : la note de frais Excel remplie${frais.some((f)=>f.justificatif_path)?" et les justificatifs":""}.${manquants.length?` <span style="color:#b3261e">Fichier(s) introuvable(s) : ${esc(manquants.join(", "))}.</span>`:""}</p>
    <p style="font-size:13px;color:#555">Transmise par ${esc(me.prenom||"")} ${esc(me.nom||"")} depuis l’application POLYNOV.</p></div>`;
 
+  const {data:param}=await admin.from("nf_parametres").select("valeur").eq("cle","email_rh").maybeSingle();
+  let EMAIL_RH=listeAdresses(String(param?.valeur||""));
+  if(!EMAIL_RH.length) EMAIL_RH=listeAdresses(EMAIL_RH_DEFAUT);
   const {data:admins}=await admin.from("collaborateurs").select("email").eq("role","ADMIN").eq("actif",true);
   const vus=new Set(EMAIL_RH.map((a)=>a.toLowerCase()));
   const cc=[c?.email,...((admins||[]) as {email:string|null}[]).map((a)=>a.email)]

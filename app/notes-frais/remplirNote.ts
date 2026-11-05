@@ -19,6 +19,8 @@ export type NotePourExcel = {
   regKmJour: number | null;
   regNbTrajets: number | null;
   frais: FraisNote[];
+  /* barème réglé par l'administration : recopié dans l'onglet Prix-Km du classeur */
+  bareme?: { puissance: string; prix_km: number }[];
 };
 
 export const MAX_DEPLACEMENTS_EXCEL = 8;
@@ -39,6 +41,9 @@ export async function remplirNoteExcel(n: NotePourExcel): Promise<Blob> {
     for (let r = 3; r <= 7; r++) {
       const v = String(px.getCell(`B${r}`).value ?? "");
       if (v.trim() === n.puissance.trim()) puissance = v;
+      // prix au km de l'application (modifiable par l'administration), pour que le classeur calcule pareil
+      const b = n.bareme?.find((x) => x.puissance.trim() === v.trim());
+      if (b) px.getCell(`C${r}`).value = b.prix_km;
     }
   }
   const date = (iso: string | null) => (iso ? new Date(`${iso}T00:00:00Z`) : null);

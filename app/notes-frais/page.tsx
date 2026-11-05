@@ -81,7 +81,7 @@ export default function NotesDeFraisPage() {
   const [info, setInfo] = useState("");
   const [enCours, setEnCours] = useState("");
   const [uid, setUid] = useState("");
-  const [moi, setMoi] = useState<{ id: string; prenom: string | null; nom: string | null; trigramme: string | null } | null>(null);
+  const [moi, setMoi] = useState<{ id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null } | null>(null);
   const [baremes, setBaremes] = useState<Bareme[]>([]);
   const [profil, setProfil] = useState<{ vehicule: string; puissance: string; km_domicile: string }>({ vehicule: "", puissance: "", km_domicile: "" });
   const [notes, setNotes] = useState<Resume[]>([]);
@@ -102,7 +102,7 @@ export default function NotesDeFraisPage() {
       return;
     }
     setUid(user.id);
-    const { data: c, error: ce } = await supabase.from("collaborateurs").select("id,prenom,nom,trigramme").eq("auth_user_id", user.id).single();
+    const { data: c, error: ce } = await supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role").eq("auth_user_id", user.id).single();
     if (ce || !c) throw new Error("Collaborateur introuvable.");
     setMoi(c);
     const [b, p, l] = await Promise.all([
@@ -327,6 +327,7 @@ export default function NotesDeFraisPage() {
         regSite: note.reg_site,
         regKmJour: note.reg_km_jour.trim() ? n(note.reg_km_jour) : null,
         regNbTrajets: note.reg_nb_trajets.trim() ? n(note.reg_nb_trajets) : null,
+        bareme: baremes,
         frais: frais.filter((f) => n(f.montant) > 0).map((f) => ({ jour: f.jour || null, nature: f.nature, commentaire: f.commentaire, montant: n(f.montant) })),
       });
       const chemin = `${uid}/${id}/note-de-frais-v${note.version + 1}.xlsx`;
@@ -376,6 +377,13 @@ export default function NotesDeFraisPage() {
     <main style={{ minHeight: "100vh", background: "#f5f6f8", fontFamily: "Calibri, Arial, sans-serif", padding: "24px 4vw 60px", color: "#252525" }}>
       <EnTetePage forme="encadre" section="Espace collaborateur" titre="Mes notes de frais" description={moi ? `${moi.prenom ?? ""} ${moi.nom ?? ""} · ${moi.trigramme ?? ""}` : ""} />
 
+      {String(moi?.role ?? "").toUpperCase() === "ADMIN" && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <a href="/admin/notes-frais" style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
+            ⚙ Paramètres des notes de frais (destinataires, barème)
+          </a>
+        </div>
+      )}
       {erreur && <div style={{ background: "#fdecec", color: "#a51d1d", padding: 12, borderRadius: 10, marginBottom: 14 }}>{erreur}</div>}
       {info && <div style={{ background: "#e7f6ec", color: "#18713b", padding: 12, borderRadius: 10, marginBottom: 14 }}>{info}</div>}
       {chargement && <div style={carte}>Chargement…</div>}
