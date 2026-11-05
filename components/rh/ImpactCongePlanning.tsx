@@ -90,13 +90,13 @@ export default function ImpactCongePlanning({ collaborateurId, nom, debut, fin, 
           const ids = lignes.map((l) => l.id);
           const moisConcernes = [...new Set(joursConge.map((j) => `${j.slice(0, 7)}-01`))];
           const [{ data: sa }, { data: pm }] = await Promise.all([
-            supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).gte("jour", debut).lte("jour", fin),
+            supabase.from("prestation_saisies").select("ligne_id,jour,heures,code").in("ligne_id", ids).gte("jour", debut).lte("jour", fin),
             supabase.from("prestation_mois").select("ligne_id,mois,valide").in("ligne_id", ids).in("mois", moisConcernes),
           ]);
           const valides = new Set(((pm ?? []) as { ligne_id: string; valide: boolean | null }[]).filter((x) => x.valide).map((x) => x.ligne_id));
           for (const l of lignes) {
-            const js = ((sa ?? []) as { ligne_id: string; jour: string; heures: number | string | null }[])
-              .filter((s) => s.ligne_id === l.id && conge.has(s.jour) && (Number(s.heures) || 0) > 0)
+            const js = ((sa ?? []) as { ligne_id: string; jour: string; heures: number | string | null; code: string | null }[])
+              .filter((s) => s.ligne_id === l.id && conge.has(s.jour) && (Number(s.heures) || 0) > 0 && !s.code)
               .map((s) => ({ jour: s.jour, heures: Number(s.heures) || 0 }));
             if (js.length === 0) continue;
             const a = parId.get(l.affaire_id);

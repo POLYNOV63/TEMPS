@@ -1,0 +1,50 @@
+[
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Saisie « 7 CP » : heures facturées et code ensemble",
+  "cherche": "  if (/^\\d+(\\.\\d+)?$/.test(t)) return { heures: Math.min(744, Number(t)), code: null };",
+  "remplace": "  if (/^\\d+(\\.\\d+)?$/.test(t)) return { heures: Math.min(744, Number(t)), code: null };\n  // CP_FACTURE : « 7 CP » (ou « CP 7 ») = absent, mais facturé quand même ; pas reporté au planning\n  const avecCode = t.match(/^(\\d+(?:\\.\\d+)?)\\s*([A-Za-z]{1,6})$/) ?? t.match(/^([A-Za-z]{1,6})\\s*(\\d+(?:\\.\\d+)?)$/);\n  if (avecCode) {\n    const [x, y] = /^\\d/.test(avecCode[1]) ? [avecCode[1], avecCode[2]] : [avecCode[2], avecCode[1]];\n    return { heures: Math.min(744, Number(x)), code: y.toUpperCase().slice(0, 6) };\n  }"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Case : affichage « 7 CP »",
+  "cherche": "                                const texte = s ? s.code ?? (s.heures !== null ? texteHeures(s.heures) : \"\") : \"\";",
+  "remplace": "                                const force = Boolean(s?.code && (s?.heures ?? 0) > 0);\n                                const texte = s ? (force ? `${texteHeures(s.heures ?? 0)} ${s.code}` : s.code ?? (s.heures !== null ? texteHeures(s.heures) : \"\")) : \"\";"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Case : bulle d’explication",
+  "cherche": "title={dernierPlanifie ? \"Dernier jour planifié de cette ligne\"",
+  "remplace": "title={force ? `${s?.code} facturé quand même (${texteHeures(s?.heures ?? 0)} h) : compté dans la facture, mais la personne reste absente au planning` : dernierPlanifie ? \"Dernier jour planifié de cette ligne\""
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Case : texte plus petit pour « 7 CP »",
+  "cherche": "                                        fontSize: ferme ? 10 : 13,",
+  "remplace": "                                        fontSize: ferme || force ? 10 : 13,"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Export : la case forcée exporte ses heures",
+  "cherche": "                    return sa ? sa.code ?? sa.heures : null;",
+  "remplace": "                    return sa ? (sa.code && (sa.heures ?? 0) > 0 ? sa.heures : sa.code ?? sa.heures) : null;"
+ },
+ {
+  "fichier": "app/pilotage/prestations/page.tsx",
+  "nom": "Aide : la saisie « 7 CP »",
+  "cherche": "· coin orange = la feuille d’heures dit autre chose.",
+  "remplace": "· coin orange = la feuille d’heures dit autre chose · <strong>« 7 CP »</strong> = absent mais facturé quand même (pas au planning)."
+ },
+ {
+  "fichier": "components/rh/ImpactCongePlanning.tsx",
+  "nom": "Congé validé : une case « CP facturé » n’est pas touchée",
+  "cherche": "            supabase.from(\"prestation_saisies\").select(\"ligne_id,jour,heures\").in(\"ligne_id\", ids).gte(\"jour\", debut).lte(\"jour\", fin),",
+  "remplace": "            supabase.from(\"prestation_saisies\").select(\"ligne_id,jour,heures,code\").in(\"ligne_id\", ids).gte(\"jour\", debut).lte(\"jour\", fin),"
+ },
+ {
+  "fichier": "components/rh/ImpactCongePlanning.tsx",
+  "nom": "Congé validé : seules les heures de travail comptent",
+  "cherche": "            const js = ((sa ?? []) as { ligne_id: string; jour: string; heures: number | string | null }[])\n              .filter((s) => s.ligne_id === l.id && conge.has(s.jour) && (Number(s.heures) || 0) > 0)",
+  "remplace": "            const js = ((sa ?? []) as { ligne_id: string; jour: string; heures: number | string | null; code: string | null }[])\n              .filter((s) => s.ligne_id === l.id && conge.has(s.jour) && (Number(s.heures) || 0) > 0 && !s.code)"
+ }
+]
