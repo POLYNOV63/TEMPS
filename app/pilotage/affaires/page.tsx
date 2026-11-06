@@ -2408,7 +2408,8 @@ function PlanningAffairesContenu() {
                 const cle = baseDe(affaire);
                 const membres = toutesAffaires.filter((a) => baseDe(a) === cle && a.statut !== "ABANDONNEE");
                 // BANDEAU_TOUTES : toute commande au forfait a son bandeau ; « famille » quand il y a des avenants
-                const enFamille = affaire.type === "CBE" && !estPrestation(affaire);
+                // BANDEAU_PARTOUT : DBE, PI et PE ont aussi leur bandeau
+                const enFamille = true;
                 const famille = membres.length > 1;
                 const premierDeFamille = enFamille && (premierDuGroupe || baseDe(lignes[indexLigne - 1]) !== cle);
                 const suivante = lignes[indexLigne + 1];
@@ -2433,7 +2434,7 @@ function PlanningAffairesContenu() {
                         )}
                         <div style={{ marginTop: 12, padding: "6px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
                           <strong style={{ color: "#34506b" }}>
-                            {famille ? "⧉ " : ""}CBE {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero}
+                            {famille ? "⧉ " : ""}{laBase.type} {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero}
                             {famille ? ` · famille de ${membres.length} commandes` : ""}
                             {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? "s" : ""})` : ""}
                           </strong>
@@ -2441,7 +2442,7 @@ function PlanningAffairesContenu() {
                             {clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : ""}
                             {laBase.designation}
                           </span>
-                          {famille && (
+                          {famille && laBase.type === "CBE" && !estPrestation(laBase) && (
                           <span style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
                             chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{" "}
                             <strong style={{ color: rs < -0.5 ? C.rougeTexte : rs > 0.5 ? "#7a3e00" : "#1b5e20" }}>
