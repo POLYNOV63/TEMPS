@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V4, après TRAME_CA_V2 et TRAME_CA_V3)
+   FINANCES - TRAME CA (TRAME_CA_V5, après TRAME_CA_V2, V3 et V4)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -17,6 +17,7 @@
    V4 : l'ATTENDU (pas encore livré ou facturé) s'affiche sous le réalisé
    de chaque ligne, en rouge italique, avec le même découpage
    imputation × activité (mouvements attendus de la page).
+   V5 : le bloc des totaux est en tête de la trame, le détail ensuite.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -169,35 +170,7 @@ export default function TrameCA(props: {
     const jusquA = (v: number[]) => v.map((x, i) => (ecoule[i] ? x : null));
 
     const lignes: Ligne[] = [
-      { kind: "titre", libelle: "BE — Chiffrage sur CDC" },
-      ca("Méca BE", r.be_meca, undefined, ra.be_meca),
-      ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
-      ca("Elec BE", r.be_elec, undefined, ra.be_elec),
-      { kind: "titre", libelle: "PI — Prestation interne" },
-      ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
-      ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
-      ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
-      { kind: "titre", libelle: "IG — Intergroupe" },
-      ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
-      ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
-      ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
-      { kind: "titre", libelle: "Négoce, scan, achats" },
-      ca("Négoce", r.negoce, undefined, ra.negoce),
-      ca("CA Scan", r.scan, undefined, ra.scan),
-      ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
-      ca("Achats sur affaires", r.achats, "info"),
-      ca("CA BE sans HA", caBE, "sous-total", caBEa),
-      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: tot(caBEnet) / 12, style: "sous-total", attendu: caBEa },
-      { kind: "titre", libelle: "PE — Prestation externe" },
-      ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
-      ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
-      ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
-      ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
-      ca("CA PE", caPE, "sous-total", caPEa),
-      { kind: "titre", libelle: "Frais annexes de refacturation (ajustements)" },
-      ca("Positif", r.fa_pos),
-      ca("Négatif", r.fa_neg),
-      { kind: "titre", libelle: "Totaux" },
+      { kind: "titre", libelle: "Totaux — réalisé, attendu, atterrissage, prévisionnel" },
       { kind: "valeurs", libelle: "Prévisionnel du mois", valeurs: prevu, total: objectif, moyenne: objectif / 12, saisie: true },
       {
         kind: "valeurs",
@@ -280,6 +253,34 @@ export default function TrameCA(props: {
         total: objectif > 0 ? cumulADate / objectif : null,
         format: "pct",
       },
+      { kind: "titre", libelle: "Détail du réalisé — BE, Chiffrage sur CDC" },
+      ca("Méca BE", r.be_meca, undefined, ra.be_meca),
+      ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
+      ca("Elec BE", r.be_elec, undefined, ra.be_elec),
+      { kind: "titre", libelle: "PI — Prestation interne" },
+      ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
+      ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
+      ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
+      { kind: "titre", libelle: "IG — Intergroupe" },
+      ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
+      ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
+      ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
+      { kind: "titre", libelle: "Négoce, scan, achats" },
+      ca("Négoce", r.negoce, undefined, ra.negoce),
+      ca("CA Scan", r.scan, undefined, ra.scan),
+      ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
+      ca("Achats sur affaires", r.achats, "info"),
+      ca("CA BE sans HA", caBE, "sous-total", caBEa),
+      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: tot(caBEnet) / 12, style: "sous-total", attendu: caBEa },
+      { kind: "titre", libelle: "PE — Prestation externe" },
+      ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
+      ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
+      ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
+      ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
+      ca("CA PE", caPE, "sous-total", caPEa),
+      { kind: "titre", libelle: "Frais annexes de refacturation (ajustements)" },
+      ca("Positif", r.fa_pos),
+      ca("Négatif", r.fa_neg),
     ];
 
     return { lignes, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
