@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V6 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5)
+   FINANCES - TRAME CA (TRAME_CA_V7 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -22,6 +22,8 @@
    enregistrés dans finances_ajustements sous un motif réservé ; les
    autres ajustements du mois (saisis ailleurs) restent intacts et comptés.
    Remplissage du prévisionnel sous le tableau.
+   V7 : la moyenne mensuelle du réalisé se calcule sur les mois CLÔTURÉS
+   (mois en cours exclu) ; prévisionnel et atterrissage restent sur 12 mois.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -191,6 +193,9 @@ export default function TrameCA(props: {
     }
   }
   const moisCourant = new Date().toISOString().slice(0, 7);
+  // mois clôturés de l'exercice affiché (12 pour un exercice passé, 0 en début d'exercice)
+  const nbClos = mois.filter((m) => m < moisCourant).length;
+  const moyClos = (v: number[]) => (nbClos > 0 ? v.slice(0, nbClos).reduce((t, x) => t + x, 0) / nbClos : null);
 
   const trame = useMemo(() => {
     const n = mois.map(() => 0);
@@ -228,7 +233,7 @@ export default function TrameCA(props: {
       valeurs,
       attendu: att,
       total: tot(valeurs),
-      moyenne: tot(valeurs) / 12,
+      moyenne: moyClos(valeurs),
       style,
       base: style === "info" ? undefined : total,
       baseTotal: style === "info" ? undefined : totalAnnuel,
@@ -244,7 +249,7 @@ export default function TrameCA(props: {
         libelle: "TOTAL CA MENSUEL (réalisé)",
         valeurs: total,
         total: totalAnnuel,
-        moyenne: totalAnnuel / 12,
+        moyenne: moyClos(total),
         style: "total",
         clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
       },
@@ -337,7 +342,7 @@ export default function TrameCA(props: {
       ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
       ca("Achats sur affaires", r.achats, "info"),
       ca("CA BE sans HA", caBE, "sous-total", caBEa),
-      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: tot(caBEnet) / 12, style: "sous-total", attendu: caBEa },
+      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: moyClos(caBEnet), style: "sous-total", attendu: caBEa },
       { kind: "titre", libelle: "PE — Prestation externe" },
       ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
       ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
@@ -387,7 +392,7 @@ export default function TrameCA(props: {
       { titre: "", cle: "poste", largeur: 42 },
       ...mois.map((m, i) => ({ titre: `${nomMois(m)} ${m.slice(2, 4)}`, cle: `m${i}`, format: "euros" as const, largeur: 13 })),
       { titre: "Totaux", cle: "total", format: "euros", largeur: 15 },
-      { titre: "Moyenne sur 12 mois", cle: "moy", format: "euros", largeur: 15 },
+      { titre: nbClos > 0 ? `Moyenne / mois (${nbClos} mois clôturé${nbClos > 1 ? "s" : ""})` : "Moyenne / mois", cle: "moy", format: "euros", largeur: 17 },
     ];
     const versExcel = (liste: Ligne[]): L[] =>
       liste.flatMap((l): L[] => {
@@ -503,7 +508,7 @@ export default function TrameCA(props: {
             )}
           </td>
           {afficherPct && <td style={tdPct}>{part(l.total, l.baseTotal)}</td>}
-          <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined || l.moyenne === null ? "" : affiche(l.moyenne)}</td>
+          <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined ? "" : l.moyenne === null ? "—" : affiche(l.moyenne)}</td>
         </tr>
       );
     });
@@ -556,7 +561,15 @@ export default function TrameCA(props: {
               ])}
               <th style={{ ...th, borderLeft: `2px solid ${C.ligne}` }}>Totaux</th>
               {afficherPct && <th style={th}>%</th>}
-              <th style={th}>Moyenne / 12</th>
+              <th
+                style={th}
+                title="Réalisé : moyenne des mois clôturés (le mois en cours n’est pas compté, il n’est pas terminé). Prévisionnel et atterrissage : moyenne sur les 12 mois."
+              >
+                Moyenne / mois
+                <div style={{ fontWeight: 400, fontSize: 10, textTransform: "none" }}>
+                  {nbClos === 0 ? "aucun mois clôturé" : nbClos === 12 ? "sur 12 mois" : `sur ${nbClos} mois clôturé${nbClos > 1 ? "s" : ""}`}
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
