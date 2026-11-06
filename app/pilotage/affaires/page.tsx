@@ -2432,13 +2432,14 @@ function PlanningAffairesContenu() {
                             {titre}
                           </div>
                         )}
-                        <div style={{ marginTop: 12, padding: "6px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
-                          <strong style={{ color: "#34506b" }}>
+                        {/* BANDEAU_FIN : une seule ligne serrée */}
+                        <div style={{ marginTop: 12, padding: "1px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "nowrap", alignItems: "baseline", gap: "0 12px", fontSize: 12, lineHeight: 1.35, whiteSpace: "nowrap", overflow: "hidden" }}>
+                          <strong style={{ color: "#34506b", flexShrink: 0 }}>
                             {famille ? "⧉ " : ""}{laBase.type} {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero}
                             {famille ? ` · famille de ${membres.length} commandes` : ""}
                             {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? "s" : ""})` : ""}
                           </strong>
-                          <span style={{ color: "#3b4046" }}>
+                          <span title={`${clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : ""}${laBase.designation ?? ""}`} style={{ color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
                             {clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : ""}
                             {laBase.designation}
                           </span>
