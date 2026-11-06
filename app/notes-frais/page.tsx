@@ -19,7 +19,7 @@ import { MAX_DEPLACEMENTS_EXCEL, remplirNoteExcel } from "./remplirNote";
 ================================================================ */
 
 type Bareme = { puissance: string; prix_km: number };
-type Dep = { jour: string; depart: string; site: string; km: string };
+type Dep = { jour: string; depart: string; site: string; km: string; ar: boolean };
 type Frais = { jour: string; nature: string; commentaire: string; montant: string; justificatif_path: string | null; justificatif_nom: string | null; fichier: File | null };
 type Note = {
   id: string | null;
@@ -54,7 +54,7 @@ const moisCourant = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 };
-const depVide = (): Dep => ({ jour: "", depart: "Polynov", site: "", km: "" });
+const depVide = (): Dep => ({ jour: "", depart: "Polynov", site: "", km: "", ar: true });
 const fraisVide = (): Frais => ({ jour: "", nature: "Péage", commentaire: "", montant: "", justificatif_path: null, justificatif_nom: null, fichier: null });
 
 /* Photo de justificatif : réduite (1600 px, JPEG) pour que l'e-mail reste léger */
@@ -156,7 +156,7 @@ export default function NotesDeFraisPage() {
       transmise_le: x.transmise_le,
       updated_at: x.updated_at,
     });
-    setDeps(((b.data ?? []) as { jour: string | null; depart: string | null; site: string | null; km: number | string | null }[]).map((d) => ({ jour: d.jour ?? "", depart: d.depart ?? "Polynov", site: d.site ?? "", km: texte(d.km) })));
+    setDeps(((b.data ?? []) as { jour: string | null; depart: string | null; site: string | null; km: number | string | null; aller_retour: boolean | null }[]).map((d) => ({ jour: d.jour ?? "", depart: d.depart ?? "Polynov", site: d.site ?? "", km: texte(d.km), ar: d.aller_retour !== false })));
     setFrais(
       ((c.data ?? []) as { jour: string | null; nature: string | null; commentaire: string | null; montant: number | string; justificatif_path: string | null; justificatif_nom: string | null }[]).map((f) => ({
         jour: f.jour ?? "",
@@ -186,7 +186,12 @@ export default function NotesDeFraisPage() {
   /* ------------------------------ calculs (règles de la note Excel) ------------------------------ */
   const prix = baremes.find((b) => b.puissance === note?.puissance)?.prix_km ?? 0;
   const kmDom = n(note?.km_domicile ?? "");
-  const coutDep = (d: Dep) => (d.depart === "Domicile" ? Math.max(0, (n(d.km) - 2 * kmDom) * prix) : n(d.km) * prix);
+  // NF_ALLER_RETOUR : km d'un trajet ; un A/R compte double (et retire deux fois le trajet domicile → Polynov)
+  const kmIndemnises = (d: Dep) => {
+    const f = d.ar ? 2 : 1;
+    return Math.max(0, n(d.km) * f - (d.depart === "Domicile" ? f * kmDom : 0));
+  };
+  const coutDep = (d: Dep) => kmIndemnises(d) * prix;
   const totaux = useMemo(() => {
     if (!note) return { occ: 0, reg: 0, frais: 0, total: 0 };
     const occ = deps.reduce((t, d) => t + coutDep(d), 0);
@@ -261,7 +266,7 @@ export default function NotesDeFraisPage() {
     await supabase.from("nf_deplacements").delete().eq("note_id", id);
     if (depsValides.length) {
       const { error } = await supabase.from("nf_deplacements").insert(
-        depsValides.map((d, k) => ({ note_id: id, ordre: k, jour: d.jour || null, depart: d.depart || null, site: d.site.trim() || null, km: d.km.trim() ? n(d.km) : null }))
+        depsValides.map((d, k) => ({ note_id: id, ordre: k, jour: d.jour || null, depart: d.depart || null, site: d.site.trim() || null, km: d.km.trim() ? n(d.km) : null, aller_retour: d.ar }))
       );
       if (error) throw error;
     }
@@ -322,7 +327,7 @@ export default function NotesDeFraisPage() {
         vehicule: note.vehicule,
         puissance: note.puissance,
         kmDomicile: note.km_domicile.trim() ? n(note.km_domicile) : null,
-        deplacements: deps.filter((d) => d.jour || d.site || n(d.km) > 0).map((d) => ({ jour: d.jour || null, depart: d.depart, site: d.site, km: d.km.trim() ? n(d.km) : null })),
+        deplacements: deps.filter((d) => d.jour || d.site || n(d.km) > 0).map((d) => ({ jour: d.jour || null, depart: d.depart, site: d.site, km: d.km.trim() ? n(d.km) : null, ar: d.ar })),
         regDepart: note.reg_depart,
         regSite: note.reg_site,
         regKmJour: note.reg_km_jour.trim() ? n(note.reg_km_jour) : null,
@@ -474,7 +479,7 @@ export default function NotesDeFraisPage() {
               </label>
             </div>
             <p style={{ fontSize: 13, color: "#6d737a", margin: "10px 0 0" }}>
-              Retenu pour vos prochaines notes. Les km se comptent au plus court (Mappy) ; au départ du domicile, ils sont indemnisés au-delà de 2 × la distance domicile → Polynov.
+              Retenu pour vos prochaines notes. Saisissez les km d’un trajet, au plus court (Mappy), et choisissez Aller ou A/R ; au départ du domicile, le trajet domicile → Polynov est déduit (deux fois pour un A/R).
             </p>
           </section>
 
@@ -487,7 +492,7 @@ export default function NotesDeFraisPage() {
               ))}
             </datalist>
             {deps.map((d, i) => (
-              <div key={i} className="nf-ligne" style={{ display: "grid", gridTemplateColumns: "150px 120px minmax(160px,300px) 90px 90px 34px", justifyContent: "start", gap: 8, alignItems: "end", marginBottom: 8 }}>
+              <div key={i} className="nf-ligne" style={{ display: "grid", gridTemplateColumns: "150px 120px minmax(160px,280px) 110px 90px 90px 34px", justifyContent: "start", gap: 8, alignItems: "end", marginBottom: 8 }}>
                 <label style={etiquette}>
                   Date
                   <input type="date" value={d.jour} onChange={(e) => changerDep(i, { jour: e.target.value })} style={champ} />
@@ -512,11 +517,29 @@ export default function NotesDeFraisPage() {
                     style={champ}
                   />
                 </label>
-                <label style={etiquette}>
-                  Km A/R
+                <div style={etiquette}>
+                  Trajet
+                  <div style={{ display: "flex", border: "1px solid #c9cdd2", borderRadius: 8, overflow: "hidden" }}>
+                    {[
+                      [false, "Aller"],
+                      [true, "A/R"],
+                    ].map(([v, t]) => (
+                      <button
+                        key={String(t)}
+                        type="button"
+                        onClick={() => changerDep(i, { ar: v as boolean })}
+                        style={{ flex: 1, border: 0, padding: "10px 4px", fontFamily: "inherit", fontSize: 14, fontWeight: 800, cursor: "pointer", background: d.ar === v ? rouge : "#fff", color: d.ar === v ? "#fff" : "#4b5057" }}
+                      >
+                        {t as string}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label style={etiquette} title={d.ar ? "Km d’un trajet : ils sont comptés deux fois (aller et retour)" : "Km du trajet aller"}>
+                  Nbre de km
                   <input value={d.km} inputMode="decimal" onChange={(e) => changerDep(i, { km: e.target.value })} style={{ ...champ, textAlign: "right" }} />
                 </label>
-                <div style={{ ...etiquette, color: "#252525" }}>
+                <div style={{ ...etiquette, color: "#252525" }} title={`${kmIndemnises(d).toLocaleString("fr-FR")} km indemnisés`}>
                   Coût
                   <strong style={{ padding: "9px 0", textAlign: "right" }}>{euros(coutDep(d))}</strong>
                 </div>

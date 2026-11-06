@@ -69,8 +69,10 @@ Deno.serve(async(req)=>{
 
   // ---- calculs (mêmes règles que la note Excel) ----
   const prix=Number(n.prix_km)||0; const kmDom=Number(n.km_domicile)||0;
-  const coutDep=(d:any)=>{const km=Number(d.km)||0; return d.depart==="Domicile"?Math.max(0,(km-2*kmDom)*prix):km*prix;};
-  const kmPris=(d:any)=>{const km=Number(d.km)||0; return d.depart==="Domicile"?Math.max(0,km-2*kmDom):km;};
+  // un aller-retour compte les km deux fois (et retire deux fois le trajet domicile → Polynov au départ du domicile)
+  const facteur=(d:any)=>d.aller_retour===false?1:2;
+  const kmPris=(d:any)=>{const km=Number(d.km)||0,f=facteur(d); return Math.max(0,km*f-(d.depart==="Domicile"?f*kmDom:0));};
+  const coutDep=(d:any)=>kmPris(d)*prix;
   const totalOcc=deplacements.reduce((t,d)=>t+coutDep(d),0);
   const regKm=Number(n.reg_km_jour)||0, regNb=Number(n.reg_nb_trajets)||0;
   const totalReg=regKm>0&&regNb>0?(n.reg_depart==="Domicile"?Math.max(0,(regKm-2*kmDom)*regNb*prix):regKm*regNb*prix):0;
@@ -97,7 +99,7 @@ Deno.serve(async(req)=>{
   const thN='style="text-align:right;padding:5px 8px;border-bottom:2px solid #ccc;background:#f3f4f6;font-size:13px"';
   const td='style="padding:5px 8px;border-bottom:1px solid #e5e5e5"';
   const tdN='style="padding:5px 8px;border-bottom:1px solid #e5e5e5;text-align:right;white-space:nowrap"';
-  const occ=deplacements.length?`<table style="border-collapse:collapse;width:100%;font-size:14px"><tr><th ${th}>Date</th><th ${th}>Départ</th><th ${th}>Site client</th><th ${thN}>Km A/R</th><th ${thN}>Km indemnisés</th><th ${thN}>Coût</th></tr>${deplacements.map((d)=>`<tr><td ${td}>${esc(dateFR(d.jour))}</td><td ${td}>${esc(d.depart||"—")}</td><td ${td}>${esc(d.site||"—")}</td><td ${tdN}>${nb(d.km)}</td><td ${tdN}>${nb(kmPris(d))}</td><td ${tdN}>${euros(coutDep(d))}</td></tr>`).join("")}<tr><td ${td} colspan="5"><strong>Total des déplacements occasionnels</strong></td><td ${tdN}><strong>${euros(totalOcc)}</strong></td></tr></table>`:"<p>Aucun.</p>";
+  const occ=deplacements.length?`<table style="border-collapse:collapse;width:100%;font-size:14px"><tr><th ${th}>Date</th><th ${th}>Départ</th><th ${th}>Site client</th><th ${th}>Trajet</th><th ${thN}>Km</th><th ${thN}>Km indemnisés</th><th ${thN}>Coût</th></tr>${deplacements.map((d)=>`<tr><td ${td}>${esc(dateFR(d.jour))}</td><td ${td}>${esc(d.depart||"—")}</td><td ${td}>${esc(d.site||"—")}</td><td ${td}>${facteur(d)===2?"Aller-retour":"Aller"}</td><td ${tdN}>${nb(d.km)}${facteur(d)===2?" × 2":""}</td><td ${tdN}>${nb(kmPris(d))}</td><td ${tdN}>${euros(coutDep(d))}</td></tr>`).join("")}<tr><td ${td} colspan="6"><strong>Total des déplacements occasionnels</strong></td><td ${tdN}><strong>${euros(totalOcc)}</strong></td></tr></table>`:"<p>Aucun.</p>";
   const reg=regKm>0&&regNb>0?`<p>Départ : <strong>${esc(n.reg_depart||"—")}</strong> · Site client : <strong>${esc(n.reg_site||"—")}</strong><br>${nb(regKm)} km A/R par jour × ${nb(regNb)} trajet(s) A/R dans le mois${n.reg_depart==="Domicile"?` (moins 2 × ${nb(kmDom)} km domicile → Polynov par trajet)`:""} = <strong>${euros(totalReg)}</strong></p>`:"<p>Aucun.</p>";
   const ann=frais.length?`<table style="border-collapse:collapse;width:100%;font-size:14px"><tr><th ${th}>Date</th><th ${th}>Nature</th><th ${th}>Commentaire</th><th ${th}>Justificatif</th><th ${thN}>Montant</th></tr>${frais.map((f,i)=>`<tr><td ${td}>${esc(dateFR(f.jour))}</td><td ${td}>${esc(f.nature||"—")}</td><td ${td}>${esc(f.commentaire||"")}</td><td ${td}>${f.justificatif_path?`pièce jointe n° ${i+1}`:'<span style="color:#b3261e">aucun</span>'}</td><td ${tdN}>${euros(Number(f.montant)||0)}</td></tr>`).join("")}<tr><td ${td} colspan="4"><strong>Total des frais annexes</strong></td><td ${tdN}><strong>${euros(totalFrais)}</strong></td></tr></table>`:"<p>Aucun.</p>";
   const html=`<div style="font-family:Calibri,Arial,sans-serif;font-size:15px;color:#222">
@@ -110,7 +112,7 @@ Deno.serve(async(req)=>{
    <h3 style="margin:16px 0 6px">Déplacement régulier du mois</h3>${reg}
    <h3 style="margin:16px 0 6px">Frais annexes (sur justificatif)</h3>${ann}
    <p style="font-size:18px;background:#f3f7ff;border-left:4px solid #1f4e99;padding:10px 12px;margin-top:18px"><strong>Montant total dû : ${euros(total)}</strong></p>
-   <p style="font-size:13px;color:#555">Les kilomètres sont indemnisés au-delà de la distance domicile → Polynov (aller et retour) quand le départ est le domicile.<br>En pièces jointes : la note de frais Excel remplie${frais.some((f)=>f.justificatif_path)?" et les justificatifs":""}.${manquants.length?` <span style="color:#b3261e">Fichier(s) introuvable(s) : ${esc(manquants.join(", "))}.</span>`:""}</p>
+   <p style="font-size:13px;color:#555">Au départ du domicile, la distance domicile → Polynov est déduite (deux fois pour un aller-retour).<br>En pièces jointes : la note de frais Excel remplie${frais.some((f)=>f.justificatif_path)?" et les justificatifs":""}.${manquants.length?` <span style="color:#b3261e">Fichier(s) introuvable(s) : ${esc(manquants.join(", "))}.</span>`:""}</p>
    <p style="font-size:13px;color:#555">Transmise par ${esc(me.prenom||"")} ${esc(me.nom||"")} depuis l’application POLYNOV.</p></div>`;
 
   const {data:param}=await admin.from("nf_parametres").select("valeur").eq("cle","email_rh").maybeSingle();

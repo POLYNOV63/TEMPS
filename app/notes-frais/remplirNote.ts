@@ -5,7 +5,7 @@
    reste à l'ouverture dans Excel.
 ================================================================ */
 
-export type DepNote = { jour: string | null; depart: string; site: string; km: number | null };
+export type DepNote = { jour: string | null; depart: string; site: string; km: number | null; ar?: boolean };
 export type FraisNote = { jour: string | null; nature: string; commentaire: string; montant: number };
 export type NotePourExcel = {
   qui: string;
@@ -58,9 +58,19 @@ export async function remplirNoteExcel(n: NotePourExcel): Promise<Blob> {
     const cDate = ws.getCell(`E${r}`);
     cDate.value = date(d.jour);
     cDate.numFmt = "dd/mm/yyyy";
-    ws.getCell(`F${r}`).value = d.depart || null;
-    ws.getCell(`G${r}`).value = d.site || null;
-    ws.getCell(`H${r}`).value = d.km;
+    // le classeur compte des km A/R et retire 2 × domicile au départ du domicile : un A/R s'y écrit tel quel (km × 2) ;
+    // un aller simple s'écrit en km déjà indemnisés, départ « Polynov », pour que le classeur calcule juste
+    const ar = d.ar !== false;
+    if (ar || d.km === null) {
+      ws.getCell(`F${r}`).value = d.depart || null;
+      ws.getCell(`G${r}`).value = d.site || null;
+      ws.getCell(`H${r}`).value = d.km === null ? null : d.km * (ar ? 2 : 1);
+    } else {
+      const indemnises = Math.max(0, d.km - (d.depart === "Domicile" ? n.kmDomicile ?? 0 : 0));
+      ws.getCell(`F${r}`).value = "Polynov";
+      ws.getCell(`G${r}`).value = `${d.site || ""} (aller simple${d.depart === "Domicile" ? ", départ domicile" : ""})`.trim();
+      ws.getCell(`H${r}`).value = indemnises;
+    }
   });
 
   if ((n.regKmJour ?? 0) > 0 && (n.regNbTrajets ?? 0) > 0) {

@@ -31,7 +31,7 @@ type Note = {
   transmise_le: string | null;
   fichier_path: string | null;
 };
-type Dep = { note_id: string; jour: string | null; depart: string | null; site: string | null; km: number };
+type Dep = { note_id: string; jour: string | null; depart: string | null; site: string | null; km: number; aller_retour: boolean | null };
 type Frais = { note_id: string; jour: string | null; nature: string | null; commentaire: string | null; montant: number; justificatif_path: string | null; justificatif_nom: string | null };
 type Collab = { id: string; prenom: string | null; nom: string | null; trigramme: string | null };
 
@@ -98,7 +98,7 @@ export default function SuiviNotesFrais() {
         const ids = liste.map((x) => x.id);
         const [d, f] = ids.length
           ? await Promise.all([
-              supabase.from("nf_deplacements").select("note_id,jour,depart,site,km").in("note_id", ids).order("ordre"),
+              supabase.from("nf_deplacements").select("note_id,jour,depart,site,km,aller_retour").in("note_id", ids).order("ordre"),
               supabase.from("nf_frais").select("note_id,jour,nature,commentaire,montant,justificatif_path,justificatif_nom").in("note_id", ids).order("ordre"),
             ])
           : [{ data: [] }, { data: [] }];
@@ -130,7 +130,8 @@ export default function SuiviNotesFrais() {
     let km = 0;
     let coutKm = 0;
     for (const d of ds) {
-      const k = d.depart === "Domicile" ? Math.max(0, d.km - 2 * n.km_domicile) : d.km;
+      const f = d.aller_retour === false ? 1 : 2;
+      const k = Math.max(0, d.km * f - (d.depart === "Domicile" ? f * n.km_domicile : 0));
       km += k;
       coutKm += k * n.prix_km;
     }
@@ -257,7 +258,7 @@ export default function SuiviNotesFrais() {
                 {d.ds.length > 0 && (
                   <div>
                     <strong>Déplacements :</strong>{" "}
-                    {d.ds.map((x) => `${x.jour ? new Date(`${x.jour}T00:00:00`).toLocaleDateString("fr-FR") : "?"} ${x.site ?? ""} (${nbr(x.km)} km, départ ${x.depart})`).join(" · ")}
+                    {d.ds.map((x) => `${x.jour ? new Date(`${x.jour}T00:00:00`).toLocaleDateString("fr-FR") : "?"} ${x.site ?? ""} (${nbr(x.km)} km ${x.aller_retour === false ? "aller" : "A/R"}, départ ${x.depart})`).join(" · ")}
                   </div>
                 )}
                 {n.reg_km_jour > 0 && n.reg_nb_trajets > 0 && (
