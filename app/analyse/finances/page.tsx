@@ -1437,118 +1437,21 @@ function FinancesContenu() {
               </div>
             </section>
 
-            {/* ---------- tableau 12 mois ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Les 12 mois de l’exercice</h2>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th style={thG} />
-                    {mois.map((m) => (
-                      <th key={m} style={{ ...th, background: m === moisCourant ? "#fff4f4" : undefined }}>{libMois(m)}</th>
-                    ))}
-                    <th style={th}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td style={tdG}>Prévisionnel</td>
-                    {mois.map((m, i) => (
-                      <td key={m} style={{ ...td, padding: 2 }}>
-                        <input
-                          key={`${m}-${vue.prevu[i]}`}
-                          disabled={!estAdmin}
-                          defaultValue={vue.prevu[i] ? String(Math.round(vue.prevu[i])) : ""}
-                          inputMode="decimal"
-                          aria-label={`Prévisionnel ${libMois(m)}`}
-                          onBlur={(e) => {
-                            const v = Number(e.target.value.replace(/\s/g, "").replace(",", ".")) || 0;
-                            if (v !== vue.prevu[i]) void enregistrerPrevus(new Map([[m, v]]));
-                          }}
-                          style={{ width: 76, textAlign: "right", border: "1px solid #c9cdd2", borderRadius: 4, padding: "4px", fontFamily: "inherit", fontSize: 13 }}
-                        />
-                      </td>
-                    ))}
-                    <td style={{ ...td, fontWeight: 800 }}>{keuros(vue.totalPrevu)}</td>
-                  </tr>
-                  {ligneValeurs("Réalisé", vue.realise, { fontWeight: 800 }, (i) => setDetail({ mois: mois[i], ligne: "REALISE" }))}
-                  {ligneValeurs("Attendu", vue.attendu, { color: "#a33a3a", fontStyle: "italic" }, (i) => setDetail({ mois: mois[i], ligne: "ATTENDU" }))}
-                  {faitPlusTard.some((v) => v > 0.5) &&
-                    ligneValeurs("Fait, facturé plus tard", faitPlusTard, { color: "#7a3e00", fontStyle: "italic", fontWeight: 400 }, (i) => setDetailReport(mois[i]))}
-                  {ligneValeurs("Atterrissage", atterrissage, { fontWeight: 800, background: "#fff4f4" }, (i) => setDetail({ mois: mois[i], ligne: "ATTERRISSAGE" }))}
-                  <tr>
-                    <td style={tdG} title="Atterrissage (réalisé + attendu) moins prévisionnel">Écart</td>
-                    {mois.map((m, i) => {
-                      const e = atterrissage[i] - vue.prevu[i];
-                      const visible = vue.prevu[i] > 0;
-                      return (
-                        <td key={m} style={{ ...td, color: !visible ? C.gris : e < 0 ? C.rougeTexte : "#1b5e20", fontWeight: 700 }}>
-                          {visible ? `${e > 0 ? "+" : ""}${keuros(e)}` : "—"}
-                          {visible && <div style={{ fontSize: 11, fontWeight: 400 }}>{pct(vue.prevu[i] > 0 ? e / vue.prevu[i] : null)}</div>}
-                        </td>
-                      );
-                    })}
-                    <td style={{ ...td, fontWeight: 800, color: totalAtterrissage - vue.totalPrevu < 0 ? C.rougeTexte : "#1b5e20" }}>
-                      {vue.totalPrevu > 0 ? `${totalAtterrissage - vue.totalPrevu > 0 ? "+" : ""}${keuros(totalAtterrissage - vue.totalPrevu)}` : "—"}
-                    </td>
-                  </tr>
-                  {/* CUMUL_REALISE : réalisé cumulé face au prévisionnel cumulé, jusqu'au mois en cours */}
-                  <tr style={{ background: "#f6f9ff" }}>
-                    <td style={tdG} title="Réalisé cumulé depuis le début de l'exercice, face au prévisionnel cumulé, et l'écart">
-                      Cumul réalisé / prévu
-                    </td>
-                    {(() => {
-                      let r = 0;
-                      let p = 0;
-                      return mois.map((m, i) => {
-                        r += vue.realise[i];
-                        p += vue.prevu[i];
-                        const e = r - p;
-                        return (
-                          <td key={m} style={{ ...td, fontSize: 12 }}>
-                            {m > moisCourant ? (
-                              "—"
-                            ) : (
-                              <>
-                                <strong>{keuros(r)}</strong>
-                                <div style={{ color: C.gris }}>{p > 0 ? keuros(p) : "—"}</div>
-                                {p > 0 && (
-                                  <div style={{ fontWeight: 800, color: e < 0 ? C.rougeTexte : "#1b5e20" }}>
-                                    {e > 0 ? "+" : ""}
-                                    {keuros(e)} ({pct(e / p)})
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </td>
-                        );
-                      });
-                    })()}
-                    <td style={td} />
-                  </tr>
-                  <tr>
-                    <td style={tdG}>Cumul atterrissage / prévu</td>
-                    {mois.map((m, i) => {
-                      cumR += atterrissage[i];
-                      cumP += vue.prevu[i];
-                      return (
-                        <td key={m} style={{ ...td, fontSize: 12 }}>
-                          {keuros(cumR)}
-                          <div style={{ color: C.gris }}>{cumP > 0 ? keuros(cumP) : "—"}</div>
-                        </td>
-                      );
-                    })}
-                    <td style={td} />
-                  </tr>
-                  {ligneValeurs(`Réalisé ${exercice - 1}-${exercice}`, vue.realiseN1, { color: C.gris, fontWeight: 400 })}
-
-                  <tr><td colSpan={14} style={{ ...tdG, background: "#eef0f3", fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>Réalisé par imputation</td></tr>
-                  {vue.parImputation.map((r) => ligneValeurs(r.cle, r.valeurs, undefined, (i) => setDetail({ mois: mois[i], imputation: r.cle })))}
-
-                  <tr><td colSpan={14} style={{ ...tdG, background: "#eef0f3", fontSize: 12, textTransform: "uppercase", letterSpacing: ".4px" }}>Réalisé par activité</td></tr>
-                  {vue.parActivite.map((r) => ligneValeurs(r.cle, r.valeurs, undefined, (i) => setDetail({ mois: mois[i], groupe: r.cle })))}
-                </tbody>
-              </table>
+            {/* ---------- TRAME_CA_V2 : la trame CA remplace le tableau des 12 mois ---------- */}
+            <div>
+              <TrameCA
+                exercice={exercice}
+                mois={mois}
+                moisN1={moisN1}
+                mouvements={mouvements}
+                prevu={vue.prevu}
+                attendu={vue.attendu}
+                faitPlusTard={faitPlusTard}
+                estAdmin={estAdmin}
+                onPrevu={(m, v) => void enregistrerPrevus(new Map([[m, v]]))}
+                onDetail={(i, ligne) => setDetail({ mois: mois[i], ligne })}
+                onDetailReport={(i) => setDetailReport(mois[i])}
+              />
 
               {/* DETAIL_MONTANT_V3 : ce qui compose le montant cliqué */}
               {detail && <DetailMontant detail={detail} mouvements={mouvements} attendus={attendus.mouvements} onFermer={() => setDetail(null)} />}
@@ -1629,7 +1532,7 @@ function FinancesContenu() {
                 })()}
 
               {estAdmin && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+              <div style={{ ...page.carte, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: 12, marginBottom: 14 }}>
                 <strong>Remplir le prévisionnel :</strong>
                 <input value={totalAnnuel} onChange={(e) => setTotalAnnuel(e.target.value)} placeholder="total annuel €" inputMode="decimal" style={{ ...page.entrees, width: 140 }} aria-label="Total annuel prévu" />
                 <button type="button" style={page.btnSecondaire} onClick={() => repartir("EGAL")}>Répartir en 12 parts égales</button>
@@ -1641,10 +1544,7 @@ function FinancesContenu() {
                 <span>%</span>
               </div>
               )}
-            </section>
-
-            {/* ---------- TRAME_CA_V1 : la présentation du classeur trame_CA ---------- */}
-            <TrameCA exercice={exercice} mois={mois} moisN1={moisN1} mouvements={mouvements} prevu={vue.prevu} />
+            </div>
 
             {/* ---------- taux de vente moyen des PE / PI ---------- */}
             {vue.tauxPEPI.some((t) => t.exercice.heures > 0 || t.n1.heures > 0) && (

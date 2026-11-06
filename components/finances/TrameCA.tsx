@@ -1,15 +1,16 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V1)
+   FINANCES - TRAME CA (TRAME_CA_V2)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
    - CA réalisé par imputation (BE, PI, IG, PE) et par activité
      (Méca, Calcul, Elec), Négoce, Scan, achats sur affaires,
      CA BE sans / avec achats, CA PE, frais annexes (= ajustements) ;
-   - total mensuel, cumul, prévisionnel cumulé, écarts, N-1, objectif ;
-   - suivi d'activité (BE = BE + PI + IG, AS = PE) ;
+   - prévisionnel du mois (saisi ici par l'ADMIN), réalisé, attendu,
+     fait / facturé plus tard, atterrissage, cumuls, écarts, N-1, objectif
+     (V2 : remplace le tableau « Les 12 mois de l'exercice ») ;
    - prises de commande et devis envoyés (montant et nombre).
 
    Les montants viennent des mêmes calculs que le reste de la page
@@ -104,10 +105,26 @@ type Ligne =
       baseTotal?: number; // dénominateur du % du total
       nb?: number[]; // nombre (prises de commande, devis)
       nbTotal?: number;
+      saisie?: boolean; // prévisionnel : case modifiable (ADMIN)
+      clic?: (i: number) => void; // montant cliquable : son détail
     };
 
-export default function TrameCA(props: { exercice: number; mois: string[]; moisN1: string[]; mouvements: MouvementCA[]; prevu: number[] }) {
-  const { exercice, mois, moisN1, mouvements, prevu } = props;
+export default function TrameCA(props: {
+  exercice: number;
+  mois: string[];
+  moisN1: string[];
+  mouvements: MouvementCA[];
+  prevu: number[];
+  attendu?: number[];
+  faitPlusTard?: number[];
+  estAdmin?: boolean;
+  onPrevu?: (mois: string, valeur: number) => void;
+  onDetail?: (i: number, ligne: "REALISE" | "ATTENDU" | "ATTERRISSAGE") => void;
+  onDetailReport?: (i: number) => void;
+}) {
+  const { exercice, mois, moisN1, mouvements, prevu, estAdmin, onPrevu, onDetail, onDetailReport } = props;
+  const attendu = props.attendu ?? mois.map(() => 0);
+  const faitPlusTard = props.faitPlusTard ?? mois.map(() => 0);
   const [afficherPct, setAfficherPct] = useState(false);
   const [com, setCom] = useState<{ lignes: LigneCom[]; montants: Map<string, number> } | null>(null);
   const [erreurCom, setErreurCom] = useState("");
@@ -155,6 +172,9 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
     const objectif = tot(prevu);
     const totalAnnuel = tot(total);
     const cumulADate = nbEcoules > 0 ? cumul[nbEcoules - 1] : 0;
+    const atterrissage = total.map((v, i) => v + attendu[i]);
+    let ca2 = 0;
+    const cumulAtter = atterrissage.map((v) => (ca2 += v));
 
     const ca = (libelle: string, valeurs: number[], style?: "sous-total" | "info"): Ligne => ({
       kind: "valeurs",
@@ -199,8 +219,53 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
       ca("Positif", r.fa_pos),
       ca("Négatif", r.fa_neg),
       { kind: "titre", libelle: "Totaux" },
-      { kind: "valeurs", libelle: "TOTAL CA MENSUEL", valeurs: total, total: totalAnnuel, moyenne: totalAnnuel / 12, style: "total" },
-      { kind: "valeurs", libelle: "TOTAL CUMULÉ", valeurs: jusquA(cumul), total: cumulADate, style: "sous-total" },
+      { kind: "valeurs", libelle: "Prévisionnel du mois", valeurs: prevu, total: objectif, moyenne: objectif / 12, saisie: true },
+      {
+        kind: "valeurs",
+        libelle: "TOTAL CA MENSUEL (réalisé)",
+        valeurs: total,
+        total: totalAnnuel,
+        moyenne: totalAnnuel / 12,
+        style: "total",
+        clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
+      },
+      {
+        kind: "valeurs",
+        libelle: "Attendu (pas encore livré ou facturé)",
+        valeurs: attendu,
+        total: tot(attendu),
+        style: "info",
+        clic: onDetail ? (i) => onDetail(i, "ATTENDU") : undefined,
+      },
+      ...(nonNul(faitPlusTard)
+        ? [
+            {
+              kind: "valeurs" as const,
+              libelle: "Fait, facturé plus tard (hors atterrissage)",
+              valeurs: faitPlusTard,
+              total: tot(faitPlusTard),
+              style: "info" as const,
+              clic: onDetailReport,
+            },
+          ]
+        : []),
+      {
+        kind: "valeurs",
+        libelle: "ATTERRISSAGE (réalisé + attendu)",
+        valeurs: atterrissage,
+        total: tot(atterrissage),
+        moyenne: tot(atterrissage) / 12,
+        style: "total",
+        clic: onDetail ? (i) => onDetail(i, "ATTERRISSAGE") : undefined,
+      },
+      {
+        kind: "valeurs",
+        libelle: "Écart atterrissage − prévisionnel",
+        valeurs: atterrissage.map((v, i) => (prevu[i] > 0 ? v - prevu[i] : null)),
+        total: objectif > 0 ? tot(atterrissage) - objectif : null,
+        style: "ecart",
+      },
+      { kind: "valeurs", libelle: "TOTAL CUMULÉ (réalisé)", valeurs: jusquA(cumul), total: cumulADate, style: "sous-total" },
       { kind: "valeurs", libelle: "PRÉVISIONNEL (cumulé)", valeurs: prevuCumul, total: objectif },
       {
         kind: "valeurs",
@@ -209,6 +274,7 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
         total: objectif > 0 ? totalAnnuel - objectif : null,
         style: "ecart",
       },
+      { kind: "valeurs", libelle: "Cumul atterrissage", valeurs: cumulAtter, total: tot(atterrissage) },
       {
         kind: "valeurs",
         libelle: `ÉCART MENSUEL N-1 (${exercice - 1}-${exercice})`,
@@ -236,30 +302,8 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
       },
     ];
 
-    // suivi d'activité : BE = BE + PI + IG, AS = PE
-    const meca = { be: somme(r.be_meca, r.pi_meca, r.ig_meca), as: r.pe_meca };
-    const calcul = { be: somme(r.be_calcul, r.pi_calcul, r.ig_calcul), as: r.pe_calcul };
-    const elec = { be: somme(r.be_elec, r.pi_elec, r.ig_elec), as: r.pe_elec };
-    const totMeca = somme(meca.be, meca.as);
-    const totCalc = somme(calcul.be, calcul.as);
-    const totElec = somme(elec.be, elec.as);
-    const troisTotaux = somme(totMeca, totCalc, totElec);
-    const activite = (nom: string, d: { be: number[]; as: number[] }, t: number[]): Ligne[] => [
-      { kind: "titre", libelle: nom },
-      { kind: "valeurs", libelle: `${nom} — BE (BE + PI + IG)`, valeurs: d.be, total: tot(d.be), moyenne: tot(d.be) / 12, base: t, baseTotal: tot(t) },
-      { kind: "valeurs", libelle: `${nom} — AS (PE)`, valeurs: d.as, total: tot(d.as), moyenne: tot(d.as) / 12, base: t, baseTotal: tot(t) },
-      { kind: "valeurs", libelle: `${nom} — TOTAL`, valeurs: t, total: tot(t), moyenne: tot(t) / 12, style: "sous-total", base: troisTotaux, baseTotal: tot(troisTotaux) },
-    ];
-    const suivi: Ligne[] = [
-      ...activite("MÉCA", meca, totMeca),
-      ...activite("CALCUL", calcul, totCalc),
-      ...activite("ELEC", elec, totElec),
-      { kind: "titre", libelle: "SCAN" },
-      ca("CA Scan", r.scan),
-    ];
-
-    return { lignes, suivi, total, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
-  }, [mouvements, mois, moisN1, prevu, exercice, moisCourant]);
+    return { lignes, total, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
+  }, [mouvements, mois, moisN1, prevu, attendu, faitPlusTard, exercice, moisCourant, onDetail, onDetailReport]);
 
   /* prises de commande et devis envoyés : mêmes règles que les Indicateurs commerciaux */
   const commercial = useMemo((): Ligne[] => {
@@ -336,16 +380,13 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
         lignes: [
           ...versExcel(trame.lignes),
           { poste: "" },
-          { _style: "groupe", poste: "SUIVI D’ACTIVITÉ" },
-          ...versExcel(trame.suivi),
-          { poste: "" },
           ...versExcel(commercial),
         ],
         alerte: (l) => String(l.poste).startsWith("ÉCART") && Number(l.total ?? 0) < 0,
         notes: [
           "Réalisé = forfaits livrés, échéances / lots livrés, PE / PI des mois clôturés du relevé (et l’historique importé de l’ancien Suivi des prestations).",
           "Frais annexes de refacturation = ajustements saisis à la main pour coller à la comptabilité.",
-          "Suivi d’activité : BE = BE + PI + IG ; AS = PE.",
+          "Attendu = forfaits pas encore livrés (au mois de leur délai estimé) et PE / PI prévues ; atterrissage = réalisé + attendu.",
         ],
       },
     ]);
@@ -384,8 +425,31 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
         <tr key={`${prefixe}-${k}`} style={{ background: fond }}>
           <td style={{ ...td, ...colPoste, background: fond ?? "#ffffff", fontWeight: poids, fontStyle: l.style === "info" ? "italic" : undefined }}>{l.libelle}</td>
           {l.valeurs.map((v, i) => [
-            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined }}>
-              {affiche(v)}
+            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined, padding: l.saisie && estAdmin ? 2 : td.padding }}>
+              {l.saisie && estAdmin && onPrevu ? (
+                <input
+                  key={`${mois[i]}-${v}`}
+                  defaultValue={v ? String(Math.round(v)) : ""}
+                  inputMode="decimal"
+                  aria-label={`Prévisionnel ${nomMois(mois[i])}`}
+                  onBlur={(e) => {
+                    const x = Number(e.currentTarget.value.replace(/\s/g, "").replace(",", ".")) || 0;
+                    if (x !== v) onPrevu(mois[i], x);
+                  }}
+                  style={{ width: 72, textAlign: "right", border: "1px solid #c9cdd2", borderRadius: 4, padding: 3, fontFamily: "inherit", fontSize: 12 }}
+                />
+              ) : l.clic && v !== null && Math.abs(v) >= 0.5 ? (
+                <button
+                  type="button"
+                  title="Voir le détail de ce montant"
+                  onClick={() => l.clic?.(i)}
+                  style={{ all: "unset", cursor: "pointer", textDecoration: "underline dotted" }}
+                >
+                  {affiche(v)}
+                </button>
+              ) : (
+                affiche(v)
+              )}
               {l.nb && l.nb[i] > 0 && <div style={{ fontSize: 10, color: C.gris, fontWeight: 400 }}>{l.nb[i]} ligne{l.nb[i] > 1 ? "s" : ""}</div>}
             </td>,
             afficherPct ? <td key={`p${i}`} style={tdPct}>{part(v, l.base?.[i])}</td> : null,
@@ -452,12 +516,6 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
             {rendre(trame.lignes, "ca")}
             <tr>
               <td colSpan={nbCol} style={{ ...td, textAlign: "left", fontWeight: 800, fontSize: 15, paddingTop: 16, position: "sticky", left: 0 }}>
-                Suivi d’activité
-              </td>
-            </tr>
-            {rendre(trame.suivi, "act")}
-            <tr>
-              <td colSpan={nbCol} style={{ ...td, textAlign: "left", fontWeight: 800, fontSize: 15, paddingTop: 16, position: "sticky", left: 0 }}>
                 Commandes et devis
               </td>
             </tr>
@@ -477,7 +535,7 @@ export default function TrameCA(props: { exercice: number; mois: string[]; moisN
       </div>
       <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
         Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements saisis pour coller à la compta.
-        Suivi d’activité : BE = BE + PI + IG, AS = PE. Commandes et devis : mêmes règles que les Indicateurs commerciaux (lignes de commande et avenants
+        Les montants soulignés s’ouvrent sur leur détail. Commandes et devis : mêmes règles que les Indicateurs commerciaux (lignes de commande et avenants
         comptés séparément).
       </p>
     </section>
