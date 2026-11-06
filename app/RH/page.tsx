@@ -693,6 +693,9 @@ export default function RHPage() {
   const [envoi, setEnvoi] =
     useState(false);
 
+  /* ESPACE_RH_ACTIONS : le formulaire de demande s'ouvre par « Demander une absence » */
+  const [formulaireOuvert, setFormulaireOuvert] = useState(false);
+
   const [aAnnuler, setAAnnuler] = useState<Demande | null>(null);
   const [motifAnnulation, setMotifAnnulation] = useState("");
   const [annulationEnCours, setAnnulationEnCours] = useState(false);
@@ -1427,6 +1430,7 @@ export default function RHPage() {
       setHeuresRE("");
       setCommentaire("");
       setFichier(null);
+      setFormulaireOuvert(false);
 
       await charger();
     } catch (e: any) {
@@ -1501,19 +1505,6 @@ export default function RHPage() {
         titre="Mon espace RH"
         description={`${collab?.prenom ?? ""} ${collab?.nom ?? ""} · ${collab?.trigramme ?? ""}`}
       />
-
-      {/* LIEN_NOTES_FRAIS */}
-      <a
-        href="/notes-frais"
-        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#fff", border: "1px solid #e2e5e9", borderLeft: `5px solid ${rouge}`, borderRadius: 14, padding: "14px 18px", marginBottom: 18, textDecoration: "none", color: "#252525", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}
-      >
-        <span>
-          <strong style={{ fontSize: 17 }}>🧾 Mes notes de frais</strong>
-          <br />
-          <span style={{ fontSize: 13, color: "#6d737a" }}>Remplir ma note du mois et la transmettre au service RH</span>
-        </span>
-        <strong style={{ color: rouge, whiteSpace: "nowrap" }}>Ouvrir →</strong>
-      </a>
 
       {erreur && (
         <div style={styles.alert}>
@@ -1725,14 +1716,48 @@ export default function RHPage() {
         )}
       </section>
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14, marginBottom: 18 }}>
+        <button
+          type="button"
+          onClick={() => {
+            setFormulaireOuvert((v) => !v);
+            setTimeout(() => document.getElementById("demande-absence")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+          }}
+          style={{ display: "flex", alignItems: "center", gap: 14, textAlign: "left", border: formulaireOuvert ? `2px solid ${rouge}` : "1px solid #e2e5e9", borderLeft: `6px solid ${rouge}`, background: formulaireOuvert ? "#fff5f5" : "#fff", borderRadius: 14, padding: "16px 18px", cursor: "pointer", fontFamily: "inherit", color: "#252525", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 30 }}>🏖️</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ fontSize: 18 }}>Demander une absence</strong>
+            <br />
+            <span style={{ fontSize: 13, color: "#6d737a" }}>{forfaitJour ? "Congé payé, RTT, CP exceptionnel" : "Congé payé, récupération, CP exceptionnel"}</span>
+          </span>
+          <strong style={{ color: rouge, whiteSpace: "nowrap" }}>{formulaireOuvert ? "Fermer ▴" : "Ouvrir ▾"}</strong>
+        </button>
+        <a
+          href="/notes-frais"
+          style={{ display: "flex", alignItems: "center", gap: 14, border: "1px solid #e2e5e9", borderLeft: `6px solid ${rouge}`, background: "#fff", borderRadius: 14, padding: "16px 18px", textDecoration: "none", color: "#252525", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}
+        >
+          <span aria-hidden="true" style={{ fontSize: 30 }}>🧾</span>
+          <span style={{ flex: 1 }}>
+            <strong style={{ fontSize: 18 }}>Déclarer une note de frais</strong>
+            <br />
+            <span style={{ fontSize: 13, color: "#6d737a" }}>Déplacements et frais du mois, envoyés au service RH</span>
+          </span>
+          <strong style={{ color: rouge, whiteSpace: "nowrap" }}>Ouvrir →</strong>
+        </a>
+      </div>
+
+      {formulaireOuvert && (
       <section
+        id="demande-absence"
         style={{
           ...styles.card,
           marginBottom: 24,
+          scrollMarginTop: 16,
         }}
       >
         <div style={styles.cardTitle}>
-          ✉️ Faire une demande
+          🏖️ Demander une absence
         </div>
 
         <div
@@ -1952,6 +1977,7 @@ export default function RHPage() {
           </button>
         </form>
       </section>
+      )}
 
       <section style={styles.card}>
         <div style={styles.cardTitle}>

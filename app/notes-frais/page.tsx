@@ -375,6 +375,9 @@ export default function NotesDeFraisPage() {
 
   return (
     <main style={{ minHeight: "100vh", background: "#f5f6f8", fontFamily: "Calibri, Arial, sans-serif", padding: "24px 4vw 60px", color: "#252525" }}>
+      {/* NF_COMPACT : contenu resserré et centré ; une colonne sur téléphone */}
+      <style>{`@media (max-width: 760px) { .nf-ligne { grid-template-columns: 1fr 1fr !important; } .nf-ligne > * { width: auto !important; } }`}</style>
+      <div style={{ maxWidth: 1040, margin: "0 auto" }}>
       <EnTetePage forme="encadre" section="Espace collaborateur" titre="Mes notes de frais" description={moi ? `${moi.prenom ?? ""} ${moi.nom ?? ""} · ${moi.trigramme ?? ""}` : ""} />
 
       {String(moi?.role ?? "").toUpperCase() === "ADMIN" && (
@@ -449,12 +452,12 @@ export default function NotesDeFraisPage() {
           {/* ---------- véhicule ---------- */}
           <section style={carte}>
             <h3 style={titre}>Véhicule</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
-              <label style={etiquette}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+              <label style={{ ...etiquette, width: 260 }}>
                 Véhicule (marque, type)
                 <input value={note.vehicule} onChange={(e) => changerNote({ vehicule: e.target.value })} placeholder="ex. Peugeot 308" style={champ} />
               </label>
-              <label style={etiquette}>
+              <label style={{ ...etiquette, width: 240 }}>
                 Puissance fiscale
                 <select value={note.puissance} onChange={(e) => changerNote({ puissance: e.target.value })} style={champ}>
                   <option value="">Choisir…</option>
@@ -465,7 +468,7 @@ export default function NotesDeFraisPage() {
                   ))}
                 </select>
               </label>
-              <label style={etiquette}>
+              <label style={{ ...etiquette, width: 190 }}>
                 Km domicile → Polynov (aller)
                 <input value={note.km_domicile} inputMode="decimal" onChange={(e) => changerNote({ km_domicile: e.target.value })} placeholder="ex. 12" style={champ} />
               </label>
@@ -484,7 +487,7 @@ export default function NotesDeFraisPage() {
               ))}
             </datalist>
             {deps.map((d, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(130px,150px) minmax(110px,130px) minmax(160px,1fr) minmax(90px,110px) minmax(80px,100px) 34px", gap: 8, alignItems: "end", marginBottom: 8 }}>
+              <div key={i} className="nf-ligne" style={{ display: "grid", gridTemplateColumns: "150px 120px minmax(160px,300px) 90px 90px 34px", justifyContent: "start", gap: 8, alignItems: "end", marginBottom: 8 }}>
                 <label style={etiquette}>
                   Date
                   <input type="date" value={d.jour} onChange={(e) => changerDep(i, { jour: e.target.value })} style={champ} />
@@ -522,7 +525,7 @@ export default function NotesDeFraisPage() {
                 </button>
               </div>
             ))}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 6 }}>
               <button type="button" style={petit} disabled={deps.length >= MAX_DEPLACEMENTS_EXCEL} onClick={() => { setDeps((l) => [...l, depVide()]); setModifiee(true); }}>
                 + Ajouter un déplacement {deps.length >= MAX_DEPLACEMENTS_EXCEL ? `(${MAX_DEPLACEMENTS_EXCEL} au plus)` : ""}
               </button>
@@ -533,7 +536,7 @@ export default function NotesDeFraisPage() {
           {/* ---------- déplacement régulier ---------- */}
           <section style={carte}>
             <h3 style={titre}>Déplacement régulier du mois</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }}>
+            <div className="nf-ligne" style={{ display: "grid", gridTemplateColumns: "120px minmax(160px,300px) 130px 170px", justifyContent: "start", gap: 12 }}>
               <label style={etiquette}>
                 Départ
                 <select value={note.reg_depart} onChange={(e) => changerNote({ reg_depart: e.target.value })} style={champ}>
@@ -554,7 +557,7 @@ export default function NotesDeFraisPage() {
                 <input value={note.reg_nb_trajets} inputMode="decimal" onChange={(e) => changerNote({ reg_nb_trajets: e.target.value })} style={{ ...champ, textAlign: "right" }} />
               </label>
             </div>
-            <div style={{ textAlign: "right", marginTop: 10 }}>
+            <div style={{ marginTop: 10 }}>
               <strong>Coût : {euros(totaux.reg)}</strong>
             </div>
           </section>
@@ -564,7 +567,7 @@ export default function NotesDeFraisPage() {
             <h3 style={titre}>Frais annexes</h3>
             <p style={{ fontSize: 13, color: "#6d737a", margin: "-6px 0 12px" }}>Uniquement sur justificatif de paiement : joignez la photo du ticket ou la facture (PDF).</p>
             {frais.map((f, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(130px,150px) minmax(120px,140px) minmax(150px,1fr) minmax(90px,110px) minmax(170px,1.2fr) 34px", gap: 8, alignItems: "end", marginBottom: 10 }}>
+              <div key={i} className="nf-ligne" style={{ display: "grid", gridTemplateColumns: "150px 130px minmax(150px,260px) 100px minmax(170px,240px) 34px", justifyContent: "start", gap: 8, alignItems: "end", marginBottom: 10 }}>
                 <label style={etiquette}>
                   Date
                   <input type="date" value={f.jour} onChange={(e) => changerFrais(i, { jour: e.target.value })} style={champ} />
@@ -603,7 +606,7 @@ export default function NotesDeFraisPage() {
                 </button>
               </div>
             ))}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", marginTop: 6 }}>
               <button type="button" style={petit} onClick={() => { setFrais((l) => [...l, fraisVide()]); setModifiee(true); }}>
                 + Ajouter un frais
               </button>
@@ -640,6 +643,7 @@ export default function NotesDeFraisPage() {
           </section>
         </>
       )}
+      </div>
     </main>
   );
 }
