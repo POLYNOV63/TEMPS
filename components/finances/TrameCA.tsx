@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V3, après TRAME_CA_V2)
+   FINANCES - TRAME CA (TRAME_CA_V4, après TRAME_CA_V2 et TRAME_CA_V3)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -14,6 +14,9 @@
    - remplir le prévisionnel (ADMIN) : un % du réalisé N-1 mois par
      mois, ou un total annuel réparti (V3, remplace le bandeau de la page).
    (V3 : « Commandes et devis » retirés, ils sont dans les Indicateurs.)
+   V4 : l'ATTENDU (pas encore livré ou facturé) s'affiche sous le réalisé
+   de chaque ligne, en rouge italique, avec le même découpage
+   imputation × activité (mouvements attendus de la page).
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -29,6 +32,8 @@ const MOIS_LONGS = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juil
 const nomMois = (m: string) => MOIS_LONGS[Number(m.slice(5, 7)) - 1];
 const nombre = (v: number) => Math.round(v).toLocaleString("fr-FR");
 const euros = (v: number) => `${nombre(v)} €`;
+const ROUGE_ATTENDU = "#a33a3a";
+const styleAttendu: CSSProperties = { fontSize: 11, fontStyle: "italic", fontWeight: 600, color: ROUGE_ATTENDU, whiteSpace: "nowrap" };
 const pourcent = (v: number | null) => (v === null || !Number.isFinite(v) ? "—" : `${Math.round(v * 100)} %`);
 
 type Cle =
@@ -85,7 +90,8 @@ type Ligne =
       valeurs: (number | null)[];
       total: number | null;
       moyenne?: number | null;
-      style?: "sous-total" | "total" | "info" | "ecart";
+      style?: "sous-total" | "total" | "info" | "ecart" | "attendu";
+      attendu?: number[]; // attendu de la ligne, affiché sous le réalisé (V4)
       format?: "euros" | "pct";
       base?: number[]; // dénominateur du % de chaque mois
       baseTotal?: number; // dénominateur du % du total
@@ -98,6 +104,7 @@ export default function TrameCA(props: {
   mois: string[];
   moisN1: string[];
   mouvements: MouvementCA[];
+  attendus?: MouvementCA[]; // mouvements attendus (forfaits non livrés, PE / PI prévues)
   prevu: number[];
   attendu?: number[];
   faitPlusTard?: number[];
@@ -111,6 +118,7 @@ export default function TrameCA(props: {
   const attendu = props.attendu ?? mois.map(() => 0);
   const faitPlusTard = props.faitPlusTard ?? mois.map(() => 0);
   const [afficherPct, setAfficherPct] = useState(false);
+  const [voirAttendu, setVoirAttendu] = useState(true);
   const [pctN1, setPctN1] = useState("100");
   const [totalSaisi, setTotalSaisi] = useState("");
   const [message, setMessage] = useState("");
@@ -122,10 +130,13 @@ export default function TrameCA(props: {
     const tot = (v: number[]) => v.reduce((t, x) => t + x, 0);
     const r = agreger(mouvements, mois);
     const r1 = agreger(mouvements, moisN1);
+    const ra = agreger(props.attendus ?? [], mois);
 
     const caBE = somme(r.be_meca, r.be_calcul, r.be_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.ig_meca, r.ig_calcul, r.ig_elec, r.negoce, r.scan, r.autre);
     const caBEnet = n.map((_, i) => caBE[i] - r.achats[i]);
     const caPE = somme(r.pe_meca, r.pe_calcul, r.pe_elec, r.pe_autre);
+    const caBEa = somme(ra.be_meca, ra.be_calcul, ra.be_elec, ra.pi_meca, ra.pi_calcul, ra.pi_elec, ra.ig_meca, ra.ig_calcul, ra.ig_elec, ra.negoce, ra.scan, ra.autre);
+    const caPEa = somme(ra.pe_meca, ra.pe_calcul, ra.pe_elec, ra.pe_autre);
     const total = n.map((_, i) => caBE[i] + caPE[i] + r.fa_pos[i] - r.fa_neg[i]);
     const caBE1 = somme(r1.be_meca, r1.be_calcul, r1.be_elec, r1.pi_meca, r1.pi_calcul, r1.pi_elec, r1.ig_meca, r1.ig_calcul, r1.ig_elec, r1.negoce, r1.scan, r1.autre);
     const total1 = n.map((_, i) => caBE1[i] + r1.pe_meca[i] + r1.pe_calcul[i] + r1.pe_elec[i] + r1.pe_autre[i] + r1.fa_pos[i] - r1.fa_neg[i]);
@@ -143,10 +154,11 @@ export default function TrameCA(props: {
     let ca2 = 0;
     const cumulAtter = atterrissage.map((v) => (ca2 += v));
 
-    const ca = (libelle: string, valeurs: number[], style?: "sous-total" | "info"): Ligne => ({
+    const ca = (libelle: string, valeurs: number[], style?: "sous-total" | "info", att?: number[]): Ligne => ({
       kind: "valeurs",
       libelle,
       valeurs,
+      attendu: att,
       total: tot(valeurs),
       moyenne: tot(valeurs) / 12,
       style,
@@ -158,30 +170,30 @@ export default function TrameCA(props: {
 
     const lignes: Ligne[] = [
       { kind: "titre", libelle: "BE — Chiffrage sur CDC" },
-      ca("Méca BE", r.be_meca),
-      ca("Calcul BE", r.be_calcul),
-      ca("Elec BE", r.be_elec),
+      ca("Méca BE", r.be_meca, undefined, ra.be_meca),
+      ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
+      ca("Elec BE", r.be_elec, undefined, ra.be_elec),
       { kind: "titre", libelle: "PI — Prestation interne" },
-      ca("Méca PI", r.pi_meca),
-      ca("Calcul PI", r.pi_calcul),
-      ca("Elec PI", r.pi_elec),
+      ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
+      ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
+      ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
       { kind: "titre", libelle: "IG — Intergroupe" },
-      ca("Méca IG", r.ig_meca),
-      ca("Calcul IG", r.ig_calcul),
-      ca("Elec IG", r.ig_elec),
+      ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
+      ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
+      ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
       { kind: "titre", libelle: "Négoce, scan, achats" },
-      ca("Négoce", r.negoce),
-      ca("CA Scan", r.scan),
-      ...(nonNul(r.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre)] : []),
+      ca("Négoce", r.negoce, undefined, ra.negoce),
+      ca("CA Scan", r.scan, undefined, ra.scan),
+      ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
       ca("Achats sur affaires", r.achats, "info"),
-      ca("CA BE sans HA", caBE, "sous-total"),
-      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: tot(caBEnet) / 12, style: "sous-total" },
+      ca("CA BE sans HA", caBE, "sous-total", caBEa),
+      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: tot(caBEnet) / 12, style: "sous-total", attendu: caBEa },
       { kind: "titre", libelle: "PE — Prestation externe" },
-      ca("Méca PE", r.pe_meca),
-      ca("Calcul PE", r.pe_calcul),
-      ca("Elec PE", r.pe_elec),
-      ...(nonNul(r.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre)] : []),
-      ca("CA PE", caPE, "sous-total"),
+      ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
+      ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
+      ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
+      ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
+      ca("CA PE", caPE, "sous-total", caPEa),
       { kind: "titre", libelle: "Frais annexes de refacturation (ajustements)" },
       ca("Positif", r.fa_pos),
       ca("Négatif", r.fa_neg),
@@ -194,6 +206,7 @@ export default function TrameCA(props: {
         total: totalAnnuel,
         moyenne: totalAnnuel / 12,
         style: "total",
+        attendu,
         clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
       },
       {
@@ -201,7 +214,7 @@ export default function TrameCA(props: {
         libelle: "Attendu (pas encore livré ou facturé)",
         valeurs: attendu,
         total: tot(attendu),
-        style: "info",
+        style: "attendu",
         clic: onDetail ? (i) => onDetail(i, "ATTENDU") : undefined,
       },
       ...(nonNul(faitPlusTard)
@@ -270,7 +283,7 @@ export default function TrameCA(props: {
     ];
 
     return { lignes, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
-  }, [mouvements, mois, moisN1, prevu, attendu, faitPlusTard, exercice, moisCourant, onDetail, onDetailReport]);
+  }, [mouvements, props.attendus, mois, moisN1, prevu, attendu, faitPlusTard, exercice, moisCourant, onDetail, onDetailReport]);
 
   /* ------------------------------ remplir le prévisionnel ------------------------------ */
 
@@ -315,7 +328,10 @@ export default function TrameCA(props: {
         const val = (v: number | null) => (v === null || !Number.isFinite(v) ? null : l.format === "pct" ? `${Math.round(v * 100)} %` : Math.round(v));
         const o: L = { _style: l.style === "total" || l.style === "sous-total" ? "groupe" : "", poste: l.libelle, total: val(l.total), moy: l.moyenne === undefined ? null : val(l.moyenne) };
         l.valeurs.forEach((v, i) => (o[`m${i}`] = val(v)));
-        return [o];
+        if (!l.attendu || !l.attendu.some((x) => Math.abs(x) >= 0.5)) return [o];
+        const att: L = { _style: "detail", poste: `${l.libelle} — dont attendu`, total: Math.round(l.attendu.reduce((t, x) => t + x, 0)) };
+        l.attendu.forEach((v, i) => (att[`m${i}`] = Math.abs(v) >= 0.5 ? Math.round(v) : null));
+        return [o, att];
       });
     await exporterExcelPolynov(`Trame_CA_${exercice}-${exercice + 1}`, [
       {
@@ -357,7 +373,7 @@ export default function TrameCA(props: {
       const fond = l.style === "total" ? "#fff4f4" : l.style === "sous-total" ? "#f6f7f9" : undefined;
       const poids = l.style === "total" || l.style === "sous-total" ? 800 : 400;
       const couleur = (v: number | null) =>
-        l.style === "ecart" && v !== null && Number.isFinite(v) && Math.abs(v) >= (l.format === "pct" ? 0.005 : 0.5) ? (v < 0 ? C.rougeTexte : "#1b5e20") : l.style === "info" ? C.gris : undefined;
+        l.style === "ecart" && v !== null && Number.isFinite(v) && Math.abs(v) >= (l.format === "pct" ? 0.005 : 0.5) ? (v < 0 ? C.rougeTexte : "#1b5e20") : l.style === "info" ? C.gris : l.style === "attendu" ? ROUGE_ATTENDU : undefined;
       const affiche = (v: number | null) => {
         if (v === null || !Number.isFinite(v)) return "—";
         if (l.format === "pct") return `${v > 0 && l.style === "ecart" ? "+" : ""}${Math.round(v * 100)} %`;
@@ -367,7 +383,10 @@ export default function TrameCA(props: {
       const part = (v: number | null, b: number | undefined) => (l.base && v !== null && b && b > 0 ? pourcent(v / b) : "");
       return (
         <tr key={`${prefixe}-${k}`} style={{ background: fond }}>
-          <td style={{ ...td, ...colPoste, background: fond ?? "#ffffff", fontWeight: poids, fontStyle: l.style === "info" ? "italic" : undefined }}>{l.libelle}</td>
+          <td style={{ ...td, ...colPoste, background: fond ?? "#ffffff", fontWeight: poids, fontStyle: l.style === "info" || l.style === "attendu" ? "italic" : undefined, color: l.style === "attendu" ? ROUGE_ATTENDU : undefined }}>
+            {l.libelle}
+            {voirAttendu && l.attendu && l.attendu.some((x) => Math.abs(x) >= 0.5) && <div style={{ ...styleAttendu, textAlign: "left" }}>dont attendu</div>}
+          </td>
           {l.valeurs.map((v, i) => [
             <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined, padding: l.saisie && estAdmin ? 2 : td.padding }}>
               {l.saisie && estAdmin && onPrevu ? (
@@ -394,11 +413,15 @@ export default function TrameCA(props: {
               ) : (
                 affiche(v)
               )}
+              {voirAttendu && l.attendu && Math.abs(l.attendu[i]) >= 0.5 && <div style={styleAttendu} title="Attendu : pas encore livré ou facturé">+ {nombre(l.attendu[i])}</div>}
             </td>,
             afficherPct ? <td key={`p${i}`} style={tdPct}>{part(v, l.base?.[i])}</td> : null,
           ])}
           <td style={{ ...td, fontWeight: 800, color: couleur(l.total), borderLeft: `2px solid ${C.ligne}` }}>
             {affiche(l.total)}
+            {voirAttendu && l.attendu && Math.abs(l.attendu.reduce((t, x) => t + x, 0)) >= 0.5 && (
+              <div style={styleAttendu}>+ {nombre(l.attendu.reduce((t, x) => t + x, 0))}</div>
+            )}
           </td>
           {afficherPct && <td style={tdPct}>{part(l.total, l.baseTotal)}</td>}
           <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined || l.moyenne === null ? "" : affiche(l.moyenne)}</td>
@@ -414,6 +437,9 @@ export default function TrameCA(props: {
         <h2 style={{ margin: 0, fontSize: 17 }}>Trame CA — exercice {exercice}-{exercice + 1}</h2>
         <span style={{ fontSize: 13, color: C.gris }}>la présentation du classeur « trame_CA », remplie automatiquement</span>
         <span style={{ flex: 1 }} />
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", color: ROUGE_ATTENDU, fontWeight: 600 }}>
+          <input type="checkbox" checked={voirAttendu} onChange={(e) => setVoirAttendu(e.target.checked)} /> Afficher l’attendu
+        </label>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
           <input type="checkbox" checked={afficherPct} onChange={(e) => setAfficherPct(e.target.checked)} /> Afficher les %
         </label>
@@ -477,7 +503,8 @@ export default function TrameCA(props: {
       </div>
       <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
         Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements saisis pour coller à la compta.
-        Les montants soulignés s’ouvrent sur leur détail.
+        Les montants soulignés s’ouvrent sur leur détail. <span style={{ color: ROUGE_ATTENDU, fontStyle: "italic", fontWeight: 600 }}>+ en rouge italique</span> : attendu
+        (forfaits pas encore livrés, au mois de leur délai estimé ; PE / PI prévues), qui s’ajoute au réalisé pour faire l’atterrissage.
       </p>
     </section>
   );

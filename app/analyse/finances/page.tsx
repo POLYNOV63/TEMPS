@@ -1446,6 +1446,7 @@ function FinancesContenu() {
                 mouvements={mouvements}
                 prevu={vue.prevu}
                 attendu={vue.attendu}
+                attendus={attendus.mouvements}
                 faitPlusTard={faitPlusTard}
                 estAdmin={estAdmin}
                 onPrevu={(m, v) => void enregistrerPrevus(new Map([[m, v]]))}
