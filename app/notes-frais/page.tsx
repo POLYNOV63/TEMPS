@@ -552,7 +552,9 @@ export default function NotesDeFraisPage() {
               <button type="button" style={petit} disabled={deps.length >= MAX_DEPLACEMENTS_EXCEL} onClick={() => { setDeps((l) => [...l, depVide()]); setModifiee(true); }}>
                 + Ajouter un déplacement {deps.length >= MAX_DEPLACEMENTS_EXCEL ? `(${MAX_DEPLACEMENTS_EXCEL} au plus)` : ""}
               </button>
-              <strong>Total : {euros(totaux.occ)}</strong>
+              <strong>
+                Total : {deps.reduce((t, d) => t + kmIndemnises(d), 0).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} km indemnisés · {euros(totaux.occ)}
+              </strong>
             </div>
           </section>
 
