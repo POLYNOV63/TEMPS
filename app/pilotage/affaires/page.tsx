@@ -141,8 +141,6 @@ type PisteAffaire = {
 };
 
 const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
-// FAMILLE_CADRE : couleur du cadre d'une famille (commande + avenants)
-const COULEUR_FAMILLE = "#4a6f96";
 
 function PlanningAffairesContenu() {
   // le planning s'ouvre une semaine avant la semaine en cours
@@ -2427,7 +2425,7 @@ function PlanningAffairesContenu() {
                             {titre}
                           </div>
                         )}
-                        <div style={{ marginTop: 16, padding: "7px 10px", background: "#dfe8f2", borderTop: `3px solid ${COULEUR_FAMILLE}`, borderLeft: `5px solid ${COULEUR_FAMILLE}`, borderRadius: "4px 4px 0 0", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
+                        <div style={{ marginTop: 12, padding: "6px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
                           <strong style={{ color: "#34506b" }}>
                             ⧉ CBE {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero} · famille de {membres.length} commandes
                             {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? "s" : ""})` : ""}
@@ -2445,14 +2443,12 @@ function PlanningAffairesContenu() {
                         </div>
                       </>
                     )}
-                    {/* FAMILLE_CADRE : barre à gauche sur toute la famille, colonne des noms teintée */}
+                    {/* FAMILLE_DISCRET : fin liseré à gauche des commandes de la famille, espace après la dernière */}
                     <div style={{ position: "relative" }}>
                       {rendreAffaire(affaire, null, false)}
-                      <div aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: LARGEUR_NOM, background: "rgba(74,111,150,0.08)", pointerEvents: "none" }} />
-                      <div aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 5, background: COULEUR_FAMILLE, borderBottomLeftRadius: dernierDeFamille ? 4 : 0, pointerEvents: "none", zIndex: 5 }} />
+                      <div aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "#9fb6cf", borderBottomLeftRadius: dernierDeFamille ? 3 : 0, pointerEvents: "none", zIndex: 5 }} />
                     </div>
-                    {/* fin de la famille : trait de fermeture et espace avant l'affaire suivante */}
-                    {dernierDeFamille && <div aria-hidden="true" style={{ borderTop: `3px solid ${COULEUR_FAMILLE}`, borderRadius: "0 0 0 4px", marginBottom: 16 }} />}
+                    {dernierDeFamille && <div aria-hidden="true" style={{ height: 12 }} />}
                   </Fragment>
                 );
               })}
