@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V2)
+   FINANCES - TRAME CA (TRAME_CA_V3, après TRAME_CA_V2)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -11,19 +11,17 @@
    - prévisionnel du mois (saisi ici par l'ADMIN), réalisé, attendu,
      fait / facturé plus tard, atterrissage, cumuls, écarts, N-1, objectif
      (V2 : remplace le tableau « Les 12 mois de l'exercice ») ;
-   - prises de commande et devis envoyés (montant et nombre).
+   - remplir le prévisionnel (ADMIN) : un % du réalisé N-1 mois par
+     mois, ou un total annuel réparti (V3, remplace le bandeau de la page).
+   (V3 : « Commandes et devis » retirés, ils sont dans les Indicateurs.)
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
    au « Réalisé » du tableau des 12 mois.
-   Prises de commande et devis : mêmes règles que les Indicateurs
-   commerciaux (lib/indicateurs.ts).
 ================================================================ */
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { C, Tuile, page } from "@/components/pilotage/ui";
-import { supabase } from "@/lib/supabase";
-import { chargerTout } from "@/lib/pilotageDonnees";
 import { exporterExcelPolynov, type ColonneExcel } from "@/lib/excelPolynov";
 import type { MouvementCA } from "@/lib/finances";
 
@@ -79,18 +77,6 @@ function agreger(mouvements: MouvementCA[], mois: string[]): Record<Cle, number[
   return r;
 }
 
-type LigneCom = {
-  id: string;
-  genre: string;
-  statut: string | null;
-  imputation: string | null;
-  base_affaire: string | null;
-  date_ouverture: string | null;
-  date_envoi: string | null;
-  date_reception_commande: string | null;
-  disparue: boolean;
-};
-
 type Ligne =
   | { kind: "titre"; libelle: string }
   | {
@@ -103,8 +89,6 @@ type Ligne =
       format?: "euros" | "pct";
       base?: number[]; // dénominateur du % de chaque mois
       baseTotal?: number; // dénominateur du % du total
-      nb?: number[]; // nombre (prises de commande, devis)
-      nbTotal?: number;
       saisie?: boolean; // prévisionnel : case modifiable (ADMIN)
       clic?: (i: number) => void; // montant cliquable : son détail
     };
@@ -121,32 +105,15 @@ export default function TrameCA(props: {
   onPrevu?: (mois: string, valeur: number) => void;
   onDetail?: (i: number, ligne: "REALISE" | "ATTENDU" | "ATTERRISSAGE") => void;
   onDetailReport?: (i: number) => void;
+  onPrevuTous?: (valeurs: Map<string, number>) => unknown;
 }) {
-  const { exercice, mois, moisN1, mouvements, prevu, estAdmin, onPrevu, onDetail, onDetailReport } = props;
+  const { exercice, mois, moisN1, mouvements, prevu, estAdmin, onPrevu, onDetail, onDetailReport, onPrevuTous } = props;
   const attendu = props.attendu ?? mois.map(() => 0);
   const faitPlusTard = props.faitPlusTard ?? mois.map(() => 0);
   const [afficherPct, setAfficherPct] = useState(false);
-  const [com, setCom] = useState<{ lignes: LigneCom[]; montants: Map<string, number> } | null>(null);
-  const [erreurCom, setErreurCom] = useState("");
-
-  useEffect(() => {
-    (async () => {
-      const [lignes, montants] = await Promise.all([
-        chargerTout<LigneCom>((a, b) =>
-          supabase
-            .from("suivi_lignes")
-            .select("id,genre,statut,imputation,base_affaire,date_ouverture,date_envoi,date_reception_commande,disparue")
-            .order("id")
-            .range(a, b)
-        ),
-        chargerTout<{ ligne_id: string; montant: number | string | null }>((a, b) =>
-          supabase.from("suivi_lignes_montants").select("ligne_id,montant").order("ligne_id").range(a, b)
-        ),
-      ]);
-      setCom({ lignes, montants: new Map(montants.map((m) => [m.ligne_id, Number(m.montant) || 0])) });
-    })().catch((e) => setErreurCom(e instanceof Error ? e.message : "Prises de commande et devis indisponibles."));
-  }, []);
-
+  const [pctN1, setPctN1] = useState("100");
+  const [totalSaisi, setTotalSaisi] = useState("");
+  const [message, setMessage] = useState("");
   const moisCourant = new Date().toISOString().slice(0, 7);
 
   const trame = useMemo(() => {
@@ -302,53 +269,35 @@ export default function TrameCA(props: {
       },
     ];
 
-    return { lignes, total, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
+    return { lignes, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
   }, [mouvements, mois, moisN1, prevu, attendu, faitPlusTard, exercice, moisCourant, onDetail, onDetailReport]);
 
-  /* prises de commande et devis envoyés : mêmes règles que les Indicateurs commerciaux */
-  const commercial = useMemo((): Ligne[] => {
-    if (!com) return [];
-    const impBase = new Map<string, string | null>();
-    for (const l of com.lignes) if (l.genre === "BASE" && l.base_affaire) impBase.set(l.base_affaire, l.imputation);
-    const pepi = (l: LigneCom) => {
-      const imp = l.imputation ?? (l.base_affaire ? impBase.get(l.base_affaire) ?? null : null);
-      return imp === "PE" || imp === "PI";
-    };
-    const montantDe = (l: LigneCom) => com.montants.get(l.id) ?? 0;
-    const compter = (liste: LigneCom[], date: (l: LigneCom) => string | null) => {
-      const res = { hors: { m: mois.map(() => 0), n: mois.map(() => 0) }, pepi: { m: mois.map(() => 0), n: mois.map(() => 0) } };
-      const index = new Map(mois.map((m, i) => [m, i]));
-      for (const l of liste) {
-        const d = date(l);
-        const i = d ? index.get(d.slice(0, 7)) : undefined;
-        if (i === undefined) continue;
-        const cible = pepi(l) ? res.pepi : res.hors;
-        cible.m[i] += montantDe(l);
-        cible.n[i] += 1;
-      }
-      return res;
-    };
-    const commandes = compter(
-      com.lignes.filter((l) => !l.disparue && (l.genre === "BASE" || l.genre === "AVENANT") && !["Devis perdu", "Commande annulée"].includes(l.statut ?? "")),
-      (l) => l.date_reception_commande
+  /* ------------------------------ remplir le prévisionnel ------------------------------ */
+
+  const lireNombre = (x: string) => Number(x.replace(/\s/g, "").replace(",", "."));
+  async function remplir(valeurs: number[], texte: string) {
+    if (!onPrevuTous) return;
+    if (trame.objectif > 0 && !window.confirm(`Remplacer le prévisionnel actuel (${euros(trame.objectif)}) sur les 12 mois ?`)) return;
+    await onPrevuTous(new Map(mois.map((m, i) => [m, Math.max(0, Math.round(valeurs[i]))])));
+    setMessage(texte);
+  }
+  function pourcentN1() {
+    const k = lireNombre(pctN1);
+    if (!Number.isFinite(k) || k <= 0) return setMessage("Saisissez un pourcentage (ex. 105).");
+    const base = trame.total1.reduce((t, v) => t + v, 0);
+    if (base <= 0) return setMessage(`Pas de réalisé sur ${exercice - 1}-${exercice} : impossible de partir de N-1.`);
+    void remplir(trame.total1.map((v) => (v * k) / 100), `Prévisionnel = ${k} % du réalisé ${exercice - 1}-${exercice}, mois par mois : ${euros((base * k) / 100)}.`);
+  }
+  function repartir(mode: "EGAL" | "N1") {
+    const total = lireNombre(totalSaisi);
+    if (!Number.isFinite(total) || total <= 0) return setMessage("Saisissez un total annuel.");
+    const base = trame.total1.reduce((t, v) => t + v, 0);
+    if (mode === "N1" && base <= 0) return setMessage(`Pas de réalisé sur ${exercice - 1}-${exercice} pour répartir au prorata.`);
+    void remplir(
+      mois.map((_, i) => (mode === "EGAL" ? total / 12 : (total * trame.total1[i]) / base)),
+      `Prévisionnel de ${euros(total)} réparti ${mode === "EGAL" ? "en 12 parts égales" : "comme l’exercice précédent"}.`
     );
-    const devis = compter(
-      com.lignes.filter((l) => !l.disparue && (l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") && l.statut !== "Devis ouvert"),
-      (l) => l.date_envoi ?? l.date_ouverture
-    );
-    const tot = (v: number[]) => v.reduce((t, x) => t + x, 0);
-    const bloc = (titre: string, x: typeof commandes): Ligne[] => {
-      const m = mois.map((_, i) => x.hors.m[i] + x.pepi.m[i]);
-      const nb = mois.map((_, i) => x.hors.n[i] + x.pepi.n[i]);
-      return [
-        { kind: "titre", libelle: titre },
-        { kind: "valeurs", libelle: "Hors PE et PI", valeurs: x.hors.m, total: tot(x.hors.m), moyenne: tot(x.hors.m) / 12, nb: x.hors.n, nbTotal: tot(x.hors.n) },
-        { kind: "valeurs", libelle: "PE et PI", valeurs: x.pepi.m, total: tot(x.pepi.m), moyenne: tot(x.pepi.m) / 12, nb: x.pepi.n, nbTotal: tot(x.pepi.n) },
-        { kind: "valeurs", libelle: "TOTAL", valeurs: m, total: tot(m), moyenne: tot(m) / 12, nb, nbTotal: tot(nb), style: "sous-total" },
-      ];
-    };
-    return [...bloc("Prise de commande (date de réception)", commandes), ...bloc("Devis envoyés (date d’envoi)", devis)];
-  }, [com, mois]);
+  }
 
   /* ------------------------------ export ------------------------------ */
 
@@ -366,10 +315,7 @@ export default function TrameCA(props: {
         const val = (v: number | null) => (v === null || !Number.isFinite(v) ? null : l.format === "pct" ? `${Math.round(v * 100)} %` : Math.round(v));
         const o: L = { _style: l.style === "total" || l.style === "sous-total" ? "groupe" : "", poste: l.libelle, total: val(l.total), moy: l.moyenne === undefined ? null : val(l.moyenne) };
         l.valeurs.forEach((v, i) => (o[`m${i}`] = val(v)));
-        if (!l.nb) return [o];
-        const nb: L = { _style: "detail", poste: `${l.libelle} — nombre`, total: l.nbTotal ?? null };
-        l.nb.forEach((v, i) => (nb[`m${i}`] = v || null));
-        return [o, nb];
+        return [o];
       });
     await exporterExcelPolynov(`Trame_CA_${exercice}-${exercice + 1}`, [
       {
@@ -379,8 +325,6 @@ export default function TrameCA(props: {
         colonnes,
         lignes: [
           ...versExcel(trame.lignes),
-          { poste: "" },
-          ...versExcel(commercial),
         ],
         alerte: (l) => String(l.poste).startsWith("ÉCART") && Number(l.total ?? 0) < 0,
         notes: [
@@ -450,13 +394,11 @@ export default function TrameCA(props: {
               ) : (
                 affiche(v)
               )}
-              {l.nb && l.nb[i] > 0 && <div style={{ fontSize: 10, color: C.gris, fontWeight: 400 }}>{l.nb[i]} ligne{l.nb[i] > 1 ? "s" : ""}</div>}
             </td>,
             afficherPct ? <td key={`p${i}`} style={tdPct}>{part(v, l.base?.[i])}</td> : null,
           ])}
           <td style={{ ...td, fontWeight: 800, color: couleur(l.total), borderLeft: `2px solid ${C.ligne}` }}>
             {affiche(l.total)}
-            {l.nbTotal !== undefined && l.nbTotal > 0 && <div style={{ fontSize: 10, color: C.gris, fontWeight: 400 }}>{l.nbTotal} lignes</div>}
           </td>
           {afficherPct && <td style={tdPct}>{part(l.total, l.baseTotal)}</td>}
           <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined || l.moyenne === null ? "" : affiche(l.moyenne)}</td>
@@ -496,6 +438,22 @@ export default function TrameCA(props: {
         />
       </div>
 
+      {estAdmin && onPrevuTous && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 12, padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, fontSize: 13 }}>
+          <strong>Remplir le prévisionnel :</strong>
+          <span>réalisé {exercice - 1}-{exercice} ×</span>
+          <input value={pctN1} onChange={(e) => setPctN1(e.target.value)} inputMode="decimal" aria-label="Pourcentage du réalisé N-1" style={{ ...page.entrees, width: 70, minHeight: 34, fontSize: 14 }} />
+          <span>%</span>
+          <button type="button" style={page.btnSecondaire} onClick={pourcentN1}>Appliquer mois par mois</button>
+          <span style={{ width: 16 }} />
+          <span>ou un total annuel</span>
+          <input value={totalSaisi} onChange={(e) => setTotalSaisi(e.target.value)} placeholder="€" inputMode="decimal" aria-label="Total annuel prévu" style={{ ...page.entrees, width: 120, minHeight: 34, fontSize: 14 }} />
+          <button type="button" style={page.btnSecondaire} onClick={() => repartir("EGAL")}>en 12 parts égales</button>
+          <button type="button" style={page.btnSecondaire} onClick={() => repartir("N1")}>comme N-1</button>
+          {message && <span style={{ flexBasis: "100%", color: C.bleuTexte, fontWeight: 600 }}>{message}</span>}
+        </div>
+      )}
+
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
@@ -514,29 +472,12 @@ export default function TrameCA(props: {
           </thead>
           <tbody>
             {rendre(trame.lignes, "ca")}
-            <tr>
-              <td colSpan={nbCol} style={{ ...td, textAlign: "left", fontWeight: 800, fontSize: 15, paddingTop: 16, position: "sticky", left: 0 }}>
-                Commandes et devis
-              </td>
-            </tr>
-            {erreurCom ? (
-              <tr>
-                <td colSpan={nbCol} style={{ ...td, textAlign: "left", color: C.rougeTexte }}>{erreurCom}</td>
-              </tr>
-            ) : !com ? (
-              <tr>
-                <td colSpan={nbCol} style={{ ...td, textAlign: "left", color: C.gris }}>Chargement…</td>
-              </tr>
-            ) : (
-              rendre(commercial, "com")
-            )}
           </tbody>
         </table>
       </div>
       <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
         Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements saisis pour coller à la compta.
-        Les montants soulignés s’ouvrent sur leur détail. Commandes et devis : mêmes règles que les Indicateurs commerciaux (lignes de commande et avenants
-        comptés séparément).
+        Les montants soulignés s’ouvrent sur leur détail.
       </p>
     </section>
   );

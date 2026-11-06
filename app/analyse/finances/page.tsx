@@ -1451,6 +1451,7 @@ function FinancesContenu() {
                 onPrevu={(m, v) => void enregistrerPrevus(new Map([[m, v]]))}
                 onDetail={(i, ligne) => setDetail({ mois: mois[i], ligne })}
                 onDetailReport={(i) => setDetailReport(mois[i])}
+                onPrevuTous={(valeurs) => enregistrerPrevus(valeurs)}
               />
 
               {/* DETAIL_MONTANT_V3 : ce qui compose le montant cliqué */}
@@ -1531,19 +1532,7 @@ function FinancesContenu() {
                   );
                 })()}
 
-              {estAdmin && (
-              <div style={{ ...page.carte, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", padding: 12, marginBottom: 14 }}>
-                <strong>Remplir le prévisionnel :</strong>
-                <input value={totalAnnuel} onChange={(e) => setTotalAnnuel(e.target.value)} placeholder="total annuel €" inputMode="decimal" style={{ ...page.entrees, width: 140 }} aria-label="Total annuel prévu" />
-                <button type="button" style={page.btnSecondaire} onClick={() => repartir("EGAL")}>Répartir en 12 parts égales</button>
-                <button type="button" style={page.btnSecondaire} onClick={() => repartir("N1")}>Répartir comme l’exercice précédent</button>
-                <span style={{ width: 12 }} />
-                <span>ou</span>
-                <button type="button" style={page.btnSecondaire} onClick={reprendreN1}>Reprendre le réalisé N-1</button>
-                <input value={evolution} onChange={(e) => setEvolution(e.target.value)} inputMode="decimal" style={{ ...page.entrees, width: 64 }} aria-label="Évolution en pourcentage" />
-                <span>%</span>
-              </div>
-              )}
+              {/* TRAME_CA_V3 : « Remplir le prévisionnel » est dans la trame */}
             </div>
 
             {/* ---------- taux de vente moyen des PE / PI ---------- */}
