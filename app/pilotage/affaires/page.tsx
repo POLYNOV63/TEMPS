@@ -1581,7 +1581,9 @@ function PlanningAffairesContenu() {
   }
 
   /* Une affaire du planning : sa ligne (barre de l'affaire), ses besoins, ses ressources, la ligne d'affectation */
-  function rendreAffaire(affaire: Affaire, titreGroupe: string | null, premiere: boolean): ReactNode {
+  function rendreAffaire(affaire: Affaire, titreGroupe: string | null, premiere: boolean, sousBandeau?: string): ReactNode {
+    // BANDEAU_TOUTES : sous un bandeau, la description n'est répétée que si elle diffère de celle du bandeau
+    const designationAffichee = sousBandeau === undefined || (affaire.designation ?? "").trim().toLowerCase() !== sousBandeau.trim().toLowerCase();
     const ouverte = ouvertes.has(affaire.id);
     const blocs = blocsParAffaire.get(affaire.id) ?? [];
     const chiffre = chiffreParAffaire.get(affaire.id) ?? 0;
@@ -1634,7 +1636,7 @@ function PlanningAffairesContenu() {
           onDoubleClick={(e) => surDoubleClic(e, affaire)}
           onDragOver={(e) => peutAgir && e.preventDefault()}
           onDrop={(e) => surDepot(e, affaire)}
-          style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "46px", background: livree ? "#f1f2f4" : "#f8f9fa", position: "relative" }}
+          style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: designationAffichee ? "46px" : "36px", background: livree ? "#f1f2f4" : "#f8f9fa", position: "relative" }}
         >
           <div style={{ gridColumn: 1, display: "flex", alignItems: "center", gap: 4, padding: "0 4px", minWidth: 0 }}>
             <button
@@ -1706,15 +1708,17 @@ function PlanningAffairesContenu() {
                   </button>
                 )}
               </div>
+              {designationAffichee && (
               <div style={{ fontSize: 12, color: "#3b4046", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={affaire.designation}>
                 {(() => {
                   // client de la commande de base, même pour un avenant (1750R2 -> 1750)
                   const base = (affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
                   const client = clientsParBase.get(`${affaire.type}|${base}`);
-                  return client ? <strong style={{ fontWeight: 800 }}>{client} · </strong> : null;
+                  return client && sousBandeau === undefined ? <strong style={{ fontWeight: 800 }}>{client} · </strong> : null;
                 })()}
                 {affaire.designation}
               </div>
+              )}
             </div>
           </div>
 
@@ -2403,7 +2407,9 @@ function PlanningAffairesContenu() {
                 const baseDe = (a: Affaire) => `${a.type}|${(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "")}`;
                 const cle = baseDe(affaire);
                 const membres = toutesAffaires.filter((a) => baseDe(a) === cle && a.statut !== "ABANDONNEE");
-                const enFamille = affaire.type === "CBE" && !estPrestation(affaire) && membres.length > 1;
+                // BANDEAU_TOUTES : toute commande au forfait a son bandeau ; « famille » quand il y a des avenants
+                const enFamille = affaire.type === "CBE" && !estPrestation(affaire);
+                const famille = membres.length > 1;
                 const premierDeFamille = enFamille && (premierDuGroupe || baseDe(lignes[indexLigne - 1]) !== cle);
                 const suivante = lignes[indexLigne + 1];
                 const dernierDeFamille = enFamille && (!suivante || rangGroupe(suivante) !== groupe || baseDe(suivante) !== cle);
@@ -2427,25 +2433,28 @@ function PlanningAffairesContenu() {
                         )}
                         <div style={{ marginTop: 12, padding: "6px 10px", background: "#eef3f9", borderTop: "2px solid #9fb6cf", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 16px", fontSize: 13 }}>
                           <strong style={{ color: "#34506b" }}>
-                            ⧉ CBE {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero} · famille de {membres.length} commandes
+                            {famille ? "⧉ " : ""}CBE {laBase.numero.match(/^\d+/)?.[0] ?? laBase.numero}
+                            {famille ? ` · famille de ${membres.length} commandes` : ""}
                             {nbLivrees > 0 ? ` (dont ${nbLivrees} livrée${nbLivrees > 1 ? "s" : ""})` : ""}
                           </strong>
                           <span style={{ color: "#3b4046" }}>
                             {clientsParBase.get(cle) ? `${clientsParBase.get(cle)} · ` : ""}
                             {laBase.designation}
                           </span>
+                          {famille && (
                           <span style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
                             chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{" "}
                             <strong style={{ color: rs < -0.5 ? C.rougeTexte : rs > 0.5 ? "#7a3e00" : "#1b5e20" }}>
                               {rs < -0.5 ? `+${formatHeures(-rs)} au-delà` : rs > 0.5 ? `reste à planifier ${formatHeures(rs)}` : "✓ tout est planifié"}
                             </strong>
                           </span>
+                          )}
                         </div>
                       </>
                     )}
                     {/* FAMILLE_DISCRET : fin liseré à gauche des commandes de la famille, espace après la dernière */}
                     <div style={{ position: "relative" }}>
-                      {rendreAffaire(affaire, null, false)}
+                      {rendreAffaire(affaire, null, false, laBase.designation ?? "")}
                       <div aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: "#9fb6cf", borderBottomLeftRadius: dernierDeFamille ? 3 : 0, pointerEvents: "none", zIndex: 5 }} />
                     </div>
                     {dernierDeFamille && <div aria-hidden="true" style={{ height: 12 }} />}
