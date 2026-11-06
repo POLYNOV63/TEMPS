@@ -145,7 +145,7 @@ const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4
 function PlanningAffairesContenu() {
   // le planning s'ouvre une semaine avant la semaine en cours
   const [lundi, setLundi] = useState(() => ajouterJours(lundiDe(aISO(new Date())), -7));
-  const [nbSemaines, setNbSemaines] = useState(4);
+  const [nbSemaines, setNbSemaines] = useState(8); // SEMAINE_ENCADREE : 8 semaines par défaut
 
   const [affaires, setAffaires] = useState<Affaire[]>([]);
   const [charges, setCharges] = useState<Charge[]>([]);
@@ -169,7 +169,7 @@ function PlanningAffairesContenu() {
   const derniereEcriture = useRef(0);
 
   const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
-  const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("TOUS");
+  const [filtreType, setFiltreType] = useState<"TOUS" | "CBE" | "DBE" | "PE" | "PI">("CBE"); // forfaits par défaut
   // RECHERCHE_PLANNING : n°, client, description, imputation, personne affectée ou responsable
   const [recherche, setRecherche] = useState("");
   // RESTE_CLIQUABLE : liste des commandes qui ont encore des heures à mettre au planning
@@ -1290,6 +1290,11 @@ function PlanningAffairesContenu() {
   const col = (i: number) => i + 2;
   const semaines = Array.from({ length: nbSemaines }, (_, w) => ajouterJours(lundi, w * 7));
 
+  // SEMAINE_ENCADREE : colonnes de la semaine en cours (si elle est affichée)
+  const lundiCourant = lundiDe(aujourdhui);
+  const debutSemaineCourante = colonnes.findIndex((j) => lundiDe(j) === lundiCourant);
+  const nbJoursSemaineCourante = colonnes.filter((j) => lundiDe(j) === lundiCourant).length;
+
   const fonds = (nbLignes = 1) => (
     <>
       <div
@@ -1297,7 +1302,7 @@ function PlanningAffairesContenu() {
         style={{
           gridColumn: `2 / ${colonnes.length + 2}`,
           gridRow: `1 / span ${nbLignes}`,
-          backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent calc(100% / ${nbSemaines} - 1px), ${C.ligne} calc(100% / ${nbSemaines} - 1px), ${C.ligne} calc(100% / ${nbSemaines}))`,
+          backgroundImage: `repeating-linear-gradient(to right, transparent 0, transparent calc(100% / ${nbSemaines} - 2px), #c4c9cf calc(100% / ${nbSemaines} - 2px), #c4c9cf calc(100% / ${nbSemaines}))`,
           pointerEvents: "none",
         }}
       />
@@ -1305,6 +1310,9 @@ function PlanningAffairesContenu() {
         estFerie(j) ? (
           <div key={`f-${j}`} aria-hidden="true" style={{ gridColumn: col(i), gridRow: `1 / span ${nbLignes}`, background: "#e9ebee", pointerEvents: "none" }} />
         ) : null
+      )}
+      {debutSemaineCourante >= 0 && (
+        <div aria-hidden="true" style={{ gridColumn: `${col(debutSemaineCourante)} / span ${nbJoursSemaineCourante}`, gridRow: `1 / span ${nbLignes}`, borderLeft: `2px solid ${C.rouge}`, borderRight: `2px solid ${C.rouge}`, background: "rgba(192,0,0,0.035)", pointerEvents: "none" }} />
       )}
       {colonnes.includes(aujourdhui) && (
         <div aria-hidden="true" style={{ gridColumn: col(colonnes.indexOf(aujourdhui)), gridRow: `1 / span ${nbLignes}`, borderLeft: `2px solid ${C.rouge}`, pointerEvents: "none" }} />
@@ -2281,10 +2289,13 @@ function PlanningAffairesContenu() {
                   ));
                 })()}
                 {semaines.map((l, w) => (
-                  <div key={l} style={{ gridColumn: `${col(5 * w)} / span 5`, gridRow: 2, textAlign: "center", fontWeight: 800, padding: "4px 0", background: "#f1f2f4", borderLeft: `1px solid ${C.ligne}`, fontSize: nbSemaines > 26 ? 10 : 13, overflow: "hidden", whiteSpace: "nowrap" }}>
+                  <div key={l} style={{ gridColumn: `${col(5 * w)} / span 5`, gridRow: 2, textAlign: "center", fontWeight: 800, padding: "4px 0", background: l === lundiCourant ? "#fff4f4" : "#f1f2f4", color: l === lundiCourant ? C.rougeFonce : undefined, borderLeft: `2px solid #c4c9cf`, fontSize: nbSemaines > 26 ? 10 : 13, overflow: "hidden", whiteSpace: "nowrap" }}>
                     S{numeroSemaine(l)}
                   </div>
                 ))}
+                {debutSemaineCourante >= 0 && (
+                  <div aria-hidden="true" title="Semaine en cours" style={{ gridColumn: `${col(debutSemaineCourante)} / span ${nbJoursSemaineCourante}`, gridRow: "2 / span 2", border: `2px solid ${C.rouge}`, borderBottom: "none", borderRadius: "5px 5px 0 0", pointerEvents: "none", zIndex: 1 }} />
+                )}
                 {colonnes.map((j, i) => (
                   <div key={j} style={{ gridColumn: col(i), gridRow: 3, textAlign: "center", padding: "3px 0", background: estFerie(j) ? "#e3e6ea" : j === aujourdhui ? "#fff4f4" : "#ffffff", borderBottom: `1px solid ${C.ligne}`, fontSize: nbSemaines > 12 ? 9 : 11, lineHeight: 1.1, color: C.gris, fontWeight: 700 }}>
                     {nbSemaines > 12 ? "" : JOURS_COURTS[jourSemaine(j) - 1]}
