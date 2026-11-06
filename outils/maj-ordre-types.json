@@ -1,0 +1,8 @@
+[
+ {
+  "fichier": "app/ma-semaine/GrilleSemaine.tsx",
+  "nom": "Ma semaine : DBE en haut, CBE au milieu, Divers en bas",
+  "cherche": "    return [...rangeesBrutes].sort((a, b) => cles.indexOf(a.cle) - cles.indexOf(b.cle));",
+  "remplace": "    // ORDRE_PAR_TYPE : DBE en haut, CBE au milieu, Divers en bas ; dans chaque groupe, l'ordre de saisie est gardé\n    const rang = (t: string) => (t === \"DBE\" ? 0 : estDiversType(t) ? 2 : 1);\n    return [...rangeesBrutes].sort((a, b) => rang(a.typeAffaire) - rang(b.typeAffaire) || cles.indexOf(a.cle) - cles.indexOf(b.cle));"
+ }
+]

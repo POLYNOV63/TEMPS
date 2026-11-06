@@ -884,7 +884,9 @@ export default function GrilleSemaine(props: GrilleSemaineProps) {
     if (ordre.current.semaine !== cleSemaine) ordre.current = { semaine: cleSemaine, cles: [] };
     const cles = ordre.current.cles;
     for (const r of rangeesBrutes) if (!cles.includes(r.cle)) cles.push(r.cle);
-    return [...rangeesBrutes].sort((a, b) => cles.indexOf(a.cle) - cles.indexOf(b.cle));
+    // ORDRE_PAR_TYPE : DBE en haut, CBE au milieu, Divers en bas ; dans chaque groupe, l'ordre de saisie est gardé
+    const rang = (t: string) => (t === "DBE" ? 0 : estDiversType(t) ? 2 : 1);
+    return [...rangeesBrutes].sort((a, b) => rang(a.typeAffaire) - rang(b.typeAffaire) || cles.indexOf(a.cle) - cles.indexOf(b.cle));
   }, [rangeesBrutes, cleSemaine]);
   const alertes = alertesSemaine(jours, props.activitesEtCodes);
 
