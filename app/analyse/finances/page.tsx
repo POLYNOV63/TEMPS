@@ -8,6 +8,7 @@ import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import DetailMontant, { type DetailDemande } from "@/components/finances/DetailMontant";
+import TrameCA from "@/components/finances/TrameCA"; // TRAME_CA_V1
 import { chargerMoi, chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
 import { exporterExcelPolynov, type ColonneExcel, type FeuilleExcel } from "@/lib/excelPolynov";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
@@ -1641,6 +1642,9 @@ function FinancesContenu() {
               </div>
               )}
             </section>
+
+            {/* ---------- TRAME_CA_V1 : la présentation du classeur trame_CA ---------- */}
+            <TrameCA exercice={exercice} mois={mois} moisN1={moisN1} mouvements={mouvements} prevu={vue.prevu} />
 
             {/* ---------- taux de vente moyen des PE / PI ---------- */}
             {vue.tauxPEPI.some((t) => t.exercice.heures > 0 || t.n1.heures > 0) && (
