@@ -2344,67 +2344,6 @@ function PlanningAffairesContenu() {
                 )}
               </div>
 
-              {/* événements hors affaire : salons, formations, absences connues… */}
-              <div style={{ marginTop: 8, padding: "6px 8px", background: "#eef0f3", borderRadius: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  aria-expanded={horsAffaireOuvert}
-                  onClick={() => setHorsAffaireOuvert((v) => !v)}
-                  style={{ all: "unset", cursor: "pointer", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", minHeight: 30, display: "inline-flex", alignItems: "center", gap: 6 }}
-                >
-                  <span aria-hidden="true">{horsAffaireOuvert ? "▾" : "▸"}</span>
-                  Hors affaire ({evenements.length})
-                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: C.gris }}>salons, formations, absences connues…</span>
-                </button>
-                {peutAgir && referentiel && (
-                  <button
-                    type="button"
-                    onClick={() => setEvenement({ prefill: { debut: colonnes.includes(aujourdhui) ? aujourdhui : colonnes[0] } })}
-                    style={{ marginLeft: "auto", minHeight: 30, padding: "0 10px", border: "1.5px dashed #7b8189", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: "#3b4046", cursor: "pointer", fontFamily: "inherit" }}
-                  >
-                    + Événement hors affaire
-                  </button>
-                )}
-              </div>
-              {horsAffaireOuvert && evenements.length === 0 && (
-                <p style={{ margin: "6px 8px", fontSize: 13, color: C.gris }}>Aucun événement hors affaire sur cette période.</p>
-              )}
-              {horsAffaireOuvert &&
-                evenements.map((ev) => (
-                  <div key={ev.cle}>
-                    <div style={{ borderTop: `1px solid ${C.ligne}` }} />
-                    {ev.blocs.map((b, k) => (
-                      <div
-                        key={b.affectation.id}
-                        data-ligne
-                        onDoubleClick={(e) => {
-                          if (!peutAgir || !referentiel || (e.target as HTMLElement).closest("button, a, [data-barre]")) return;
-                          const jour = jourSousLaSouris(e.currentTarget as HTMLElement, e.clientX);
-                          if (jour) setEvenement({ prefill: { debut: jour } });
-                        }}
-                        style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "36px", borderTop: k > 0 ? `1px dashed ${C.ligne}` : "none", position: "relative" }}
-                      >
-                        <div style={{ gridColumn: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 6px 0 12px", lineHeight: 1.2, minWidth: 0 }}>
-                          {k === 0 ? (
-                            <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {ev.libelle}
-                              {ev.code && <span style={{ fontWeight: 600, color: C.gris }}> · {ev.code}</span>}
-                            </strong>
-                          ) : null}
-                          <span style={{ fontSize: 12, color: "#3b4046" }}>
-                            {nomCollab(annuaire.find((c) => c.id === b.affectation.collaborateur_id))} · {formatHeures(b.heures)}
-                          </span>
-                        </div>
-                        {fonds()}
-                        {rendreBloc(b, null)}
-                        <div style={{ gridColumn: colonnes.length + 2, display: "flex", alignItems: "center", padding: "0 8px", fontSize: 12, fontWeight: 700 }}>
-                          {formatDate(b.jours[0].jour)} → {formatDate(b.jours[b.jours.length - 1].jour)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-
               {lignes.length === 0 && !chargement && (
                 <p style={{ color: C.gris, padding: "16px 4px" }}>
                   Aucune affaire en cours ou en attente au planning. Mettez-en au planning depuis le portefeuille (« + Planifier »).
@@ -2474,6 +2413,68 @@ function PlanningAffairesContenu() {
                   </Fragment>
                 );
               })}
+
+              {/* HORS_AFFAIRE_BAS : événements hors affaire, sous les affaires (salons, formations, absences connues…) */}
+              <div style={{ marginTop: 18, padding: "6px 8px", background: "#eef0f3", borderRadius: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  aria-expanded={horsAffaireOuvert}
+                  onClick={() => setHorsAffaireOuvert((v) => !v)}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", minHeight: 30, display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <span aria-hidden="true">{horsAffaireOuvert ? "▾" : "▸"}</span>
+                  Hors affaire ({evenements.length})
+                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: C.gris }}>salons, formations, absences connues…</span>
+                </button>
+                {peutAgir && referentiel && (
+                  <button
+                    type="button"
+                    onClick={() => setEvenement({ prefill: { debut: colonnes.includes(aujourdhui) ? aujourdhui : colonnes[0] } })}
+                    style={{ marginLeft: "auto", minHeight: 30, padding: "0 10px", border: "1.5px dashed #7b8189", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: "#3b4046", cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    + Événement hors affaire
+                  </button>
+                )}
+              </div>
+              {horsAffaireOuvert && evenements.length === 0 && (
+                <p style={{ margin: "6px 8px", fontSize: 13, color: C.gris }}>Aucun événement hors affaire sur cette période.</p>
+              )}
+              {horsAffaireOuvert &&
+                evenements.map((ev) => (
+                  <div key={ev.cle}>
+                    <div style={{ borderTop: `1px solid ${C.ligne}` }} />
+                    {ev.blocs.map((b, k) => (
+                      <div
+                        key={b.affectation.id}
+                        data-ligne
+                        onDoubleClick={(e) => {
+                          if (!peutAgir || !referentiel || (e.target as HTMLElement).closest("button, a, [data-barre]")) return;
+                          const jour = jourSousLaSouris(e.currentTarget as HTMLElement, e.clientX);
+                          if (jour) setEvenement({ prefill: { debut: jour } });
+                        }}
+                        style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "36px", borderTop: k > 0 ? `1px dashed ${C.ligne}` : "none", position: "relative" }}
+                      >
+                        <div style={{ gridColumn: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 6px 0 12px", lineHeight: 1.2, minWidth: 0 }}>
+                          {k === 0 ? (
+                            <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {ev.libelle}
+                              {ev.code && <span style={{ fontWeight: 600, color: C.gris }}> · {ev.code}</span>}
+                            </strong>
+                          ) : null}
+                          <span style={{ fontSize: 12, color: "#3b4046" }}>
+                            {nomCollab(annuaire.find((c) => c.id === b.affectation.collaborateur_id))} · {formatHeures(b.heures)}
+                          </span>
+                        </div>
+                        {fonds()}
+                        {rendreBloc(b, null)}
+                        <div style={{ gridColumn: colonnes.length + 2, display: "flex", alignItems: "center", padding: "0 8px", fontSize: 12, fontWeight: 700 }}>
+                          {formatDate(b.jours[0].jour)} → {formatDate(b.jours[b.jours.length - 1].jour)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
 
               {/* affaires livrées restées au planning */}
               {lignesLivrees.length > 0 && (
