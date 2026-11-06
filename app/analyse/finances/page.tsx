@@ -1453,6 +1453,7 @@ function FinancesContenu() {
                 onDetail={(i, ligne) => setDetail({ mois: mois[i], ligne })}
                 onDetailReport={(i) => setDetailReport(mois[i])}
                 onPrevuTous={(valeurs) => enregistrerPrevus(valeurs)}
+                onAjustementsModifies={setAjustements}
               />
 
               {/* DETAIL_MONTANT_V3 : ce qui compose le montant cliqué */}

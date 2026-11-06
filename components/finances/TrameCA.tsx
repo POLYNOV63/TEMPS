@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V5, après TRAME_CA_V2, V3 et V4)
+   FINANCES - TRAME CA (TRAME_CA_V6 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -18,15 +18,20 @@
    de chaque ligne, en rouge italique, avec le même découpage
    imputation × activité (mouvements attendus de la page).
    V5 : le bloc des totaux est en tête de la trame, le détail ensuite.
+   V6 : frais annexes (positif / négatif) saisis dans la trame par l'ADMIN,
+   enregistrés dans finances_ajustements sous un motif réservé ; les
+   autres ajustements du mois (saisis ailleurs) restent intacts et comptés.
+   Remplissage du prévisionnel sous le tableau.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
    au « Réalisé » du tableau des 12 mois.
 ================================================================ */
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { C, Tuile, page } from "@/components/pilotage/ui";
 import { exporterExcelPolynov, type ColonneExcel } from "@/lib/excelPolynov";
+import { supabase } from "@/lib/supabase";
 import type { MouvementCA } from "@/lib/finances";
 
 const MOIS_LONGS = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
@@ -35,6 +40,11 @@ const nombre = (v: number) => Math.round(v).toLocaleString("fr-FR");
 const euros = (v: number) => `${nombre(v)} €`;
 const ROUGE_ATTENDU = "#a33a3a";
 const styleAttendu: CSSProperties = { fontSize: 11, fontStyle: "italic", fontWeight: 600, color: ROUGE_ATTENDU, whiteSpace: "nowrap" };
+/* motifs réservés aux frais annexes saisis dans la trame */
+const MOTIF_POS = "Frais annexes de refacturation + (trame CA)";
+const MOTIF_NEG = "Frais annexes de refacturation − (trame CA)";
+type Ajustement = { id: string; mois: string; montant: number; motif: string };
+
 const pourcent = (v: number | null) => (v === null || !Number.isFinite(v) ? "—" : `${Math.round(v * 100)} %`);
 
 type Cle =
@@ -97,6 +107,7 @@ type Ligne =
       base?: number[]; // dénominateur du % de chaque mois
       baseTotal?: number; // dénominateur du % du total
       saisie?: boolean; // prévisionnel : case modifiable (ADMIN)
+      saisieFrais?: "POS" | "NEG"; // frais annexes : case modifiable (ADMIN)
       clic?: (i: number) => void; // montant cliquable : son détail
     };
 
@@ -114,6 +125,7 @@ export default function TrameCA(props: {
   onDetail?: (i: number, ligne: "REALISE" | "ATTENDU" | "ATTERRISSAGE") => void;
   onDetailReport?: (i: number) => void;
   onPrevuTous?: (valeurs: Map<string, number>) => unknown;
+  onAjustementsModifies?: (liste: { mois: string; montant: number; motif: string }[]) => void;
 }) {
   const { exercice, mois, moisN1, mouvements, prevu, estAdmin, onPrevu, onDetail, onDetailReport, onPrevuTous } = props;
   const attendu = props.attendu ?? mois.map(() => 0);
@@ -123,6 +135,61 @@ export default function TrameCA(props: {
   const [pctN1, setPctN1] = useState("100");
   const [totalSaisi, setTotalSaisi] = useState("");
   const [message, setMessage] = useState("");
+  const [ajustements, setAjustements] = useState<Ajustement[]>([]);
+  const [erreurFrais, setErreurFrais] = useState("");
+
+  async function chargerAjustements() {
+    const { data, error } = await supabase.from("finances_ajustements").select("id,mois,montant,motif");
+    if (error) throw new Error(error.message);
+    const liste = ((data ?? []) as { id: string; mois: string; montant: number | string; motif: string }[]).map((a) => ({
+      id: a.id,
+      mois: String(a.mois).slice(0, 10),
+      montant: Number(a.montant) || 0,
+      motif: a.motif,
+    }));
+    setAjustements(liste);
+    return liste;
+  }
+  useEffect(() => {
+    chargerAjustements().catch(() => setAjustements([]));
+  }, []);
+
+  /* Frais annexes d'un mois : la case donne le TOTAL du signe (tous ajustements du mois) ;
+     seule la ligne au motif réservé est modifiée, les autres ajustements restent tels quels. */
+  async function enregistrerFrais(m: string, signe: "POS" | "NEG", totalVoulu: number) {
+    setErreurFrais("");
+    const motif = signe === "POS" ? MOTIF_POS : MOTIF_NEG;
+    const duMois = ajustements.filter((a) => a.mois.slice(0, 7) === m);
+    const propre = duMois.find((a) => a.motif === motif);
+    const autres = duMois
+      .filter((a) => a.motif !== MOTIF_POS && a.motif !== MOTIF_NEG)
+      .filter((a) => (signe === "POS" ? a.montant > 0 : a.montant < 0))
+      .reduce((t, a) => t + Math.abs(a.montant), 0);
+    const part = Math.round((Math.max(0, totalVoulu) - autres) * 100) / 100;
+    if (part < 0) {
+      setErreurFrais(`${nomMois(m)} : ${euros(autres)} d’ajustements ${signe === "POS" ? "positifs" : "négatifs"} sont déjà saisis ailleurs (page Facturation) ; le total ne peut pas être inférieur.`);
+      return;
+    }
+    const montant = signe === "POS" ? part : -part;
+    const r =
+      part === 0
+        ? propre
+          ? await supabase.from("finances_ajustements").delete().eq("id", propre.id)
+          : { error: null }
+        : propre
+          ? await supabase.from("finances_ajustements").update({ montant }).eq("id", propre.id)
+          : await supabase.from("finances_ajustements").insert({ mois: `${m}-01`, montant, motif });
+    if (r.error) {
+      setErreurFrais(r.error.message);
+      return;
+    }
+    try {
+      const liste = await chargerAjustements();
+      props.onAjustementsModifies?.(liste.map(({ mois, montant: mt, motif: mo }) => ({ mois, montant: mt, motif: mo })));
+    } catch (e) {
+      setErreurFrais(e instanceof Error ? e.message : "Rechargement des ajustements impossible.");
+    }
+  }
   const moisCourant = new Date().toISOString().slice(0, 7);
 
   const trame = useMemo(() => {
@@ -179,7 +246,6 @@ export default function TrameCA(props: {
         total: totalAnnuel,
         moyenne: totalAnnuel / 12,
         style: "total",
-        attendu,
         clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
       },
       {
@@ -279,8 +345,8 @@ export default function TrameCA(props: {
       ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
       ca("CA PE", caPE, "sous-total", caPEa),
       { kind: "titre", libelle: "Frais annexes de refacturation (ajustements)" },
-      ca("Positif", r.fa_pos),
-      ca("Négatif", r.fa_neg),
+      { ...ca("Positif", r.fa_pos), saisieFrais: "POS" } as Ligne,
+      { ...ca("Négatif", r.fa_neg), saisieFrais: "NEG" } as Ligne,
     ];
 
     return { lignes, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
@@ -389,8 +455,20 @@ export default function TrameCA(props: {
             {voirAttendu && l.attendu && l.attendu.some((x) => Math.abs(x) >= 0.5) && <div style={{ ...styleAttendu, textAlign: "left" }}>dont attendu</div>}
           </td>
           {l.valeurs.map((v, i) => [
-            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined, padding: l.saisie && estAdmin ? 2 : td.padding }}>
-              {l.saisie && estAdmin && onPrevu ? (
+            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined, padding: (l.saisie || l.saisieFrais) && estAdmin ? 2 : td.padding }}>
+              {l.saisieFrais && estAdmin && props.onAjustementsModifies ? (
+                <input
+                  key={`${mois[i]}-${l.saisieFrais}-${v}`}
+                  defaultValue={v ? String(Math.round(v * 100) / 100) : ""}
+                  inputMode="decimal"
+                  aria-label={`Frais annexes ${l.saisieFrais === "POS" ? "positifs" : "négatifs"} ${nomMois(mois[i])}`}
+                  onBlur={(e) => {
+                    const x = Number(e.currentTarget.value.replace(/\s/g, "").replace(",", ".")) || 0;
+                    if (Math.abs(x - (v ?? 0)) >= 0.005) void enregistrerFrais(mois[i], l.saisieFrais as "POS" | "NEG", Math.abs(x));
+                  }}
+                  style={{ width: 72, textAlign: "right", border: "1px solid #c9cdd2", borderRadius: 4, padding: 3, fontFamily: "inherit", fontSize: 12 }}
+                />
+              ) : l.saisie && estAdmin && onPrevu ? (
                 <input
                   key={`${mois[i]}-${v}`}
                   defaultValue={v ? String(Math.round(v)) : ""}
@@ -465,22 +543,6 @@ export default function TrameCA(props: {
         />
       </div>
 
-      {estAdmin && onPrevuTous && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 12, padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, fontSize: 13 }}>
-          <strong>Remplir le prévisionnel :</strong>
-          <span>réalisé {exercice - 1}-{exercice} ×</span>
-          <input value={pctN1} onChange={(e) => setPctN1(e.target.value)} inputMode="decimal" aria-label="Pourcentage du réalisé N-1" style={{ ...page.entrees, width: 70, minHeight: 34, fontSize: 14 }} />
-          <span>%</span>
-          <button type="button" style={page.btnSecondaire} onClick={pourcentN1}>Appliquer mois par mois</button>
-          <span style={{ width: 16 }} />
-          <span>ou un total annuel</span>
-          <input value={totalSaisi} onChange={(e) => setTotalSaisi(e.target.value)} placeholder="€" inputMode="decimal" aria-label="Total annuel prévu" style={{ ...page.entrees, width: 120, minHeight: 34, fontSize: 14 }} />
-          <button type="button" style={page.btnSecondaire} onClick={() => repartir("EGAL")}>en 12 parts égales</button>
-          <button type="button" style={page.btnSecondaire} onClick={() => repartir("N1")}>comme N-1</button>
-          {message && <span style={{ flexBasis: "100%", color: C.bleuTexte, fontWeight: 600 }}>{message}</span>}
-        </div>
-      )}
-
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
@@ -502,8 +564,26 @@ export default function TrameCA(props: {
           </tbody>
         </table>
       </div>
+
+      {erreurFrais && <div style={{ marginTop: 8, color: C.rougeTexte, fontWeight: 600, fontSize: 13 }}>{erreurFrais}</div>}
+
+      {estAdmin && onPrevuTous && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 12, padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, fontSize: 13 }}>
+          <strong>Remplir le prévisionnel :</strong>
+          <span>réalisé {exercice - 1}-{exercice} ×</span>
+          <input value={pctN1} onChange={(e) => setPctN1(e.target.value)} inputMode="decimal" aria-label="Pourcentage du réalisé N-1" style={{ ...page.entrees, width: 70, minHeight: 34, fontSize: 14 }} />
+          <span>%</span>
+          <button type="button" style={page.btnSecondaire} onClick={pourcentN1}>Appliquer mois par mois</button>
+          <span style={{ width: 16 }} />
+          <span>ou un total annuel</span>
+          <input value={totalSaisi} onChange={(e) => setTotalSaisi(e.target.value)} placeholder="€" inputMode="decimal" aria-label="Total annuel prévu" style={{ ...page.entrees, width: 120, minHeight: 34, fontSize: 14 }} />
+          <button type="button" style={page.btnSecondaire} onClick={() => repartir("EGAL")}>en 12 parts égales</button>
+          <button type="button" style={page.btnSecondaire} onClick={() => repartir("N1")}>comme N-1</button>
+          {message && <span style={{ flexBasis: "100%", color: C.bleuTexte, fontWeight: 600 }}>{message}</span>}
+        </div>
+      )}
       <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
-        Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements saisis pour coller à la compta.
+        Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements pour coller à la compta (saisis ici par l’ADMIN, ou depuis la Facturation).
         Les montants soulignés s’ouvrent sur leur détail. <span style={{ color: ROUGE_ATTENDU, fontStyle: "italic", fontWeight: 600 }}>+ en rouge italique</span> : attendu
         (forfaits pas encore livrés, au mois de leur délai estimé ; PE / PI prévues), qui s’ajoute au réalisé pour faire l’atterrissage.
       </p>
