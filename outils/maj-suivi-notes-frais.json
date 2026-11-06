@@ -1,0 +1,14 @@
+[
+ {
+  "fichier": "app/dashboard/page.tsx",
+  "nom": "Tableau de bord : tuile « Notes de frais » dans RH",
+  "cherche": "        <CarteCompacte\n          icone=\"📒\"\n          titre=\"Suivi RH\"\n          description=\"CP, RTT et compteurs de chacun : soldes, historique, ajustements\"\n          onClick={() => aller(\"/admin/suivi-rh\")}\n        />",
+  "remplace": "        <CarteCompacte\n          icone=\"📒\"\n          titre=\"Suivi RH\"\n          description=\"CP, RTT et compteurs de chacun : soldes, historique, ajustements\"\n          onClick={() => aller(\"/admin/suivi-rh\")}\n        />\n        {/* SUIVI_NOTES_FRAIS */}\n        <CarteCompacte\n          icone=\"🧾\"\n          titre=\"Notes de frais\"\n          description=\"Toutes les notes : combien, à qui, pour quoi ; justificatifs et statistiques\"\n          onClick={() => aller(\"/admin/suivi-notes-frais\")}\n        />"
+ },
+ {
+  "fichier": "app/admin/notes-frais/page.tsx",
+  "nom": "Paramètres : lien vers le suivi des notes",
+  "cherche": "      {!chargement && !admin && <div style={carte}>Cette page est réservée aux administrateurs.</div>}",
+  "remplace": "      {/* SUIVI_NOTES_FRAIS */}\n      {admin && (\n        <div style={{ maxWidth: 760, display: \"flex\", justifyContent: \"flex-end\", marginBottom: 12 }}>\n          <a href=\"/admin/suivi-notes-frais\" style={{ border: \"1px solid #c9cdd2\", borderRadius: 8, padding: \"8px 14px\", background: \"#fff\", color: \"#252525\", fontWeight: 800, textDecoration: \"none\" }}>\n            🧾 Suivi des notes de frais →\n          </a>\n        </div>\n      )}\n      {!chargement && !admin && <div style={carte}>Cette page est réservée aux administrateurs.</div>}"
+ }
+]

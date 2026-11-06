@@ -110,6 +110,14 @@ export default function ParametresNotesFrais() {
       <EnTetePage forme="encadre" section="Administration RH" titre="Paramètres des notes de frais" description="Destinataires de l’e-mail et barème kilométrique" />
 
       {chargement && <div style={carte}>Chargement…</div>}
+      {/* SUIVI_NOTES_FRAIS */}
+      {admin && (
+        <div style={{ maxWidth: 760, display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+          <a href="/admin/suivi-notes-frais" style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
+            🧾 Suivi des notes de frais →
+          </a>
+        </div>
+      )}
       {!chargement && !admin && <div style={carte}>Cette page est réservée aux administrateurs.</div>}
       {erreur && <div style={{ background: "#fdecec", color: "#a51d1d", padding: 12, borderRadius: 10, marginBottom: 14, maxWidth: 760 }}>{erreur}</div>}
       {info && <div style={{ background: "#e7f6ec", color: "#18713b", padding: 12, borderRadius: 10, marginBottom: 14, maxWidth: 760 }}>{info}</div>}

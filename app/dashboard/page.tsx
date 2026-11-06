@@ -821,6 +821,13 @@ function BlocValidationsRH({
           description="CP, RTT et compteurs de chacun : soldes, historique, ajustements"
           onClick={() => aller("/admin/suivi-rh")}
         />
+        {/* SUIVI_NOTES_FRAIS */}
+        <CarteCompacte
+          icone="🧾"
+          titre="Notes de frais"
+          description="Toutes les notes : combien, à qui, pour quoi ; justificatifs et statistiques"
+          onClick={() => aller("/admin/suivi-notes-frais")}
+        />
         <CarteCompacte
           icone="📋"
           titre="Feuilles collaborateurs"
