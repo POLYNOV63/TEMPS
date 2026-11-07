@@ -1,8 +1,8 @@
 /* ===============================================================
-   MAJ - CHARGE ET COMPÉTENCES PAR ACTIVITÉ, PAGE À PART (CHARGE_ACTIVITES)
+   MAJ - DISPONIBILITÉS PAR ACTIVITÉ, PAGE À PART (CHARGE_ACTIVITES)
 
    - nouvelle page app/analyse/charge-activites (fournie dans le ZIP) ;
-   - tableau de bord : tuile « Charge et compétences » dans « Analyses »
+   - tableau de bord : tuile « Disponibilités par activité » dans « Analyses »
      (ADMIN) et dans « Charge du bureau d'études » (DIRECTION) ;
    - Charge par ressource : retire le planning par activité s'il y avait
      été ajouté (version 1 ou 2).
@@ -36,8 +36,12 @@ for (const f of [PAGE, TABLEAU, RESSOURCES]) if (!existsSync(f)) echec(`Fichier 
 /* ---------- 1. tableau de bord ---------- */
 let tb = lireFichier(TABLEAU);
 const ecritures = [];
+const ANCIEN = 'titre="Charge et compétences" description="Compétences disponibles et activités en tension, sur 12 semaines"';
 if (tb.includes("CHARGE_ACTIVITES")) {
-  console.log("✓ tableau de bord : déjà à jour");
+  if (tb.includes(ANCIEN)) {
+    tb = tb.split(ANCIEN).join('titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines"');
+    ecritures.push([TABLEAU, tb, "✓ tableau de bord : tuile renommée « Disponibilités par activité »"]);
+  } else console.log("✓ tableau de bord : déjà à jour");
 } else {
   const ADMIN =
     '\n        <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />\n';
@@ -47,7 +51,7 @@ if (tb.includes("CHARGE_ACTIVITES")) {
   if (compter(tb, DIRECTION) !== 1) echec(`tableau de bord : tuile « Charge par ressource » (Direction) trouvée ${compter(tb, DIRECTION)} fois (attendu : 1).`);
   const tuile = (indent) =>
     `${indent}{/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}\n` +
-    `${indent}<CarteCompacte icone="🧭" titre="Charge et compétences" description="Compétences disponibles et activités en tension, sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />\n`;
+    `${indent}<CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />\n`;
   tb = tb.replace(ADMIN, (x) => x + tuile("        ")).replace(DIRECTION, (x) => x + tuile("          "));
   ecritures.push([TABLEAU, tb, "✓ tableau de bord : tuile ajoutée (Analyses pour l’ADMIN, Charge du bureau d’études pour la Direction)"]);
 }
