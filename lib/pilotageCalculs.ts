@@ -206,6 +206,12 @@ function joursEntre(debut: string, fin: string): number {
   return Math.round((d(fin) - d(debut)) / 86400000);
 }
 
+/* TOLERANCE_AFFECTATION : comme au planning, pas d'alerte pour quelques heures non affectées :
+   6 h au plus, sans dépasser 10 % du chiffré */
+export function toleranceAffectation(chiffre: number): number {
+  return Math.min(6, 0.1 * Math.max(0, chiffre));
+}
+
 export function etatAffaire(
   a: Pick<Affaire, "type" | "statut" | "echeance">,
   t: Totaux,
@@ -256,7 +262,7 @@ export function etatAffaire(
     if (planning.chargeObligatoire && t.chiffre > 0) {
       const nonAffecte = Math.max(0, t.reste - planning.planifie);
 
-      if (nonAffecte > 0.01) {
+      if (nonAffecte > toleranceAffectation(t.chiffre)) {
         return { genre: "warn", texte: `${formatHeures(nonAffecte)} non affectées` };
       }
     }

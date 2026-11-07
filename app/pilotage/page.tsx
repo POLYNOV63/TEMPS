@@ -29,6 +29,7 @@ import {
   indexParAffaire,
   nomCollab,
   planifieParAffaire,
+  toleranceAffectation,
   totauxAffaire,
   type Collab,
   type Genre,
@@ -388,7 +389,11 @@ function PortefeuilleContenu() {
           case "resp": return normaliser(nomCollab(collabs.get(l.affaire.responsable_id)));
           case "echeance": return l.affaire.echeance ?? "9999-12-31";
           case "chiffre": return l.totaux.chiffre;
-          case "realise": return l.totaux.realise;
+          // PORTEFEUILLE_V2 : tri sur le % du chiffré consommé
+          case "realise": {
+            const ch = l.famille ? l.famille.chiffre : l.totaux.chiffre;
+            return l.dansFamille ? -2 : ch > 0 ? l.totaux.realise / ch : -1;
+          }
           case "reste": return l.totaux.reste;
         }
       };
@@ -611,7 +616,7 @@ function PortefeuilleContenu() {
   const petit: CSSProperties = { fontSize: 12, color: C.gris, marginTop: 2 };
 
   function rendreTableau(liste: Ligne[]) {
-    const nbColonnes = 10;
+    const nbColonnes = 8;
     return (
       <table className="portefeuille-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
         <thead className="portefeuille-entete">
@@ -621,9 +626,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="client" libelle="Client" />
             <EnTeteTri col="resp" libelle="Resp." />
             <EnTeteTri col="echeance" libelle="Délai" />
-            <EnTeteTri col="chiffre" libelle="Chiffré" num />
-            <EnTeteTri col="realise" libelle="Réalisé" centre />
-            <EnTeteTri col="reste" libelle="Reste" num />
+            <EnTeteTri col="realise" libelle="Réalisé / Chiffré" centre />
             <th style={thNum} title="Reste à faire non encore affecté dans le planning">À affecter</th>
             <th style={thCourt}>État / planning</th>
           </tr>
@@ -714,69 +717,44 @@ function PortefeuilleContenu() {
                           : ""}
                     </div>
                   </td>
-                  <td style={tdNum}>
-                    {l.famille ? (
-                      <span title={(l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join("\n")}>
-                        <strong>{formatHeures(l.famille.chiffre)}</strong>
-                        <div style={petit}>famille</div>
-                      </span>
-                    ) : l.dansFamille ? (
-                      <span title={`Inclus dans le chiffré de la famille, porté par ${l.dansFamille}`}>
-                        {gris(totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : "—")}
-                        <div style={petit}>inclus dans {l.dansFamille}</div>
-                      </span>
-                    ) : totaux.chiffre > 0 ? (
-                      formatHeures(totaux.chiffre)
-                    ) : (
-                      gris("—")
-                    )}
-                  </td>
-                  <td style={{ ...tdNum, minWidth: 104, textAlign: "center" }}>
+                  {/* PORTEFEUILLE_V2 : réalisé / chiffré, en une colonne, avec la barre */}
+                  <td style={{ ...tdNum, minWidth: 190, textAlign: "center" }}>
                     {l.dansFamille ? (
-                      <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">{gris(`dans ${l.dansFamille}`)}</span>
-                    ) : totaux.realise > 0 ? (
-                      formatHeures(totaux.realise)
+                      <span title="Les heures sont pointées sur la commande de base : le réalisé de toute la famille y est affiché">
+                        {gris(`dans ${l.dansFamille}`)}
+                        <div style={petit}>chiffré {totaux.chiffre > 0 ? formatHeures(totaux.chiffre) : "—"}</div>
+                      </span>
                     ) : (
-                      gris("—")
-                    )}
-                    {/* BARRE_PROGRESSION : pointé sur chiffré (de la famille pour une commande avec avenants) */}
-                    {!l.dansFamille &&
                       (() => {
                         const ch = l.famille ? l.famille.chiffre : totaux.chiffre;
-                        if (ch <= 0) return null;
+                        if (ch <= 0) return totaux.realise > 0 ? <span>{formatHeures(totaux.realise)} {gris("/ —")}</span> : gris("—");
                         const r = totaux.realise / ch;
                         const couleur = r > 1.0001 ? "#c62828" : r > 0.9 ? "#e08a00" : "#2e7d32";
+                        const detail = l.famille ? (l.famille.detail ?? []).map((d) => `${d.numero} : ${formatHeures(d.chiffre)}`).join("\n") : "";
                         return (
-                          <div title={`${Math.round(r * 100)} % du chiffré consommé`} style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", marginTop: 3, maxWidth: "100%", overflow: "hidden" /* BARRE_SANS_CHEVAUCHEMENT */ }}>
-                            <span style={{ width: 44, flex: "0 0 44px", height: 6, background: "#eceef1", borderRadius: 3, overflow: "hidden", display: "inline-block" }}>
-                              <span style={{ display: "block", width: `${Math.min(100, r * 100)}%`, height: "100%", background: couleur }} />
-                            </span>
-                            <span style={{ fontSize: 11, fontWeight: 800, minWidth: 34, textAlign: "right", color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>
+                          <div title={`Réalisé ${formatHeures(totaux.realise)} sur ${formatHeures(ch)} chiffrées (${Math.round(r * 100)} %) · reste ${formatHeures(totaux.reste)}${detail ? `\n${detail}` : ""}`}>
+                            <div>
+                              <strong>{formatHeures(totaux.realise)}</strong> <span style={{ color: C.gris }}>/ {formatHeures(ch)}</span>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                              <span style={{ flex: 1, height: 8, background: "#eceef1", borderRadius: 4, overflow: "hidden", display: "inline-block" }}>
+                                <span style={{ display: "block", width: `${Math.min(100, r * 100)}%`, height: "100%", background: couleur }} />
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 800, minWidth: 36, textAlign: "right", color: r > 1.0001 ? C.rougeTexte : C.gris }}>{Math.round(r * 100)} %</span>
+                            </div>
+                            {l.famille && <div style={petit}>famille · {l.famille.numeros.length} commandes</div>}
                           </div>
                         );
-                      })()}
-                    {l.famille && <div style={petit}>famille</div>}
-                  </td>
-                  <td style={tdNum}>
-                    {l.dansFamille ? (
-                      gris("—")
-                    ) : l.famille ? (
-                      <span title={`Chiffré de la famille ${l.famille.numeros.join(", ")} : ${formatHeures(l.famille.chiffre)}`}>
-                        {formatHeures(totaux.reste)}
-                      </span>
-                    ) : totaux.chiffre > 0 ? (
-                      formatHeures(totaux.reste)
-                    ) : (
-                      gris("—")
+                      })()
                     )}
                   </td>
                   <td style={tdNum}>
                     {!planningActif || totaux.chiffre <= 0 || estInactive(affaire) ? (
                       gris("—")
-                    ) : aAffecter > 0.01 ? (
+                    ) : aAffecter > toleranceAffectation(l.famille ? l.famille.chiffre : totaux.chiffre) ? (
                       <strong style={{ color: C.orangeTexte }}>{formatHeures(aAffecter)}</strong>
                     ) : (
-                      gris("0 h")
+                      <span title="Dans la tolérance (6 h au plus, 10 % du chiffré au plus) : pas d’alerte">{gris(aAffecter > 0.01 ? formatHeures(aAffecter) : "0 h")}</span>
                     )}
                     {planning.planifie > 0 && <div style={petit}>{formatHeures(planning.planifie)} planifiées</div>}
                   </td>

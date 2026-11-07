@@ -267,24 +267,33 @@ export default function FeuilleDeRouteDashboard() {
                           <td style={{ ...td, textAlign: "right", fontWeight: 800, whiteSpace: "nowrap" }}>{h(l.total)}</td>
                         </tr>
                       ))}
-                      {s.aRendre.map((d) => (
-                        <tr key={`devis-${d.affaire_id}`}>
-                          <td style={td}>
-                            <Link href={lienAffaire("DBE", d.numero)} style={{ fontWeight: 800, color: "#a3245a" }}>
-                              📝 DBE {d.numero}
-                            </Link>
-                            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>devis à rendre</span>
-                          </td>
-                          {s.jours.map((j) => (
-                            <td key={j} style={{ ...tdJour, background: d.echeance === j ? "#fbe3ee" : undefined, color: "#a3245a", fontWeight: 800 }}>
-                              {d.echeance === j ? "📌 rendu" : ""}
+                      {s.aRendre.map((d) => {
+                        // DEVIS_EN_RETARD : rendu dépassé et devis pas encore envoyé : en rouge, jusqu'à l'envoi
+                        const aujourd = aujourdhui;
+                        const retard = Boolean(d.echeance && d.echeance < aujourd);
+                        const rouge = "#b3261e";
+                        return (
+                          <tr key={`devis-${d.affaire_id}`} style={{ background: retard ? "#fdecec" : undefined }}>
+                            <td style={td}>
+                              <Link href={lienAffaire("DBE", d.numero)} title="Ouvrir la page du devis" style={{ fontWeight: 800, color: retard ? rouge : "#a3245a" }}>
+                                📝 DBE {d.numero}
+                              </Link>
+                              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: retard ? rouge : C.gris }}>
+                                {retard ? "devis en retard, pas encore envoyé" : "devis à rendre"}
+                              </span>
+                              {d.designation && <div style={{ fontSize: 12 }}>{d.designation}</div>}
                             </td>
-                          ))}
-                          <td style={{ ...td, textAlign: "right", fontSize: 11, color: "#b3261e", whiteSpace: "nowrap" }}>
-                            {d.echeance && d.echeance < s.debut ? `en retard (${dateCourte(d.echeance)})` : ""}
-                          </td>
-                        </tr>
-                      ))}
+                            {s.jours.map((j) => (
+                              <td key={j} style={{ ...tdJour, background: d.echeance === j ? (retard ? "#f7c6c6" : "#fbe3ee") : undefined, color: retard ? rouge : "#a3245a", fontWeight: 800 }}>
+                                {d.echeance === j ? "📌 rendu" : retard && j === aujourd ? "⚠ à envoyer" : ""}
+                              </td>
+                            ))}
+                            <td style={{ ...td, textAlign: "right", fontSize: 11, color: retard ? rouge : C.gris, fontWeight: retard ? 800 : 400, whiteSpace: "nowrap" }}>
+                              {retard && d.echeance ? `en retard depuis le ${dateCourte(d.echeance)}` : ""}
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {s.congesJour.some(Boolean) && (
                         <tr>
                           <td style={{ ...td, color: "#18713b", fontWeight: 700 }}>🏖 Congés</td>
