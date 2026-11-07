@@ -290,10 +290,29 @@ function RessourcesContenu() {
   const [triDetail, setTriDetail] = useState<{ cle: "ACTIVITE" | "NOM" | "CHARGE" | "ECART"; sens: 1 | -1 }>({ cle: "ACTIVITE", sens: 1 });
   // ACTIVITES_BE : le tableau de détail ne montre que Méca, Elec et Calcul (d'après le nom de l'activité)
   const estActiviteBE = (nom: string) => /^(meca|elec|calcul)/.test(nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+  // ACTIVITE_SPECIALITE : toutes les activités principales de chacun ; avec plusieurs, la personne est rangée dans
+  // la plus rare parmi Méca / Elec / Calcul (sa spécialité)
+  const [principales, setPrincipales] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("collaborateurs_predominances")
+      .select("collaborateur_id,activite_id")
+      .eq("niveau", "PRINCIPALE")
+      .then(({ data }) => {
+        const m = new Map<string, string[]>();
+        for (const x of (data ?? []) as { collaborateur_id: string; activite_id: string }[]) m.set(x.collaborateur_id, [...(m.get(x.collaborateur_id) ?? []), x.activite_id]);
+        setPrincipales(m);
+      });
+  }, []);
   const lignesDetail = useMemo(() => {
     const parId = new Map(groupesRep.activites.map((a) => [a.id, a]));
+    const nbTitulaires = new Map<string, number>();
+    for (const ids of principales.values()) for (const x of ids) nbTitulaires.set(x, (nbTitulaires.get(x) ?? 0) + 1);
     const activiteDe = (id: string) => {
-      const a = parId.get(groupesRep.predo.get(id) ?? "");
+      const be = (principales.get(id) ?? [])
+        .filter((x) => estActiviteBE(parId.get(x)?.nom ?? ""))
+        .sort((x, y) => (nbTitulaires.get(x) ?? 0) - (nbTitulaires.get(y) ?? 0));
+      const a = parId.get(be[0] ?? groupesRep.predo.get(id) ?? "");
       return a ? { cle: a.id, nom: a.nom, ordre: a.ordre } : { cle: "_", nom: "Sans activité principale", ordre: 9999 };
     };
     const etat = (l: (typeof lignes)[number]) =>
@@ -320,7 +339,7 @@ function RessourcesContenu() {
       );
     });
     return res;
-  }, [lignes, rechDetail, filtreEtat, filtreAct, triDetail, groupesRep]);
+  }, [lignes, rechDetail, filtreEtat, filtreAct, triDetail, groupesRep, principales]);
   const enteteTri = (cle: "NOM" | "CHARGE" | "ECART", libelle: string) => (
     <button
       type="button"
