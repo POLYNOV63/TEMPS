@@ -174,7 +174,7 @@ export async function chargerActivites(): Promise<ReferentielActivites> {
 --------------------------------------------------------------- */
 
 const COLONNES_AFFECTATION =
-  "id,groupe_id,affaire_id,activite_id,code,libelle,collaborateur_id,date_debut,date_fin,commentaire";
+  "id,groupe_id,affaire_id,activite_id,code,libelle,collaborateur_id,date_debut,date_fin,commentaire,previsionnel"; // PREVISIONNEL_PLANNING (SQL 87)
 
 /* Affectations qui touchent la période [debut, fin] et leurs jours dans la période. */
 export async function chargerAffectations(

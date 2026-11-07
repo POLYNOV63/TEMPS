@@ -234,7 +234,9 @@ function PlanningAffairesContenu() {
   // heures facturées (relevé des prestations) jusqu'à hier, par affaire
   const [factureParAffaire, setFactureParAffaire] = useState<Map<string, number>>(new Map());
   const [horsAffaireOuvert, setHorsAffaireOuvert] = useState(true);
+  const [prevOuvert, setPrevOuvert] = useState(true);
   const [evenement, setEvenement] = useState<null | {
+    previsionnel?: boolean; // PREVISIONNEL_PLANNING
     prefill?: { collaborateurId?: string; debut?: string };
     edition?: { affectation: Affectation; jours: JourRow[] };
   }>(null);
@@ -556,14 +558,15 @@ function PlanningAffairesContenu() {
 
   /* Événements hors affaire visibles sur la période, regroupés par intitulé */
   const evenements = useMemo(() => {
-    const groupes = new Map<string, { libelle: string; code: string | null; blocs: Bloc[] }>();
+    const groupes = new Map<string, { libelle: string; code: string | null; prev: boolean; blocs: Bloc[] }>();
 
     for (const b of blocsParAffaire.get("") ?? []) {
       const libelle = b.affectation.libelle?.trim() || "Événement";
       const cle = b.affectation.groupe_id ?? `${libelle.toLowerCase()}|${b.affectation.code ?? ""}`;
-      const g = groupes.get(cle) ?? { libelle, code: b.affectation.code, blocs: [] };
+      const prev = Boolean(b.affectation.previsionnel);
+      const g = groupes.get(`${prev ? "P" : "H"}|${cle}`) ?? { libelle, code: b.affectation.code, prev, blocs: [] };
       g.blocs.push(b);
-      groupes.set(cle, g);
+      groupes.set(`${g.prev ? "P" : "H"}|${cle}`, g);
     }
 
     return [...groupes.entries()]
@@ -1345,7 +1348,8 @@ function PlanningAffairesContenu() {
     const cap = capacites.get(b.affectation.collaborateur_id);
     const manquants = joursSansCapacite(colonnes[bornes.i], colonnes[bornes.f], cap);
     const nb = bornes.f - bornes.i + 1;
-    const fond = libre ? "#7b8189" : pe ? "#6f8fb3" : pi ? "#6b58a8" : affaire?.type === "DBE" ? "#f2bfd0" : C.rouge;
+    const prevision = Boolean(b.affectation.previsionnel);
+    const fond = prevision ? "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)" : libre ? "#7b8189" : pe ? "#6f8fb3" : pi ? "#6b58a8" : affaire?.type === "DBE" ? "#f2bfd0" : C.rouge;
     const encre = affaire?.type === "DBE" && !pe && !pi ? "#4a0f28" : "#ffffff";
     const net = (j: string) => cap?.get(j)?.net ?? 0;
     const part = Math.round(ratioDuBloc(b.jours, net) * 100);
@@ -1394,7 +1398,7 @@ function PlanningAffairesContenu() {
               ? "2px dashed #1f2328"
               : choisi
                 ? "3px solid #1f2328"
-                : `1.5px solid ${libre ? "#4b5057" : pe ? "#34506b" : pi ? "#4a3a85" : affaire?.type === "DBE" ? "#d98aa6" : C.rouge}`,
+                : `1.5px ${prevision ? "dashed" : "solid"} ${libre ? "#4b5057" : pe ? "#34506b" : pi ? "#4a3a85" : affaire?.type === "DBE" ? "#d98aa6" : C.rouge}`,
             boxShadow: choisi ? "0 0 0 3px #ffd54a" : suivi ? "0 0 0 3px #1f6feb" : "none",
             opacity: estompe ? 0.22 : 1,
             boxSizing: "border-box",
@@ -2414,6 +2418,69 @@ function PlanningAffairesContenu() {
                 );
               })}
 
+              {/* PREVISIONNEL_PLANNING : charge probable, non confirmée (à part du hors affaire) */}
+              <div style={{ marginTop: 18, padding: "6px 8px", background: "#eef1f5", border: "1px dashed #8e9aa8", borderRadius: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  aria-expanded={prevOuvert}
+                  onClick={() => setPrevOuvert((v) => !v)}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", minHeight: 30, display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  <span aria-hidden="true">{prevOuvert ? "▾" : "▸"}</span>
+                  Prévisionnel ({evenements.filter((e) => e.prev).length})
+                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: C.gris }}>charge probable, pas encore confirmée : prolongation de PE, affaire attendue…</span>
+                </button>
+                {peutAgir && referentiel && (
+                  <button
+                    type="button"
+                    onClick={() => setEvenement({ previsionnel: true, prefill: { debut: colonnes.includes(aujourdhui) ? aujourdhui : colonnes[0] } })}
+                    style={{ marginLeft: "auto", minHeight: 30, padding: "0 10px", border: "1.5px dashed #8e9aa8", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: "#3b4046", cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    + Prévisionnel
+                  </button>
+                )}
+              </div>
+              {prevOuvert && evenements.filter((e) => e.prev).length === 0 && (
+                <p style={{ margin: "6px 8px", fontSize: 13, color: C.gris }}>Aucun prévisionnel sur cette période.</p>
+              )}
+              {prevOuvert &&
+                evenements
+                  .filter((e) => e.prev)
+                  .map((ev) => (
+                    <div key={`p-${ev.cle}`}>
+                      <div style={{ borderTop: `1px solid ${C.ligne}` }} />
+                      {ev.blocs.map((b, k) => (
+                        <div
+                          key={b.affectation.id}
+                          data-ligne
+                          onDoubleClick={(e) => {
+                            if (!peutAgir || !referentiel || (e.target as HTMLElement).closest("button, a, [data-barre]")) return;
+                            const jour = jourSousLaSouris(e.currentTarget as HTMLElement, e.clientX);
+                            if (jour) setEvenement({ previsionnel: true, prefill: { debut: jour } });
+                          }}
+                          style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: "36px", borderTop: k > 0 ? `1px dashed ${C.ligne}` : "none", position: "relative", background: "#fafbfc" }}
+                        >
+                          <div style={{ gridColumn: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 6px 0 12px", lineHeight: 1.2, minWidth: 0 }}>
+                            {k === 0 ? (
+                              <strong style={{ fontSize: 13, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {ev.libelle}
+                                {ev.code && <span style={{ fontWeight: 600, color: C.gris }}> · {ev.code}</span>}
+                              </strong>
+                            ) : null}
+                            <span style={{ fontSize: 12, color: "#3b4046" }}>
+                              {nomCollab(annuaire.find((c) => c.id === b.affectation.collaborateur_id))} · {formatHeures(b.heures)}
+                            </span>
+                          </div>
+                          {fonds()}
+                          {rendreBloc(b, null)}
+                          <div style={{ gridColumn: colonnes.length + 2, display: "flex", alignItems: "center", padding: "0 8px", fontSize: 12, fontWeight: 700 }}>
+                            {formatDate(b.jours[0].jour)} → {formatDate(b.jours[b.jours.length - 1].jour)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
               {/* HORS_AFFAIRE_BAS : événements hors affaire, sous les affaires (salons, formations, absences connues…) */}
               <div style={{ marginTop: 18, padding: "6px 8px", background: "#eef0f3", borderRadius: 4, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <button
@@ -2423,7 +2490,7 @@ function PlanningAffairesContenu() {
                   style={{ all: "unset", cursor: "pointer", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: "#3b4046", minHeight: 30, display: "inline-flex", alignItems: "center", gap: 6 }}
                 >
                   <span aria-hidden="true">{horsAffaireOuvert ? "▾" : "▸"}</span>
-                  Hors affaire ({evenements.length})
+                  Hors affaire ({evenements.filter((e) => !e.prev).length})
                   <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: C.gris }}>salons, formations, absences connues…</span>
                 </button>
                 {peutAgir && referentiel && (
@@ -2436,11 +2503,11 @@ function PlanningAffairesContenu() {
                   </button>
                 )}
               </div>
-              {horsAffaireOuvert && evenements.length === 0 && (
+              {horsAffaireOuvert && evenements.filter((e) => !e.prev).length === 0 && (
                 <p style={{ margin: "6px 8px", fontSize: 13, color: C.gris }}>Aucun événement hors affaire sur cette période.</p>
               )}
               {horsAffaireOuvert &&
-                evenements.map((ev) => (
+                evenements.filter((e) => !e.prev).map((ev) => (
                   <div key={ev.cle}>
                     <div style={{ borderTop: `1px solid ${C.ligne}` }} />
                     {ev.blocs.map((b, k) => (
@@ -2506,6 +2573,7 @@ function PlanningAffairesContenu() {
               </span>
               <span>▸ replié · ⚑ livraison souhaitée · 📌 rendu d’un devis (DBE)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#7b8189", border: "1px solid #4b5057" }} />événement hors affaire (salon, formation, absence connue…)</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)", border: "1px dashed #4b5057" }} />prévisionnel (non confirmé)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : la partie foncée est le chiffré déjà affecté (verte quand tout est affecté)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
@@ -2570,6 +2638,7 @@ function PlanningAffairesContenu() {
           affectationsConnues={affectations}
           prefill={{ onglet: "LIBRE", ...evenement.prefill }}
           edition={evenement.edition}
+          previsionnel={Boolean(evenement.previsionnel ?? evenement.edition?.affectation.previsionnel)}
         />
       )}
 

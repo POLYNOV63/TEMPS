@@ -148,6 +148,7 @@ export type Affectation = {
   date_debut: JourISO;
   date_fin: JourISO;
   commentaire: string | null;
+  previsionnel?: boolean | null; // PREVISIONNEL_PLANNING : charge probable, non confirmée (SQL 87)
 };
 
 export type JourRow = {

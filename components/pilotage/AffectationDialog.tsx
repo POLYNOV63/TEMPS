@@ -71,6 +71,8 @@ type Props = {
   affectationsConnues?: Pick<Affectation, "affaire_id" | "activite_id" | "code" | "date_debut">[];
   prefill?: PrefAffectation;
   edition?: { affectation: Affectation; jours: JourRow[] };
+  /* PREVISIONNEL_PLANNING : événement prévisionnel (charge probable, non confirmée) */
+  previsionnel?: boolean;
 };
 
 function prochainJourOuvre(depuis: string): string {
@@ -92,6 +94,7 @@ export default function AffectationDialog({
   affectationsConnues = [],
   prefill,
   edition,
+  previsionnel = false,
 }: Props) {
   const enEdition = Boolean(edition);
   const aujourdhui = aISO(new Date());
@@ -392,7 +395,7 @@ export default function AffectationDialog({
     for (const r of aEnregistrer) {
       const jours = r.jours;
 
-      const { error } = await supabase.rpc("pilotage_enregistrer_affectation", {
+      const { data: idEnregistre, error } = await supabase.rpc("pilotage_enregistrer_affectation", {
         p_id: edition?.affectation.id ?? null,
         p_affaire_id: onglet === "AFFAIRE" ? affaireId : null,
         p_activite_id: onglet === "AFFAIRE" ? activite : null,
@@ -410,6 +413,16 @@ export default function AffectationDialog({
         setEnCours(false);
         setErreur(traduireErreur(error.message));
         return;
+      }
+
+      // PREVISIONNEL_PLANNING : l'événement est marqué prévisionnel
+      if (previsionnel && idEnregistre) {
+        const { error: ep } = await supabase.from("pilotage_affectations").update({ previsionnel: true }).eq("id", idEnregistre as string);
+        if (ep) {
+          setEnCours(false);
+          setErreur(traduireErreur(ep.message));
+          return;
+        }
       }
     }
 
@@ -478,10 +491,10 @@ export default function AffectationDialog({
   ];
 
   return (
-    <Modal titre={enEdition ? "Modifier l’affectation" : "Ajouter une affectation"} onClose={onClose} largeur={780}>
+    <Modal titre={previsionnel ? (enEdition ? "Modifier le prévisionnel" : "Ajouter du prévisionnel (non confirmé)") : enEdition ? "Modifier l’affectation" : "Ajouter une affectation"} onClose={onClose} largeur={780}>
       {erreur && <Message genre="erreur">{erreur}</Message>}
 
-      {!enEdition && (
+      {!enEdition && !previsionnel && (
         <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
           <button type="button" aria-pressed={onglet === "AFFAIRE"} style={segment(onglet === "AFFAIRE")} onClick={() => setOnglet("AFFAIRE")}>
             Sur une affaire
@@ -550,7 +563,11 @@ export default function AffectationDialog({
             <div>
               <label htmlFor="lib" style={page.etiquette}>Intitulé</label>
               <input id="lib" type="text" value={libelle} onChange={(e) => setLibelle(e.target.value)} style={page.entrees} />
-              <div style={page.aide}>Salon, déplacement, formation, journée interne… tout ce qui n’est pas une affaire.</div>
+              <div style={page.aide}>
+                {previsionnel
+                  ? "Charge probable mais pas encore confirmée : prolongation de PE sans commande, affaire attendue… Elle compte dans la charge, montrée à part du certain. Supprimez-la quand la commande arrive (ou si elle ne vient pas)."
+                  : "Salon, déplacement, formation, journée interne… tout ce qui n’est pas une affaire."}
+              </div>
             </div>
             <div>
               <label htmlFor="codl" style={page.etiquette}>Imputation (code)</label>
