@@ -123,13 +123,23 @@ function RessourcesContenu() {
     [jours, affectationsParId]
   );
 
-  const finSemaine = ajouterJours(lundi, 6);
+  // DETAIL_PERIODE : le détail porte sur 1, 2 ou 4 semaines à partir de la semaine affichée
+  const [nbSemDetail, setNbSemDetail] = useState(1);
+  const finSemaine = ajouterJours(lundi, 7 * nbSemDetail - 1);
 
   const lignes = useMemo(
     () =>
       annuaire
         .map((c) => {
-          const s = chargeParSemaine(capacites, joursAffectes, c.id, lundi);
+          const s = Array.from({ length: nbSemDetail }, (_, w) => chargeParSemaine(capacites, joursAffectes, c.id, ajouterJours(lundi, 7 * w))).reduce((t, x) => ({
+            ...t,
+            theorique: t.theorique + x.theorique,
+            ferie: t.ferie + x.ferie,
+            absence: t.absence + x.absence,
+            net: t.net + x.net,
+            affecte: t.affecte + x.affecte,
+            ecart: t.ecart + x.ecart,
+          }));
           const heuresParAffectation = new Map<string, number>();
 
           for (const j of jours) {
@@ -154,7 +164,7 @@ function RessourcesContenu() {
         })
         .filter((l) => l.visible)
         .sort((a, b) => Number(b.collab.inclus_statistiques) - Number(a.collab.inclus_statistiques) || nomCollab(a.collab).localeCompare(nomCollab(b.collab), "fr")),
-    [annuaire, capacites, joursAffectes, jours, affectationsParId, affairesParId, lundi, finSemaine]
+    [annuaire, capacites, joursAffectes, jours, affectationsParId, affairesParId, lundi, finSemaine, nbSemDetail]
   );
 
   const equipe = lignes.filter((l) => l.collab.inclus_statistiques && l.semaine.theorique > 0);
@@ -419,7 +429,7 @@ function RessourcesContenu() {
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
           <Tuile libelle="Capacité disponible" valeur={formatHeures(totalNet)} sous={`${formatHeures(totalTheorique)} théoriques, fériés et absences déduits`} />
-          <Tuile libelle="Planifié" valeur={formatHeures(totalAffecte)} sous="affectations de la semaine" />
+          <Tuile libelle="Planifié" valeur={formatHeures(totalAffecte)} sous={nbSemDetail === 1 ? "affectations de la semaine" : `affectations des ${nbSemDetail} semaines`} />
           <Tuile libelle="Disponible" valeur={totalNet - totalAffecte >= 0 ? formatHeures(totalNet - totalAffecte) : "0 h"} sous="sur l’ensemble de l’équipe" />
           <Tuile
             libelle="En surcharge"
@@ -428,6 +438,142 @@ function RessourcesContenu() {
             accent={surcharges.length > 0}
           />
         </div>
+
+        {/* DETAIL_PERIODE : le détail en premier, sur 1, 2 ou 4 semaines */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>
+            {nbSemDetail === 1
+              ? `Détail de la semaine S${numeroSemaine(lundi)}`
+              : `Détail de S${numeroSemaine(lundi)} à S${numeroSemaine(ajouterJours(lundi, 7 * (nbSemDetail - 1)))}`}
+          </h2>
+          <span style={{ display: "inline-flex", gap: 6 }}>
+            {[1, 2, 4].map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-pressed={nbSemDetail === n}
+                onClick={() => setNbSemDetail(n)}
+                style={{ ...page.btnSecondaire, minHeight: 32, padding: "0 10px", background: nbSemDetail === n ? C.rouge : "#ffffff", color: nbSemDetail === n ? "#ffffff" : C.rougeFonce, borderColor: nbSemDetail === n ? C.rouge : undefined }}
+              >
+                {n === 1 ? "1 semaine" : `${n} semaines`}
+              </button>
+            ))}
+          </span>
+          {nbSemDetail > 1 && <span style={{ fontSize: 13, color: C.gris }}>totaux sur la période · « Déplacer… » se fait semaine par semaine</span>}
+        </div>
+
+        <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1020 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...page.th, width: 120 }}>Ressource</th>
+                  <th style={{ ...page.th, textAlign: "right" }}>Théorique</th>
+                  <th style={{ ...page.th, textAlign: "right" }}>Fériés et absences</th>
+                  <th style={{ ...page.th, textAlign: "right" }}>Disponible</th>
+                  <th style={{ ...page.th, textAlign: "right" }}>Affecté</th>
+                  <th style={page.th}>Charge</th>
+                  <th style={page.th}>Écart</th>
+                  <th style={page.th}>Affectations de la semaine</th>
+                  <th style={page.th} />
+                </tr>
+              </thead>
+              <tbody>
+                {lignes.map((l) => {
+                  const encadrement = !l.collab.inclus_statistiques;
+                  const s = l.semaine;
+                  const exces = Math.max(0, s.affecte - s.net);
+                  const normal = Math.min(s.affecte, s.net);
+
+                  return (
+                    <tr key={l.collab.id}>
+                      <td style={page.td}>
+                        <strong style={{ fontSize: 18 }}>{nomCollab(l.collab)}</strong>
+                        {encadrement && <div style={{ fontSize: 12, color: C.gris }}>Encadrement</div>}
+                      </td>
+                      <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(s.theorique)}</td>
+                      <td style={{ ...page.td, textAlign: "right" }}>
+                        {s.ferie + s.absence > 0 ? (
+                          <>
+                            <strong>{formatHeures(s.ferie + s.absence)}</strong>
+                            <div style={{ fontSize: 12, color: C.gris }}>
+                              {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "absence RH" : ""].filter(Boolean).join(" + ")}
+                            </div>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td style={{ ...page.td, textAlign: "right" }}>
+                        <strong>{encadrement ? "hors capacité" : formatHeures(s.net)}</strong>
+                      </td>
+                      <td style={{ ...page.td, textAlign: "right" }}>
+                        <strong>{formatHeures(s.affecte)}</strong>
+                      </td>
+                      <td style={{ ...page.td, width: "20%" }}>
+                        {!encadrement && (
+                          <div
+                            role="img"
+                            aria-label={`Affecté ${formatHeures(s.affecte)} pour ${formatHeures(s.net)} disponibles`}
+                            style={{ position: "relative", height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 180 }}
+                          >
+                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(normal / echelle) * 100}%`, background: "#34506b" }} />
+                            {exces > 0 && (
+                              <div style={{ position: "absolute", left: `${(normal / echelle) * 100}%`, top: 0, bottom: 0, width: `${(exces / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#e58a84 4px,#e58a84 8px)" }} />
+                            )}
+                            <div title={`Capacité disponible : ${formatHeures(s.net)}`} style={{ position: "absolute", left: `${(s.net / echelle) * 100}%`, top: -4, bottom: -4, width: 2, background: C.encre }} />
+                          </div>
+                        )}
+                      </td>
+                      <td style={page.td}>{encadrement ? <Pastille genre="info">Pas de seuil</Pastille> : ecartPastille(s.ecart)}</td>
+                      <td style={{ ...page.td, fontSize: 14 }}>
+                        {l.details.length === 0 ? (
+                          <span style={{ color: C.gris }}>—</span>
+                        ) : (
+                          l.details.map((d) => (
+                            <div key={d.id} style={{ whiteSpace: "nowrap" }}>
+                              <strong>{d.etiquette}</strong> · {formatHeures(d.heures)}
+                            </div>
+                          ))
+                        )}
+                      </td>
+                      <td style={{ ...page.td, textAlign: "right" }}>
+                        {nbSemDetail === 1 && !encadrement && s.ecart > 0.01 && l.details.length > 0 && (
+                          <button type="button" style={{ ...page.btnSecondaire, minHeight: 44 }} onClick={() => ouvrirDeplacement(l.collab, s.ecart)}>
+                            Déplacer…
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr>
+                  <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique)}</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique - totalNet)}</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalNet)}</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalAffecte)}</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa" }} />
+                  <td style={{ ...page.td, background: "#f8f9fa" }}>{ecartPastille(totalAffecte - totalNet)}</td>
+                  <td style={{ ...page.td, background: "#f8f9fa", fontSize: 14 }}>
+                    {surcharges.length > 0 ? `${surcharges.length} personne(s) en surcharge` : ""}
+                  </td>
+                  <td style={{ ...page.td, background: "#f8f9fa" }} />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p style={{ margin: "12px 4px 0", fontSize: 13, color: C.gris }}>
+            Capacité théorique : profil horaire. Absences : demandes validées dans Validation RH. Le trait noir marque la
+            capacité disponible ; la zone hachurée rouge est le dépassement. L’encadrement n’entre pas dans la capacité de
+            l’équipe.
+          </p>
+          <div style={{ marginTop: 10 }}>
+            <Link href="/pilotage/planning" style={{ fontWeight: 700, color: C.rougeFonce }}>
+              Voir le planning visuel →
+            </Link>
+          </div>
+        </section>
 
         {/* Vue d'ensemble : charge de chaque personne sur 12 semaines */}
         <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
@@ -611,120 +757,6 @@ function RessourcesContenu() {
           </div>
         </section>
 
-        <h2 style={{ margin: "0 0 10px", fontSize: 20 }}>Détail de la semaine S{numeroSemaine(lundi)}</h2>
-
-        <section style={{ ...page.carte, padding: 16 }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1020 }}>
-              <thead>
-                <tr>
-                  <th style={{ ...page.th, width: 120 }}>Ressource</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Théorique</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Fériés et absences</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Disponible</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Affecté</th>
-                  <th style={page.th}>Charge</th>
-                  <th style={page.th}>Écart</th>
-                  <th style={page.th}>Affectations de la semaine</th>
-                  <th style={page.th} />
-                </tr>
-              </thead>
-              <tbody>
-                {lignes.map((l) => {
-                  const encadrement = !l.collab.inclus_statistiques;
-                  const s = l.semaine;
-                  const exces = Math.max(0, s.affecte - s.net);
-                  const normal = Math.min(s.affecte, s.net);
-
-                  return (
-                    <tr key={l.collab.id}>
-                      <td style={page.td}>
-                        <strong style={{ fontSize: 18 }}>{nomCollab(l.collab)}</strong>
-                        {encadrement && <div style={{ fontSize: 12, color: C.gris }}>Encadrement</div>}
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(s.theorique)}</td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        {s.ferie + s.absence > 0 ? (
-                          <>
-                            <strong>{formatHeures(s.ferie + s.absence)}</strong>
-                            <div style={{ fontSize: 12, color: C.gris }}>
-                              {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "absence RH" : ""].filter(Boolean).join(" + ")}
-                            </div>
-                          </>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        <strong>{encadrement ? "hors capacité" : formatHeures(s.net)}</strong>
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        <strong>{formatHeures(s.affecte)}</strong>
-                      </td>
-                      <td style={{ ...page.td, width: "20%" }}>
-                        {!encadrement && (
-                          <div
-                            role="img"
-                            aria-label={`Affecté ${formatHeures(s.affecte)} pour ${formatHeures(s.net)} disponibles`}
-                            style={{ position: "relative", height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 180 }}
-                          >
-                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(normal / echelle) * 100}%`, background: "#34506b" }} />
-                            {exces > 0 && (
-                              <div style={{ position: "absolute", left: `${(normal / echelle) * 100}%`, top: 0, bottom: 0, width: `${(exces / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#e58a84 4px,#e58a84 8px)" }} />
-                            )}
-                            <div title={`Capacité disponible : ${formatHeures(s.net)}`} style={{ position: "absolute", left: `${(s.net / echelle) * 100}%`, top: -4, bottom: -4, width: 2, background: C.encre }} />
-                          </div>
-                        )}
-                      </td>
-                      <td style={page.td}>{encadrement ? <Pastille genre="info">Pas de seuil</Pastille> : ecartPastille(s.ecart)}</td>
-                      <td style={{ ...page.td, fontSize: 14 }}>
-                        {l.details.length === 0 ? (
-                          <span style={{ color: C.gris }}>—</span>
-                        ) : (
-                          l.details.map((d) => (
-                            <div key={d.id} style={{ whiteSpace: "nowrap" }}>
-                              <strong>{d.etiquette}</strong> · {formatHeures(d.heures)}
-                            </div>
-                          ))
-                        )}
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        {!encadrement && s.ecart > 0.01 && l.details.length > 0 && (
-                          <button type="button" style={{ ...page.btnSecondaire, minHeight: 44 }} onClick={() => ouvrirDeplacement(l.collab, s.ecart)}>
-                            Déplacer…
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr>
-                  <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique - totalNet)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalNet)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalAffecte)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa" }} />
-                  <td style={{ ...page.td, background: "#f8f9fa" }}>{ecartPastille(totalAffecte - totalNet)}</td>
-                  <td style={{ ...page.td, background: "#f8f9fa", fontSize: 14 }}>
-                    {surcharges.length > 0 ? `${surcharges.length} personne(s) en surcharge` : ""}
-                  </td>
-                  <td style={{ ...page.td, background: "#f8f9fa" }} />
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p style={{ margin: "12px 4px 0", fontSize: 13, color: C.gris }}>
-            Capacité théorique : profil horaire. Absences : demandes validées dans Validation RH. Le trait noir marque la
-            capacité disponible ; la zone hachurée rouge est le dépassement. L’encadrement n’entre pas dans la capacité de
-            l’équipe.
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <Link href="/pilotage/planning" style={{ fontWeight: 700, color: C.rougeFonce }}>
-              Voir le planning visuel →
-            </Link>
-          </div>
-        </section>
       </div>
 
       {deplacement && (
