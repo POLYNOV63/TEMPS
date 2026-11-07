@@ -288,6 +288,8 @@ function RessourcesContenu() {
   const [filtreEtat, setFiltreEtat] = useState<"TOUS" | "SURCHARGE" | "DISPONIBLE" | "COMPLET">("TOUS");
   const [filtreAct, setFiltreAct] = useState("");
   const [triDetail, setTriDetail] = useState<{ cle: "ACTIVITE" | "NOM" | "CHARGE" | "ECART"; sens: 1 | -1 }>({ cle: "ACTIVITE", sens: 1 });
+  // ACTIVITES_BE : le tableau de détail ne montre que Méca, Elec et Calcul (d'après le nom de l'activité)
+  const estActiviteBE = (nom: string) => /^(meca|elec|calcul)/.test(nom.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
   const lignesDetail = useMemo(() => {
     const parId = new Map(groupesRep.activites.map((a) => [a.id, a]));
     const activiteDe = (id: string) => {
@@ -302,6 +304,7 @@ function RessourcesContenu() {
       .filter((l) => !q || `${l.collab.trigramme ?? ""} ${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.toLowerCase().includes(q))
       .filter((l) => filtreEtat === "TOUS" || etat(l) === filtreEtat)
       .map((l) => ({ ...l, activite: activiteDe(l.collab.id) }))
+      .filter((l) => estActiviteBE(l.activite.nom))
       .filter((l) => !filtreAct || l.activite.cle === filtreAct);
     const nom = (l: (typeof res)[number]) => nomCollab(l.collab);
     const s = triDetail.sens;
@@ -548,6 +551,7 @@ function RessourcesContenu() {
             >
               <option value="">Toutes les activités</option>
               {[...groupesRep.activites]
+                .filter((a) => estActiviteBE(a.nom))
                 .sort((a, b) => a.ordre - b.ordre)
                 .map((a) => (
                   <option key={a.id} value={a.id}>
@@ -724,7 +728,7 @@ function RessourcesContenu() {
                   );
                 })}
                 <tr>
-                  <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong> <span style={{ fontSize: 11, color: C.gris }}>toutes activités</span></td>
                   <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right", whiteSpace: "nowrap" }}>
                     <strong>{formatHeures(totalAffecte)}</strong>
                     <span style={{ color: C.gris }}> / {formatHeures(totalNet)}</span>
