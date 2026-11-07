@@ -125,6 +125,9 @@ function RessourcesContenu() {
 
   // DETAIL_PERIODE : le détail porte sur 1, 2 ou 4 semaines à partir de la semaine affichée
   const [nbSemDetail, setNbSemDetail] = useState(1);
+  // DETAIL_LISIBLE : affectations repliées ; dépliées personne par personne, ou toutes
+  const [affOuvertes, setAffOuvertes] = useState<Set<string>>(new Set());
+  const [toutDeplie, setToutDeplie] = useState(false);
   const finSemaine = ajouterJours(lundi, 7 * nbSemDetail - 1);
 
   const lignes = useMemo(
@@ -473,58 +476,108 @@ function RessourcesContenu() {
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Charge</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Écart</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Affectations</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>
+                    Affectations{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setToutDeplie((v) => !v);
+                        setAffOuvertes(new Set());
+                      }}
+                      style={{ all: "unset", cursor: "pointer", fontSize: 11, fontWeight: 700, color: C.rougeFonce, textTransform: "none", textDecoration: "underline" }}
+                    >
+                      {toutDeplie ? "tout replier" : "tout déplier"}
+                    </button>
+                  </th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }} />
                 </tr>
               </thead>
               <tbody>
-                {lignes.map((l) => {
+                {lignes.map((l, idx) => {
                   const encadrement = !l.collab.inclus_statistiques;
                   const s = l.semaine;
                   const exces = Math.max(0, s.affecte - s.net);
                   const normal = Math.min(s.affecte, s.net);
 
                   return (
-                    <tr key={l.collab.id}>
-                      <td style={page.td}>
-                        <strong style={{ fontSize: 18 }}>{nomCollab(l.collab)}</strong>
-                        {encadrement && <div style={{ fontSize: 12, color: C.gris }}>Encadrement</div>}
+                    <tr key={l.collab.id} style={{ background: idx % 2 ? "#fafbfc" : "#ffffff" }}>
+                      <td style={{ ...page.td, whiteSpace: "nowrap" }}>
+                        <strong style={{ fontSize: 15 }}>{nomCollab(l.collab)}</strong>
+                        {encadrement && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>encadrement</span>}
                       </td>
                       <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(s.theorique)}</td>
                       <td style={{ ...page.td, textAlign: "right", whiteSpace: "nowrap" }}>
                         <strong>{formatHeures(s.affecte)}</strong>
                         <span style={{ color: C.gris }}> / {encadrement ? "hors capacité" : formatHeures(s.net)}</span>
                         {s.ferie + s.absence > 0 && (
-                          <div style={{ fontSize: 12, color: C.gris }}>
-                            − {formatHeures(s.ferie + s.absence)} {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "absence" : ""].filter(Boolean).join(" + ")}
-                          </div>
+                          <span
+                            title={`Capacité réduite de ${formatHeures(s.ferie + s.absence)} : ${[s.ferie > 0 ? `férié ${formatHeures(s.ferie)}` : "", s.absence > 0 ? `absence ${formatHeures(s.absence)}` : ""].filter(Boolean).join(", ")}`}
+                            style={{ marginLeft: 4, fontSize: 11, color: C.gris }}
+                          >
+                            (−{formatHeures(s.ferie + s.absence)} {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "abs." : ""].filter(Boolean).join("+")})
+                          </span>
                         )}
                       </td>
-                      <td style={{ ...page.td, width: "20%" }}>
+                      <td style={{ ...page.td, width: "22%" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ flex: 1 }}>
                         {!encadrement && (
                           <div
                             role="img"
                             aria-label={`Affecté ${formatHeures(s.affecte)} pour ${formatHeures(s.net)} disponibles`}
                             style={{ position: "relative", height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 100 }}
                           >
-                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(normal / echelle) * 100}%`, background: "#34506b" }} />
+                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(normal / echelle) * 100}%`, background: s.net > 0 && s.affecte / s.net >= 0.8 ? "#34506b" : "#8fb0d6" }} />
                             {exces > 0 && (
                               <div style={{ position: "absolute", left: `${(normal / echelle) * 100}%`, top: 0, bottom: 0, width: `${(exces / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#e58a84 4px,#e58a84 8px)" }} />
                             )}
                             <div title={`Capacité disponible : ${formatHeures(s.net)}`} style={{ position: "absolute", left: `${(s.net / echelle) * 100}%`, top: -4, bottom: -4, width: 2, background: C.encre }} />
                           </div>
                         )}
+                        </div>
+                        {!encadrement && s.net > 0 && (
+                          <strong style={{ fontSize: 13, minWidth: 42, textAlign: "right", color: s.affecte > s.net + 0.01 ? "#8f1010" : C.encre }}>
+                            {Math.round((s.affecte / s.net) * 100)} %
+                          </strong>
+                        )}
+                        </div>
                       </td>
-                      <td style={page.td}>{encadrement ? <Pastille genre="info">Pas de seuil</Pastille> : ecartPastille(s.ecart)}</td>
-                      <td style={{ ...page.td, fontSize: 14 }}>
+                      <td style={{ ...page.td, whiteSpace: "nowrap" }}>{encadrement ? <Pastille genre="info">Pas de seuil</Pastille> : ecartPastille(s.ecart)}</td>
+                      <td style={{ ...page.td, fontSize: 13 }}>
                         {l.details.length === 0 ? (
                           <span style={{ color: C.gris }}>—</span>
                         ) : (
-                          l.details.map((d) => (
-                            <div key={d.id} style={{ whiteSpace: "nowrap" }}>
-                              <strong>{d.etiquette}</strong> · {formatHeures(d.heures)}
-                            </div>
-                          ))
+                          (() => {
+                            const ouvert = toutDeplie || affOuvertes.has(l.collab.id);
+                            const tries = [...l.details].sort((a, b) => b.heures - a.heures);
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-expanded={ouvert}
+                                  onClick={() =>
+                                    setAffOuvertes((x) => {
+                                      const n = new Set(x);
+                                      if (n.has(l.collab.id)) n.delete(l.collab.id);
+                                      else n.add(l.collab.id);
+                                      return n;
+                                    })
+                                  }
+                                  title={tries.map((d) => `${d.etiquette} · ${formatHeures(d.heures)}`).join("\n")}
+                                  style={{ all: "unset", cursor: "pointer", whiteSpace: "nowrap", color: "#3b4046" }}
+                                >
+                                  <span style={{ color: C.rougeFonce, fontWeight: 800 }}>{ouvert ? "▾" : "▸"}</span> <strong>{tries[0].etiquette}</strong>
+                                  {tries.length > 1 && <span style={{ color: C.gris }}> + {tries.length - 1}</span>}
+                                </button>
+                                {ouvert &&
+                                  tries.map((d) => (
+                                    <div key={d.id} style={{ whiteSpace: "nowrap", paddingLeft: 14, color: d.libre ? C.gris : undefined }}>
+                                      {d.etiquette} · {formatHeures(d.heures)}
+                                    </div>
+                                  ))}
+                              </>
+                            );
+                          })()
                         )}
                       </td>
                       <td style={{ ...page.td, textAlign: "right" }}>
