@@ -945,6 +945,8 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
           {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
           <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
           <CarteCompacte icone="🎯" titre="Analyse du chiffré" description="Heures produites face aux heures chiffrées, par commande" onClick={() => aller("/analyse/pointage")} />
+          {/* FIABILITE_CHIFFRAGE */}
+          <CarteCompacte icone="📐" titre="Fiabilité du chiffrage" description="Chiffré face au réalisé, par activité, sur les forfaits livrés" onClick={() => aller("/analyse/fiabilite-chiffrage")} />
           <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
         </div>
       </Groupe>
@@ -1107,6 +1109,8 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
         <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
         <CarteCompacte icone="🎯" titre="Analyse du chiffré" description="Heures produites face aux heures chiffrées, par commande" onClick={() => aller("/analyse/pointage")} />
+        {/* FIABILITE_CHIFFRAGE */}
+        <CarteCompacte icone="📐" titre="Fiabilité du chiffrage" description="Chiffré face au réalisé, par activité, sur les forfaits livrés" onClick={() => aller("/analyse/fiabilite-chiffrage")} />
         {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
         <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
         <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
