@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V7 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6)
+   FINANCES - TRAME CA (TRAME_CA_V8 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6, TRAME_CA_V7)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -24,6 +24,8 @@
    Remplissage du prévisionnel sous le tableau.
    V7 : la moyenne mensuelle du réalisé se calcule sur les mois CLÔTURÉS
    (mois en cours exclu) ; prévisionnel et atterrissage restent sur 12 mois.
+   V8 : le tableau reste dans sa carte (défilement horizontal si besoin),
+   colonnes plus serrées.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -426,10 +428,10 @@ export default function TrameCA(props: {
 
   /* ------------------------------ rendu ------------------------------ */
 
-  const th: CSSProperties = { ...page.th, textAlign: "right", padding: "6px", fontSize: 11 };
-  const td: CSSProperties = { textAlign: "right", whiteSpace: "nowrap", padding: "4px 6px", fontSize: 12, borderBottom: `1px solid ${C.ligne}` };
+  const th: CSSProperties = { ...page.th, textAlign: "right", padding: "5px 4px", fontSize: 11, whiteSpace: "nowrap" };
+  const td: CSSProperties = { textAlign: "right", whiteSpace: "nowrap", padding: "3px 4px", fontSize: 12, borderBottom: `1px solid ${C.ligne}` };
   const tdPct: CSSProperties = { ...td, color: C.gris, fontSize: 11 };
-  const colPoste: CSSProperties = { position: "sticky", left: 0, background: "#ffffff", zIndex: 1, textAlign: "left", minWidth: 230 };
+  const colPoste: CSSProperties = { position: "sticky", left: 0, background: "#ffffff", zIndex: 1, textAlign: "left", minWidth: 190, maxWidth: 230, whiteSpace: "normal" };
   const nbCol = 1 + (mois.length + 1) * (afficherPct ? 2 : 1) + 1;
 
   const rendre = (liste: Ligne[], prefixe: string) =>
@@ -516,7 +518,7 @@ export default function TrameCA(props: {
   const ecartPrevi = trame.objectif > 0 ? trame.cumulADate - trame.objectif : null;
 
   return (
-    <section style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
+    <section style={{ ...page.carte, padding: 16, marginBottom: 14, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <h2 style={{ margin: 0, fontSize: 17 }}>Trame CA — exercice {exercice}-{exercice + 1}</h2>
         <span style={{ fontSize: 13, color: C.gris }}>la présentation du classeur « trame_CA », remplie automatiquement</span>
@@ -548,7 +550,7 @@ export default function TrameCA(props: {
         />
       </div>
 
-      <div style={{ overflowX: "auto" }}>
+      <div style={{ overflowX: "auto", maxWidth: "100%" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr>
@@ -562,7 +564,7 @@ export default function TrameCA(props: {
               <th style={{ ...th, borderLeft: `2px solid ${C.ligne}` }}>Totaux</th>
               {afficherPct && <th style={th}>%</th>}
               <th
-                style={th}
+                style={{ ...th, whiteSpace: "normal", minWidth: 70 }}
                 title="Réalisé : moyenne des mois clôturés (le mois en cours n’est pas compté, il n’est pas terminé). Prévisionnel et atterrissage : moyenne sur les 12 mois."
               >
                 Moyenne / mois
