@@ -942,6 +942,8 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
       <Groupe titre="Charge du bureau d'études" description="Consultation">
         <div style={stylesV2.grille}>
           <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
+          {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
+          <CarteCompacte icone="🧭" titre="Charge et compétences" description="Compétences disponibles et activités en tension, sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
           <CarteCompacte icone="🎯" titre="Analyse du chiffré" description="Heures produites face aux heures chiffrées, par commande" onClick={() => aller("/analyse/pointage")} />
           <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
         </div>
@@ -1108,6 +1110,8 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
         <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
         <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
+        {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
+        <CarteCompacte icone="🧭" titre="Charge et compétences" description="Compétences disponibles et activités en tension, sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
       </div>
     </Groupe>
   );
