@@ -141,9 +141,11 @@ type PisteAffaire = {
 };
 
 const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
-// PLANIFIE_95 : « tout est planifié » dès 95 % du chiffré (pointé + planifié à venir), « au-delà » après 105 %
-const SEUIL_PLANIFIE = 0.95;
-const SEUIL_AU_DELA = 1.05;
+// TOLERANCE_6H : « tout est planifié » quand il reste au plus 6 h à planifier (pointé + planifié à venir face au chiffré),
+// sans dépasser 10 % du chiffré ; même tolérance pour « au-delà du chiffré »
+const TOLERANCE_H = 6;
+const TOLERANCE_PART = 0.1;
+const tolerance = (chiffre: number) => Math.min(TOLERANCE_H, TOLERANCE_PART * chiffre);
 
 function PlanningAffairesContenu() {
   // le planning s'ouvre une semaine avant la semaine en cours
@@ -657,7 +659,7 @@ function PlanningAffairesContenu() {
     let n = 0;
     const affichees = new Set(affaires.filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE").map((a) => a.id));
     for (const [id, r] of resteAPlanifier)
-      if (affichees.has(id) && r.reste > 0.5) {
+      if (affichees.has(id) && r.reste > tolerance(r.chiffre)) {
         h += r.reste;
         n++;
       }
@@ -1493,7 +1495,7 @@ function PlanningAffairesContenu() {
     const partConsommee = env && env.commande > 0
       ? Math.min(100, (env.consomme / env.commande) * 100)
       : rp && rp.chiffre > 0 ? Math.min(100, (rp.pointe / rp.chiffre) * 100) : 0;
-    const couvert = !env && (rp ? rp.chiffre > 0 && rp.pointe + rp.planifie >= SEUIL_PLANIFIE * rp.chiffre : chiffre > 0 && affecte >= SEUIL_PLANIFIE * chiffre);
+    const couvert = !env && (rp ? rp.chiffre > 0 && rp.chiffre - rp.pointe - rp.planifie <= tolerance(rp.chiffre) : chiffre > 0 && chiffre - affecte <= tolerance(chiffre));
     const couleurBord = prestation ? (pi ? "#6b58a8" : "#34506b") : affaire.type === "DBE" ? "#d98aa6" : C.rouge;
     const fondBarre = prestation ? (pi ? "#f1eef9" : "#eaf1fa") : affaire.type === "DBE" ? "#fdf1f5" : "#fbeeee";
     const fondRempli = couvert ? "#bfe3c6" : prestation ? (pi ? "#cfc6ea" : "#bcd0e8") : affaire.type === "DBE" ? "#f2bfd0" : "#f0b9b9";
@@ -1868,17 +1870,18 @@ function PlanningAffairesContenu() {
                   const fait = r.pointe + r.planifie;
                   const taux = fait / r.chiffre;
                   const finTardive = Boolean(affaire.echeance && total?.fin && total.fin > affaire.echeance);
-                  const genre: Genre = finTardive || taux > SEUIL_AU_DELA ? "crit" : taux >= SEUIL_PLANIFIE ? "ok" : "warn";
+                  const tol = tolerance(r.chiffre);
+                  const genre: Genre = finTardive || fait - r.chiffre > tol ? "crit" : r.chiffre - fait <= tol ? "ok" : "warn";
                   const texte = finTardive
                     ? "Fin après le délai"
-                    : taux > SEUIL_AU_DELA
+                    : fait - r.chiffre > tol
                       ? `+${formatHeures(fait - r.chiffre)} au-delà du chiffré`
-                      : taux >= SEUIL_PLANIFIE
+                      : r.chiffre - fait <= tol
                         ? "Tout est planifié"
                         : `Reste ${formatHeures(r.chiffre - fait)} à planifier`;
                   return (
                     <span
-                      title={`Chiffré ${formatHeures(r.chiffre)} : déjà pointé ${formatHeures(r.pointe)} + planifié à venir ${formatHeures(r.planifie)}, soit ${Math.round(taux * 100)} %${finTardive ? ` · la dernière affectation finit après le délai (${formatDate(affaire.echeance)})` : ""}\n« Tout est planifié » de 95 % à 105 % du chiffré.`}
+                      title={`Chiffré ${formatHeures(r.chiffre)} : déjà pointé ${formatHeures(r.pointe)} + planifié à venir ${formatHeures(r.planifie)}, soit ${Math.round(taux * 100)} %${finTardive ? ` · la dernière affectation finit après le délai (${formatDate(affaire.echeance)})` : ""}\n« Tout est planifié » à ${formatHeures(tol)} près (6 h au plus, 10 % du chiffré au plus).`}
                     >
                       <Pastille genre={genre}>{texte}</Pastille>
                     </span>
@@ -2151,7 +2154,7 @@ function PlanningAffairesContenu() {
                 {affaires
                   .filter((a) => a.statut === "EN_COURS" || a.statut === "EN_ATTENTE")
                   .map((a) => ({ a, rp: resteAPlanifier.get(a.id) }))
-                  .filter((x) => x.rp && x.rp.reste > 0.5)
+                  .filter((x) => x.rp && x.rp.reste > tolerance(x.rp.chiffre))
                   .sort((x, y) => (y.rp?.reste ?? 0) - (x.rp?.reste ?? 0))
                   .map(({ a, rp }) => {
                     const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
@@ -2416,10 +2419,10 @@ function PlanningAffairesContenu() {
                           <span style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
                             chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{" "}
                             {(() => {
-                              const tauxF = ch > 0 ? (pt + pl) / ch : 1;
+                              const tolF = tolerance(ch);
                               return (
-                                <strong style={{ color: tauxF > SEUIL_AU_DELA ? C.rougeTexte : tauxF >= SEUIL_PLANIFIE ? "#1b5e20" : "#7a3e00" }}>
-                                  {tauxF > SEUIL_AU_DELA ? `+${formatHeures(-rs)} au-delà` : tauxF >= SEUIL_PLANIFIE ? "tout est planifié" : `reste ${formatHeures(rs)} à planifier`}
+                                <strong style={{ color: -rs > tolF ? C.rougeTexte : rs <= tolF ? "#1b5e20" : "#7a3e00" }}>
+                                  {-rs > tolF ? `+${formatHeures(-rs)} au-delà` : rs <= tolF ? "tout est planifié" : `reste ${formatHeures(rs)} à planifier`}
                                 </strong>
                               );
                             })()}
@@ -2594,7 +2597,7 @@ function PlanningAffairesContenu() {
               <span>▸ replié · ⚑ livraison souhaitée · 📌 rendu d’un devis (DBE)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#7b8189", border: "1px solid #4b5057" }} />événement hors affaire (salon, formation, absence connue…)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)", border: "1px dashed #4b5057" }} />prévisionnel (non confirmé)</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : partie foncée = déjà pointé, claire = planifié à venir ; verte dès 95 % du chiffré (« Tout est planifié »)</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : partie foncée = déjà pointé, claire = planifié à venir ; verte quand il reste au plus 6 h à planifier (« Tout est planifié »)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6b58a8", border: "1px solid #4a3a85" }} />PI</span>
