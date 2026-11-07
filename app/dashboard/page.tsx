@@ -936,7 +936,7 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
           <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel, rentabilité" onClick={() => aller("/analyse/finances")} />
           <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
           <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
-          <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
+          <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
         </div>
       </Groupe>
       <Groupe titre="Charge du bureau d'études" description="Consultation">
@@ -1113,7 +1113,7 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
         <CarteCompacte icone="📐" titre="Fiabilité du chiffrage" description="Chiffré face au réalisé, par activité, sur les forfaits livrés" onClick={() => aller("/analyse/fiabilite-chiffrage")} />
         {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
         <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
-        <CarteCompacte icone="🧑‍🔧" titre="Analyse des effectifs" description="Prédominances, activités pointées et méthodes de vente (PE / PI / BE)" onClick={() => aller("/analyse/effectifs")} />
+        <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
         {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
         <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
       </div>
