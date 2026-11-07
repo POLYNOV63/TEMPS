@@ -141,6 +141,9 @@ type PisteAffaire = {
 };
 
 const ROUGE_HACHURE = "repeating-linear-gradient(45deg,#b3261e,#b3261e 4px,#f0b4b0 4px,#f0b4b0 8px)";
+// PLANIFIE_95 : « tout est planifié » dès 95 % du chiffré (pointé + planifié à venir), « au-delà » après 105 %
+const SEUIL_PLANIFIE = 0.95;
+const SEUIL_AU_DELA = 1.05;
 
 function PlanningAffairesContenu() {
   // le planning s'ouvre une semaine avant la semaine en cours
@@ -1328,7 +1331,7 @@ function PlanningAffairesContenu() {
     if (chiffre > 0 && affecte > chiffre + 0.001) return { genre: "crit", texte: `Au-delà du chiffré (+${formatHeures(affecte - chiffre)})` };
     if (affaire.echeance && finPrevue && finPrevue > affaire.echeance) return { genre: "crit", texte: "Fin après la livraison souhaitée" };
     if (chiffre > 0 && chiffre - affecte > 0.5) return { genre: "warn", texte: `Reste ${formatHeures(chiffre - affecte)} à affecter` };
-    if (chiffre > 0) return { genre: "ok", texte: "✓ Chiffré couvert" };
+    if (chiffre > 0) return { genre: "ok", texte: "Tout est planifié" };
     if (affecte > 0) return { genre: "info", texte: finPrevue ? `Fin le ${formatDate(finPrevue)}` : "Affectée" };
     return { genre: "info", texte: affaire.type === "DBE" ? "Jalon de remise" : "Non affectée" };
   }
@@ -1490,7 +1493,7 @@ function PlanningAffairesContenu() {
     const partConsommee = env && env.commande > 0
       ? Math.min(100, (env.consomme / env.commande) * 100)
       : rp && rp.chiffre > 0 ? Math.min(100, (rp.pointe / rp.chiffre) * 100) : 0;
-    const couvert = !env && (rp ? rp.chiffre > 0 && rp.reste <= 0.5 : chiffre > 0 && affecte >= chiffre - 0.5);
+    const couvert = !env && (rp ? rp.chiffre > 0 && rp.pointe + rp.planifie >= SEUIL_PLANIFIE * rp.chiffre : chiffre > 0 && affecte >= SEUIL_PLANIFIE * chiffre);
     const couleurBord = prestation ? (pi ? "#6b58a8" : "#34506b") : affaire.type === "DBE" ? "#d98aa6" : C.rouge;
     const fondBarre = prestation ? (pi ? "#f1eef9" : "#eaf1fa") : affaire.type === "DBE" ? "#fdf1f5" : "#fbeeee";
     const fondRempli = couvert ? "#bfe3c6" : prestation ? (pi ? "#cfc6ea" : "#bcd0e8") : affaire.type === "DBE" ? "#f2bfd0" : "#f0b9b9";
@@ -1576,7 +1579,6 @@ function PlanningAffairesContenu() {
           <span style={{ position: "relative", overflow: "hidden", textOverflow: "ellipsis" }}>
             {prestation ? `${formatDate(nouveauDebut)} → ${formatDate(nouvelleFin)}` : `${affaire.type} ${affaire.numero}`}
             {libelle && ` · ${libelle}`}
-            {couvert && " ✓"}
           </span>
           {prestation && <span aria-hidden="true" style={poignee("fin", piste.coupeDroite)} onPointerDown={(e) => demarrerDragAffaire(e, affaire, "fin")} />}
         </div>
@@ -1862,10 +1864,23 @@ function PlanningAffairesContenu() {
                 {(() => {
                   const r = resteAPlanifier.get(affaire.id);
                   // forfait chiffré : l'état dit ce qui reste à planifier (chiffré − pointé − planifié à venir)
-                  if (!r || r.chiffre <= 0 || etat.genre === "crit") return <Pastille genre={etat.genre}>{etat.texte}</Pastille>;
+                  if (!r || r.chiffre <= 0) return <Pastille genre={etat.genre}>{etat.texte}</Pastille>;
+                  const fait = r.pointe + r.planifie;
+                  const taux = fait / r.chiffre;
+                  const finTardive = Boolean(affaire.echeance && total?.fin && total.fin > affaire.echeance);
+                  const genre: Genre = finTardive || taux > SEUIL_AU_DELA ? "crit" : taux >= SEUIL_PLANIFIE ? "ok" : "warn";
+                  const texte = finTardive
+                    ? "Fin après le délai"
+                    : taux > SEUIL_AU_DELA
+                      ? `+${formatHeures(fait - r.chiffre)} au-delà du chiffré`
+                      : taux >= SEUIL_PLANIFIE
+                        ? "Tout est planifié"
+                        : `Reste ${formatHeures(r.chiffre - fait)} à planifier`;
                   return (
-                    <span title={`Chiffré ${formatHeures(r.chiffre)} − déjà pointé ${formatHeures(r.pointe)} − planifié à venir ${formatHeures(r.planifie)}`}>
-                      <Pastille genre={r.reste > 0.5 ? "warn" : "ok"}>{r.reste > 0.5 ? `Reste ${formatHeures(r.reste)} à planifier` : "✓ Tout est planifié"}</Pastille>
+                    <span
+                      title={`Chiffré ${formatHeures(r.chiffre)} : déjà pointé ${formatHeures(r.pointe)} + planifié à venir ${formatHeures(r.planifie)}, soit ${Math.round(taux * 100)} %${finTardive ? ` · la dernière affectation finit après le délai (${formatDate(affaire.echeance)})` : ""}\n« Tout est planifié » de 95 % à 105 % du chiffré.`}
+                    >
+                      <Pastille genre={genre}>{texte}</Pastille>
                     </span>
                   );
                 })()}
@@ -2400,9 +2415,14 @@ function PlanningAffairesContenu() {
                           {famille && laBase.type === "CBE" && !estPrestation(laBase) && (
                           <span style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
                             chiffré {formatHeures(ch)} · pointé {formatHeures(pt)} · planifié {formatHeures(pl)} ·{" "}
-                            <strong style={{ color: rs < -0.5 ? C.rougeTexte : rs > 0.5 ? "#7a3e00" : "#1b5e20" }}>
-                              {rs < -0.5 ? `+${formatHeures(-rs)} au-delà` : rs > 0.5 ? `reste à planifier ${formatHeures(rs)}` : "✓ tout est planifié"}
-                            </strong>
+                            {(() => {
+                              const tauxF = ch > 0 ? (pt + pl) / ch : 1;
+                              return (
+                                <strong style={{ color: tauxF > SEUIL_AU_DELA ? C.rougeTexte : tauxF >= SEUIL_PLANIFIE ? "#1b5e20" : "#7a3e00" }}>
+                                  {tauxF > SEUIL_AU_DELA ? `+${formatHeures(-rs)} au-delà` : tauxF >= SEUIL_PLANIFIE ? "tout est planifié" : `reste ${formatHeures(rs)} à planifier`}
+                                </strong>
+                              );
+                            })()}
                           </span>
                           )}
                         </div>
@@ -2574,7 +2594,7 @@ function PlanningAffairesContenu() {
               <span>▸ replié · ⚑ livraison souhaitée · 📌 rendu d’un devis (DBE)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#7b8189", border: "1px solid #4b5057" }} />événement hors affaire (salon, formation, absence connue…)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)", border: "1px dashed #4b5057" }} />prévisionnel (non confirmé)</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : la partie foncée est le chiffré déjà affecté (verte quand tout est affecté)</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : partie foncée = déjà pointé, claire = planifié à venir ; verte dès 95 % du chiffré (« Tout est planifié »)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6b58a8", border: "1px solid #4a3a85" }} />PI</span>
