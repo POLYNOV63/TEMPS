@@ -463,19 +463,18 @@ function RessourcesContenu() {
         </div>
 
         <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1020 }}>
+          {/* DETAIL_COMPACT : sans ascenseur horizontal, titres figés */}
+          <div>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>
                 <tr>
-                  <th style={{ ...page.th, width: 120 }}>Ressource</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Théorique</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Fériés et absences</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Disponible</th>
-                  <th style={{ ...page.th, textAlign: "right" }}>Affecté</th>
-                  <th style={page.th}>Charge</th>
-                  <th style={page.th}>Écart</th>
-                  <th style={page.th}>Affectations de la semaine</th>
-                  <th style={page.th} />
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", width: 110 }}>Ressource</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }}>Théorique</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Charge</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Écart</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Affectations</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }} />
                 </tr>
               </thead>
               <tbody>
@@ -492,30 +491,21 @@ function RessourcesContenu() {
                         {encadrement && <div style={{ fontSize: 12, color: C.gris }}>Encadrement</div>}
                       </td>
                       <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(s.theorique)}</td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        {s.ferie + s.absence > 0 ? (
-                          <>
-                            <strong>{formatHeures(s.ferie + s.absence)}</strong>
-                            <div style={{ fontSize: 12, color: C.gris }}>
-                              {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "absence RH" : ""].filter(Boolean).join(" + ")}
-                            </div>
-                          </>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
-                        <strong>{encadrement ? "hors capacité" : formatHeures(s.net)}</strong>
-                      </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>
+                      <td style={{ ...page.td, textAlign: "right", whiteSpace: "nowrap" }}>
                         <strong>{formatHeures(s.affecte)}</strong>
+                        <span style={{ color: C.gris }}> / {encadrement ? "hors capacité" : formatHeures(s.net)}</span>
+                        {s.ferie + s.absence > 0 && (
+                          <div style={{ fontSize: 12, color: C.gris }}>
+                            − {formatHeures(s.ferie + s.absence)} {[s.ferie > 0 ? "férié" : "", s.absence > 0 ? "absence" : ""].filter(Boolean).join(" + ")}
+                          </div>
+                        )}
                       </td>
                       <td style={{ ...page.td, width: "20%" }}>
                         {!encadrement && (
                           <div
                             role="img"
                             aria-label={`Affecté ${formatHeures(s.affecte)} pour ${formatHeures(s.net)} disponibles`}
-                            style={{ position: "relative", height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 180 }}
+                            style={{ position: "relative", height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 100 }}
                           >
                             <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(normal / echelle) * 100}%`, background: "#34506b" }} />
                             {exces > 0 && (
@@ -550,9 +540,10 @@ function RessourcesContenu() {
                 <tr>
                   <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong></td>
                   <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique - totalNet)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalNet)}</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalAffecte)}</strong></td>
+                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <strong>{formatHeures(totalAffecte)}</strong>
+                    <span style={{ color: C.gris }}> / {formatHeures(totalNet)}</span>
+                  </td>
                   <td style={{ ...page.td, background: "#f8f9fa" }} />
                   <td style={{ ...page.td, background: "#f8f9fa" }}>{ecartPastille(totalAffecte - totalNet)}</td>
                   <td style={{ ...page.td, background: "#f8f9fa", fontSize: 14 }}>
