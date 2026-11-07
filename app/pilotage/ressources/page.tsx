@@ -429,7 +429,7 @@ function RessourcesContenu() {
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
           <Tuile libelle="Capacité disponible" valeur={formatHeures(totalNet)} sous={`${formatHeures(totalTheorique)} théoriques, fériés et absences déduits`} />
-          <Tuile libelle="Planifié" valeur={formatHeures(totalAffecte)} sous={nbSemDetail === 1 ? "affectations de la semaine" : `affectations des ${nbSemDetail} semaines`} />
+          <Tuile libelle="Planifié" valeur={formatHeures(totalAffecte)} sous={`${totalNet > 0 ? `${Math.round((totalAffecte / totalNet) * 100)} % de la capacité · ` : ""}${nbSemDetail === 1 ? "la semaine" : `${nbSemDetail} semaines`}`} />
           <Tuile libelle="Disponible" valeur={totalNet - totalAffecte >= 0 ? formatHeures(totalNet - totalAffecte) : "0 h"} sous="sur l’ensemble de l’équipe" />
           <Tuile
             libelle="En surcharge"
@@ -544,7 +544,20 @@ function RessourcesContenu() {
                     <strong>{formatHeures(totalAffecte)}</strong>
                     <span style={{ color: C.gris }}> / {formatHeures(totalNet)}</span>
                   </td>
-                  <td style={{ ...page.td, background: "#f8f9fa" }} />
+                  {/* TAUX_GLOBAL : charge de l'équipe (affecté ÷ capacité, encadrement exclu) */}
+                  <td style={{ ...page.td, background: "#f8f9fa" }}>
+                    {totalNet > 0 && (() => {
+                      const taux = totalAffecte / totalNet;
+                      return (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div role="img" aria-label={`Charge de l’équipe : ${Math.round(taux * 100)} %`} style={{ position: "relative", flex: 1, height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 100, overflow: "hidden" }}>
+                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${Math.min(100, taux * 100)}%`, background: taux > 1.001 ? "#b3261e" : "#34506b" }} />
+                          </div>
+                          <strong style={{ fontSize: 16, color: taux > 1.001 ? "#8f1010" : C.encre, whiteSpace: "nowrap" }}>{Math.round(taux * 100)} %</strong>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td style={{ ...page.td, background: "#f8f9fa" }}>{ecartPastille(totalAffecte - totalNet)}</td>
                   <td style={{ ...page.td, background: "#f8f9fa", fontSize: 14 }}>
                     {surcharges.length > 0 ? `${surcharges.length} personne(s) en surcharge` : ""}
