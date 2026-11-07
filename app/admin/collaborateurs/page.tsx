@@ -90,6 +90,14 @@ const estDirection = (role?: string | null) => normaliserRole(role) === "DIRECTI
 /* Adresse hors domaine POLYNOV : à inviter dans Microsoft Entra */
 const estExterne = (email?: string | null) => !/@polynov\.fr$/i.test(String(email ?? "").trim());
 
+/* NIVEAUX_COLLAB : niveau de la personne (SQL 86). Sert aux disponibilités par activité,
+   qui n'en affichent que des totaux, jamais nominativement. */
+const NIVEAUX_COLLAB = [
+  { n: 1, libelle: "Niveau 1", aide: "Exécute sous supervision : dessin, mise en plan, calculs simples" },
+  { n: 2, libelle: "Niveau 2", aide: "Autonome sur une affaire courante" },
+  { n: 3, libelle: "Niveau 3", aide: "Expert ou référent : conçoit, pilote une affaire, valide le travail des autres" },
+];
+
 export default function CollaborateursPage() {
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
   const [profils, setProfils] = useState<ProfilHoraire[]>([]);
@@ -127,6 +135,9 @@ export default function CollaborateursPage() {
   // COMPETENCES_APPOINT : ce que la personne sait aussi faire (Scan…), sans que ce soit sa prédominance
   const [competences, setCompetences] = useState<Map<string, string[]>>(new Map());
   const [editCompet, setEditCompet] = useState<Set<string>>(new Set());
+  // NIVEAUX_COLLAB : niveau de chacun, et celui choisi dans la fiche en cours de modification
+  const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
+  const [editNiveau, setEditNiveau] = useState<number | null>(null);
 
   // Formulaire collaborateur
   const [prenom, setPrenom] = useState("");
@@ -274,6 +285,12 @@ export default function CollaborateursPage() {
       }
       setPredominances(m);
       setCompetences(mc);
+    }
+
+    {
+      // NIVEAUX_COLLAB (sans la table, SQL 86 pas encore passé : aucun niveau)
+      const { data: niv } = await supabase.from("collaborateurs_niveaux").select("collaborateur_id,niveau");
+      setNiveaux(new Map(((niv ?? []) as { collaborateur_id: string; niveau: number }[]).map((x) => [x.collaborateur_id, Number(x.niveau)])));
     }
 
     setChargement(false);
@@ -675,6 +692,7 @@ const { data: profil, error: erreurProfil } = await supabase
 
     setEditPredo(new Set(predominances.get(c.id) ?? []));
     setEditCompet(new Set(competences.get(c.id) ?? []));
+    setEditNiveau(niveaux.get(c.id) ?? null);
     setEditModal(c);
   }
 
@@ -782,6 +800,20 @@ const { data: profil, error: erreurProfil } = await supabase
           setErreur(`Fiche enregistrée, mais prédominance non enregistrée : ${ei.message}`);
           return;
         }
+      }
+    }
+
+    // NIVEAUX_COLLAB : le niveau (supprimé s'il n'est plus renseigné)
+    if (!estDirection(editForm.role)) {
+      const { error: en } =
+        editNiveau === null
+          ? await supabase.from("collaborateurs_niveaux").delete().eq("collaborateur_id", editModal.id)
+          : await supabase
+              .from("collaborateurs_niveaux")
+              .upsert({ collaborateur_id: editModal.id, niveau: editNiveau, maj_le: new Date().toISOString() }, { onConflict: "collaborateur_id" });
+      if (en) {
+        setErreur(`Fiche enregistrée, mais niveau non enregistré : ${en.message}`);
+        return;
       }
     }
 
@@ -1039,6 +1071,15 @@ const { data: profil, error: erreurProfil } = await supabase
                             </span>
                           ) : null;
                         })}
+
+                        {niveaux.has(c.id) && (
+                          <span
+                            title={NIVEAUX_COLLAB.find((nv) => nv.n === niveaux.get(c.id))?.aide}
+                            style={{ background: "#f4f7f4", color: "#2e5e32", border: "1px solid #c8dcc9", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
+                          >
+                            N{niveaux.get(c.id)}
+                          </span>
+                        )}
 
                         {c.inclus_statistiques === false && (
                           <span
@@ -1469,6 +1510,32 @@ const { data: profil, error: erreurProfil } = await supabase
                 </div>
                 <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
                   Ce qu’il sait faire sans que ce soit son métier principal (le Scan, par exemple) : affiché à part, ne compte pas dans la composition.
+                </div>
+              </div>
+            )}
+
+            {/* NIVEAUX_COLLAB : niveau de la personne */}
+            {!estDirection(editForm.role) && (
+              <div style={{ marginTop: 16 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Niveau</label>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {[...NIVEAUX_COLLAB, { n: 0, libelle: "Non renseigné", aide: "" }].map((nv) => {
+                    const coche = (editNiveau ?? 0) === nv.n;
+                    return (
+                      <label
+                        key={nv.n}
+                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, cursor: "pointer", border: `1.5px solid ${coche ? "#1f4e79" : "#ddd"}`, background: coche ? "#eef4fb" : "white", fontSize: 14 }}
+                      >
+                        <input type="radio" name="niveau-collab" checked={coche} onChange={() => setEditNiveau(nv.n === 0 ? null : nv.n)} />
+                        <strong>{nv.libelle}</strong>
+                        {nv.aide && <span style={{ color: "#666" }}>· {nv.aide}</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
+                  Sert aux disponibilités par activité, qui n’en montrent que des totaux : le niveau d’une personne n’est affiché nulle part ailleurs
+                  qu’ici.
                 </div>
               </div>
             )}

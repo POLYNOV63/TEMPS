@@ -11,7 +11,7 @@ import { aISO, ajouterJours, chargeParSemaine, construireCapacites, lundiDe, num
 import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
 
 /* ===============================================================
-   ANALYSE - DISPONIBILITÉS PAR ACTIVITÉ (CHARGE_ACTIVITES_V3)
+   ANALYSE - DISPONIBILITÉS PAR ACTIVITÉ (CHARGE_ACTIVITES_V4)
    ADMIN et DIRECTION (lecture seule, droit « chargeRessources »)
 
    Méca, Elec et Calcul, sur 12 semaines. Pour chaque activité, les
@@ -20,7 +20,12 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
                   fériés déduits) ;
    - OCCUPÉES   : tout ce qui leur est planifié (affaires, PE / PI,
                   hors affaire) ;
-   - DISPONIBLES : capacité − occupées (négatif = surcharge).
+   - DISPONIBLES : heures libres des personnes (capacité − occupées de
+                  chacune, quand c'est positif), détaillées par NIVEAU
+                  (fiche collaborateur, SQL 86) : 1 clair → 3 foncé ;
+   - SURCHARGE   : heures planifiées au-delà de la capacité de chacun.
+   Capacité − occupées = disponibles − surcharge.
+   Le niveau n'est jamais affiché nominativement : seulement des totaux.
    Un graphique par activité, puis le tableau récapitulatif.
    V3 : une personne peut avoir PLUSIEURS activités principales (ex.
    Mécanique et Calcul) : elle compte alors dans chacune (les lignes ne
@@ -33,7 +38,13 @@ const ACTIVITES_SUIVIES = [
   { cle: "calcul", libelle: "Calcul", couleur: "#6b58a8" },
 ];
 const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-const VERT = "#4caf50";
+/* niveaux : du plus clair au plus foncé */
+const NIVEAUX = [
+  { n: 1, libelle: "Niveau 1", aide: "exécute sous supervision", couleur: "#c8e6c9" },
+  { n: 2, libelle: "Niveau 2", aide: "autonome sur une affaire courante", couleur: "#66bb6a" },
+  { n: 3, libelle: "Niveau 3", aide: "expert ou référent", couleur: "#2e7d32" },
+  { n: 0, libelle: "Niveau non renseigné", aide: "à saisir dans la fiche collaborateur", couleur: "#e3e7e3" },
+];
 const ROUGE = "#c62828";
 
 function ChargeActivitesContenu() {
@@ -46,6 +57,7 @@ function ChargeActivitesContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [detail, setDetail] = useState<{ cle: string; w: number } | null>(null);
+  const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
 
   const fenetreFin = ajouterJours(lundi, 12 * 7 - 1);
   const lundiActuel = lundiDe(aISO(new Date()));
@@ -56,9 +68,12 @@ function ChargeActivitesContenu() {
       chargerAnnuaire(),
       supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id").eq("niveau", "PRINCIPALE"),
       supabase.from("activites").select("id,nom"),
+      supabase.from("collaborateurs_niveaux").select("collaborateur_id,niveau"),
     ])
-      .then(([an, p, a]) => {
+      .then(([an, p, a, nv]) => {
         if (!actif) return;
+        // sans la table (SQL 86 pas encore passé) : tout le monde « non renseigné »
+        setNiveaux(new Map(((nv.data ?? []) as { collaborateur_id: string; niveau: number }[]).map((x) => [x.collaborateur_id, Number(x.niveau) || 0])));
         setAnnuaire(an);
         // une personne peut avoir plusieurs activités principales : on les garde toutes
         const m = new Map<string, Set<string>>();
@@ -111,6 +126,7 @@ function ChargeActivitesContenu() {
       const personnes = equipe.filter((c) => [...(predo.get(c.id) ?? [])].some((id) => ids.has(id)));
       const parPersonne = personnes.map((c) => ({
         c,
+        niveau: niveaux.get(c.id) ?? 0,
         // ses autres activités principales, pour le signaler dans le détail
         aussi: [...(predo.get(c.id) ?? [])].filter((id) => !ids.has(id)).map((id) => activites.find((a) => a.id === id)?.nom ?? "").filter(Boolean),
         semaines: semaines.map((l) => {
@@ -120,9 +136,13 @@ function ChargeActivitesContenu() {
       }));
       const capa = semaines.map((_, w) => parPersonne.reduce((t, p) => t + p.semaines[w].capa, 0));
       const occ = semaines.map((_, w) => parPersonne.reduce((t, p) => t + p.semaines[w].occ, 0));
-      return { ...s, personnes: parPersonne, capa, occ, dispo: capa.map((v, w) => v - occ[w]) };
+      const libre = (p: (typeof parPersonne)[number], w: number) => Math.max(0, p.semaines[w].capa - p.semaines[w].occ);
+      const parNiveau = NIVEAUX.map((nv) => semaines.map((_, w) => parPersonne.filter((p) => p.niveau === nv.n).reduce((t, p) => t + libre(p, w), 0)));
+      const dispo = semaines.map((_, w) => parNiveau.reduce((t, x) => t + x[w], 0));
+      const surcharge = semaines.map((_, w) => parPersonne.reduce((t, p) => t + Math.max(0, p.semaines[w].occ - p.semaines[w].capa), 0));
+      return { ...s, personnes: parPersonne, capa, occ, dispo, parNiveau, surcharge };
     });
-  }, [annuaire, activites, predo, semaines, capacites, joursAffectes]);
+  }, [annuaire, activites, predo, niveaux, semaines, capacites, joursAffectes]);
 
   const somme = (v: number[]) => v.reduce((t, x) => t + x, 0);
   const h = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} h`;
@@ -173,18 +193,23 @@ function ChargeActivitesContenu() {
                   {semaines.map((l, w) => {
                     const capa = d.capa[w];
                     const occ = d.occ[w];
-                    const libre = Math.max(0, capa - occ);
-                    const exces = Math.max(0, occ - capa);
+                    const exces = d.surcharge[w];
+                    const occUtile = Math.max(0, capa - d.dispo[w]);
                     return (
                       <div
                         key={l}
-                        title={`S${numeroSemaine(l)} : capacité ${h(capa)} · occupées ${h(occ)} · ${capa - occ >= 0 ? `disponibles ${h(capa - occ)}` : `surcharge ${h(occ - capa)}`}`}
+                        title={`S${numeroSemaine(l)} : capacité ${h(capa)} · occupées ${h(occ)} · disponibles ${h(d.dispo[w])}${
+                          d.dispo[w] >= 0.5 ? ` (${NIVEAUX.map((nv, k) => (d.parNiveau[k][w] >= 0.5 ? `${nv.libelle.replace("Niveau non renseigné", "non renseigné")} ${h(d.parNiveau[k][w])}` : "")).filter(Boolean).join(", ")})` : ""
+                        }${exces >= 0.5 ? ` · surcharge ${h(exces)}` : ""}`}
                         onClick={() => setDetail(detail?.cle === d.cle && detail.w === w ? null : { cle: d.cle, w })}
                         style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column-reverse", cursor: "pointer", outline: detail?.cle === d.cle && detail.w === w ? `2px solid ${C.encre}` : undefined }}
                       >
-                        <div style={{ height: `${(Math.min(occ, capa) / max) * 100}%`, background: d.couleur, opacity: 0.85 }} />
+                        <div style={{ height: `${(occUtile / max) * 100}%`, background: d.couleur, opacity: 0.85 }} />
                         {exces > 0 && <div style={{ height: `${(exces / max) * 100}%`, background: `repeating-linear-gradient(45deg,${ROUGE},${ROUGE} 3px,#f3b1ae 3px,#f3b1ae 6px)` }} />}
-                        {libre > 0 && <div style={{ height: `${(libre / max) * 100}%`, background: VERT, borderRadius: "3px 3px 0 0" }} />}
+                        {/* disponibles, du niveau 3 (foncé, en bas) au niveau 1 (clair), puis non renseigné */}
+                        {[2, 1, 0, 3].map((k) =>
+                          d.parNiveau[k][w] > 0 ? <div key={k} style={{ height: `${(d.parNiveau[k][w] / max) * 100}%`, background: NIVEAUX[k].couleur }} /> : null
+                        )}
                       </div>
                     );
                   })}
@@ -202,7 +227,12 @@ function ChargeActivitesContenu() {
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, margin: "-6px 0 16px" }}>
           <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#7b8189", verticalAlign: "middle" }} /> occupées (couleur de l’activité)</span>
-          <span><i style={{ display: "inline-block", width: 12, height: 12, background: VERT, verticalAlign: "middle" }} /> disponibles</span>
+          {NIVEAUX.map((nv) => (
+            <span key={nv.n} title={nv.aide}>
+              <i style={{ display: "inline-block", width: 12, height: 12, background: nv.couleur, verticalAlign: "middle", border: "1px solid #c9d1c9" }} /> disponibles · {nv.libelle.toLowerCase()}
+              {nv.n > 0 ? <span style={{ color: C.gris }}> ({nv.aide})</span> : null}
+            </span>
+          ))}
           <span><i style={{ display: "inline-block", width: 12, height: 12, background: `repeating-linear-gradient(45deg,${ROUGE},${ROUGE} 3px,#f3b1ae 3px,#f3b1ae 6px)`, verticalAlign: "middle" }} /> surcharge</span>
           <span style={{ color: C.gris }}>La hauteur totale d’une barre est la capacité de la semaine. Cliquez sur une barre ou une case pour voir le détail par personne.</span>
         </div>
@@ -235,12 +265,30 @@ function ChargeActivitesContenu() {
                   <Fragment key={d.cle}>
                     {(
                       [
-                        ["Capacité", d.capa],
-                        ["Occupées", d.occ],
-                        ["Disponibles", d.dispo],
-                      ] as [string, number[]][]
-                    ).map(([lib, v], k) => {
-                      const dispo = lib === "Disponibles";
+                        ["Capacité", d.capa, null],
+                        ["Occupées", d.occ, null],
+                        ["Disponibles", d.dispo, null],
+                        ...NIVEAUX.map((nv, i) => [`dont ${nv.libelle.replace("Niveau non renseigné", "non renseigné").toLowerCase()}`, d.parNiveau[i], nv] as [string, number[], (typeof NIVEAUX)[number]])
+                          .filter(([, v, nv]) => nv && (nv.n > 0 || v.some((x) => x >= 0.5))),
+                        ...(d.surcharge.some((x) => x >= 0.5) ? [["Surcharge", d.surcharge.map((x) => -x), null] as [string, number[], null]] : []),
+                      ] as [string, number[], (typeof NIVEAUX)[number] | null][]
+                    ).map(([lib, v, nv], k) => {
+                      const dispo = lib === "Disponibles" || lib === "Surcharge";
+                      if (nv)
+                        return (
+                          <tr key={lib}>
+                            <th scope="row" style={{ textAlign: "left", padding: "2px 8px 2px 18px", fontSize: 12, fontWeight: 600, color: "#3b4046", borderBottom: `1px solid ${C.ligne}` }} title={nv.aide}>
+                              <i style={{ display: "inline-block", width: 10, height: 10, background: nv.couleur, border: "1px solid #c9d1c9", marginRight: 6, verticalAlign: "middle" }} />
+                              {lib}
+                            </th>
+                            {v.map((x, w) => (
+                              <td key={w} style={{ textAlign: "center", padding: "2px", fontSize: 12, color: x >= 0.5 ? "#1b5e20" : C.gris, borderBottom: `1px solid ${C.ligne}` }}>
+                                {x >= 0.5 ? Math.round(x).toLocaleString("fr-FR") : "—"}
+                              </td>
+                            ))}
+                            <td style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: "#1b5e20", borderBottom: `1px solid ${C.ligne}` }}>{Math.round(somme(v)).toLocaleString("fr-FR") || "—"}</td>
+                          </tr>
+                        );
                       return (
                         <tr key={lib} style={{ background: dispo ? "#f6fbf7" : undefined }}>
                           <th
@@ -248,7 +296,7 @@ function ChargeActivitesContenu() {
                             style={{ textAlign: "left", padding: "5px 8px", fontSize: 13, borderTop: k === 0 ? `2px solid ${C.ligne}` : undefined, borderBottom: `1px solid ${C.ligne}` }}
                           >
                             {k === 0 && <div style={{ fontWeight: 800, color: d.couleur, textTransform: "uppercase", fontSize: 13 }}>{d.libelle}</div>}
-                            <span style={{ fontWeight: dispo ? 800 : 600, color: dispo ? "#1b5e20" : "#3b4046" }}>{lib}</span>
+                            <span style={{ fontWeight: dispo ? 800 : 600, color: dispo ? "#1b5e20" : lib === "Surcharge" ? ROUGE : "#3b4046" }}>{lib}</span>
                           </th>
                           {v.map((x, w) => (
                             <td
@@ -266,11 +314,11 @@ function ChargeActivitesContenu() {
                                 background: semaines[w] === lundiActuel ? "#fffafa" : undefined,
                               }}
                             >
-                              {Math.abs(x) < 0.5 ? "—" : `${dispo && x < 0 ? "▲ " : ""}${Math.round(x).toLocaleString("fr-FR")}`}
+                              {Math.abs(x) < 0.5 ? "—" : `${dispo && x < 0 ? "▲ " : ""}${Math.round(Math.abs(x)).toLocaleString("fr-FR")}`}
                             </td>
                           ))}
                           <td style={{ textAlign: "center", fontWeight: 800, fontSize: 13, color: dispo ? (somme(v) < 0 ? ROUGE : "#1b5e20") : "#3b4046", borderTop: k === 0 ? `2px solid ${C.ligne}` : undefined, borderBottom: `1px solid ${C.ligne}` }}>
-                            {Math.round(somme(v)).toLocaleString("fr-FR")}
+                            {Math.round(Math.abs(somme(v))).toLocaleString("fr-FR")}
                           </td>
                         </tr>
                       );
@@ -324,7 +372,8 @@ function ChargeActivitesContenu() {
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>
           Chaque activité regroupe les personnes dont c’est une activité principale (fiche collaborateur), encadrement exclu ; une personne qui a
           plusieurs activités principales compte dans chacune, les activités ne s’additionnent donc pas entre elles. Occupées : tout ce qui leur est
-          planifié, affaires, PE / PI et hors affaire. Détail par personne et par affaire :{" "}
+          planifié, affaires, PE / PI et hors affaire. Disponibles : les heures libres de chacun, détaillées par niveau (fiche collaborateur) ; surcharge :
+          ce qui dépasse la capacité de certains. Capacité − occupées = disponibles − surcharge. Détail par personne et par affaire :{" "}
           <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>
             Charge par ressource →
           </Link>
