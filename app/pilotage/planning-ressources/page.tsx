@@ -7,7 +7,7 @@ import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { chargerAffaires, chargerAnnuaire, chargerCapacitesAbsences, chargerPlanifie, type AffaireP } from "@/lib/pilotageDonnees";
-import { ajouterJours, construireCapacites, estWeekend, lundiDe, numeroSemaine, type Affectation, type Capacites, type JourRow } from "@/lib/pilotagePlanning";
+import { ajouterJours, construireCapacites, estFerie, estWeekend, lundiDe, numeroSemaine, type Affectation, type Capacites, type JourRow } from "@/lib/pilotagePlanning";
 import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
 
 /* ===============================================================
@@ -460,7 +460,7 @@ function PlanningRessourcesContenu() {
                 ) : null
               )}
               {colonnes.map((j, i) => (
-                <div key={j} style={{ gridColumn: col(i), gridRow: 3, textAlign: "center", fontSize: nbSemaines > 8 ? 9 : 11, fontWeight: 700, color: j === aujourdhui ? C.rougeFonce : C.gris, background: j === aujourdhui ? "#fff4f4" : "#ffffff", padding: "2px 0", borderBottom: `1px solid ${C.ligne}` }}>
+                <div key={j} title={estFerie(j) ? "Jour férié" : undefined} style={{ gridColumn: col(i), gridRow: 3, textAlign: "center", fontSize: nbSemaines > 8 ? 9 : 11, fontWeight: 700, color: j === aujourdhui ? C.rougeFonce : C.gris, background: estFerie(j) ? "#dfe2e6" : j === aujourdhui ? "#fff4f4" : "#ffffff", padding: "2px 0", borderBottom: `1px solid ${C.ligne}` }}>
                   {Number(j.slice(8))}
                 </div>
               ))}
@@ -498,6 +498,33 @@ function PlanningRessourcesContenu() {
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                   </div>
 
+                  {/* FERIES_GRISES : jour férié grisé sur toute la hauteur de la personne */}
+                  {colonnes.map((j, i) =>
+                    estFerie(j) ? (
+                      <div
+                        key={`fe-${j}`}
+                        title={`Jour férié (${formatDate(j)})`}
+                        style={{
+                          gridColumn: col(i),
+                          gridRow: `1 / span ${Math.max(2, l.voies)}`,
+                          margin: "-6px 0",
+                          background: "#e3e6ea",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          overflow: "hidden",
+                          fontSize: 9,
+                          fontWeight: 800,
+                          color: "#6b7178",
+                          writingMode: "vertical-rl",
+                          transform: "rotate(180deg)",
+                          zIndex: 0,
+                        }}
+                      >
+                        Férié
+                      </div>
+                    ) : null
+                  )}
                   {/* ABSENT_ECRIT : jour de congé validé (capacité nulle un jour normalement travaillé) */}
                   {colonnes.map((j, i) => {
                     const cj = capacites.get(l.collab.id)?.get(j);
