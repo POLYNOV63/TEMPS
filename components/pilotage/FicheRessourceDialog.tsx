@@ -263,7 +263,7 @@ export default function FicheRessourceDialog({
             <label htmlFor="fr-p" style={page.etiquette}>Personne</label>
             <select id="fr-p" value={collab} onChange={(e) => setCollab(e.target.value)} style={page.entrees}>
               <option value="">— Choisir —</option>
-              {annuaire.map((c) => (
+              {/* RESSOURCE_SORTIE */ annuaire.filter((c) => !c.date_sortie || c.date_sortie >= new Date().toISOString().slice(0, 10) || c.id === collab).map((c) => (
                 <option key={c.id} value={c.id}>
                   {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
                   {!c.inclus_statistiques ? " (encadrement)" : ""}

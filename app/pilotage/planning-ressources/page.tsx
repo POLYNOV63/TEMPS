@@ -492,10 +492,13 @@ function PlanningRessourcesContenu() {
                     </>
                   );
                 })()}
-                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}` }}>
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
                   <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
-                    <strong style={{ fontSize: 15 }}>{nomCollab(l.collab)}</strong>
+                    <strong style={{ fontSize: 15, color: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? C.gris : undefined }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
+                    {l.collab.date_sortie && (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", whiteSpace: "nowrap" }}>sortie le {formatDate(l.collab.date_sortie)}</span>
+                    )}
                   </div>
 
                   {/* FERIES_GRISES : jour férié grisé sur toute la hauteur de la personne */}
@@ -525,6 +528,34 @@ function PlanningRessourcesContenu() {
                       </div>
                     ) : null
                   )}
+                  {/* RESSOURCE_SORTIE : jours après la date de sortie */}
+                  {l.collab.date_sortie &&
+                    colonnes.map((j, i) =>
+                      j > (l.collab.date_sortie as string) ? (
+                        <div
+                          key={`so-${j}`}
+                          title={`${nomCollab(l.collab)} : sorti(e) le ${formatDate(l.collab.date_sortie as string)}`}
+                          style={{
+                            gridColumn: col(i),
+                            gridRow: `1 / span ${Math.max(2, l.voies)}`,
+                            margin: "-6px 0",
+                            background: "repeating-linear-gradient(45deg,#d5d8dc,#d5d8dc 4px,#eceef1 4px,#eceef1 8px)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            overflow: "hidden",
+                            fontSize: 9,
+                            fontWeight: 800,
+                            color: "#6b7178",
+                            writingMode: "vertical-rl",
+                            transform: "rotate(180deg)",
+                            zIndex: 0,
+                          }}
+                        >
+                          Sorti
+                        </div>
+                      ) : null
+                    )}
                   {/* ABSENT_ECRIT : jour de congé validé (capacité nulle un jour normalement travaillé) */}
                   {colonnes.map((j, i) => {
                     const cj = capacites.get(l.collab.id)?.get(j);

@@ -59,6 +59,7 @@ export type Collab = {
   prenom: string | null;
   nom: string | null;
   inclus_statistiques: boolean;
+  date_sortie?: string | null; // RESSOURCE_SORTIE : dernier jour travaillé (SQL 89)
 };
 
 export type Imputation = {

@@ -585,7 +585,8 @@ export default function AffectationDialog({
         <div>
           <div style={page.etiquette}>Ressources</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {annuaire.map((c) => (
+            {/* RESSOURCE_SORTIE : une personne sortie n'est plus proposée */}
+            {annuaire.filter((c) => !c.date_sortie || c.date_sortie >= new Date().toISOString().slice(0, 10) || ressources.includes(c.id)).map((c) => (
               <button
                 key={c.id}
                 type="button"
