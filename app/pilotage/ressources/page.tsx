@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -128,6 +128,14 @@ function RessourcesContenu() {
   // DETAIL_LISIBLE : affectations repliées ; dépliées personne par personne, ou toutes
   const [affOuvertes, setAffOuvertes] = useState<Set<string>>(new Set());
   const [toutDeplie, setToutDeplie] = useState(false);
+  // BANDEAU_EQUIPE : niveau de chacun (SQL 86 ; sans la table, tout est « non renseigné »)
+  const [niveauxCollab, setNiveauxCollab] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    void supabase
+      .from("collaborateurs_niveaux")
+      .select("collaborateur_id,niveau")
+      .then(({ data }) => setNiveauxCollab(new Map(((data ?? []) as { collaborateur_id: string; niveau: number }[]).map((x) => [x.collaborateur_id, Number(x.niveau) || 0]))));
+  }, []);
   const finSemaine = ajouterJours(lundi, 7 * nbSemDetail - 1);
 
   const lignes = useMemo(
@@ -498,17 +506,73 @@ function RessourcesContenu() {
         {info && <Message genre="ok">{info}</Message>}
         {chargement && <Message genre="info">Chargement…</Message>}
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 20 }}>
-          <Tuile libelle="Capacité disponible" valeur={formatHeures(totalNet)} sous={`${formatHeures(totalTheorique)} théoriques, fériés et absences déduits`} />
-          <Tuile libelle="Planifié" valeur={formatHeures(totalAffecte)} sous={`${totalNet > 0 ? `${Math.round((totalAffecte / totalNet) * 100)} % de la capacité · ` : ""}${nbSemDetail === 1 ? "la semaine" : `${nbSemDetail} semaines`}`} />
-          <Tuile libelle="Disponible" valeur={totalNet - totalAffecte >= 0 ? formatHeures(totalNet - totalAffecte) : "0 h"} sous="sur l’ensemble de l’équipe" />
-          <Tuile
-            libelle="En surcharge"
-            valeur={`${surcharges.length} personne${surcharges.length > 1 ? "s" : ""}`}
-            sous={surcharges.map((l) => `${nomCollab(l.collab)} +${formatHeures(l.semaine.ecart)}`).join(" · ") || "aucune"}
-            accent={surcharges.length > 0}
-          />
-        </div>
+        {/* BANDEAU_EQUIPE : l'équipe BE en un coup d'œil, sur la période du détail */}
+        {(() => {
+          const NIV = [
+            { n: 1, lib: "N1", aide: "niveau 1 : exécute sous supervision", couleur: "#c8e6c9" },
+            { n: 2, lib: "N2", aide: "niveau 2 : autonome sur une affaire courante", couleur: "#66bb6a" },
+            { n: 3, lib: "N3", aide: "niveau 3 : expert ou référent", couleur: "#2e7d32" },
+            { n: 0, lib: "non renseigné", aide: "niveau à saisir dans la fiche collaborateur", couleur: "#e3e7e3" },
+          ];
+          const libres = NIV.map((nv) =>
+            equipe.filter((l) => (niveauxCollab.get(l.collab.id) ?? 0) === nv.n).reduce((s, l) => s + Math.max(0, l.semaine.net - l.semaine.affecte), 0)
+          );
+          const libreTotal = libres.reduce((s, x) => s + x, 0);
+          const taux = totalNet > 0 ? totalAffecte / totalNet : 0;
+          const etiquette: CSSProperties = { fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris, marginBottom: 4 };
+          return (
+            <section style={{ ...page.carte, padding: "14px 18px", marginBottom: 20, borderLeft: `5px solid ${C.rouge}` }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch", gap: "14px 30px" }}>
+                <div style={{ minWidth: 150 }}>
+                  <div style={etiquette}>Équipe BE · toutes activités</div>
+                  <div style={{ fontSize: 15, fontWeight: 800 }}>
+                    {nbSemDetail === 1 ? `Semaine S${numeroSemaine(lundi)}` : `S${numeroSemaine(lundi)} à S${numeroSemaine(ajouterJours(lundi, 7 * (nbSemDetail - 1)))}`}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.gris }}>{equipe.length} personnes · hors encadrement</div>
+                </div>
+                <div>
+                  <div style={etiquette}>Affecté / capacité</div>
+                  <div style={{ fontSize: 24, fontWeight: 800 }}>
+                    {formatHeures(totalAffecte)} <span style={{ fontSize: 16, color: C.gris, fontWeight: 600 }}>/ {formatHeures(totalNet)}</span>
+                  </div>
+                  {totalTheorique - totalNet > 0.01 && <div style={{ fontSize: 12, color: C.gris }}>− {formatHeures(totalTheorique - totalNet)} fériés et absences</div>}
+                </div>
+                <div style={{ flex: "1 1 220px", minWidth: 200 }}>
+                  <div style={etiquette}>Charge</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ flex: 1, height: 14, borderRadius: 4, background: "#eef0f3", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, taux * 100)}%`, height: "100%", background: taux > 1.001 ? "#b3261e" : taux >= 0.8 ? "#34506b" : "#8fb0d6" }} />
+                    </div>
+                    <strong style={{ fontSize: 24, color: taux > 1.001 ? "#8f1010" : C.encre }}>{Math.round(taux * 100)} %</strong>
+                  </div>
+                </div>
+                <div style={{ minWidth: 220 }}>
+                  <div style={etiquette}>Disponible</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: libreTotal >= 0.5 ? "#1b5e20" : C.gris }}>{formatHeures(libreTotal)}</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                    {NIV.map((nv, k) =>
+                      nv.n === 0 && libres[k] < 0.5 ? null : (
+                        <span key={nv.n} title={nv.aide} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: "#3b4046" }}>
+                          <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: nv.couleur, border: "1px solid #c9d1c9" }} />
+                          {nv.lib} {formatHeures(libres[k])}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
+                <div style={{ minWidth: 150, maxWidth: 260 }}>
+                  <div style={etiquette}>En surcharge</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: surcharges.length > 0 ? "#8f1010" : "#1b5e20" }}>
+                    {surcharges.length > 0 ? `${surcharges.length} pers.` : "personne"}
+                  </div>
+                  {surcharges.length > 0 && (
+                    <div style={{ fontSize: 12, color: C.gris }}>{surcharges.map((l) => `${nomCollab(l.collab)} +${formatHeures(l.semaine.ecart)}`).join(" · ")}</div>
+                  )}
+                </div>
+              </div>
+            </section>
+          );
+        })()}
 
         {/* DETAIL_PERIODE : le détail en premier, sur 1, 2 ou 4 semaines */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", margin: "0 0 10px" }}>
@@ -746,32 +810,6 @@ function RessourcesContenu() {
                     </Fragment>
                   );
                 })}
-                <tr>
-                  <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong> <span style={{ fontSize: 11, color: C.gris }}>toutes activités</span></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right", whiteSpace: "nowrap" }}>
-                    <strong>{formatHeures(totalAffecte)}</strong>
-                    <span style={{ color: C.gris }}> / {formatHeures(totalNet)}</span>
-                  </td>
-                  {/* TAUX_GLOBAL : charge de l'équipe (affecté ÷ capacité, encadrement exclu) */}
-                  <td style={{ ...page.td, background: "#f8f9fa" }}>
-                    {totalNet > 0 && (() => {
-                      const taux = totalAffecte / totalNet;
-                      return (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <div role="img" aria-label={`Charge de l’équipe : ${Math.round(taux * 100)} %`} style={{ position: "relative", flex: 1, height: 16, borderRadius: 3, background: "#eef0f3", minWidth: 100, overflow: "hidden" }}>
-                            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${Math.min(100, taux * 100)}%`, background: taux > 1.001 ? "#b3261e" : "#34506b" }} />
-                          </div>
-                          <strong style={{ fontSize: 16, color: taux > 1.001 ? "#8f1010" : C.encre, whiteSpace: "nowrap" }}>{Math.round(taux * 100)} %</strong>
-                        </div>
-                      );
-                    })()}
-                  </td>
-                  <td style={{ ...page.td, background: "#f8f9fa" }}>{ecartPastille(totalAffecte - totalNet)}</td>
-                  <td style={{ ...page.td, background: "#f8f9fa", fontSize: 14 }}>
-                    {surcharges.length > 0 ? `${surcharges.length} personne(s) en surcharge` : ""}
-                  </td>
-                  <td style={{ ...page.td, background: "#f8f9fa" }} />
-                </tr>
               </tbody>
             </table>
           </div>
