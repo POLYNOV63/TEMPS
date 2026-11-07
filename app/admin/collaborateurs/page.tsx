@@ -33,6 +33,7 @@ type Collaborateur = {
   actif: boolean;
   compteur_recuperation?: number | null;
   inclus_statistiques?: boolean | null;
+  date_sortie?: string | null; // DATE_SORTIE
 };
 
 type ProfilHoraire = {
@@ -124,6 +125,7 @@ export default function CollaborateursPage() {
     trigramme: "",
     role: "COLLABORATEUR",
     inclusStatistiques: true,
+    dateSortie: "",
   });
   const [editEnCours, setEditEnCours] = useState(false);
 
@@ -688,6 +690,7 @@ const { data: profil, error: erreurProfil } = await supabase
       trigramme: c.trigramme || "",
       role: normaliserRole(c.role),
       inclusStatistiques: c.inclus_statistiques !== false,
+      dateSortie: c.date_sortie ?? "",
     });
 
     setEditPredo(new Set(predominances.get(c.id) ?? []));
@@ -769,6 +772,7 @@ const { data: profil, error: erreurProfil } = await supabase
         role: editForm.role,
         // une fiche Direction n'entre jamais dans les statistiques de l'équipe
         inclus_statistiques: estDirection(editForm.role) ? false : editForm.inclusStatistiques,
+        date_sortie: estDirection(editForm.role) ? null : editForm.dateSortie || null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", editModal.id);
@@ -1078,6 +1082,15 @@ const { data: profil, error: erreurProfil } = await supabase
                             style={{ background: "#f4f7f4", color: "#2e5e32", border: "1px solid #c8dcc9", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
                           >
                             N{niveaux.get(c.id)}
+                          </span>
+                        )}
+
+                        {c.date_sortie && (
+                          <span
+                            title="Dernier jour travaillé : plus de capacité au planning après cette date"
+                            style={{ background: "#fff4e5", color: "#7a3e00", border: "1px solid #e9b877", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
+                          >
+                            Sortie le {formatDate(c.date_sortie)}
                           </span>
                         )}
 
@@ -1536,6 +1549,30 @@ const { data: profil, error: erreurProfil } = await supabase
                 <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
                   Sert aux disponibilités par activité, qui n’en montrent que des totaux : le niveau d’une personne n’est affiché nulle part ailleurs
                   qu’ici.
+                </div>
+              </div>
+            )}
+
+            {/* DATE_SORTIE : dernier jour travaillé ; après, plus de capacité au planning */}
+            {!estDirection(editForm.role) && (
+              <div style={{ marginTop: 16 }}>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Date de sortie (facultatif)</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="date"
+                    value={editForm.dateSortie}
+                    onChange={(e) => setEditForm((f) => ({ ...f, dateSortie: e.target.value }))}
+                    style={{ ...inputStyle, maxWidth: 200 }}
+                  />
+                  {editForm.dateSortie && (
+                    <button type="button" onClick={() => setEditForm((f) => ({ ...f, dateSortie: "" }))} style={secondaryButtonStyle}>
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
+                  Dernier jour travaillé. Après cette date, la personne n’a plus de capacité dans le planning, la charge et les disponibilités. Elle garde
+                  son accès (dernière feuille d’heures…) jusqu’à ce que vous la désactiviez.
                 </div>
               </div>
             )}
