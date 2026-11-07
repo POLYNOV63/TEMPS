@@ -468,10 +468,19 @@ function RessourcesContenu() {
         <section style={{ ...page.carte, padding: 16, marginBottom: 20 }}>
           {/* DETAIL_COMPACT : sans ascenseur horizontal, titres figés */}
           <div>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed" }}>
+              {/* LARGEURS_DETAIL : Ressource, Affecté / capacité, Charge, Écart, Affectations (le reste), Déplacer */}
+              <colgroup>
+                <col style={{ width: 76 }} />
+                <col style={{ width: 200 }} />
+                <col style={{ width: 210 }} />
+                <col style={{ width: 165 }} />
+                <col />
+                <col style={{ width: nbSemDetail === 1 ? 110 : 8 }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", width: 110 }}>Ressource</th>
+                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Ressource</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Charge</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Écart</th>
@@ -516,7 +525,7 @@ function RessourcesContenu() {
                           </span>
                         )}
                       </td>
-                      <td style={{ ...page.td, width: "22%" }}>
+                      <td style={page.td}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ flex: 1 }}>
                         {!encadrement && (
