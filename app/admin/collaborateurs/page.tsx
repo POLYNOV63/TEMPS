@@ -1090,7 +1090,7 @@ const { data: profil, error: erreurProfil } = await supabase
                             title="Dernier jour travaillé : plus de capacité au planning après cette date"
                             style={{ background: "#fff4e5", color: "#7a3e00", border: "1px solid #e9b877", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
                           >
-                            Sortie le {formatDate(c.date_sortie)}
+                            Plus dispo après le {formatDate(c.date_sortie)}
                           </span>
                         )}
 
@@ -1556,7 +1556,7 @@ const { data: profil, error: erreurProfil } = await supabase
             {/* DATE_SORTIE : dernier jour travaillé ; après, plus de capacité au planning */}
             {!estDirection(editForm.role) && (
               <div style={{ marginTop: 16 }}>
-                <label style={{ ...labelStyle, marginTop: 0 }}>Date de sortie (facultatif)</label>
+                <label style={{ ...labelStyle, marginTop: 0 }}>Plus dispo après le (facultatif)</label>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <input
                     type="date"

@@ -497,7 +497,7 @@ function PlanningRessourcesContenu() {
                     <strong style={{ fontSize: 15, color: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? C.gris : undefined }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                     {l.collab.date_sortie && (
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", whiteSpace: "nowrap" }}>sortie le {formatDate(l.collab.date_sortie)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", whiteSpace: "nowrap" }}>plus dispo après le {formatDate(l.collab.date_sortie)}</span>
                     )}
                   </div>
 
@@ -534,7 +534,7 @@ function PlanningRessourcesContenu() {
                       j > (l.collab.date_sortie as string) ? (
                         <div
                           key={`so-${j}`}
-                          title={`${nomCollab(l.collab)} : sorti(e) le ${formatDate(l.collab.date_sortie as string)}`}
+                          title={`${nomCollab(l.collab)} : plus dispo après le ${formatDate(l.collab.date_sortie as string)}`}
                           style={{
                             gridColumn: col(i),
                             gridRow: `1 / span ${Math.max(2, l.voies)}`,
@@ -552,7 +552,7 @@ function PlanningRessourcesContenu() {
                             zIndex: 0,
                           }}
                         >
-                          Sorti
+                          Plus dispo
                         </div>
                       ) : null
                     )}
