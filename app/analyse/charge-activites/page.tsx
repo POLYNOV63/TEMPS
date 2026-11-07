@@ -11,7 +11,7 @@ import { aISO, ajouterJours, chargeParSemaine, construireCapacites, lundiDe, num
 import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
 
 /* ===============================================================
-   ANALYSE - DISPONIBILITÉS PAR ACTIVITÉ (CHARGE_ACTIVITES_V2)
+   ANALYSE - DISPONIBILITÉS PAR ACTIVITÉ (CHARGE_ACTIVITES_V3)
    ADMIN et DIRECTION (lecture seule, droit « chargeRessources »)
 
    Méca, Elec et Calcul, sur 12 semaines. Pour chaque activité, les
@@ -22,6 +22,9 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
                   hors affaire) ;
    - DISPONIBLES : capacité − occupées (négatif = surcharge).
    Un graphique par activité, puis le tableau récapitulatif.
+   V3 : une personne peut avoir PLUSIEURS activités principales (ex.
+   Mécanique et Calcul) : elle compte alors dans chacune (les lignes ne
+   s'additionnent pas entre activités).
 ================================================================ */
 
 const ACTIVITES_SUIVIES = [
@@ -36,7 +39,7 @@ const ROUGE = "#c62828";
 function ChargeActivitesContenu() {
   const [lundi, setLundi] = useState(() => lundiDe(aISO(new Date())));
   const [annuaire, setAnnuaire] = useState<Collab[]>([]);
-  const [predo, setPredo] = useState<Map<string, string>>(new Map());
+  const [predo, setPredo] = useState<Map<string, Set<string>>>(new Map());
   const [activites, setActivites] = useState<{ id: string; nom: string }[]>([]);
   const [joursAffectes, setJoursAffectes] = useState<JourAffecte[]>([]);
   const [caps, setCaps] = useState<Awaited<ReturnType<typeof chargerCapacitesAbsences>>>({ caps: [], absences: [] });
@@ -57,7 +60,14 @@ function ChargeActivitesContenu() {
       .then(([an, p, a]) => {
         if (!actif) return;
         setAnnuaire(an);
-        setPredo(new Map(((p.data ?? []) as { collaborateur_id: string; activite_id: string }[]).map((x) => [x.collaborateur_id, x.activite_id])));
+        // une personne peut avoir plusieurs activités principales : on les garde toutes
+        const m = new Map<string, Set<string>>();
+        for (const x of (p.data ?? []) as { collaborateur_id: string; activite_id: string }[]) {
+          const e = m.get(x.collaborateur_id) ?? new Set<string>();
+          e.add(x.activite_id);
+          m.set(x.collaborateur_id, e);
+        }
+        setPredo(m);
         setActivites((a.data ?? []) as { id: string; nom: string }[]);
       })
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement impossible."));
@@ -98,9 +108,11 @@ function ChargeActivitesContenu() {
     const equipe = annuaire.filter((c) => c.inclus_statistiques);
     return ACTIVITES_SUIVIES.map((s) => {
       const ids = new Set(activites.filter((a) => sansAccents(a.nom).startsWith(s.cle)).map((a) => a.id));
-      const personnes = equipe.filter((c) => ids.has(predo.get(c.id) ?? ""));
+      const personnes = equipe.filter((c) => [...(predo.get(c.id) ?? [])].some((id) => ids.has(id)));
       const parPersonne = personnes.map((c) => ({
         c,
+        // ses autres activités principales, pour le signaler dans le détail
+        aussi: [...(predo.get(c.id) ?? [])].filter((id) => !ids.has(id)).map((id) => activites.find((a) => a.id === id)?.nom ?? "").filter(Boolean),
         semaines: semaines.map((l) => {
           const x = chargeParSemaine(capacites, joursAffectes, c.id, l);
           return { capa: x.net, occ: x.affecte };
@@ -295,7 +307,8 @@ function ChargeActivitesContenu() {
                         const libre = x.capa - x.occ;
                         return (
                           <div key={p.c.id} style={{ padding: "2px 0" }}>
-                            <strong>{nomCollab(p.c)}</strong> · capacité {formatHeures(x.capa)} · occupé {formatHeures(x.occ)} ·{" "}
+                            <strong>{nomCollab(p.c)}</strong>
+                            {p.aussi.length > 0 && <span style={{ color: C.gris }}> (aussi en {p.aussi.join(", ")})</span>} · capacité {formatHeures(x.capa)} · occupé {formatHeures(x.occ)} ·{" "}
                             <strong style={{ color: libre < -0.5 ? ROUGE : libre >= 0.5 ? "#1b5e20" : C.gris }}>
                               {libre < -0.5 ? `surcharge ${formatHeures(-libre)}` : libre >= 0.5 ? `libre ${formatHeures(libre)}` : "complet"}
                             </strong>
@@ -309,7 +322,8 @@ function ChargeActivitesContenu() {
         </section>
 
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>
-          Chaque activité regroupe les personnes dont c’est l’activité principale (fiche collaborateur), encadrement exclu. Occupées : tout ce qui leur est
+          Chaque activité regroupe les personnes dont c’est une activité principale (fiche collaborateur), encadrement exclu ; une personne qui a
+          plusieurs activités principales compte dans chacune, les activités ne s’additionnent donc pas entre elles. Occupées : tout ce qui leur est
           planifié, affaires, PE / PI et hors affaire. Détail par personne et par affaire :{" "}
           <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>
             Charge par ressource →
