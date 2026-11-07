@@ -472,7 +472,6 @@ function RessourcesContenu() {
               <thead>
                 <tr>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", width: 110 }}>Ressource</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }}>Théorique</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "right" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Charge</th>
                   <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }}>Écart</th>
@@ -505,7 +504,6 @@ function RessourcesContenu() {
                         <strong style={{ fontSize: 15 }}>{nomCollab(l.collab)}</strong>
                         {encadrement && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: C.gris }}>encadrement</span>}
                       </td>
-                      <td style={{ ...page.td, textAlign: "right" }}>{formatHeures(s.theorique)}</td>
                       <td style={{ ...page.td, textAlign: "right", whiteSpace: "nowrap" }}>
                         <strong>{formatHeures(s.affecte)}</strong>
                         <span style={{ color: C.gris }}> / {encadrement ? "hors capacité" : formatHeures(s.net)}</span>
@@ -592,7 +590,6 @@ function RessourcesContenu() {
                 })}
                 <tr>
                   <td style={{ ...page.td, background: "#f8f9fa" }}><strong>Équipe BE</strong></td>
-                  <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right" }}><strong>{formatHeures(totalTheorique)}</strong></td>
                   <td style={{ ...page.td, background: "#f8f9fa", textAlign: "right", whiteSpace: "nowrap" }}>
                     <strong>{formatHeures(totalAffecte)}</strong>
                     <span style={{ color: C.gris }}> / {formatHeures(totalNet)}</span>
