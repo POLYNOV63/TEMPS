@@ -1,0 +1,54 @@
+
+  /* CHARGE_PAR_ACTIVITE : le travail planifié, rangé selon l'activité de chaque affectation (Méca, Calcul…), face à la
+     capacité des personnes dont c'est l'activité principale (congés et fériés déduits) ; équipe hors encadrement, 12 semaines */
+  const [detailActivite, setDetailActivite] = useState<{ cle: string; w: number } | null>(null);
+  const chargeActivite = useMemo(() => {
+    type LigneAct = { cle: string; nom: string; ordre: number; capa: number[]; charge: number[]; detail: Map<string, Map<string, number>>[] };
+    const ids = new Set(equipe12.map((c) => c.id));
+    const semaineDe = (jour: string) => semaines12.findIndex((l) => jour >= l && jour <= ajouterJours(l, 6));
+    const parCle = new Map<string, LigneAct>();
+    const ligneDe = (cle: string, nom: string, ordre: number) => {
+      let l = parCle.get(cle);
+      if (!l) {
+        l = { cle, nom, ordre, capa: semaines12.map(() => 0), charge: semaines12.map(() => 0), detail: semaines12.map(() => new Map<string, Map<string, number>>()) };
+        parCle.set(cle, l);
+      }
+      return l;
+    };
+    for (const a of groupesRep.activites) ligneDe(a.id, a.nom, a.ordre);
+    const connues = new Set(groupesRep.activites.map((a) => a.id));
+    // capacité : chaque personne compte pour son activité principale
+    for (const c of equipe12) {
+      const act = groupesRep.predo.get(c.id);
+      const l = act && connues.has(act) ? ligneDe(act, "", 0) : ligneDe("_sans", "Sans activité principale", 998);
+      semaines12.forEach((s, w) => (l.capa[w] += chargeParSemaine(capacites, joursAffectes, c.id, s).net));
+    }
+    // charge : les heures planifiées, selon l'activité de l'affectation
+    for (const j of jours) {
+      const a = affectationsParId.get(j.affectation_id);
+      if (!a || !ids.has(a.collaborateur_id)) continue;
+      const w = semaineDe(j.jour);
+      const h = num(j.heures);
+      if (w < 0 || h <= 0) continue;
+      const l = !a.affaire_id
+        ? ligneDe("_hors", "Hors affaire (salons, formations…)", 1000)
+        : a.activite_id && connues.has(a.activite_id)
+          ? ligneDe(a.activite_id, "", 0)
+          : ligneDe("_nonprecise", "Activité non précisée", 999);
+      l.charge[w] += h;
+      const aff = a.affaire_id ? affairesParId.get(a.affaire_id) : undefined;
+      const etiquette = aff ? `${aff.type} ${aff.numero}` : a.libelle ?? "Événement";
+      const qui = nomCollab(annuaire.find((x) => x.id === a.collaborateur_id));
+      const m = l.detail[w].get(etiquette) ?? new Map<string, number>();
+      m.set(qui, (m.get(qui) ?? 0) + h);
+      l.detail[w].set(etiquette, m);
+    }
+    const liste = [...parCle.values()]
+      .filter((l) => l.capa.some((x) => x > 0.01) || l.charge.some((x) => x > 0.01))
+      .sort((x, y) => x.ordre - y.ordre || x.nom.localeCompare(y.nom, "fr"));
+    const total = {
+      capa: semaines12.map((_, w) => liste.reduce((t, l) => t + l.capa[w], 0)),
+      charge: semaines12.map((_, w) => liste.reduce((t, l) => t + l.charge[w], 0)),
+    };
+    return { liste, total };
+  }, [equipe12, semaines12, groupesRep, capacites, joursAffectes, jours, affectationsParId, affairesParId, annuaire]);
