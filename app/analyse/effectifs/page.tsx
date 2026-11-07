@@ -10,7 +10,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
    ANALYSE - CARTOGRAPHIE DE L'ÉQUIPE (EFFECTIFS_CARTO)
-   ADMIN et Direction (droit « indicateurs »)
+   ADMIN et Direction (droit « indicateurs »). Encadrement exclu.
 
    Qui compose le bureau d'études, sans heures ni production :
    - par activité : nombre de personnes en activité principale, part de
@@ -51,7 +51,6 @@ function CartographieContenu() {
   const [membres, setMembres] = useState<Membre[]>([]);
   const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
   const [estAdmin, setEstAdmin] = useState(false);
-  const [avecEncadrement, setAvecEncadrement] = useState(true);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
@@ -81,7 +80,8 @@ function CartographieContenu() {
   }, []);
 
   const vue = useMemo(() => {
-    const equipe = membres.filter((m) => avecEncadrement || m.inclus_statistiques);
+    // l'encadrement (exclu des statistiques, fiche collaborateur) n'entre pas dans la cartographie
+    const equipe = membres.filter((m) => m.inclus_statistiques);
     const niveauDe = (m: Membre) => niveaux.get(m.id) ?? 0;
     const compte = (liste: Membre[]) => NIVEAUX.map((nv) => liste.filter((m) => niveauDe(m) === nv.n).length);
     const avecPredo = equipe.filter((m) => m.predominances.length > 0);
@@ -118,14 +118,13 @@ function CartographieContenu() {
 
     return {
       equipe,
-      encadrement: equipe.filter((m) => !m.inclus_statistiques).length,
       niveauxEquipe: compte(equipe),
       parActivite,
       polyvalence,
       sansPredo: equipe.filter((m) => m.predominances.length === 0),
       sansNiveau: equipe.filter((m) => niveauDe(m) === 0),
     };
-  }, [membres, activites, niveaux, avecEncadrement]);
+  }, [membres, activites, niveaux]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px", textAlign: "center" };
   const td: CSSProperties = { ...page.td, padding: "8px", fontSize: 14 };
@@ -141,10 +140,6 @@ function CartographieContenu() {
             <h1 style={page.titre}>Cartographie de l’équipe</h1>
             <p style={page.sousTitre}>Qui compose le bureau d’études : activités, niveaux, relève et polyvalence. Des nombres, aucun classement de personnes.</p>
           </div>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700 }}>
-            <input type="checkbox" checked={avecEncadrement} onChange={(e) => setAvecEncadrement(e.target.checked)} style={{ width: 18, height: 18 }} />
-            Avec l’encadrement
-          </label>
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
@@ -153,7 +148,7 @@ function CartographieContenu() {
         {!chargement && !erreur && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <Tuile libelle="Effectif" valeur={String(vue.equipe.length)} sous={vue.encadrement > 0 ? `dont ${vue.encadrement} en encadrement` : "personnes actives"} />
+              <Tuile libelle="Effectif" valeur={String(vue.equipe.length)} sous="personnes actives, hors encadrement" />
               <Tuile
                 libelle="Niveaux de l’équipe"
                 valeur={`${vue.niveauxEquipe[0]} · ${vue.niveauxEquipe[1]} · ${vue.niveauxEquipe[2]}`}
@@ -275,7 +270,7 @@ function CartographieContenu() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <section style={{ ...page.carte, padding: 16, flex: "1 1 380px", minWidth: 0 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Niveaux de l’équipe</h2>
-                <p style={{ margin: "0 0 12px", fontSize: 13, color: C.gris }}>Tout le bureau d’études, toutes activités confondues.</p>
+                <p style={{ margin: "0 0 12px", fontSize: 13, color: C.gris }}>Tout le bureau d’études hors encadrement, toutes activités confondues.</p>
                 <BarreNiveaux nb={vue.niveauxEquipe} largeur={340} />
                 <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
                   {NIVEAUX.map((nv, k) =>
