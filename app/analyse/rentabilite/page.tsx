@@ -84,7 +84,10 @@ function RentabiliteContenu() {
   const [pilotageCBE, setPilotageCBE] = useState<{ numero: string; statut: string; date_livraison: string | null; imputation: string | null; designation: string | null }[]>([]);
   /* RENTABILITE_V2 : prestations PE / PI facturées (par affaire, par mois) et heures pointées sur l'exercice */
   const [prestations, setPrestations] = useState<{ base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[]>([]);
-  const [pointeExercice, setPointeExercice] = useState<Map<string, number>>(new Map());
+  // RENTABILITE_V5 : heures pointées par affaire et par mois (pour ne compter que les mois facturés des PE / PI)
+  const [pointeExercice, setPointeExercice] = useState<Map<string, Map<string, number>>>(new Map());
+  const [triF, setTriF] = useState<{ col: string; sens: 1 | -1 }>({ col: "mpct", sens: 1 });
+  const [triP, setTriP] = useState<{ col: string; sens: 1 | -1 }>({ col: "mpct", sens: 1 });
 
   useEffect(() => {
     let actif = true;
@@ -220,14 +223,17 @@ function RentabiliteContenu() {
   useEffect(() => {
     let actif = true;
     void (async () => {
-      const m = new Map<string, number>();
+      const m = new Map<string, Map<string, number>>();
       for (let a = 0; a < 300000; a += 1000) {
-        const r = await supabase.rpc("pointage_periode", { p_debut: `${exercice}-11-01`, p_fin: `${exercice + 1}-10-31` }).range(a, a + 999);
+        const r = await supabase.rpc("realise_par_mois").range(a, a + 999);
         if (r.error || !r.data) break;
-        for (const x of r.data as { type_affaire: string; numero: string; heures: number | string }[]) {
+        for (const x of r.data as { type_affaire: string; numero: string; mois: string; heures: number | string }[]) {
           if (x.type_affaire !== "CBE") continue;
-          const k = String(x.numero ?? "").replace(/^0+/, "");
-          m.set(k, (m.get(k) ?? 0) + (Number(x.heures) || 0));
+          const k = (String(x.numero ?? "").match(/\d+/)?.[0] ?? "").replace(/^0+/, "");
+          const mm = m.get(k) ?? new Map<string, number>();
+          const mois = String(x.mois).slice(0, 7);
+          mm.set(mois, (mm.get(mois) ?? 0) + (Number(x.heures) || 0));
+          m.set(k, mm);
         }
         if ((r.data as unknown[]).length < 1000) break;
       }
@@ -236,7 +242,7 @@ function RentabiliteContenu() {
     return () => {
       actif = false;
     };
-  }, [exercice]);
+  }, []);
 
   const coutExercice = coutHoraire(couts, `${exercice}-11-01`);
   const coutPropre = couts.has(exercice);
@@ -337,7 +343,9 @@ function RentabiliteContenu() {
     }
     const cEx = coutHoraire(couts, debut);
     const prestationsEx: (LigneRenta & { base: string; designation: string | null; imputation: string; nbMois: number })[] = [...parPrest.values()].map((p) => {
-      const hr = pointeExercice.get(p.base) ?? 0;
+      // seulement les heures pointées des mois facturés (pas celles d'un mois pas encore validé)
+      const pm = pointeExercice.get(p.base);
+      const hr = [...p.mois].reduce((t, m) => t + (pm?.get(m) ?? 0), 0);
       return { cle: p.base, libelle: `CBE ${p.base}`, base: p.base, designation: p.designation, imputation: p.imputation, nbMois: p.mois.size, ca: p.ca, achats: 0, hc: p.hFact, hr, cout: cEx === null ? null : hr * cEx, auMontant: false };
     });
     for (const p of prestationsEx) ajouter(p.imputation, p.ca, 0, p.hc, p.hr, p.cout, false);
@@ -427,25 +435,70 @@ function RentabiliteContenu() {
       </>
     );
   };
-  const enTetes = (premiere: string, autres: string[] = []) => (
-    <tr>
-      <th style={{ ...th, textAlign: "left" }}>{premiere}</th>
-      {autres.map((t) => (
-        <th key={t} style={{ ...th, textAlign: "left" }}>
-          {t}
-        </th>
-      ))}
-      <th style={th}>Prix</th>
-      <th style={th}>Achats</th>
-      <th style={th} title="Heures chiffrées au devis">H. chiffrées</th>
-      <th style={th} title="Heures réellement passées (feuilles d’heures et historique)">H. passées</th>
-      <th style={th} title="(prix − achats) ÷ heures chiffrées">Taux vendu</th>
-      <th style={th} title="(prix − achats) ÷ heures passées">Taux obtenu</th>
-      <th style={th} title="achats + heures passées × coût horaire de structure">Coût</th>
-      <th style={th}>Marge</th>
-      <th style={th}>Marge %</th>
-    </tr>
-  );
+  /* RENTABILITE_V5 : tri des tableaux d'affaires */
+  type Tri = { col: string; sens: 1 | -1 };
+  type LigneTri = LigneRenta & { base?: string; client?: string | null; fin?: string; imputation?: string | null; nbMois?: number };
+  const valeurTri = (l: LigneTri, col: string): number | string => {
+    const bas = -1e12;
+    switch (col) {
+      case "numero": return Number(l.base) || 0;
+      case "client": return (l.client ?? "~").toLowerCase();
+      case "fin": return l.fin ?? "";
+      case "type": return l.imputation ?? "";
+      case "nbMois": return l.nbMois ?? 0;
+      case "ca": return l.ca;
+      case "achats": return l.achats;
+      case "hc": return l.hc;
+      case "hr": return l.hr;
+      case "tv": return tauxVendu(l) ?? bas;
+      case "to": return tauxObtenu(l) ?? bas;
+      case "cout": return l.cout ?? bas;
+      case "marge": return marge(l) ?? bas;
+      default: {
+        const m = marge(l);
+        return m === null || !l.ca ? bas : m / l.ca;
+      }
+    }
+  };
+  const trier = <T extends LigneTri>(liste: T[], tri: Tri) =>
+    [...liste].sort((x, y) => {
+      const a = valeurTri(x, tri.col);
+      const b = valeurTri(y, tri.col);
+      const c = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), "fr");
+      return c * tri.sens;
+    });
+  const changerTri = (set: (f: (t: Tri) => Tri) => void) => (col: string) =>
+    set((t) => ({ col, sens: t.col === col ? (t.sens === 1 ? -1 : 1) : col === "numero" || col === "client" || col === "type" ? 1 : -1 }));
+
+  const enTetes = (premiere: string, autres: string[] = [], tri?: { etat: Tri; changer: (c: string) => void }, libelleHc = "H. chiffrées") => {
+    const cles: Record<string, string> = { Affaire: "numero", Client: "client", "Livrée le": "fin", Type: "type", "Mois facturés": "nbMois" };
+    const cellule = (libelle: string, col: string | null, style: CSSProperties, title?: string) => (
+      <th key={libelle} style={style} title={title}>
+        {tri && col ? (
+          <button type="button" onClick={() => tri.changer(col)} style={{ all: "unset", cursor: "pointer", whiteSpace: "nowrap" }}>
+            {libelle} {tri.etat.col === col ? (tri.etat.sens === 1 ? "▲" : "▼") : <span style={{ color: "#b9bec5" }}>↕</span>}
+          </button>
+        ) : (
+          libelle
+        )}
+      </th>
+    );
+    return (
+      <tr>
+        {cellule(premiere, cles[premiere] ?? null, { ...th, textAlign: "left" })}
+        {autres.map((x) => cellule(x, cles[x] ?? null, { ...th, textAlign: "left" }))}
+        {cellule("Prix", "ca", th)}
+        {cellule("Achats", "achats", th)}
+        {cellule(libelleHc, "hc", th, libelleHc === "H. facturées" ? "Heures facturées au relevé" : "Heures chiffrées au devis")}
+        {cellule("H. passées", "hr", th, "Heures réellement passées (feuilles d’heures et historique)")}
+        {cellule("Taux vendu", "tv", th, libelleHc === "H. facturées" ? "CA ÷ heures facturées" : "(prix − achats) ÷ heures chiffrées")}
+        {cellule("Taux obtenu", "to", th, "(prix − achats) ÷ heures passées")}
+        {cellule("Coût", "cout", th, "achats + heures passées × coût horaire de structure")}
+        {cellule("Marge", "marge", th)}
+        {cellule("Marge %", "mpct", th)}
+      </tr>
+    );
+  };
 
   const t = vue.total;
   const mTotal = marge(t);
@@ -606,9 +659,9 @@ function RentabiliteContenu() {
                   </h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>Les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.</p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                    <thead>{enTetes("Affaire", ["Client", "Livrée le"])}</thead>
+                    <thead>{enTetes("Affaire", ["Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
                     <tbody>
-                      {vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile).map((a) => (
+                      {trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF).map((a) => (
                         <tr key={a.base}>
                           <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
                             <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
@@ -643,13 +696,15 @@ function RentabiliteContenu() {
                   <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
                     <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>PE / PI, sur l’exercice</h2>
                     <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-                      Mois facturés de l’exercice (relevé validé, historique avant le relevé). « H. chiffrées » = heures facturées ; taux vendu = CA ÷ heures
-                      facturées (le taux du contrat) ; taux obtenu = CA ÷ heures pointées sur l’exercice. Un taux obtenu plus bas : des heures passées non facturées.
+                      Mois facturés de l’exercice (relevé validé, historique avant le relevé). Taux vendu = CA ÷ heures facturées (le taux du contrat) ; taux
+                      obtenu = CA ÷ heures pointées <strong>pendant ces mêmes mois</strong>. Un écart entre les deux, c’est la différence entre heures pointées et
+                      heures facturées : heures passées non facturées (trajets, temps interne, heures au-delà d’un forfait jour…), ou au contraire heures
+                      facturées au-delà du pointé (heures sup refacturées à 125 %, journée facturée plus longue que celle pointée).
                     </p>
                     <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                      <thead>{enTetes("Affaire", ["Type", "Mois facturés"])}</thead>
+                      <thead>{enTetes("Affaire", ["Type", "Mois facturés"], { etat: triP, changer: changerTri(setTriP) }, "H. facturées")}</thead>
                       <tbody>
-                        {vue.prestationsEx.map((a) => (
+                        {trier(vue.prestationsEx, triP).map((a) => (
                           <tr key={a.base}>
                             <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
                               <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
