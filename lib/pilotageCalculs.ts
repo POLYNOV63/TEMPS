@@ -214,7 +214,7 @@ export function toleranceAffectation(chiffre: number): number {
 }
 
 export function etatAffaire(
-  a: Pick<Affaire, "type" | "statut" | "echeance">,
+  a: Pick<Affaire, "type" | "statut" | "echeance"> & { imputation?: string | null },
   t: Totaux,
   aujourdhui: string,
   planning?: PlanningAffaire
@@ -224,6 +224,14 @@ export function etatAffaire(
   /* LIVREE_SANS_ALERTE : une affaire livrée est terminée, plus d'alerte (ses chiffres restent
      dans le Bilan affaire et dans Charge & pointage) */
   if (a.statut === "LIVREE") return { genre: "info", texte: "Livrée" };
+
+  /* NEGOCE_A_PART : négoce pur sans heures chiffrées (elles sont dans la marge) : ni « pas de charge chiffrée »,
+     ni heures non affectées ; on affiche les heures passées */
+  if (a.type === "CBE" && a.imputation === "Négoce" && t.chiffre === 0) {
+    if (a.statut === "EN_ATTENTE") return { genre: "info", texte: "En attente" };
+    if (a.echeance && a.echeance < aujourdhui) return { genre: "crit", texte: "Délai dépassé" };
+    return { genre: "info", texte: t.realise > 0 ? `Négoce · ${formatHeures(t.realise)} passées` : "Négoce" };
+  }
 
   if (t.chiffre > 0 && t.depassement > 0) {
     return { genre: "crit", texte: `Dépassement de ${formatHeures(t.depassement)}` };

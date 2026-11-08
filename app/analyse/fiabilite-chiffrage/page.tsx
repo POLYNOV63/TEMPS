@@ -23,6 +23,9 @@ import { formatDate, formatHeures, type Charge, type Realise } from "@/lib/pilot
    - « non chiffré » : heures passées dans une activité qui n'avait pas été
      chiffrée sur l'affaire.
    PE et PI (temps passé) sont exclues. Aucune donnée nominative.
+   NEGOCE_A_PART : les affaires de négoce pur (imputation « Négoce ») ne
+   sont pas comptées par activité (leurs heures, non chiffrées, sont dans
+   la marge) : elles sont résumées à part, heures passées comprises.
 ================================================================ */
 
 const SEUIL = 0.1;
@@ -106,13 +109,16 @@ function FiabiliteContenu() {
     const fin = `${exercice + 1}-10-31`;
     const nomAct = new Map(activites.map((a) => [a.id, a]));
 
-    // familles de forfaits (hors PE / PI) entièrement livrées dans l'exercice
+    // familles de forfaits (hors PE / PI) entièrement livrées dans l'exercice ; le négoce pur à part
     const familles = new Map<string, AffaireP[]>();
+    const imputationBase = new Map<string, string | null>();
+    for (const a of affaires) if (a.type === "CBE" && /^\d+$/.test(a.numero)) imputationBase.set(baseDe(a.numero), a.imputation);
     for (const a of affaires) {
       if (a.type !== "CBE" || a.imputation === "PE" || a.imputation === "PI" || a.statut === "ABANDONNEE") continue;
       const b = baseDe(a.numero);
       familles.set(b, [...(familles.get(b) ?? []), a]);
     }
+    const negoce: LigneAffaire[] = [];
     const chargesParAffaire = new Map<string, Charge[]>();
     for (const c of charges) chargesParAffaire.set(c.affaire_id, [...(chargesParAffaire.get(c.affaire_id) ?? []), c]);
     const realiseParBase = new Map<string, Map<string, number>>();
@@ -151,8 +157,13 @@ function FiabiliteContenu() {
           re.set(c.activite_id, (re.get(c.activite_id) ?? 0) + (Number(c.realise_initial) || 0));
         }
       const totalCh = [...ch.values()].reduce((t, x) => t + x, 0);
-      if (totalCh <= 0) continue; // sans chiffré, rien à comparer
       const totalRe = [...re.values()].reduce((t, x) => t + x, 0);
+      // NEGOCE_A_PART : négoce pur (imputation de la commande de base), résumé à part
+      if ((imputationBase.get(base) ?? laBase.imputation) === "Négoce") {
+        negoce.push({ base, designation: laBase.designation, fin: dateFin, chiffre: totalCh, realise: totalRe });
+        continue;
+      }
+      if (totalCh <= 0) continue; // sans chiffré, rien à comparer
       parAffaire.push({ base, designation: laBase.designation, fin: dateFin, chiffre: totalCh, realise: totalRe });
 
       for (const id of new Set([...ch.keys(), ...re.keys()])) {
@@ -179,7 +190,8 @@ function FiabiliteContenu() {
     const totalCh = parAffaire.reduce((t, a) => t + a.chiffre, 0);
     const totalRe = parAffaire.reduce((t, a) => t + a.realise, 0);
     const justes = parAffaire.filter((a) => Math.abs((a.realise - a.chiffre) / a.chiffre) <= SEUIL).length;
-    return { liste, parAffaire: parAffaire.sort((x, y) => (y.realise - y.chiffre) / y.chiffre - (x.realise - x.chiffre) / x.chiffre), totalCh, totalRe, justes };
+    negoce.sort((x, y) => y.realise - x.realise);
+    return { negoce, liste, parAffaire: parAffaire.sort((x, y) => (y.realise - y.chiffre) / y.chiffre - (x.realise - x.chiffre) / x.chiffre), totalCh, totalRe, justes };
   }, [affaires, charges, realise, activites, exercice]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px", textAlign: "center" };
@@ -347,6 +359,52 @@ function FiabiliteContenu() {
               </section>
             )}
 
+            {/* NEGOCE_A_PART : le négoce pur, résumé à part */}
+            {vue.negoce.length > 0 &&
+              (() => {
+                const heures = vue.negoce.reduce((t, a) => t + a.realise, 0);
+                const chiffre = vue.negoce.reduce((t, a) => t + a.chiffre, 0);
+                return (
+                  <details style={{ ...page.carte, padding: 16, marginBottom: 14, borderLeft: "5px solid #b35c00" }}>
+                    <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 16 }}>
+                      Négoce, à part : {vue.negoce.length} affaire{vue.negoce.length > 1 ? "s" : ""} livrée{vue.negoce.length > 1 ? "s" : ""} ·{" "}
+                      <span style={{ color: "#b35c00" }}>{formatHeures(heures)} passées</span>
+                      {chiffre > 0 ? ` pour ${formatHeures(chiffre)} chiffrées` : ", non chiffrées"}
+                    </summary>
+                    <p style={{ margin: "8px 0 10px", fontSize: 13, color: C.gris }}>
+                      Les affaires de négoce pur ne comptent pas dans le tableau par activité : leurs heures (consultation, commandes, suivi fournisseur) ne sont
+                      en général pas chiffrées, elles sont couvertes par la marge. Les voici, pour mesurer ce qu’elles coûtent vraiment.
+                    </p>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...th, textAlign: "left" }}>Affaire</th>
+                          <th style={{ ...th, textAlign: "left" }}>Descriptif</th>
+                          <th style={th}>Livrée le</th>
+                          <th style={th}>Chiffré</th>
+                          <th style={th}>Heures passées</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {vue.negoce.map((a) => (
+                          <tr key={a.base}>
+                            <td style={{ ...td, fontSize: 13, whiteSpace: "nowrap" }}>
+                              <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                CBE {a.base}
+                              </Link>
+                            </td>
+                            <td style={{ ...td, fontSize: 13 }}>{a.designation}</td>
+                            <td style={{ ...tdN, fontSize: 13, textAlign: "center" }}>{formatDate(a.fin)}</td>
+                            <td style={{ ...tdN, fontSize: 13 }}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
+                            <td style={{ ...tdN, fontSize: 13, fontWeight: 800 }}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                );
+              })()}
+
             {vue.parAffaire.length > 0 && (
               <details style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 16 }}>Toutes les affaires analysées ({vue.parAffaire.length}), toutes activités</summary>
@@ -364,6 +422,9 @@ function FiabiliteContenu() {
                 <li>
                   <strong>Chiffré</strong> : les heures chiffrées par activité de toute la famille. <strong>Réalisé</strong> : les heures pointées sur
                   l’affaire (feuilles d’heures et historique) et le réalisé initial repris du classeur, dans la même activité.
+                </li>
+                <li>
+                  <strong>Négoce pur</strong> (imputation « Négoce ») : à part, avec ses heures passées ; il ne pèse pas sur la Mécanique.
                 </li>
                 <li>
                   <strong>Juste</strong> : réalisé à ±10 % du chiffré. <strong>Réalisé non chiffré</strong> : heures passées dans une activité qui

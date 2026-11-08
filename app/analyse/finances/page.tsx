@@ -547,8 +547,17 @@ function FinancesContenu() {
       v.cout = v.cout === null || cout === null ? null : v.cout + cout;
       parGroupeRenta.set(g, v);
     };
+    // NEGOCE_A_PART : une affaire de négoce pur compte entière dans « Négoce », avec le coût de ses heures
+    const basesNegoce = new Set(
+      lignesFin.filter((l) => l.genre === "BASE" && l.imputation === "Négoce" && l.base_affaire).map((l) => String(l.base_affaire).replace(/^0+/, ""))
+    );
     for (const a of terminees) {
       const c = coutHoraire(couts, a.date_fin);
+      if (basesNegoce.has(a.base_affaire.replace(/^0+/, ""))) {
+        const h = GROUPES.reduce((t, g) => t + a.realiseG[g], 0);
+        ajouter("Négoce", a.montant, 0, h, c === null ? null : a.achats + h * c);
+        continue;
+      }
       for (const g of GROUPES) {
         if (g === "Négoce") continue;
         if (a.parGroupe[g] === 0 && a.realiseG[g] === 0 && a.heuresChiffrees[g] === 0) continue;
@@ -1375,7 +1384,20 @@ function FinancesContenu() {
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
               {/* VIGNETTES_ALLEGEES : le détail du travail facturé plus tard reste dans le tableau (ligne cliquable) */}
-              <Tuile libelle="Marge du négoce" valeur={vue.negoce > 0 ? `${Math.round(((vue.negoce - vue.achats) / vue.negoce) * 100)} %` : "—"} sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}`} />
+              {(() => {
+                // NEGOCE_A_PART : marge brute (revente − achats) et nette (après les heures passées × coût de structure)
+                const ng = vue.parGroupeRenta.find(([g]) => g === "Négoce")?.[1];
+                const brute = vue.negoce > 0 ? (vue.negoce - vue.achats) / vue.negoce : null;
+                const nette = ng && ng.cout !== null && ng.ca > 0 ? (ng.ca - ng.cout) / ng.ca : null;
+                return (
+                  <Tuile
+                    libelle="Marge du négoce"
+                    valeur={brute === null ? "—" : `${Math.round(brute * 100)} %`}
+                    sous={`revente ${keuros(vue.negoce)} · achats ${keuros(vue.achats)}${nette !== null ? ` · nette ${Math.round(nette * 100)} % après ${formatHeures(ng?.heuresRealisees ?? 0)} passées` : ""}`}
+                    accent={nette !== null && nette < 0}
+                  />
+                );
+              })()}
             </div>
 
             {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
