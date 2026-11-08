@@ -15,6 +15,7 @@ import {
   affairesTerminees,
   coutHoraire,
   groupesVides,
+  mouvementsExcel,
   type Discipline,
   type Groupe,
   type LigneFin,
@@ -402,7 +403,24 @@ function RentabiliteContenu() {
       enAttente.push({ base: b, designation: laBase.designation, livree, raison });
     }
 
-    return { affaires, groupes, total, prestationsEx, enAttente };
+    /* RENTABILITE_V6 : rapprochement avec le CA de l'exercice (Finances), qui compte chaque livraison ou échéance à sa date */
+    const sz = (b: string) => b.replace(/^0+/, "");
+    const mvts = mouvementsExcel(lignesFin, () => false).filter((m) => m.date >= debut && m.date <= fin);
+    const caForfaits = mvts.reduce((t, m) => t + m.montant, 0);
+    const caSurAnalysees = mvts.filter((m) => analysees.has(sz(m.base_affaire))).reduce((t, m) => t + m.montant, 0);
+    const basesEnCours = new Set(mvts.filter((m) => !analysees.has(sz(m.base_affaire))).map((m) => sz(m.base_affaire)));
+    const prixForfaits = affaires.reduce((t, a) => t + a.ca, 0);
+    const rapprochement = {
+      caForfaits,
+      caSurAnalysees,
+      caEnCours: caForfaits - caSurAnalysees,
+      nbEnCours: basesEnCours.size,
+      factureAvant: prixForfaits - caSurAnalysees,
+      prixForfaits,
+      caPrestations: prestationsEx.reduce((t, p) => t + p.ca, 0),
+    };
+
+    return { affaires, groupes, total, prestationsEx, enAttente, rapprochement };
   }, [lignesFin, realiseParBase, couts, exercice, prestations, pointeExercice, pilotageCBE]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 6px", textAlign: "center" };
@@ -491,7 +509,7 @@ function RentabiliteContenu() {
         {cellule("Achats", "achats", th)}
         {cellule(libelleHc, "hc", th, libelleHc === "H. facturées" ? "Heures facturées au relevé" : "Heures chiffrées au devis")}
         {cellule("H. passées", "hr", th, "Heures réellement passées (feuilles d’heures et historique)")}
-        {cellule("Taux vendu", "tv", th, libelleHc === "H. facturées" ? "CA ÷ heures facturées" : "(prix − achats) ÷ heures chiffrées")}
+        {cellule(libelleHc === "H. facturées" ? "Taux facturé" : "Taux vendu", "tv", th, libelleHc === "H. facturées" ? "CA ÷ heures facturées : le taux du contrat" : "(prix − achats) ÷ heures chiffrées")}
         {cellule("Taux obtenu", "to", th, "(prix − achats) ÷ heures passées")}
         {cellule("Coût", "cout", th, "achats + heures passées × coût horaire de structure")}
         {cellule("Marge", "marge", th)}
@@ -559,6 +577,43 @@ function RentabiliteContenu() {
                 </span>
               )}
             </section>
+
+            {/* RENTABILITE_V6 : pourquoi le total des prix n'est pas le CA de l'exercice */}
+            {(() => {
+              const r = vue.rapprochement;
+              const ligne = (libelle: string, valeur: number, signe = "", gras = false) => (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "3px 0", fontWeight: gras ? 800 : 400, borderTop: gras ? `1px solid ${C.ligne}` : undefined }}>
+                  <span>{libelle}</span>
+                  <span style={{ whiteSpace: "nowrap" }}>
+                    {signe}
+                    {euros(valeur)}
+                  </span>
+                </div>
+              );
+              return (
+                <details style={{ ...page.carte, padding: "10px 16px", marginBottom: 14, fontSize: 14 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 800 }}>
+                    Pourquoi le total des prix n’est pas le chiffre d’affaires de l’exercice ?
+                  </summary>
+                  <p style={{ margin: "8px 0", color: C.gris, fontSize: 13 }}>
+                    Le chiffre d’affaires (page Finances) compte chaque livraison ou échéance <strong>à sa date</strong>. La rentabilité, elle, ne regarde une
+                    affaire qu’une fois <strong>toute livrée</strong>, et alors pour son prix entier, même si une partie a été facturée un exercice précédent.
+                  </p>
+                  <div style={{ maxWidth: 620 }}>
+                    {ligne("CA des forfaits de l’exercice (livraisons et échéances, comme Finances)", r.caForfaits, "", true)}
+                    {ligne(`− CA d’affaires pas encore toutes livrées (${r.nbEnCours} affaire${r.nbEnCours > 1 ? "s" : ""} : échéances, lots, commandes livrées d’une famille encore ouverte)`, r.caEnCours, "− ")}
+                    {ligne("+ part des affaires analysées déjà facturée avant l’exercice (échéances antérieures)", r.factureAvant, r.factureAvant >= 0 ? "+ " : "")}
+                    {ligne("= Prix des forfaits livrés analysés ici", r.prixForfaits, "", true)}
+                    {ligne("+ PE / PI : mois facturés et validés au relevé", r.caPrestations, "+ ")}
+                    {ligne("= Total des prix de la page", r.prixForfaits + r.caPrestations, "", true)}
+                  </div>
+                  <p style={{ margin: "8px 0 0", color: C.gris, fontSize: 12 }}>
+                    Finances peut aussi compter des frais annexes saisis à la main et, pour les PE / PI, des mois pas encore validés : ils ne sont pas dans
+                    cette page.
+                  </p>
+                </details>
+              );
+            })()}
 
             {/* RENTABILITE_V4 : livrées au Pilotage mais pas encore dans le Suivi d'affaire */}
             {vue.enAttente.length > 0 && (
@@ -696,8 +751,9 @@ function RentabiliteContenu() {
                   <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
                     <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>PE / PI, sur l’exercice</h2>
                     <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-                      Mois facturés de l’exercice (relevé validé, historique avant le relevé). Taux vendu = CA ÷ heures facturées (le taux du contrat) ; taux
-                      obtenu = CA ÷ heures pointées <strong>pendant ces mêmes mois</strong>. Un écart entre les deux, c’est la différence entre heures pointées et
+                      Ici, rien n’est chiffré à l’avance : on part de ce qui a été fait. <strong>Taux facturé</strong> = CA ÷ heures facturées, c’est le taux du
+                      contrat ; <strong>taux obtenu</strong> = CA ÷ heures pointées <strong>pendant ces mêmes mois</strong> (relevé validé, historique avant le
+                      relevé). Un écart entre les deux, c’est la différence entre heures pointées et
                       heures facturées : heures passées non facturées (trajets, temps interne, heures au-delà d’un forfait jour…), ou au contraire heures
                       facturées au-delà du pointé (heures sup refacturées à 125 %, journée facturée plus longue que celle pointée).
                     </p>
