@@ -36,13 +36,36 @@ const NIVEAUX = [
 ];
 const pct = (x: number) => `${Math.round(x * 100)} %`;
 
-function BarreNiveaux({ nb, largeur = 220 }: { nb: number[]; largeur?: number }) {
+/* BARRE_LISIBLE : barre épaisse, le niveau et le nombre écrits dans chaque part */
+function BarreNiveaux({ nb, largeur = 260 }: { nb: number[]; largeur?: number | string }) {
   const total = nb.reduce((t, x) => t + x, 0);
   return (
-    <span style={{ display: "inline-flex", height: 14, width: largeur, borderRadius: 4, overflow: "hidden", background: "#eef0f3", verticalAlign: "middle" }}>
-      {NIVEAUX.map((nv, k) =>
-        nb[k] > 0 ? <span key={nv.n} title={`${nv.lib} (${nv.aide}) : ${nb[k]}`} style={{ width: `${(nb[k] / Math.max(1, total)) * 100}%`, background: nv.couleur }} /> : null
-      )}
+    <span style={{ display: "inline-flex", height: 26, width: largeur, borderRadius: 6, overflow: "hidden", background: "#eef0f3", verticalAlign: "middle" }}>
+      {NIVEAUX.map((nv, k) => {
+        if (nb[k] <= 0) return null;
+        const part = nb[k] / Math.max(1, total);
+        return (
+          <span
+            key={nv.n}
+            title={`${nv.lib} (${nv.aide}) : ${nb[k]} personne${nb[k] > 1 ? "s" : ""}`}
+            style={{
+              width: `${part * 100}%`,
+              background: nv.couleur,
+              color: nv.n === 3 ? "#ffffff" : "#13361a",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 13,
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              borderRight: "2px solid #ffffff",
+            }}
+          >
+            {part >= 0.16 ? `${nv.lib} · ${nb[k]}` : nb[k]}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -151,11 +174,17 @@ function CartographieContenu() {
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <Tuile libelle="Effectif" valeur={String(vue.equipe.length)} sous="personnes actives, hors encadrement" />
-              <Tuile
-                libelle="Niveaux de l’équipe"
-                valeur={`${vue.niveauxEquipe[0]} · ${vue.niveauxEquipe[1]} · ${vue.niveauxEquipe[2]}`}
-                sous={`N1 · N2 · N3${vue.niveauxEquipe[3] > 0 ? ` · ${vue.niveauxEquipe[3]} à renseigner` : ""}`}
-              />
+              {/* BARRE_LISIBLE : la tuile des niveaux montre la barre */}
+              <div style={{ ...page.carte, padding: "12px 16px", flex: "1 1 240px", minWidth: 220 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Niveaux de l’équipe</div>
+                <div style={{ marginTop: 10 }}>
+                  <BarreNiveaux nb={vue.niveauxEquipe} largeur="100%" />
+                </div>
+                <div style={{ fontSize: 12, color: C.gris, marginTop: 6 }}>
+                  {vue.niveauxEquipe[2]} référent{vue.niveauxEquipe[2] > 1 ? "s" : ""} (N3) sur {vue.equipe.length}
+                  {vue.niveauxEquipe[3] > 0 ? ` · ${vue.niveauxEquipe[3]} à renseigner` : ""}
+                </div>
+              </div>
               <Tuile libelle="Polyvalents" valeur={String(vue.polyvalence[1] + vue.polyvalence[2])} sous="personnes qui maîtrisent au moins 2 activités" />
               <Tuile
                 libelle="Activités fragiles"
@@ -231,11 +260,6 @@ function CartographieContenu() {
                         {x.titulaires > 0 ? (
                           <>
                             <BarreNiveaux nb={x.nb} />
-                            <div style={{ fontSize: 12, color: "#3b4046", marginTop: 3 }}>
-                              {NIVEAUX.map((nv, k) => (nv.n > 0 || x.nb[k] > 0 ? `${nv.lib} ${x.nb[k]}` : null))
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </div>
                           </>
                         ) : (
                           "—"
@@ -273,7 +297,7 @@ function CartographieContenu() {
               <section style={{ ...page.carte, padding: 16, flex: "1 1 380px", minWidth: 0 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Niveaux de l’équipe</h2>
                 <p style={{ margin: "0 0 12px", fontSize: 13, color: C.gris }}>Tout le bureau d’études hors encadrement, toutes activités confondues.</p>
-                <BarreNiveaux nb={vue.niveauxEquipe} largeur={340} />
+                <BarreNiveaux nb={vue.niveauxEquipe} largeur="100%" />
                 <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
                   {NIVEAUX.map((nv, k) =>
                     nv.n === 0 && vue.niveauxEquipe[k] === 0 ? null : (
