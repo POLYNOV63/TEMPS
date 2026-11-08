@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -175,14 +175,25 @@ function CartographieContenu() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <Tuile libelle="Effectif" valeur={String(vue.equipe.length)} sous="personnes actives, hors encadrement" />
               {/* BARRE_LISIBLE : la tuile des niveaux montre la barre */}
-              <div style={{ ...page.carte, padding: "12px 16px", flex: "1 1 240px", minWidth: 220 }}>
+              {/* NIVEAUX_EN_LIGNE : la carte des niveaux, dans la ligne des vignettes */}
+              <div style={{ ...page.carte, padding: "12px 16px", flex: "2 1 380px", minWidth: 300 }}>
                 <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Niveaux de l’équipe</div>
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop: 8 }}>
                   <BarreNiveaux nb={vue.niveauxEquipe} largeur="100%" />
                 </div>
-                <div style={{ fontSize: 12, color: C.gris, marginTop: 6 }}>
-                  {vue.niveauxEquipe[2]} référent{vue.niveauxEquipe[2] > 1 ? "s" : ""} (N3) sur {vue.equipe.length}
-                  {vue.niveauxEquipe[3] > 0 ? ` · ${vue.niveauxEquipe[3]} à renseigner` : ""}
+                <div style={{ display: "grid", gridTemplateColumns: "12px 1fr auto auto", alignItems: "center", gap: "3px 8px", marginTop: 8, fontSize: 12.5 }}>
+                  {NIVEAUX.map((nv, k) =>
+                    nv.n === 0 && vue.niveauxEquipe[k] === 0 ? null : (
+                      <Fragment key={nv.n}>
+                        <i style={{ display: "inline-block", width: 12, height: 12, background: nv.couleur, borderRadius: 3, border: "1px solid #c9d1c9" }} />
+                        <span>
+                          <strong>{nv.n === 0 ? "Non renseigné" : `N${nv.n}`}</strong> <span style={{ color: C.gris }}>· {nv.aide}</span>
+                        </span>
+                        <strong style={{ textAlign: "right" }}>{vue.niveauxEquipe[k]}</strong>
+                        <span style={{ textAlign: "right", color: C.gris, minWidth: 34 }}>{vue.equipe.length ? pct(vue.niveauxEquipe[k] / vue.equipe.length) : "—"}</span>
+                      </Fragment>
+                    )
+                  )}
                 </div>
               </div>
               <Tuile libelle="Polyvalents" valeur={String(vue.polyvalence[1] + vue.polyvalence[2])} sous="personnes qui maîtrisent au moins 2 activités" />
@@ -294,26 +305,6 @@ function CartographieContenu() {
 
             {/* ---------- équipe : niveaux et polyvalence ---------- */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              <section style={{ ...page.carte, padding: 16, flex: "1 1 380px", minWidth: 0 }}>
-                <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Niveaux de l’équipe</h2>
-                <p style={{ margin: "0 0 12px", fontSize: 13, color: C.gris }}>Tout le bureau d’études hors encadrement, toutes activités confondues.</p>
-                <BarreNiveaux nb={vue.niveauxEquipe} largeur="100%" />
-                <div style={{ display: "grid", gap: 6, marginTop: 12 }}>
-                  {NIVEAUX.map((nv, k) =>
-                    nv.n === 0 && vue.niveauxEquipe[k] === 0 ? null : (
-                      <div key={nv.n} style={{ display: "grid", gridTemplateColumns: "16px 1fr 50px 50px", alignItems: "center", gap: 8, fontSize: 14 }}>
-                        <i style={{ display: "inline-block", width: 14, height: 14, background: nv.couleur, borderRadius: 3, border: "1px solid #c9d1c9" }} />
-                        <span>
-                          <strong>{nv.n === 0 ? "Non renseigné" : `Niveau ${nv.n}`}</strong> <span style={{ color: C.gris }}>· {nv.aide}</span>
-                        </span>
-                        <strong style={{ textAlign: "right" }}>{vue.niveauxEquipe[k]}</strong>
-                        <span style={{ textAlign: "right", color: C.gris }}>{vue.equipe.length ? pct(vue.niveauxEquipe[k] / vue.equipe.length) : "—"}</span>
-                      </div>
-                    )
-                  )}
-                </div>
-              </section>
-
               <section style={{ ...page.carte, padding: 16, flex: "1 1 380px", minWidth: 0 }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Polyvalence</h2>
                 <p style={{ margin: "0 0 12px", fontSize: 13, color: C.gris }}>Nombre d’activités maîtrisées par chacun, en principale ou en appoint.</p>
