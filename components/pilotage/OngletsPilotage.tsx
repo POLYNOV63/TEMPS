@@ -6,23 +6,48 @@ import { C } from "@/components/pilotage/ui";
 import { peut, type Droit } from "@/lib/droits";
 import { chargerMoi } from "@/lib/pilotageDonnees";
 
-/* Navigation du module Pilotage BE (bandeau fixe en haut de l'écran).
-   Chaque onglet n'apparaît qu'aux rôles qui y ont accès. */
+/* ===============================================================
+   NAVIGATION PAR AXES (NAVIGATION_AXES)
 
-const ONGLETS: readonly { cle: string; libelle: string; href: string; droit: Droit }[] = [
-  { cle: "portefeuille", libelle: "Portefeuille", href: "/pilotage", droit: "piloterBE" },
-  { cle: "affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
-  { cle: "ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
-  { cle: "ressources-planning", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
-  { cle: "prestations", libelle: "Prestations PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
-  { cle: "feuilles-route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
+   Bandeau fixe en haut des pages du Pilotage et des analyses, rangé comme
+   le tableau de bord :
+   - 1re ligne : les axes (Affaires · Charge · Analyses) ;
+   - 2e ligne  : les pages de l'axe courant.
+   Chaque page n'apparaît qu'aux rôles qui y ont accès ; un axe sans page
+   accessible n'apparaît pas.
+================================================================ */
+
+type Axe = "affaires" | "charge" | "analyses";
+
+const AXES: { cle: Axe; libelle: string }[] = [
+  { cle: "affaires", libelle: "Affaires" },
+  { cle: "charge", libelle: "Charge" },
+  { cle: "analyses", libelle: "Analyses" },
 ];
 
-export default function OngletsPilotage({
-  actif,
-}: {
-  actif: "portefeuille" | "affaires" | "ressources" | "ressources-planning" | "prestations" | "indicateurs" | "feuilles-route";
-}) {
+const ONGLETS = [
+  // Affaires : où en est-on
+  { cle: "portefeuille", axe: "affaires", libelle: "Suivi des affaires", href: "/pilotage", droit: "voirPlanning" },
+  { cle: "bilan", axe: "affaires", libelle: "Bilan affaire", href: "/affaires/bilan", droit: "voirPlanning" },
+  { cle: "prestations", axe: "affaires", libelle: "Relevé PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
+  // Charge : a-t-on les bras
+  { cle: "affaires", axe: "charge", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
+  { cle: "ressources-planning", axe: "charge", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
+  { cle: "ressources", axe: "charge", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
+  { cle: "charge-activites", axe: "charge", libelle: "Disponibilités par activité", href: "/analyse/charge-activites", droit: "chargeRessources" },
+  { cle: "feuilles-route", axe: "charge", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
+  // Analyses : ce qui a été fait, ce que ça a rapporté
+  { cle: "capacite", axe: "analyses", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
+  { cle: "effectifs", axe: "analyses", libelle: "Cartographie de l’équipe", href: "/analyse/effectifs", droit: "indicateurs" },
+  { cle: "rentabilite", axe: "analyses", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
+  { cle: "finances", axe: "analyses", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
+  { cle: "facturation", axe: "analyses", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
+  { cle: "indicateurs", axe: "analyses", libelle: "Indicateurs commerciaux", href: "/pilotage/indicateurs", droit: "indicateurs" },
+] as const satisfies readonly { cle: string; axe: Axe; libelle: string; href: string; droit: Droit }[];
+
+export type OngletActif = (typeof ONGLETS)[number]["cle"];
+
+export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
   const [role, setRole] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
@@ -31,14 +56,17 @@ export default function OngletsPilotage({
       .catch(() => setRole(null));
   }, []);
 
+  const courant = ONGLETS.find((o) => o.cle === actif);
+  const axeCourant: Axe = courant?.axe ?? "affaires";
   // Tant que le rôle n'est pas connu, seul l'onglet courant est affiché
   const visibles = ONGLETS.filter((o) => (role === undefined ? o.cle === actif : peut(role, o.droit)));
+  const axesVisibles = AXES.filter((a) => visibles.some((o) => o.axe === a.cle));
+  const pagesAxe = visibles.filter((o) => o.axe === axeCourant);
 
   return (
     <nav
-      aria-label="Pilotage BE"
+      aria-label="Navigation"
       style={{
-        // reste collé en haut de l'écran quand on fait défiler la page
         position: "sticky",
         top: 0,
         zIndex: 40,
@@ -46,34 +74,67 @@ export default function OngletsPilotage({
         background: "#ffffff",
         borderBottom: `1px solid ${C.ligne}`,
         padding: "0 28px",
-        display: "flex",
-        gap: 6,
-        flexWrap: "wrap",
         fontFamily: "Calibri, Arial, sans-serif",
       }}
     >
-      {visibles.map((o) => {
-        const a = o.cle === actif;
+      {/* les axes */}
+      {axesVisibles.length > 1 && (
+        <div style={{ display: "flex", gap: 6, paddingTop: 8, flexWrap: "wrap" }}>
+          {axesVisibles.map((a) => {
+            const actifAxe = a.cle === axeCourant;
+            const premiere = visibles.find((o) => o.axe === a.cle);
+            return (
+              <Link
+                key={a.cle}
+                href={actifAxe || !premiere ? "#" : premiere.href}
+                aria-current={actifAxe ? "true" : undefined}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  minHeight: 30,
+                  padding: "0 14px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  letterSpacing: ".4px",
+                  textDecoration: "none",
+                  background: actifAxe ? C.rouge : "#f1f2f4",
+                  color: actifAxe ? "#ffffff" : "#3b4046",
+                }}
+              >
+                {a.libelle}
+              </Link>
+            );
+          })}
+        </div>
+      )}
 
-        return (
-          <Link
-            key={o.cle}
-            href={o.href}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              minHeight: 48,
-              padding: "0 16px",
-              fontWeight: 700,
-              color: a ? C.rougeFonce : "#3b4046",
-              textDecoration: "none",
-              borderBottom: `3px solid ${a ? C.rouge : "transparent"}`,
-            }}
-          >
-            {o.libelle}
-          </Link>
-        );
-      })}
+      {/* les pages de l'axe courant */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {pagesAxe.map((o) => {
+          const a = o.cle === actif;
+          return (
+            <Link
+              key={o.cle}
+              href={o.href}
+              aria-current={a ? "page" : undefined}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                minHeight: 44,
+                padding: "0 14px",
+                fontWeight: 700,
+                color: a ? C.rougeFonce : "#3b4046",
+                textDecoration: "none",
+                borderBottom: `3px solid ${a ? C.rouge : "transparent"}`,
+              }}
+            >
+              {o.libelle}
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

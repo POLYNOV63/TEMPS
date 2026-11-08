@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
@@ -696,6 +697,7 @@ function FacturationContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Chiffre d'affaires" />
+      {/* NAVIGATION_AXES */}<OngletsPilotage actif="facturation" />
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
           <div>

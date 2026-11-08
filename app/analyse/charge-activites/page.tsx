@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
@@ -158,6 +159,7 @@ function ChargeActivitesContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse" />
+      {/* NAVIGATION_AXES */}<OngletsPilotage actif="charge-activites" />
       <div style={{ ...page.contenu, maxWidth: 1400 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
           <div>

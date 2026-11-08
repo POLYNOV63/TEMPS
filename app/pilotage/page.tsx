@@ -1193,10 +1193,10 @@ function PortefeuilleContenu() {
 
               {/* PORTEFEUILLE_PERIODE : période, activité, export (ce qu'apportait l'Analyse du chiffré) */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 12 }}>
-                <strong style={{ fontSize: 14 }}>Pointé :</strong>
+                <strong style={{ fontSize: 14 }}>Heures pointées :</strong>
                 {(
                   [
-                    ["CUMUL", "Cumul"],
+                    ["CUMUL", "Depuis l’ouverture"],
                     ["EXERCICE", "Exercice"],
                     ["MOIS", "Mois"],
                     ["LIBRE", "Dates libres"],

@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsCharge from "@/components/analyse/OngletsCharge";
 import BilanActivites from "@/components/analyse/BilanActivites";
@@ -2783,6 +2784,7 @@ feuilles.forEach((f) => {
     return (
       <div style={styles.page}>
         <EnTetePage section="Bilans & pilotage" />
+        {/* NAVIGATION_AXES */}<OngletsPilotage actif="capacite" />
 
         <div
           style={{
@@ -2825,6 +2827,7 @@ feuilles.forEach((f) => {
       ================================================= */}
 
       <EnTetePage section="Bilans & pilotage" />
+      {/* NAVIGATION_AXES */}<OngletsPilotage actif="capacite" />
       
 
       <main style={styles.main}>

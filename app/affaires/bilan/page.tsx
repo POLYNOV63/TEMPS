@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
 import SousDossiersAffaire from "@/components/SousDossiersAffaire";
@@ -498,6 +499,7 @@ function BilanContenu() {
     <main style={page.fond} className="bilan-page">
       <style>{CSS_MOBILE_BILAN}</style>
       <EnTetePage section="Bilan affaire" />
+      {/* NAVIGATION_AXES */}<OngletsPilotage actif="bilan" />
 
       <div className="bilan-contenu" style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ marginBottom: 16 }}>

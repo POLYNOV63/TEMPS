@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
@@ -134,6 +135,7 @@ function CartographieContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse" />
+      {/* NAVIGATION_AXES */}<OngletsPilotage actif="effectifs" />
       <div style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
           <div>
