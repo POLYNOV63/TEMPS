@@ -84,7 +84,8 @@ function AnalyseChiffreContenu() {
   const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
 
   const [vue, setVue] = useState<"EN_COURS" | "TOUTES">("EN_COURS");
-  const [perimetre, setPerimetre] = useState<"FORFAITS" | "PEPI" | "TOUT">("FORFAITS");
+  // NEGOCE_A_PART_CHIFFRE : le négoce pur (imputation « Négoce ») a son propre périmètre
+  const [perimetre, setPerimetre] = useState<"FORFAITS" | "PEPI" | "NEGOCE" | "TOUT">("FORFAITS");
   const [activite, setActivite] = useState("");
   const [seulementAlertes, setSeulementAlertes] = useState(false);
   const [recherche, setRecherche] = useState("");
@@ -306,12 +307,16 @@ function AnalyseChiffreContenu() {
     return familles
       .filter((f) => {
         const pepi = f.imputation === "PE" || f.imputation === "PI";
-        return perimetre === "TOUT" || (perimetre === "PEPI" ? pepi : !pepi);
+        const negoce = f.imputation === "Négoce";
+        if (perimetre === "TOUT") return true;
+        if (perimetre === "PEPI") return pepi;
+        if (perimetre === "NEGOCE") return negoce;
+        return !pepi && !negoce;
       })
       .map((f) => ({ f, v: valeurs(f, activite) }))
       .filter(({ f, v }) => (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "EN_COURS" || v.periode > 0.01))
       .filter(({ v }) => !activite || v.chiffre > 0 || v.pointe > 0 || v.periode > 0)
-      .filter(({ v }) => !seulementAlertes || (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5))
+      .filter(({ f, v }) => !seulementAlertes || (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5 && f.imputation !== "Négoce"))
       .filter(({ f }) => !q || `${f.numeros.join(" ")} ${f.designation} ${clients.get(f.base) ?? ""}`.toLowerCase().includes(q))
       .sort((x, y) => Number(y.f.base) - Number(x.f.base));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,7 +462,8 @@ function AnalyseChiffreContenu() {
                   [
                     ["FORFAITS", "Forfaits"],
                     ["PEPI", "PE / PI"],
-                    ["TOUT", "Forfaits + PE / PI"],
+                    ["NEGOCE", "Négoce"],
+                    ["TOUT", "Tout"],
                   ] as const
                 ).map(([v, l]) => (
                   <button key={v} type="button" aria-pressed={perimetre === v} onClick={() => setPerimetre(v)} style={perimetre === v ? page.btnPrimaire : page.btnSecondaire}>
@@ -485,7 +491,7 @@ function AnalyseChiffreContenu() {
               <Message genre="info">Choisissez les deux dates de la période.</Message>
             ) : (
               <Message genre="info">
-                <strong>Ce que vous regardez :</strong> les commandes {perimetre === "FORFAITS" ? "au forfait" : perimetre === "PEPI" ? "en PE / PI" : "au forfait et en PE / PI"}{" "}
+                <strong>Ce que vous regardez :</strong> les commandes {perimetre === "FORFAITS" ? "au forfait (hors négoce)" : perimetre === "PEPI" ? "en PE / PI" : perimetre === "NEGOCE" ? "de négoce" : "de tous types"}{" "}
                 {vue === "EN_COURS" ? "en cours" : "en cours, et celles pointées sur la période"}
                 {activite ? `, activité ${nomActivite.get(activite) ?? ""} seulement` : ""} ({lignes.length}), avenants regroupés avec leur commande. Pour chacune :{" "}
                 <strong>Avant</strong> ce qui était pointé avant le {frDate(bornes.du)}, <strong>Sur la période</strong> ce qui l’a été {libellePeriode},{" "}
@@ -627,7 +633,7 @@ function AnalyseChiffreContenu() {
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                               {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
-                              {v.chiffre === 0 && v.fin > 0.5 && <Pastille genre="warn">non chiffré</Pastille>}
+                              {v.chiffre === 0 && v.fin > 0.5 && (f.imputation === "Négoce" ? <Pastille genre="info">négoce · dans la marge</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
                               {(() => {
                                 const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
