@@ -231,7 +231,8 @@ export function etatAffaire(
 
   /* NEGOCE_A_PART : négoce pur sans heures chiffrées (elles sont dans la marge) : ni « pas de charge chiffrée »,
      ni heures non affectées ; on affiche les heures passées */
-  if (a.type === "CBE" && estNegoceImp(a.imputation) && t.chiffre === 0) {
+  // TEMPS_PASSE_INFO : chiffré ou non, le négoce et le scan n'ont que l'information du temps passé
+  if (a.type === "CBE" && estNegoceImp(a.imputation)) {
     if (a.statut === "EN_ATTENTE") return { genre: "info", texte: "En attente" };
     if (a.echeance && a.echeance < aujourdhui) return { genre: "crit", texte: "Délai dépassé" };
     const genreVente = /scan/i.test(a.imputation ?? "") ? "Scan" : "Négoce";

@@ -319,7 +319,7 @@ function AnalyseChiffreContenu() {
       .map((f) => ({ f, v: valeurs(f, activite) }))
       .filter(({ f, v }) => (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "EN_COURS" || v.periode > 0.01))
       .filter(({ v }) => !activite || v.chiffre > 0 || v.pointe > 0 || v.periode > 0)
-      .filter(({ f, v }) => !seulementAlertes || (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5 && !estNegoceImp(f.imputation)))
+      .filter(({ f, v }) => !seulementAlertes || (!estNegoceImp(f.imputation) && (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5)))
       .filter(({ f }) => !q || `${f.numeros.join(" ")} ${f.designation} ${clients.get(f.base) ?? ""}`.toLowerCase().includes(q))
       .sort((x, y) => Number(y.f.base) - Number(x.f.base));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -327,11 +327,11 @@ function AnalyseChiffreContenu() {
 
   const totaux = useMemo(() => {
     const t = { chiffre: 0, periode: 0, fin: 0, depassees: 0 };
-    for (const { v } of lignes) {
+    for (const { f, v } of lignes) {
       t.chiffre += v.chiffre;
       t.periode += v.periode;
       t.fin += v.fin;
-      if (v.chiffre > 0 && v.fin > v.chiffre + 0.5) t.depassees++;
+      if (v.chiffre > 0 && v.fin > v.chiffre + 0.5 && !estNegoceImp(f.imputation)) t.depassees++; // TEMPS_PASSE_INFO
     }
     // par activité, sur les affaires affichées
     const parAct = new Map<string, { nom: string; chiffre: number; periode: number; fin: number }>();
@@ -627,11 +627,13 @@ function AnalyseChiffreContenu() {
                           <td style={{ ...td, color: C.gris }}>{formatHeures(v.avant)}</td>
                           <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{formatHeures(v.periode)}</td>
                           <td style={{ ...td, fontWeight: 800 }}>{formatHeures(v.fin)}</td>
-                          <td style={td}>{jauge(v.chiffre, v.fin)}</td>
+                          <td style={td}>{estNegoceImp(f.imputation) ? <span style={{ fontSize: 12, color: C.gris }}>temps passé</span> : jauge(v.chiffre, v.fin)}</td>
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                              {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
-                              {v.chiffre === 0 && v.fin > 0.5 && (estNegoceImp(f.imputation) ? <Pastille genre="info">vendu au montant</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
+                              {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && !estNegoceImp(f.imputation) && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
+                              {estNegoceImp(f.imputation)
+                                ? v.fin > 0.5 && <Pastille genre="info">{formatHeures(v.fin)} passées</Pastille>
+                                : v.chiffre === 0 && v.fin > 0.5 && <Pastille genre="warn">non chiffré</Pastille>}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
                               {(() => {
                                 const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
@@ -656,62 +658,14 @@ function AnalyseChiffreContenu() {
                                             <td style={{ ...tdG, padding: "4px 6px" }}>{d.nom}</td>
                                             <td style={{ ...td, padding: "4px 6px" }}>{formatHeures(va.chiffre)} chiffrées</td>
                                             <td style={{ ...td, padding: "4px 6px", color: C.rougeFonce }}>{formatHeures(va.periode)} sur la période</td>
-                                            <td style={{ ...td, padding: "4px 6px" }}>{va.chiffre > 0 ? jauge(va.chiffre, va.fin) : <Pastille genre="warn">non chiffré</Pastille>}</td>
+                                            <td style={{ ...td, padding: "4px 6px" }}>{estNegoceImp(f.imputation) ? <span style={{ color: C.gris }}>{formatHeures(va.fin)} passées</span> : va.chiffre > 0 ? jauge(va.chiffre, va.fin) : <Pastille genre="warn">non chiffré</Pastille>}</td>
                                           </tr>
                                         );
                                       })}
                                     </tbody>
                                   </table>
                                 </div>
-                                {(() => {
-                                  const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
-                                  if (!baseId) return null;
-                                  const av = avancements.get(baseId);
-                                  const auxHeures = f.chiffre > 0 ? Math.min(100, Math.round((f.pointe / f.chiffre) * 100)) : null;
-                                  return (
-                                    <div style={{ flex: "1 1 220px" }}>
-                                      <strong>Avancement accompli (estimé)</strong>
-                                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                        <input
-                                          key={`${baseId}-${av?.pct ?? ""}`}
-                                          defaultValue={av ? String(av.pct) : ""}
-                                          inputMode="decimal"
-                                          placeholder={auxHeures !== null ? String(auxHeures) : "—"}
-                                          aria-label="Avancement accompli en pourcentage"
-                                          onBlur={(e) => {
-                                            if (e.target.value.trim() !== (av ? String(av.pct) : "")) void enregistrerAvancement(baseId, e.target.value);
-                                          }}
-                                          style={{ ...page.entrees, width: 80, textAlign: "right" }}
-                                        />
-                                        <span>%</span>
-                                      </div>
-                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
-                                        {av ? `Saisi le ${av.le ? formatDate(av.le) : "—"} · ` : "Non saisi : les en-cours se calculent aux heures · "}
-                                        aux heures : {auxHeures !== null ? `${auxHeures} %` : "chiffré inconnu"}. Vider le champ pour revenir aux heures.
-                                      </div>
-                                      <strong style={{ display: "block", marginTop: 10 }}>Achats reçus ou montés (total)</strong>
-                                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                                        <input
-                                          key={`ar-${baseId}-${achatsRecus.get(baseId)?.montant ?? ""}`}
-                                          defaultValue={achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : ""}
-                                          inputMode="decimal"
-                                          placeholder="0"
-                                          aria-label="Achats reçus ou montés, en euros"
-                                          onBlur={(e) => {
-                                            const actuel = achatsRecus.get(baseId) ? String(achatsRecus.get(baseId)?.montant) : "";
-                                            if (e.target.value.trim() !== actuel) void enregistrerAchatsRecus(baseId, e.target.value);
-                                          }}
-                                          style={{ ...page.entrees, width: 110, textAlign: "right" }}
-                                        />
-                                        <span>€</span>
-                                      </div>
-                                      <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
-                                        {achatsRecus.get(baseId)?.le ? `Saisi le ${formatDate(achatsRecus.get(baseId)?.le ?? null)} · ` : ""}
-                                        au prix d’achat : tout ce qui est arrivé ou monté sur l’affaire, facturé ou non. Seule cette part du négoce compte dans les en-cours.
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
+                                {/* TEMPS_PASSE_INFO : avancement et achats reçus ne se saisissent plus ici */}
                                 {f.membres.length > 1 && (
                                   <div style={{ flex: "1 1 220px" }}>
                                     <strong>Par commande</strong>
