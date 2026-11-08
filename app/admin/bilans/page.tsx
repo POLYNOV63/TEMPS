@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsCharge from "@/components/analyse/OngletsCharge";
+import BilanActivites from "@/components/analyse/BilanActivites";
 
 /* =========================================================
    TYPES
@@ -653,7 +654,7 @@ function BilansPageContenu() {
 
   const [onglet, setOnglet] =
     useState<
-      "PILOTAGE" | "NON_EXPLIQUE" | "COLLABORATEURS"
+      "PILOTAGE" | "NON_EXPLIQUE" | "COLLABORATEURS" | "ACTIVITES" // CAPACITE_ACTIVITES
     >("PILOTAGE");
 
   const [codeDetailFiltre, setCodeDetailFiltre] =
@@ -3422,7 +3423,20 @@ feuilles.forEach((f) => {
           >
             👥 Collaborateurs
           </button>
+
+          <button
+            style={{
+              ...styles.tab,
+              ...(onglet === "ACTIVITES" ? styles.tabActive : {}),
+            }}
+            onClick={() => setOnglet("ACTIVITES")}
+          >
+            🧩 Par activité
+          </button>
         </div>
+
+        {/* CAPACITE_ACTIVITES : l'ancien « Bilan activités » (heures CBE / DBE par activité, feuilles du nouveau système) */}
+        {onglet === "ACTIVITES" && <BilanActivites integre />}
 
         {/* =================================================
             PILOTAGE

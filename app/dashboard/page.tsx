@@ -408,7 +408,7 @@ export default function DashboardPage() {
             {/* TABLEAU_DE_BORD_V3 : moi, puis le métier, les analyses, les RH, les exports, le paramétrage */}
             <BandeauMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} />
 
-            <BlocBureauEtudes aller={aller} />
+            <BlocBureauEtudes aller={aller} admin />
 
             <BlocAnalyses aller={aller} />
 
@@ -754,7 +754,7 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
         )}
         <CarteCompacte
           icone="🗂️"
-          titre="Portefeuille"
+          titre="Suivi des affaires"
           description="Toutes les affaires : chiffré, réalisé, reste, statut"
           onClick={() => aller("/pilotage")}
         />
@@ -891,6 +891,10 @@ function BlocMonEspace({
           description="Mes feuilles de temps enregistrées"
           onClick={() => aller("/mes-feuilles")}
         />
+        {/* SUIVI_OUVERT : l'avancement des affaires, en heures, pour tous */}
+        {avecPlanning && (
+          <CarteCompacte icone="🗂️" titre="Suivi des affaires" description="Chiffré, réalisé et planifié de chaque affaire, en heures" onClick={() => aller("/pilotage")} />
+        )}
         {avecPlanning && (
           <CarteCompacte
             icone="🗓️"
@@ -927,29 +931,31 @@ function BlocMonEspace({
   );
 }
 
-/* Direction (Président, adjoint) : consultation seule */
+/* Direction (Président, adjoint) : consultation seule — TABLEAU_PAR_AXES */
 function BlocDirection({ aller }: { aller: (url: string) => void }) {
   return (
     <>
-      <Groupe titre="Chiffre d'affaires" description="Consultation">
+      <Groupe titre="Charge à venir" description="Consultation">
         <div style={stylesV2.grille}>
-          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel, rentabilité" onClick={() => aller("/analyse/finances")} />
-          {/* RENTABILITE_V1 */}
-          <CarteCompacte icone="📊" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
-          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
-          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
+          {/* CHARGE_ACTIVITES */}
+          <CarteCompacte principale icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, occupé et disponible sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
+          <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
+          <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
+        </div>
+      </Groupe>
+      <Groupe titre="Avancement des affaires et équipe" description="Consultation">
+        <div style={stylesV2.grille}>
+          <CarteCompacte icone="🗂️" titre="Suivi des affaires" description="Chiffré, réalisé et planifié de chaque affaire, sur une période, par activité" onClick={() => aller("/pilotage")} />
           <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
         </div>
       </Groupe>
-      <Groupe titre="Charge du bureau d'études" description="Consultation">
+      <Groupe titre="Rentabilité et chiffre d'affaires" description="Consultation">
         <div style={stylesV2.grille}>
-          <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
-          {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
-          <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
-          <CarteCompacte icone="🎯" titre="Analyse du chiffré" description="Heures produites face aux heures chiffrées, par commande" onClick={() => aller("/analyse/pointage")} />
-          {/* FIABILITE_CHIFFRAGE */}
-          <CarteCompacte icone="📐" titre="Fiabilité du chiffrage" description="Chiffré face au réalisé, par activité, sur les forfaits livrés" onClick={() => aller("/analyse/fiabilite-chiffrage")} />
-          <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
+          {/* RENTABILITE_V1 FIABILITE_CHIFFRAGE */}
+          <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
+          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
+          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
+          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
         </div>
       </Groupe>
     </>
@@ -1089,39 +1095,53 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
   );
 }
 
-/* Le métier : les affaires, leur planning et les prestations */
-function BlocBureauEtudes({ aller }: { aller: (url: string) => void }) {
+/* TABLEAU_PAR_AXES : le métier, en deux questions — où en sont les affaires, a-t-on les bras */
+function BlocBureauEtudes({ aller, admin = false }: { aller: (url: string) => void; admin?: boolean }) {
   return (
-    <Groupe titre="Bureau d'études" description="Les affaires, qui travaille dessus et quand (la charge par ressource est un onglet du planning)">
-      <div style={stylesV2.grille}>
-        <CarteCompacte principale icone="🗓️" titre="Planning des affaires" description="Affecter les ressources, voir le pointé et le reste à planifier" onClick={() => aller("/pilotage/affaires")} />
-        <CarteCompacte icone="🗂️" titre="Portefeuille" description="Toutes les affaires : chiffré, réalisé, reste, statut" onClick={() => aller("/pilotage")} />
-        <CarteCompacte icone="🧾" titre="Relevé PE / PI" description="Le relevé du mois, importé du Suivi des prestations" onClick={() => aller("/pilotage/prestations")} />
-        <CarteCompacte icone="📊" titre="Bilan affaire" description="Heures pointées par affaire, par personne et par mois" onClick={() => aller("/affaires/bilan")} />
-      </div>
-    </Groupe>
+    <>
+      <Groupe titre="Avancement des affaires" description="Chiffré face aux heures consommées : où en est-on, va-t-on déraper ?">
+        <div style={stylesV2.grille}>
+          <CarteCompacte principale icone="🗂️" titre="Suivi des affaires" description="Toutes les affaires : réalisé / chiffré, sur une période, par activité, alertes" onClick={() => aller("/pilotage")} />
+          <CarteCompacte icone="📋" titre="Bilan affaire" description="Une affaire en détail : par activité, par personne, mois par mois" onClick={() => aller("/affaires/bilan")} />
+          <CarteCompacte icone="🧾" titre="Relevé PE / PI" description="Le relevé du mois des prestations au temps passé" onClick={() => aller("/pilotage/prestations")} />
+        </div>
+      </Groupe>
+      <Groupe titre="Charge à venir" description="Le planifié face à la capacité : a-t-on les bras ?">
+        <div style={stylesV2.grille}>
+          <CarteCompacte principale icone="🗓️" titre="Planning des affaires" description="Affecter les ressources, voir le pointé et le reste à planifier" onClick={() => aller("/pilotage/affaires")} />
+          <CarteCompacte icone="👥" titre="Charge par ressource" description="Qui est chargé, qui est disponible, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
+          {/* CHARGE_ACTIVITES */}
+          {admin && <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, occupé et disponible sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />}
+        </div>
+      </Groupe>
+    </>
   );
 }
 
-/* Toutes les analyses au même endroit : l'argent, le commercial, la charge */
+/* TABLEAU_PAR_AXES : ce qui a été fait, ce que ça a rapporté, le chiffre d'affaires */
 function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
   return (
-    <Groupe titre="Analyses" description="Chiffre d'affaires, commercial, pointé face au chiffré, charge des équipes">
-      <div style={stylesV2.grille}>
-        <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage, rentabilité" onClick={() => aller("/analyse/finances")} />
-        {/* RENTABILITE_V1 */}
-        <CarteCompacte icone="📊" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
-        <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
-        <CarteCompacte icone="🎯" titre="Analyse du chiffré" description="Heures produites face aux heures chiffrées, par commande" onClick={() => aller("/analyse/pointage")} />
-        {/* FIABILITE_CHIFFRAGE */}
-        <CarteCompacte icone="📐" titre="Fiabilité du chiffrage" description="Chiffré face au réalisé, par activité, sur les forfaits livrés" onClick={() => aller("/analyse/fiabilite-chiffrage")} />
-        {/* POINTE_BILANS : le bilan du temps de l'équipe, page à part */}
-        <CarteCompacte icone="📊" titre="Analyse de capacité" description="Où part le temps de l’équipe sur une période : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
-        <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
-        {/* CHARGE_ACTIVITES : charge et compétences disponibles par activité (ADMIN, DIRECTION) */}
-        <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, heures occupées et disponibles sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
-      </div>
-    </Groupe>
+    <>
+      <Groupe titre="Activité réalisée" description="Où est passé le temps, qui compose l'équipe">
+        <div style={stylesV2.grille}>
+          <CarteCompacte principale icone="📊" titre="Analyse de capacité" description="Où part le temps de l'équipe : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
+          <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
+        </div>
+      </Groupe>
+      <Groupe titre="Rentabilité" description="Ce qu'ont rapporté les affaires livrées, face au coût d'une heure">
+        <div style={stylesV2.grille}>
+          {/* RENTABILITE_V1 FIABILITE_CHIFFRAGE : la fiabilité du chiffrage est reprise dans la rentabilité */}
+          <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
+        </div>
+      </Groupe>
+      <Groupe titre="Chiffre d'affaires et commercial" description="Facturé, attendu, prévisionnel, devis et commandes">
+        <div style={stylesV2.grille}>
+          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
+          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Le point de fin de mois avec la compta" onClick={() => aller("/analyse/facturation")} />
+          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
+        </div>
+      </Groupe>
+    </>
   );
 }
 

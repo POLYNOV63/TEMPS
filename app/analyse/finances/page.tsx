@@ -1655,101 +1655,13 @@ function FinancesContenu() {
               <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>Le % sous chaque montant est la part de l’activité vendue sous cette imputation ; la couleur indique son poids dans le CA de l’exercice.</p>
             </section>
 
-            {/* ---------- rentabilité ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <h2 style={{ margin: 0, fontSize: 17 }}>Rentabilité de l’exercice</h2>
-                <span style={{ flex: 1 }} />
-                <span>
-                  Coût de structure {exercice}-{exercice + 1} :{" "}
-                  <strong>{couts.has(exercice) ? `${couts.get(exercice)!.toLocaleString("fr-FR")} €/h` : coutEx !== null ? `${coutEx.toLocaleString("fr-FR")} €/h (autre exercice)` : "non saisi"}</strong>
-                </span>
-                {estAdmin && (
-                  <>
-                    <input value={coutSaisi} onChange={(e) => setCoutSaisi(e.target.value)} placeholder="€/h" inputMode="decimal" style={{ ...page.entrees, width: 80 }} aria-label="Coût de structure horaire" />
-                    <button type="button" style={page.btnSecondaire} disabled={!coutSaisi} onClick={() => void enregistrerCout()}>Enregistrer</button>
-                  </>
-                )}
-              </div>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead>
-                  <tr>
-                    {["Activité", "CA", "H. chiffrées", "H. réalisées", "Prix vendu", "Prix obtenu", "Coût", "Marge", "Marge %"].map((t, i) => (
-                      <th key={t} style={i === 0 ? thG : th}>{t}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {vue.parGroupeRenta.map(([g, v]) => {
-                    const marge = v.cout === null ? null : v.ca - v.cout;
-                    return (
-                      <tr key={g}>
-                        <td style={tdG}>{g}</td>
-                        <td style={td}>{euros(v.ca)}</td>
-                        <td style={td}>{v.heuresChiffrees > 0 ? formatHeures(v.heuresChiffrees) : "—"}</td>
-                        <td style={td}>{v.heuresRealisees > 0 ? formatHeures(v.heuresRealisees) : "—"}</td>
-                        <td style={td}>{v.heuresChiffrees > 0 ? `${Math.round(v.ca / v.heuresChiffrees)} €/h` : "—"}</td>
-                        <td style={{ ...td, fontWeight: 700 }}>{v.heuresRealisees > 0 ? `${Math.round(v.ca / v.heuresRealisees)} €/h` : "—"}</td>
-                        <td style={td}>{v.cout === null ? "—" : euros(v.cout)}</td>
-                        <td style={{ ...td, fontWeight: 800, color: marge !== null && marge < 0 ? C.rougeTexte : undefined }}>{marge === null ? "—" : euros(marge)}</td>
-                        <td style={td}>{marge === null || v.ca === 0 ? "—" : `${Math.round((marge / v.ca) * 100)} %`}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-
-              <button
-                type="button"
-                aria-expanded={voirAffaires}
-                onClick={() => setVoirAffaires((x) => !x)}
-                style={{ all: "unset", cursor: "pointer", fontWeight: 800, marginTop: 12, display: "inline-flex", gap: 8, minHeight: 36, alignItems: "center" }}
-              >
-                <span aria-hidden="true">{voirAffaires ? "▾" : "▸"}</span> Affaire par affaire ({vue.terminees.length + vue.prestations.length}) — les moins rentables d’abord
-              </button>
-              {voirAffaires && (
-                <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                  <thead>
-                    <tr>
-                      {["Affaire", "Désignation", "Client", "Terminée", "Montant", "H. chiffrées", "H. réalisées", "Achats", "Coût", "Marge", "%"].map((t, i) => (
-                        <th key={t} style={i < 4 ? thG : th}>{t}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vue.terminees.map((a) => (
-                      <tr key={a.base_affaire}>
-                        <td style={tdG}>CBE{a.base_affaire}</td>
-                        <td style={{ ...tdG, fontWeight: 400, whiteSpace: "normal" }}>{a.designation ?? "—"}</td>
-                        <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
-                        <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.date_fin)}</td>
-                        <td style={td}>{euros(a.montant)}</td>
-                        <td style={td}>{formatHeures(a.heuresChiffreesTotal)}</td>
-                        <td style={{ ...td, color: a.heuresRealisees > a.heuresChiffreesTotal ? C.rougeTexte : undefined }}>{formatHeures(a.heuresRealisees)}</td>
-                        <td style={td}>{a.achats ? euros(a.achats) : "—"}</td>
-                        <td style={td}>{a.coutTotal === null ? "—" : euros(a.coutTotal)}</td>
-                        <td style={{ ...td, fontWeight: 800, color: a.marge !== null && a.marge < 0 ? C.rougeTexte : undefined }}>{a.marge === null ? "—" : euros(a.marge)}</td>
-                        <td style={td}>{a.marge === null || a.montant === 0 ? "—" : `${Math.round((a.marge / a.montant) * 100)} %`}</td>
-                      </tr>
-                    ))}
-                    {vue.prestations.map((p) => (
-                      <tr key={`p-${p.base}`}>
-                        <td style={tdG}>CBE{p.base}</td>
-                        <td style={{ ...tdG, fontWeight: 400 }}>{p.imputation} — relevé validé</td>
-                        <td style={{ ...tdG, fontWeight: 400 }}>{p.client ?? "—"}</td>
-                        <td style={{ ...tdG, fontWeight: 400 }}>—</td>
-                        <td style={td}>{euros(p.montant)}</td>
-                        <td style={td}>—</td>
-                        <td style={td}>{formatHeures(p.heures)}</td>
-                        <td style={td}>—</td>
-                        <td style={td}>{p.cout === null ? "—" : euros(p.cout)}</td>
-                        <td style={{ ...td, fontWeight: 800, color: p.cout !== null && p.montant - p.cout < 0 ? C.rougeTexte : undefined }}>{p.cout === null ? "—" : euros(p.montant - p.cout)}</td>
-                        <td style={td}>{p.cout === null || p.montant === 0 ? "—" : `${Math.round(((p.montant - p.cout) / p.montant) * 100)} %`}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            {/* TABLEAU_PAR_AXES : la rentabilité a sa propre page */}
+            <section style={{ ...page.carte, padding: 14, marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <strong>Rentabilité</strong>
+              <span style={{ color: C.gris, fontSize: 14 }}>taux vendu, taux obtenu, coût de structure et marge, par activité et par affaire :</span>
+              <Link href="/analyse/rentabilite" style={{ fontWeight: 800, color: C.rougeFonce }}>
+                ouvrir la page Rentabilité →
+              </Link>
             </section>
 
             <details style={{ fontSize: 13, color: "#3b4046" }}>
