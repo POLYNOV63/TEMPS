@@ -79,6 +79,8 @@ function RentabiliteContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [seulementNonVentile, setSeulementNonVentile] = useState(false); // RENTABILITE_V3
+  /* RENTABILITE_V4 : affaires livrées au Pilotage, pour signaler celles que le Suivi d'affaire ne donne pas encore livrées */
+  const [pilotageCBE, setPilotageCBE] = useState<{ numero: string; statut: string; date_livraison: string | null; imputation: string | null; designation: string | null }[]>([]);
   /* RENTABILITE_V2 : prestations PE / PI facturées (par affaire, par mois) et heures pointées sur l'exercice */
   const [prestations, setPrestations] = useState<{ base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[]>([]);
   const [pointeExercice, setPointeExercice] = useState<Map<string, number>>(new Map());
@@ -177,13 +179,14 @@ function RentabiliteContenu() {
         chargerTout<{ ligne_id: string; mois: string; montant_fige: number | string | null; heures_fige: number | string | null }>((a, b) =>
           supabase.from("prestation_mois").select("ligne_id,mois,montant_fige,heures_fige").eq("valide", true).order("ligne_id").range(a, b)
         ),
-        supabase.from("pilotage_affaires").select("id,numero,imputation,designation").eq("type", "CBE"),
+        supabase.from("pilotage_affaires").select("id,numero,imputation,designation,statut,date_livraison").eq("type", "CBE"),
         chargerTout<{ mois: string; type: string; numero: string; heures: number | string; montant: number | string }>((a, b) =>
           supabase.from("prestation_historique").select("mois,type,numero,heures,montant").order("id").range(a, b)
         ).catch(() => []),
       ]);
       if (!actif) return;
       const affaires = new Map(((af.data ?? []) as { id: string; numero: string; imputation: string | null; designation: string | null }[]).map((a) => [a.id, a]));
+      setPilotageCBE((af.data ?? []) as { numero: string; statut: string; date_livraison: string | null; imputation: string | null; designation: string | null }[]);
       const ligneAffaire = new Map(((pl.data ?? []) as { id: string; affaire_id: string }[]).map((l) => [l.id, l.affaire_id]));
       const prest: { base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[] = [];
       const moisReleve = new Set<string>();
@@ -363,8 +366,35 @@ function RentabiliteContenu() {
       if (mx === null || my === null) return 0;
       return mx / (x.ca || 1) - my / (y.ca || 1);
     });
-    return { affaires, groupes, total, prestationsEx };
-  }, [lignesFin, realiseParBase, couts, exercice, prestations, pointeExercice]);
+    /* RENTABILITE_V4 : livrées au Pilotage dans l'exercice, mais pas (encore) livrées dans le Suivi d'affaire */
+    const analysees = new Set(affaires.map((a) => a.base));
+    const famillesPilotage = new Map<string, typeof pilotageCBE>();
+    for (const a of pilotageCBE) {
+      if (a.statut === "ABANDONNEE" || a.imputation === "PE" || a.imputation === "PI") continue;
+      const b = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
+      famillesPilotage.set(b, [...(famillesPilotage.get(b) ?? []), a]);
+    }
+    const enAttente: { base: string; designation: string | null; livree: string; raison: string }[] = [];
+    for (const [b, membres] of famillesPilotage) {
+      if (analysees.has(b) || !membres.every((m) => m.statut === "LIVREE")) continue;
+      const livree = membres.map((m) => m.date_livraison ?? "").sort().slice(-1)[0];
+      if (!livree || livree < debut || livree > fin) continue;
+      const lignes = lignesFin.filter((l) => (l.base_affaire ?? "").replace(/^0+/, "") === b && (l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue);
+      const pasLivree = lignes.find((l) => l.statut !== "Livrée" && l.statut !== "Devis perdu" && l.statut !== "Commande annulée");
+      const raison =
+        lignes.length === 0
+          ? "absente du Suivi d’affaire"
+          : pasLivree
+            ? `encore « ${pasLivree.statut ?? "sans statut"} » dans le Suivi d’affaire (${pasLivree.cle})`
+            : lignes.some((l) => l.statut === "Livrée" && !l.date_livraison)
+              ? "livrée dans le Suivi d’affaire, mais sans date de livraison"
+              : "à vérifier dans le Suivi d’affaire";
+      const laBase = membres.find((m) => /^\d+$/.test(m.numero)) ?? membres[0];
+      enAttente.push({ base: b, designation: laBase.designation, livree, raison });
+    }
+
+    return { affaires, groupes, total, prestationsEx, enAttente };
+  }, [lignesFin, realiseParBase, couts, exercice, prestations, pointeExercice, pilotageCBE]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 6px", textAlign: "center" };
   const td: CSSProperties = { ...page.td, padding: "7px 6px", fontSize: 13, textAlign: "right", whiteSpace: "nowrap" };
@@ -474,6 +504,24 @@ function RentabiliteContenu() {
                 </span>
               )}
             </section>
+
+            {/* RENTABILITE_V4 : livrées au Pilotage mais pas encore dans le Suivi d'affaire */}
+            {vue.enAttente.length > 0 && (
+              <Message genre="info">
+                <strong>
+                  {vue.enAttente.length} affaire{vue.enAttente.length > 1 ? "s" : ""} livrée{vue.enAttente.length > 1 ? "s" : ""} au Pilotage, pas encore comptée
+                  {vue.enAttente.length > 1 ? "s" : ""} ici
+                </strong>{" "}
+                : le prix et les achats viennent du Suivi d’affaire BE, qui doit lui aussi la donner « Livrée », avec sa date de livraison (puis la synchronisation).
+                <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+                  {vue.enAttente.map((a) => (
+                    <li key={a.base}>
+                      <strong>CBE {a.base}</strong> {a.designation ? `· ${a.designation} ` : ""}· livrée le {formatDate(a.livree)} au Pilotage · {a.raison}
+                    </li>
+                  ))}
+                </ul>
+              </Message>
+            )}
 
             {coutExercice === null && (
               <Message genre="info">Saisissez le coût horaire de structure pour calculer les coûts et les marges. Les taux vendus et obtenus s’affichent déjà.</Message>
