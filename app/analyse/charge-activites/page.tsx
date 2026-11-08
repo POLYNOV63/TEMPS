@@ -61,6 +61,9 @@ function ChargeActivitesContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [detail, setDetail] = useState<{ cle: string; w: number } | null>(null);
+  useEffect(() => {
+    if (detail) window.setTimeout(() => document.getElementById("detail-semaine")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+  }, [detail]);
   const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
 
   const fenetreFin = ajouterJours(lundi, 12 * 7 - 1);
@@ -250,6 +253,96 @@ function ChargeActivitesContenu() {
           <span style={{ color: C.gris }}>La hauteur totale d’une barre est la capacité de la semaine. Cliquez sur une barre ou une case pour voir le détail par personne.</span>
         </div>
 
+        {/* DETAIL_SOUS_GRAPHIQUES : le détail de la semaine cliquée, juste sous les graphiques */}
+        {detail &&
+          (() => {
+            const d = donnees.find((x) => x.cle === detail.cle);
+            if (!d) return null;
+            const w = detail.w;
+            const personnes = [...d.personnes].sort((a, b) => b.semaines[w].capa - b.semaines[w].occ - (a.semaines[w].capa - a.semaines[w].occ));
+            const echelle = Math.max(1, ...personnes.map((p) => Math.max(p.semaines[w].capa, p.semaines[w].occ)));
+            const vignette = (titre: string, valeur: string, couleur?: string, sous?: string) => (
+              <div style={{ flex: "1 1 150px", border: `1px solid ${C.ligne}`, borderRadius: 10, padding: "8px 12px", background: "#ffffff" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>{titre}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: couleur }}>{valeur}</div>
+                {sous && <div style={{ fontSize: 12, color: C.gris }}>{sous}</div>}
+              </div>
+            );
+            return (
+              <section id="detail-semaine" style={{ ...page.carte, padding: 16, marginBottom: 16, borderLeft: `5px solid ${d.couleur}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <h2 style={{ margin: 0, fontSize: 18 }}>
+                    <span style={{ color: d.couleur }}>{d.libelle}</span> · semaine S{numeroSemaine(semaines[w])}
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.gris }}>
+                      {" "}
+                      · du {formatDate(semaines[w])} au {formatDate(ajouterJours(semaines[w], 4))}
+                    </span>
+                  </h2>
+                  <span style={{ flex: 1 }} />
+                  <button type="button" onClick={() => setDetail(null)} aria-label="Fermer le détail" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+                  {vignette("Capacité", h(d.capa[w]), undefined, `${d.personnes.length} personne${d.personnes.length > 1 ? "s" : ""}`)}
+                  {vignette("Occupées", h(d.occ[w]), undefined, d.prev[w] >= 0.5 ? `dont prévisionnel ${h(d.prev[w])}` : undefined)}
+                  {vignette(
+                    "Disponibles",
+                    h(d.dispo[w]),
+                    d.dispo[w] >= 0.5 ? "#1b5e20" : C.gris,
+                    NIVEAUX.map((nv, k) => (d.parNiveau[k][w] >= 0.5 ? `${nv.libelle.replace("Niveau non renseigné", "non renseigné")} ${h(d.parNiveau[k][w])}` : ""))
+                      .filter(Boolean)
+                      .join(" · ") || undefined
+                  )}
+                  {d.surcharge[w] >= 0.5 && vignette("Surcharge", h(d.surcharge[w]), ROUGE, "au-delà de la capacité de certains")}
+                </div>
+                {personnes.length === 0 ? (
+                  <span style={{ color: C.gris }}>Personne n’a cette activité comme activité principale.</span>
+                ) : (
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                    <thead>
+                      <tr>
+                        {["Personne", "Capacité", "Occupé", "Charge", "Libre"].map((t) => (
+                          <th key={t} style={{ ...page.th, textAlign: t === "Personne" ? "left" : "center", padding: "6px 8px" }}>
+                            {t}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {personnes.map((p, i) => {
+                        const x = p.semaines[w];
+                        const libre = x.capa - x.occ;
+                        return (
+                          <tr key={p.c.id} style={{ background: i % 2 ? "#fafbfc" : undefined }}>
+                            <td style={{ ...page.td, padding: "6px 8px", whiteSpace: "nowrap" }}>
+                              <strong>{nomCollab(p.c)}</strong>
+                              {p.aussi.length > 0 && <span style={{ color: C.gris, fontSize: 12 }}> · aussi {p.aussi.join(", ")}</span>}
+                            </td>
+                            <td style={{ ...page.td, padding: "6px 8px", textAlign: "center" }}>{formatHeures(x.capa)}</td>
+                            <td style={{ ...page.td, padding: "6px 8px", textAlign: "center" }}>{formatHeures(x.occ)}</td>
+                            <td style={{ ...page.td, padding: "6px 8px", width: "35%" }}>
+                              <div style={{ position: "relative", height: 14, background: "#eef0f3", borderRadius: 4, overflow: "hidden" }}>
+                                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(Math.min(x.occ, x.capa) / echelle) * 100}%`, background: d.couleur, opacity: 0.85 }} />
+                                {x.occ > x.capa && (
+                                  <div style={{ position: "absolute", left: `${(x.capa / echelle) * 100}%`, top: 0, bottom: 0, width: `${((x.occ - x.capa) / echelle) * 100}%`, background: `repeating-linear-gradient(45deg,${ROUGE},${ROUGE} 3px,#f3b1ae 3px,#f3b1ae 6px)` }} />
+                                )}
+                                <div style={{ position: "absolute", left: `${(x.capa / echelle) * 100}%`, top: 0, bottom: 0, width: 2, background: "#1f2328" }} />
+                              </div>
+                            </td>
+                            <td style={{ ...page.td, padding: "6px 8px", textAlign: "center", fontWeight: 800, color: libre < -0.5 ? ROUGE : libre >= 0.5 ? "#1b5e20" : C.gris, whiteSpace: "nowrap" }}>
+                              {libre < -0.5 ? `surcharge ${formatHeures(-libre)}` : libre >= 0.5 ? `libre ${formatHeures(libre)}` : "complet"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </section>
+            );
+          })()}
+
         {/* ---------- tableau récapitulatif ---------- */}
         <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
           <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Récapitulatif, en heures</h2>
@@ -358,44 +451,6 @@ function ChargeActivitesContenu() {
             </table>
           </div>
 
-          {detail &&
-            (() => {
-              const d = donnees.find((x) => x.cle === detail.cle);
-              if (!d) return null;
-              const w = detail.w;
-              return (
-                <div style={{ marginTop: 12, padding: "10px 12px", border: `1px solid ${C.ligne}`, borderRadius: 8, background: "#fcfcfd", fontSize: 13 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                    <strong>
-                      {d.libelle} · S{numeroSemaine(semaines[w])}
-                    </strong>
-                    <span style={{ flex: 1 }} />
-                    <button type="button" onClick={() => setDetail(null)} aria-label="Fermer le détail" style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer" }}>
-                      ×
-                    </button>
-                  </div>
-                  {d.personnes.length === 0 ? (
-                    <span style={{ color: C.gris }}>Personne n’a cette activité comme activité principale.</span>
-                  ) : (
-                    [...d.personnes]
-                      .sort((a, b) => b.semaines[w].capa - b.semaines[w].occ - (a.semaines[w].capa - a.semaines[w].occ))
-                      .map((p) => {
-                        const x = p.semaines[w];
-                        const libre = x.capa - x.occ;
-                        return (
-                          <div key={p.c.id} style={{ padding: "2px 0" }}>
-                            <strong>{nomCollab(p.c)}</strong>
-                            {p.aussi.length > 0 && <span style={{ color: C.gris }}> (aussi en {p.aussi.join(", ")})</span>} · capacité {formatHeures(x.capa)} · occupé {formatHeures(x.occ)} ·{" "}
-                            <strong style={{ color: libre < -0.5 ? ROUGE : libre >= 0.5 ? "#1b5e20" : C.gris }}>
-                              {libre < -0.5 ? `surcharge ${formatHeures(-libre)}` : libre >= 0.5 ? `libre ${formatHeures(libre)}` : "complet"}
-                            </strong>
-                          </div>
-                        );
-                      })
-                  )}
-                </div>
-              );
-            })()}
         </section>
 
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>
