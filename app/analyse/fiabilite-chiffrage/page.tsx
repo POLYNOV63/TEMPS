@@ -31,7 +31,8 @@ import { formatDate, formatHeures, type Charge, type Realise } from "@/lib/pilot
 const SEUIL = 0.1;
 const SANS = "__sans__";
 /* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
-const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+// SCAN_A_PART : le scan, vendu au montant, est traité comme le négoce
+const estNegoceImp = (imp: string | null | undefined) => /^(negoce|scan)/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 
 type Activite = { id: string; nom: string; ordre: number };
 type LigneAffaire = { base: string; designation: string; fin: string; chiffre: number; realise: number };
@@ -369,13 +370,13 @@ function FiabiliteContenu() {
                 return (
                   <details style={{ ...page.carte, padding: 16, marginBottom: 14, borderLeft: "5px solid #b35c00" }}>
                     <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 16 }}>
-                      Négoce, à part : {vue.negoce.length} affaire{vue.negoce.length > 1 ? "s" : ""} livrée{vue.negoce.length > 1 ? "s" : ""} ·{" "}
+                      Négoce et Scan, à part : {vue.negoce.length} affaire{vue.negoce.length > 1 ? "s" : ""} livrée{vue.negoce.length > 1 ? "s" : ""} ·{" "}
                       <span style={{ color: "#b35c00" }}>{formatHeures(heures)} passées</span>
                       {chiffre > 0 ? ` pour ${formatHeures(chiffre)} chiffrées` : ", non chiffrées"}
                     </summary>
                     <p style={{ margin: "8px 0 10px", fontSize: 13, color: C.gris }}>
-                      Les affaires de négoce pur ne comptent pas dans le tableau par activité : leurs heures (consultation, commandes, suivi fournisseur) ne sont
-                      en général pas chiffrées, elles sont couvertes par la marge. Les voici, pour mesurer ce qu’elles coûtent vraiment.
+                      Les affaires de négoce et de scan, vendues au montant, ne comptent pas dans le tableau par activité : leurs heures ne sont en général
+                      pas chiffrées, elles sont couvertes par le prix. Les voici, pour mesurer ce qu’elles coûtent vraiment.
                     </p>
                     <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                       <thead>
@@ -426,7 +427,7 @@ function FiabiliteContenu() {
                   l’affaire (feuilles d’heures et historique) et le réalisé initial repris du classeur, dans la même activité.
                 </li>
                 <li>
-                  <strong>Négoce pur</strong> (imputation « Négoce ») : à part, avec ses heures passées ; il ne pèse pas sur la Mécanique.
+                  <strong>Négoce et Scan</strong> (vendus au montant) : à part, avec leurs heures passées ; ils ne pèsent pas sur la Mécanique.
                 </li>
                 <li>
                   <strong>Juste</strong> : réalisé à ±10 % du chiffré. <strong>Réalisé non chiffré</strong> : heures passées dans une activité qui

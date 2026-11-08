@@ -553,8 +553,17 @@ function FinancesContenu() {
     const basesNegoce = new Set(
       lignesFin.filter((l) => l.genre === "BASE" && estNegoceImp(l.imputation) && l.base_affaire).map((l) => String(l.base_affaire).replace(/^0+/, ""))
     );
+    // SCAN_A_PART : une affaire de scan compte entière dans « Scan », avec le coût de ses heures
+    const basesScan = new Set(
+      lignesFin.filter((l) => l.genre === "BASE" && /^scan/i.test(l.imputation ?? "") && l.base_affaire).map((l) => String(l.base_affaire).replace(/^0+/, ""))
+    );
     for (const a of terminees) {
       const c = coutHoraire(couts, a.date_fin);
+      if (basesScan.has(a.base_affaire.replace(/^0+/, ""))) {
+        const hs = GROUPES.reduce((t, g) => t + a.realiseG[g], 0);
+        ajouter("Scan", a.montant, 0, hs, c === null ? null : a.achats + hs * c);
+        continue;
+      }
       if (basesNegoce.has(a.base_affaire.replace(/^0+/, ""))) {
         const h = GROUPES.reduce((t, g) => t + a.realiseG[g], 0);
         ajouter("Négoce", a.montant, 0, h, c === null ? null : a.achats + h * c);

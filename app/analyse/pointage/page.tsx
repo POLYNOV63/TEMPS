@@ -45,7 +45,8 @@ type Agregat = { total: number; parAct: Map<string, number>; parPersonne: Map<st
 const pct = (x: number) => `${Math.round(x * 100)} %`;
 const sansZeros = (n: string) => String(n ?? "").replace(/^0+/, "");
 /* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
-const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+// SCAN_A_PART : le scan, vendu au montant, est traité comme le négoce
+const estNegoceImp = (imp: string | null | undefined) => /^(negoce|scan)/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 
 function agreger(lignes: { numero: string; collaborateur_id: string; activite_id: string | null; heures: number }[]) {
   const m = new Map<string, Agregat>();
@@ -453,7 +454,7 @@ function AnalyseChiffreContenu() {
                   [
                     ["FORFAITS", "Forfaits"],
                     ["PEPI", "PE / PI"],
-                    ["NEGOCE", "Négoce"],
+                    ["NEGOCE", "Négoce / Scan"],
                   ] as const
                 ).map(([v, l]) => (
                   <button key={v} type="button" aria-pressed={perimetre === v} onClick={() => setPerimetre(v)} style={perimetre === v ? page.btnPrimaire : page.btnSecondaire}>
@@ -477,7 +478,7 @@ function AnalyseChiffreContenu() {
               <Message genre="info">Choisissez les deux dates de la période.</Message>
             ) : (
               <Message genre="info">
-                <strong>Ce que vous regardez :</strong> les commandes {perimetre === "FORFAITS" ? "au forfait (hors négoce)" : perimetre === "PEPI" ? "en PE / PI" : perimetre === "NEGOCE" ? "de négoce" : "de tous types"}{" "}
+                <strong>Ce que vous regardez :</strong> les commandes {perimetre === "FORFAITS" ? "au forfait (hors négoce)" : perimetre === "PEPI" ? "en PE / PI" : perimetre === "NEGOCE" ? "de négoce et de scan" : "de tous types"}{" "}
                 {vue === "EN_COURS" ? "en cours" : "en cours, et celles pointées sur la période"}
                 {activite ? `, activité ${nomActivite.get(activite) ?? ""} seulement` : ""} ({lignes.length}), avenants regroupés avec leur commande. Pour chacune :{" "}
                 <strong>Avant</strong> ce qui était pointé avant le {frDate(bornes.du)}, <strong>Sur la période</strong> ce qui l’a été {libellePeriode},{" "}
@@ -630,7 +631,7 @@ function AnalyseChiffreContenu() {
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                               {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
-                              {v.chiffre === 0 && v.fin > 0.5 && (estNegoceImp(f.imputation) ? <Pastille genre="info">négoce · dans la marge</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
+                              {v.chiffre === 0 && v.fin > 0.5 && (estNegoceImp(f.imputation) ? <Pastille genre="info">vendu au montant</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
                               {(() => {
                                 const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
