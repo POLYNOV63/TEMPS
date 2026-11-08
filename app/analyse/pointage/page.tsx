@@ -44,6 +44,8 @@ type Agregat = { total: number; parAct: Map<string, number>; parPersonne: Map<st
 
 const pct = (x: number) => `${Math.round(x * 100)} %`;
 const sansZeros = (n: string) => String(n ?? "").replace(/^0+/, "");
+/* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
+const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 
 function agreger(lignes: { numero: string; collaborateur_id: string; activite_id: string | null; heures: number }[]) {
   const m = new Map<string, Agregat>();
@@ -83,7 +85,7 @@ function AnalyseChiffreContenu() {
   const [clients, setClients] = useState<Map<string, string>>(new Map());
   const [dormantes, setDormantes] = useState<Map<string, Dormance>>(new Map());
 
-  const [vue, setVue] = useState<"EN_COURS" | "TOUTES">("EN_COURS");
+  const [vue, setVue] = useState<"EN_COURS" | "TOUTES">("TOUTES"); // en cours + pointées sur la période
   // NEGOCE_A_PART_CHIFFRE : le négoce pur (imputation « Négoce ») a son propre périmètre
   const [perimetre, setPerimetre] = useState<"FORFAITS" | "PEPI" | "NEGOCE" | "TOUT">("FORFAITS");
   const [activite, setActivite] = useState("");
@@ -307,7 +309,7 @@ function AnalyseChiffreContenu() {
     return familles
       .filter((f) => {
         const pepi = f.imputation === "PE" || f.imputation === "PI";
-        const negoce = f.imputation === "Négoce";
+        const negoce = estNegoceImp(f.imputation);
         if (perimetre === "TOUT") return true;
         if (perimetre === "PEPI") return pepi;
         if (perimetre === "NEGOCE") return negoce;
@@ -316,7 +318,7 @@ function AnalyseChiffreContenu() {
       .map((f) => ({ f, v: valeurs(f, activite) }))
       .filter(({ f, v }) => (vue === "EN_COURS" ? f.statut === "EN_COURS" : f.statut === "EN_COURS" || v.periode > 0.01))
       .filter(({ v }) => !activite || v.chiffre > 0 || v.pointe > 0 || v.periode > 0)
-      .filter(({ f, v }) => !seulementAlertes || (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5 && f.imputation !== "Négoce"))
+      .filter(({ f, v }) => !seulementAlertes || (v.chiffre > 0 ? v.fin > v.chiffre + 0.5 : v.fin > 0.5 && !estNegoceImp(f.imputation)))
       .filter(({ f }) => !q || `${f.numeros.join(" ")} ${f.designation} ${clients.get(f.base) ?? ""}`.toLowerCase().includes(q))
       .sort((x, y) => Number(y.f.base) - Number(x.f.base));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -449,21 +451,9 @@ function AnalyseChiffreContenu() {
                 <strong style={{ fontSize: 14, minWidth: 80 }}>Affaires :</strong>
                 {(
                   [
-                    ["EN_COURS", "En cours"],
-                    ["TOUTES", "Toutes"],
-                  ] as const
-                ).map(([v, l]) => (
-                  <button key={v} type="button" aria-pressed={vue === v} onClick={() => setVue(v)} style={vue === v ? page.btnPrimaire : page.btnSecondaire}>
-                    {l}
-                  </button>
-                ))}
-                <span style={{ width: 10 }} />
-                {(
-                  [
                     ["FORFAITS", "Forfaits"],
                     ["PEPI", "PE / PI"],
                     ["NEGOCE", "Négoce"],
-                    ["TOUT", "Tout"],
                   ] as const
                 ).map(([v, l]) => (
                   <button key={v} type="button" aria-pressed={perimetre === v} onClick={() => setPerimetre(v)} style={perimetre === v ? page.btnPrimaire : page.btnSecondaire}>
@@ -479,10 +469,6 @@ function AnalyseChiffreContenu() {
                     </option>
                   ))}
                 </select>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={seulementAlertes} onChange={(e) => setSeulementAlertes(e.target.checked)} style={{ width: 18, height: 18 }} />
-                  Seulement au-delà du chiffré
-                </label>
                 <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher : n°, client, désignation…" style={{ ...page.entrees, maxWidth: 260 }} aria-label="Rechercher" />
               </div>
             </div>
@@ -511,12 +497,23 @@ function AnalyseChiffreContenu() {
                 valeur={calculPeriode ? "…" : formatHeures(totaux.fin)}
                 sous={bornes ? `cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)}${totaux.chiffre > 0 ? ` · ${pct(totaux.fin / totaux.chiffre)} du chiffré` : ""}` : ""}
               />
-              <Tuile
-                libelle="Au-delà du chiffré"
-                valeur={calculPeriode ? "…" : String(totaux.depassees)}
-                sous={bornes ? `affaires dont le cumul au ${frDate(bornes.au < aujourdhui ? bornes.au : aujourdhui)} dépasse le chiffré` : ""}
-                accent={!calculPeriode && totaux.depassees > 0}
-              />
+              {/* NEGOCE_ROBUSTE : la tuile sert de filtre (un clic : seulement ces affaires ; un autre : toutes) */}
+              <div
+                role="button"
+                tabIndex={0}
+                aria-pressed={seulementAlertes}
+                title={seulementAlertes ? "Cliquer pour revoir toutes les affaires" : "Cliquer pour ne voir que les affaires au-delà du chiffré"}
+                onClick={() => setSeulementAlertes((x) => !x)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSeulementAlertes((x) => !x)}
+                style={{ display: "flex", cursor: "pointer", borderRadius: 12, outline: seulementAlertes ? `3px solid ${C.rouge}` : undefined }}
+              >
+                <Tuile
+                  libelle="Au-delà du chiffré"
+                  valeur={calculPeriode ? "…" : String(totaux.depassees)}
+                  sous={seulementAlertes ? "filtre actif : seulement ces affaires · cliquer pour tout revoir" : "affaires qui dépassent le chiffré · cliquer pour ne voir qu’elles"}
+                  accent={!calculPeriode && totaux.depassees > 0}
+                />
+              </div>
             </div>
 
             {/* HORS_APPLICATION : heures de la période pointées sur des n° CBE que l'application ne suit pas */}
@@ -633,7 +630,7 @@ function AnalyseChiffreContenu() {
                           <td style={tdG}>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                               {v.chiffre > 0 && v.fin > v.chiffre + 0.5 && <Pastille genre="crit">+{formatHeures(v.fin - v.chiffre)}</Pastille>}
-                              {v.chiffre === 0 && v.fin > 0.5 && (f.imputation === "Négoce" ? <Pastille genre="info">négoce · dans la marge</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
+                              {v.chiffre === 0 && v.fin > 0.5 && (estNegoceImp(f.imputation) ? <Pastille genre="info">négoce · dans la marge</Pastille> : <Pastille genre="warn">non chiffré</Pastille>)}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
                               {(() => {
                                 const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;

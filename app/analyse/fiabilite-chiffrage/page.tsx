@@ -30,6 +30,8 @@ import { formatDate, formatHeures, type Charge, type Realise } from "@/lib/pilot
 
 const SEUIL = 0.1;
 const SANS = "__sans__";
+/* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
+const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 
 type Activite = { id: string; nom: string; ordre: number };
 type LigneAffaire = { base: string; designation: string; fin: string; chiffre: number; realise: number };
@@ -159,7 +161,7 @@ function FiabiliteContenu() {
       const totalCh = [...ch.values()].reduce((t, x) => t + x, 0);
       const totalRe = [...re.values()].reduce((t, x) => t + x, 0);
       // NEGOCE_A_PART : négoce pur (imputation de la commande de base), résumé à part
-      if ((imputationBase.get(base) ?? laBase.imputation) === "Négoce") {
+      if (estNegoceImp(imputationBase.get(base) ?? laBase.imputation)) {
         negoce.push({ base, designation: laBase.designation, fin: dateFin, chiffre: totalCh, realise: totalRe });
         continue;
       }

@@ -209,6 +209,9 @@ function joursEntre(debut: string, fin: string): number {
 
 /* TOLERANCE_AFFECTATION : comme au planning, pas d'alerte pour quelques heures non affectées :
    6 h au plus, sans dépasser 10 % du chiffré */
+/* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
+const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+
 export function toleranceAffectation(chiffre: number): number {
   return Math.min(6, 0.1 * Math.max(0, chiffre));
 }
@@ -227,7 +230,7 @@ export function etatAffaire(
 
   /* NEGOCE_A_PART : négoce pur sans heures chiffrées (elles sont dans la marge) : ni « pas de charge chiffrée »,
      ni heures non affectées ; on affiche les heures passées */
-  if (a.type === "CBE" && a.imputation === "Négoce" && t.chiffre === 0) {
+  if (a.type === "CBE" && estNegoceImp(a.imputation) && t.chiffre === 0) {
     if (a.statut === "EN_ATTENTE") return { genre: "info", texte: "En attente" };
     if (a.echeance && a.echeance < aujourdhui) return { genre: "crit", texte: "Délai dépassé" };
     return { genre: "info", texte: t.realise > 0 ? `Négoce · ${formatHeures(t.realise)} passées` : "Négoce" };

@@ -52,6 +52,8 @@ import {
 ================================================================ */
 
 const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+/* NEGOCE_ROBUSTE : « Négoce », « NEGOCE », « Negoce »… (accents et majuscules ignorés) */
+const estNegoceImp = (imp: string | null | undefined) => /^negoce/.test((imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 const libMois = (m: string) => `${MOIS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
 const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).toLocaleString("fr-FR")} k€` : euros(n));
@@ -549,7 +551,7 @@ function FinancesContenu() {
     };
     // NEGOCE_A_PART : une affaire de négoce pur compte entière dans « Négoce », avec le coût de ses heures
     const basesNegoce = new Set(
-      lignesFin.filter((l) => l.genre === "BASE" && l.imputation === "Négoce" && l.base_affaire).map((l) => String(l.base_affaire).replace(/^0+/, ""))
+      lignesFin.filter((l) => l.genre === "BASE" && estNegoceImp(l.imputation) && l.base_affaire).map((l) => String(l.base_affaire).replace(/^0+/, ""))
     );
     for (const a of terminees) {
       const c = coutHoraire(couts, a.date_fin);
