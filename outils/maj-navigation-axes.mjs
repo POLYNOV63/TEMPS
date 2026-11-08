@@ -6,7 +6,7 @@
      les pages de l'axe ; on y trouve toutes les pages accessibles ;
    - ce bandeau est ajouté aux pages qui ne l'avaient pas : Bilan affaire,
      Disponibilités par activité, Analyse de capacité, Cartographie,
-     Rentabilité, Finances, Facturation du mois ;
+     Rentabilité, Finances, Facturation du mois, Indicateurs commerciaux ;
    - Suivi des affaires : « Cumul » devient « Depuis l'ouverture ».
 
    À lancer à la racine du projet :   node outils/maj-navigation-axes.mjs
@@ -24,6 +24,7 @@ const PAGES = [
   ["app/analyse/rentabilite/page.tsx", "rentabilite"],
   ["app/analyse/finances/page.tsx", "finances"],
   ["app/analyse/facturation/page.tsx", "facturation"],
+  ["app/pilotage/indicateurs/page.tsx", "indicateurs"],
 ];
 const IMPORT_ENTETE = 'import EnTetePage from "@/components/EnTetePage";';
 const IMPORT_ONGLETS = 'import OngletsPilotage from "@/components/pilotage/OngletsPilotage";';

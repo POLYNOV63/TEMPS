@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import EnTetePage from "@/components/EnTetePage";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
@@ -645,6 +646,7 @@ function IndicateursContenu() {
 
       <div className="sans-impression">
         <EnTetePage section="Indicateurs commerciaux" />
+        {/* NAVIGATION_AXES */}<OngletsPilotage actif="indicateurs" />
       </div>
 
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
