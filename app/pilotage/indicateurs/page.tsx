@@ -9,7 +9,7 @@ import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerTout } from "@/lib/pilotageDonnees";
 import { aujourdhuiISO, formatDate, formatHeures } from "@/lib/pilotageCalculs";
-import { DISCIPLINES, issueDevis, type Discipline, type Issue, type LigneInd } from "@/lib/indicateurs";
+import { issueDevis, type Issue, type LigneInd } from "@/lib/indicateurs";
 
 /* ===============================================================
    INDICATEURS COMMERCIAUX (INDICATEURS_V2) — page resserrée
@@ -25,14 +25,19 @@ import { DISCIPLINES, issueDevis, type Discipline, type Issue, type LigneInd } f
    Montants : visibles des profils qui y ont droit ; sinon, en heures.
 ================================================================ */
 
+/* ACTIVITES_NEGOCE : les activités du Suivi d'affaire, négoce compris (il n'a pas d'heures, mais un montant) */
+type Discipline = "meca" | "calcul" | "elec" | "scan" | "negoce" | "autre";
+const DISCIPLINES: Discipline[] = ["meca", "calcul", "elec", "scan", "negoce", "autre"];
 const ACTIVITES: Record<Discipline, { nom: string; couleur: string }> = {
   meca: { nom: "Méca", couleur: "#c00000" },
   calcul: { nom: "Calcul", couleur: "#6b58a8" },
-  elec: { nom: "Elec", couleur: "#34506b" },
-  pneu: { nom: "Pneu", couleur: "#2a9d8f" },
+  elec: { nom: "Elec / Pneu", couleur: "#34506b" },
   scan: { nom: "Scan", couleur: "#e08a1e" },
-  autre: { nom: "Autre", couleur: "#9aa0a6" },
+  negoce: { nom: "Négoce", couleur: "#8d6e63" },
+  autre: { nom: "Autre / non ventilé", couleur: "#9aa0a6" },
 };
+type Detail = Record<Discipline, number>;
+const sansAccents = (t: string | null) => (t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 const MOIS_COURTS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 const debutExercice = (jour: string) => {
   const a = Number(jour.slice(0, 4));
@@ -87,6 +92,7 @@ function IndicateursContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [tousClients, setTousClients] = useState(false);
+  const [detailMontants, setDetailMontants] = useState<Map<string, Detail>>(new Map()); // ACTIVITES_NEGOCE
 
   useEffect(() => {
     let actif = true;
@@ -102,7 +108,13 @@ function IndicateursContenu() {
               .order("cle")
               .range(a, b)
           ),
-          chargerTout<{ ligne_id: string; montant: number | string }>((a, b) => supabase.from("suivi_lignes_montants").select("ligne_id,montant").order("ligne_id").range(a, b)),
+          chargerTout<Record<string, number | string> & { ligne_id: string }>((a, b) =>
+            supabase
+              .from("suivi_lignes_montants")
+              .select("ligne_id,montant,montant_meca,montant_calcul,montant_elec_pneu,montant_scan,montant_autre,montant_negoce")
+              .order("ligne_id")
+              .range(a, b)
+          ),
           chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)),
           supabase.from("suivi_synchronisations").select("terminee_le").eq("statut", "APPLIQUEE").order("terminee_le", { ascending: false }).limit(1),
         ]);
@@ -135,6 +147,14 @@ function IndicateursContenu() {
           }))
         );
         setMontantsVisibles(montants.length > 0);
+        setDetailMontants(
+          new Map(
+            montants.map((m) => [
+              m.ligne_id,
+              { meca: n(m.montant_meca), calcul: n(m.montant_calcul), elec: n(m.montant_elec_pneu), scan: n(m.montant_scan), negoce: n(m.montant_negoce), autre: n(m.montant_autre) },
+            ])
+          )
+        );
         setDerniereSynchro(synchro.data?.[0]?.terminee_le ?? null);
       } catch (e) {
         if (actif) setErreur(e instanceof Error ? e.message : "Impossible de charger les indicateurs.");
@@ -161,13 +181,25 @@ function IndicateursContenu() {
       // la ligne qui dit le mieux ce qu'est devenu le devis : une commande, sinon la ligne de devis
       const l = ls.find((x) => (x.genre === "BASE" || x.genre === "AVENANT") && x.statut !== "Devis perdu") ?? ls[0];
       const ouverture = ls.map((x) => x.date_ouverture ?? "").sort()[0];
-      const tot = DISCIPLINES.reduce((t, d) => t + l.heures[d], 0);
-      const parts = Object.fromEntries(DISCIPLINES.map((d) => [d, tot > 0 ? l.heures[d] / tot : d === "autre" ? 1 : 0])) as Record<Discipline, number>;
-      const principale: Discipline = tot > 0 ? DISCIPLINES.reduce((a, d) => (l.heures[d] > l.heures[a] ? d : a), DISCIPLINES[0]) : "autre";
+      /* ACTIVITES_NEGOCE : répartition par activité, d'après le détail du MONTANT (qui contient le négoce) ; à défaut, les heures
+         chiffrées ; à défaut, l'imputation (NEGOCE, SCAN) ; sinon « Autre / non ventilé » */
+      const dm = detailMontants.get(l.id);
+      const parHeures: Detail = { meca: l.heures.meca, calcul: l.heures.calcul, elec: l.heures.elec + l.heures.pneu, scan: l.heures.scan, negoce: 0, autre: l.heures.autre };
+      const sommeD = (d: Detail) => DISCIPLINES.reduce((t, k) => t + d[k], 0);
+      const imp = sansAccents(l.imputation);
+      const base: Detail =
+        dm && sommeD(dm) > 0
+          ? dm
+          : sommeD(parHeures) > 0
+            ? parHeures
+            : { meca: 0, calcul: 0, elec: 0, scan: imp.startsWith("scan") ? 1 : 0, negoce: imp.startsWith("negoce") ? 1 : 0, autre: imp.startsWith("scan") || imp.startsWith("negoce") ? 0 : 1 };
+      const tot = sommeD(base);
+      const parts = Object.fromEntries(DISCIPLINES.map((d) => [d, base[d] / tot])) as Record<Discipline, number>;
+      const principale: Discipline = DISCIPLINES.reduce((a, d) => (base[d] > base[a] ? d : a), DISCIPLINES[0]);
       res.push({ numero, l, ouverture, issue: issueDevis(l), principale, parts });
     }
     return res;
-  }, [lignes]);
+  }, [lignes, detailMontants]);
 
   const bornes = libre ?? { du: `${exercice}-11-01`, au: `${exercice + 1}-10-31` < aujourdhui ? `${exercice + 1}-10-31` : aujourdhui };
   const decaler = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
@@ -287,10 +319,10 @@ function IndicateursContenu() {
         <th style={thD}>Remportées</th>
         <th style={thD}>Perdues</th>
         <th style={thD}>Sans réponse</th>
-        <th style={thD} title="Remportées ÷ (remportées + perdues)">Taux (nb)</th>
+        <th style={thD} title="Taux de transformation en nombre : remportées ÷ (remportées + perdues). Les consultations sans réponse ne comptent pas.">Transformées</th>
         <th style={thD}>{montantsVisibles ? "Chiffré" : "Heures chiffrées"}</th>
         <th style={thD}>{montantsVisibles ? "Remporté" : "Heures remportées"}</th>
-        <th style={thD} title="Remporté ÷ (remporté + perdu)">Taux ({montantsVisibles ? "€" : "h"})</th>
+        <th style={thD} title="Taux de transformation en montant : remporté ÷ (remporté + perdu)">Transformé en {montantsVisibles ? "€" : "heures"}</th>
       </tr>
     </thead>
   );
@@ -304,7 +336,15 @@ function IndicateursContenu() {
       <td style={{ ...tdD, color: "#1b5e20", fontWeight: 700 }}>{s.g}</td>
       <td style={tdD}>{s.p}</td>
       <td style={{ ...tdD, color: C.gris }}>{s.a}</td>
-      <td style={{ ...tdD, fontWeight: 800 }}>{taux(s.g, s.p)}</td>
+      <td style={tdD} title={`${s.g} remportée(s) sur ${s.g + s.p} consultation(s) dont on connaît l’issue`}>
+        <strong>{taux(s.g, s.p)}</strong>
+        {s.g + s.p > 0 && (
+          <span style={{ color: C.gris, fontSize: 12 }}>
+            {" "}
+            ({s.g}/{s.g + s.p})
+          </span>
+        )}
+      </td>
       <td style={tdD}>{fmt(s.v)}</td>
       <td style={{ ...tdD, color: "#1b5e20", fontWeight: 700 }}>{fmt(s.vg)}</td>
       <td style={{ ...tdD, fontWeight: 800 }}>{taux(s.vg, s.vp)}</td>
@@ -385,7 +425,11 @@ function IndicateursContenu() {
               <Tuile
                 libelle="Taux de transformation"
                 valeur={taux(t.g, t.p)}
-                sous={`${t.g} remportées, ${t.p} perdues, ${t.a} sans réponse · ${montantsVisibles ? "en montant" : "en heures"} ${taux(t.vg, t.vp)} · N-1 ${taux(tN1.g, tN1.p)}`}
+                sous={
+                  t.g + t.p < 5
+                    ? `seulement ${t.g + t.p} consultation${t.g + t.p > 1 ? "s" : ""} dont l’issue est connue (${t.a} sans réponse) : taux peu significatif`
+                    : `${t.g} remportées sur ${t.g + t.p} dont l’issue est connue (${t.a} sans réponse) · ${montantsVisibles ? "en montant" : "en heures"} ${taux(t.vg, t.vp)} · N-1 ${taux(tN1.g, tN1.p)}`
+                }
               />
             </div>
 
@@ -429,7 +473,8 @@ function IndicateursContenu() {
               <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Par activité</h2>
               <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
                 Une consultation qui mêle plusieurs activités compte une fois, dans son activité principale ; son {montantsVisibles ? "montant" : "chiffrage"} est
-                réparti entre ses activités au prorata des heures chiffrées.
+                réparti entre ses activités d’après le détail du montant dans le Suivi d’affaire (qui contient le négoce), à défaut des heures chiffrées, à
+                défaut de son imputation (NEGOCE, SCAN). « Autre / non ventilé » : la colonne « Autre » du classeur, et les consultations sans aucun détail.
               </p>
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                 {entete("Activité")}
@@ -539,7 +584,9 @@ function IndicateursContenu() {
                   perdu ». <strong>Sans réponse</strong> : tout le reste (en rédaction, envoyé, intention de commande).
                 </li>
                 <li>
-                  <strong>Taux de transformation</strong> = remportées ÷ (remportées + perdues) : les consultations sans réponse ne comptent pas.
+                  <strong>Taux de transformation</strong> = remportées ÷ (remportées + perdues), en nombre (« 3/4 » = 3 remportées sur 4 dont l’issue est
+                  connue) et en montant. Les consultations <strong>sans réponse</strong> ne comptent pas : en début d’exercice, ou si les devis perdus ne sont
+                  pas classés « Devis perdu » dans le Suivi d’affaire, le taux peut monter à 100 % alors que beaucoup de devis n’ont jamais abouti.
                 </li>
               </ul>
             </details>
