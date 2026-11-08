@@ -367,6 +367,12 @@ function BilanContenu() {
       realise.set(k, (realise.get(k) ?? 0) + i.heures);
     }
 
+    // MONTANT_HORS_COMPARAISON : négoce et scan sont vendus au montant
+    const auMontantNom = (nom?: string) => /^(negoce|scan)/.test((nom ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+    const imputationBase = (lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0])?.imputation ?? undefined;
+    const toutAuMontant = auMontantNom(imputationBase);
+    const auMontant = new Set([...realise.keys()].filter((id) => auMontantNom(activites.get(id)?.nom)));
+    const horsComparaison = toutAuMontant ? 0 : [...auMontant].filter((id) => (chiffre.get(id) ?? 0) <= 0).reduce((t, id) => t + (realise.get(id) ?? 0), 0);
     const ids = new Set([...chiffre.keys(), ...realise.keys()]);
     const parActivite = [...ids]
       .map((id) => ({ id, nom: nomActivite(id), ordre: activites.get(id)?.ordre ?? 999, chiffre: chiffre.get(id) ?? 0, realise: realise.get(id) ?? 0 }))
@@ -420,6 +426,10 @@ function BilanContenu() {
     }
 
     return {
+      toutAuMontant,
+      auMontant,
+      horsComparaison,
+      realiseCompare: totalRealise - horsComparaison,
       sourceChiffre,
       parActivite,
       chiffreNonRattache,
@@ -434,7 +444,7 @@ function BilanContenu() {
         historique: imputations.filter((i) => i.source === "HISTORIQUE").reduce((t, i) => t + i.heures, 0),
       },
     };
-  }, [comptees, chiffrePilotage, correspondance, imputations, activites, nomActivite, noms]);
+  }, [comptees, chiffrePilotage, correspondance, imputations, activites, nomActivite, noms, lignesExcel]);
 
   const detail = useMemo(() => {
     // Détail semaine par semaine, regroupé par personne / semaine / code
@@ -466,8 +476,8 @@ function BilanContenu() {
   const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
   // n° du devis d'origine (pour un CBE) : celui de la commande de base dans le Suivi d'affaire
   const devis = affaire?.type === "CBE" ? numeroDevis(base?.base_devis ?? base?.numero_devis) : null;
-  const ecart = bilan.totalChiffre - bilan.totalRealise;
-  const part = bilan.totalChiffre > 0 ? bilan.totalRealise / bilan.totalChiffre : 0;
+  const ecart = bilan.totalChiffre - bilan.realiseCompare;
+  const part = bilan.totalChiffre > 0 ? bilan.realiseCompare / bilan.totalChiffre : 0;
   const echeance = (() => {
     const dates = comptees.map((l) => l.delai ?? l.date_livraison_estimee).filter((d): d is string => Boolean(d)).sort();
     return pilotage?.echeance ?? dates[dates.length - 1] ?? null;
@@ -606,12 +616,16 @@ function BilanContenu() {
                 valeur={formatHeures(bilan.totalRealise)}
                 sous={`${formatHeures(bilan.sources.feuilles)} saisies · ${formatHeures(bilan.sources.historique)} historique`}
               />
-              <Tuile
-                libelle={ecart >= 0 ? "Reste" : "Dépassement"}
-                valeur={bilan.totalChiffre > 0 ? formatHeures(Math.abs(ecart)) : "—"}
-                sous={bilan.totalChiffre > 0 ? `${Math.round(part * 100)} % du chiffré consommé` : ""}
-                accent={ecart < 0 && bilan.totalChiffre > 0}
-              />
+              {bilan.toutAuMontant ? (
+                <Tuile libelle="Temps passé" valeur={formatHeures(bilan.totalRealise)} sous="vendu au montant : pas de comparaison au chiffré" />
+              ) : (
+                <Tuile
+                  libelle={ecart >= 0 ? "Reste" : "Dépassement"}
+                  valeur={bilan.totalChiffre > 0 ? formatHeures(Math.abs(ecart)) : "—"}
+                  sous={bilan.totalChiffre > 0 ? `${Math.round(part * 100)} % du chiffré consommé${bilan.horsComparaison > 0.01 ? ` · hors ${formatHeures(bilan.horsComparaison)} scan / négoce` : ""}` : ""}
+                  accent={ecart < 0 && bilan.totalChiffre > 0}
+                />
+              )}
               <Tuile libelle="Personnes" valeur={String(bilan.parPersonne.filter((p) => p.cle !== "__autres__").length || bilan.parPersonne.length)} sous="ont imputé sur l’affaire" />
             </div>
 
@@ -635,6 +649,7 @@ function BilanContenu() {
                     {bilan.parActivite.map((a) => {
                       const e = a.chiffre - a.realise;
                       const p = a.chiffre > 0 ? a.realise / a.chiffre : 0;
+                      const info = bilan.toutAuMontant || (bilan.auMontant.has(a.id) && a.chiffre <= 0);
                       return (
                         <tr key={a.id}>
                           <td style={td}>
@@ -642,11 +657,11 @@ function BilanContenu() {
                           </td>
                           <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
                           <td style={tdN}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
-                          <td style={{ ...tdN, color: e < -0.01 ? C.rougeTexte : undefined, fontWeight: e < -0.01 ? 800 : 400 }}>
-                            {a.chiffre > 0 ? (e < 0 ? `+${formatHeures(-e)} dépassé` : `${formatHeures(e)} restant`) : a.realise > 0 ? "non chiffré" : "—"}
+                          <td style={{ ...tdN, color: info ? C.gris : e < -0.01 ? C.rougeTexte : undefined, fontWeight: !info && e < -0.01 ? 800 : 400 }}>
+                            {info ? (a.realise > 0 ? "temps passé · vendu au montant" : "—") : a.chiffre > 0 ? (e < 0 ? `+${formatHeures(-e)} dépassé` : `${formatHeures(e)} restant`) : a.realise > 0 ? "non chiffré" : "—"}
                           </td>
                           <td style={td}>
-                            {a.chiffre > 0 ? (
+                            {a.chiffre > 0 && !info ? (
                               <>
                                 <Barre part={p} depasse={e < -0.01} /> <span style={{ fontSize: 12, color: C.gris }}>{Math.round(p * 100)} %</span>
                               </>
@@ -671,13 +686,20 @@ function BilanContenu() {
                       <td style={{ ...td, fontWeight: 800 }}>Total</td>
                       <td style={{ ...tdN, fontWeight: 800 }}>{bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}</td>
                       <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(bilan.totalRealise)}</td>
-                      <td style={{ ...tdN, fontWeight: 800, color: ecart < -0.01 && bilan.totalChiffre > 0 ? C.rougeTexte : undefined }}>
-                        {bilan.totalChiffre > 0 ? (ecart < 0 ? `+${formatHeures(-ecart)} dépassé` : `${formatHeures(ecart)} restant`) : "—"}
+                      <td style={{ ...tdN, fontWeight: 800, color: ecart < -0.01 && bilan.totalChiffre > 0 && !bilan.toutAuMontant ? C.rougeTexte : undefined }}>
+                        {bilan.totalChiffre > 0 && !bilan.toutAuMontant ? (ecart < 0 ? `+${formatHeures(-ecart)} dépassé` : `${formatHeures(ecart)} restant`) : "—"}
                       </td>
-                      <td style={td}>{bilan.totalChiffre > 0 && <Barre part={part} depasse={ecart < -0.01} />}</td>
+                      <td style={td}>{bilan.totalChiffre > 0 && !bilan.toutAuMontant && <Barre part={part} depasse={ecart < -0.01} />}</td>
                     </tr>
                   </tbody>
                 </table>
+              )}
+              {(bilan.toutAuMontant || bilan.horsComparaison > 0.01) && (
+                <p style={{ fontSize: 13, color: C.gris, margin: "10px 0 0" }}>
+                  {bilan.toutAuMontant
+                    ? "Affaire de négoce ou de scan, vendue au montant : on suit le temps passé, sans le comparer au chiffré."
+                    : `Dont ${formatHeures(bilan.horsComparaison)} de scan / négoce non chiffrées (vendues au montant) : comptées dans le réalisé, mais hors comparaison au chiffré.`}
+                </p>
               )}
               {bilan.codesSans.length > 0 && (
                 <p style={{ fontSize: 13, color: C.orangeTexte, margin: "10px 0 0" }}>
@@ -758,7 +780,7 @@ function BilanContenu() {
             {lignesExcel.length > 0 &&
               (() => {
                 const reparti = new Map<string, number>();
-                let restant = bilan.totalRealise;
+                let restant = bilan.toutAuMontant ? bilan.totalRealise : bilan.realiseCompare;
                 comptees.forEach((l, i) => {
                   const p = i === comptees.length - 1 ? restant : Math.min(l.heures_total, restant);
                   reparti.set(l.cle, Math.max(0, p));
@@ -767,17 +789,18 @@ function BilanContenu() {
                 const commandes = lignesExcel.filter((l) => l.genre === "BASE" || l.genre === "AVENANT" || l.genre === "DEVIS");
                 const decoupages = lignesExcel.filter((l) => l.genre === "LOT" || l.genre === "ECHEANCE");
                 const chiffreFamille = comptees.reduce((t, l) => t + l.heures_total, 0);
-                const resteFamille = chiffreFamille - bilan.totalRealise;
+                const resteFamille = chiffreFamille - bilan.realiseCompare;
                 const surligne: CSSProperties = { background: "#ffe58a", borderRadius: 3, padding: "0 4px" };
                 const thC: CSSProperties = { ...th, textAlign: "center" };
                 const tdC: CSSProperties = { ...td, textAlign: "center", whiteSpace: "nowrap" };
                 const reste = (h: number) =>
-                  h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h);
+                  bilan.toutAuMontant ? "—" : h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h);
                 // PLANIFIE_BILAN : heures planifiées à venir, commande par commande (planning des affaires)
                 const cleNumero = (l: LigneExcel) => String(l.numero_affaire ?? "").toUpperCase().replace(/^(CBE|DBE)/, "").replace(/^0+/, "");
                 const planifieDe = (l: LigneExcel) => planifie.get(cleNumero(l)) ?? 0;
                 const planifieFamille = comptees.reduce((t, l) => t + planifieDe(l), 0);
                 const jauge = (chiffre: number, pointe: number, prevu: number) => {
+                  if (bilan.toutAuMontant) return null;
                   const total = pointe + prevu;
                   const echelle = Math.max(chiffre, total, 0.01);
                   const au = total > chiffre + 0.01;
@@ -856,7 +879,7 @@ function BilanContenu() {
                             <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
                             <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{planifieFamille > 0.01 ? formatHeures(planifieFamille) : "—"}</td>
                             <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{reste(resteFamille - planifieFamille)}</td>
-                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>{chiffreFamille > 0 && jauge(chiffreFamille, bilan.totalRealise, planifieFamille)}</td>
+                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>{chiffreFamille > 0 && jauge(chiffreFamille, bilan.realiseCompare, planifieFamille)}</td>
                           </tr>
                         )}
                       </tbody>
@@ -930,9 +953,9 @@ function BilanContenu() {
                           <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(m.heures / maxMois) * 100}%`, background: C.rouge, borderRadius: 4 }} />
                         </span>
                         <strong style={{ textAlign: "right" }}>{formatHeures(m.heures)}</strong>
-                        <span style={{ color: m.cumul > bilan.totalChiffre && bilan.totalChiffre > 0 ? C.rougeTexte : C.gris, fontSize: 12 }}>
+                        <span style={{ color: !bilan.toutAuMontant && m.cumul > bilan.totalChiffre && bilan.totalChiffre > 0 ? C.rougeTexte : C.gris, fontSize: 12 }}>
                           cumul {formatHeures(m.cumul)}
-                          {bilan.totalChiffre > 0 ? ` (${Math.round((m.cumul / bilan.totalChiffre) * 100)} %)` : ""}
+                          {bilan.totalChiffre > 0 && !bilan.toutAuMontant ? ` (${Math.round((m.cumul / bilan.totalChiffre) * 100)} %)` : ""}
                         </span>
                       </div>
                     ))}

@@ -39,6 +39,7 @@ type Famille = {
   activites: Detail[];
   codes: { code: string; heures: number }[];
   ids: string[];
+  horsIds: string[]; // MONTANT_HORS_COMPARAISON : scan / négoce pointés sans chiffré
 };
 type Agregat = { total: number; parAct: Map<string, number>; parPersonne: Map<string, number> };
 
@@ -272,7 +273,9 @@ function AnalyseChiffreContenu() {
       }
       const activites = [...parActivite.values()].sort((x, y) => y.chiffre - x.chiffre || y.pointe - x.pointe);
       const chiffre = activites.reduce((t, d) => t + d.chiffre, 0);
-      const pointe = activites.reduce((t, d) => t + d.pointe, 0);
+      // MONTANT_HORS_COMPARAISON : scan / négoce pointés sans chiffré : hors comparaison (information)
+      const horsIds = activites.filter((d) => d.chiffre <= 0 && estNegoceImp(d.nom)).map((d) => d.activite);
+      const pointe = activites.filter((d) => !horsIds.includes(d.activite)).reduce((t, d) => t + d.pointe, 0);
       res.push({
         base,
         numeros: retenus.map((m) => m.numero),
@@ -287,6 +290,7 @@ function AnalyseChiffreContenu() {
         activites,
         codes: [...codes.entries()].map(([code, heures]) => ({ code, heures })).sort((x, y) => y.heures - x.heures),
         ids: retenus.map((m) => m.id),
+        horsIds,
       });
     }
     return res;
@@ -298,9 +302,10 @@ function AnalyseChiffreContenu() {
     const chiffre = act ? d?.chiffre ?? 0 : f.chiffre;
     const pointe = act ? d?.pointe ?? 0 : f.pointe;
     const p = surPeriode.get(f.base);
-    const periodeH = act ? p?.parAct.get(act) ?? 0 : p?.total ?? 0;
+    const hors = (x?: Agregat) => f.horsIds.reduce((t, id) => t + (x?.parAct.get(id) ?? 0), 0);
+    const periodeH = act ? p?.parAct.get(act) ?? 0 : (p?.total ?? 0) - hors(p);
     const dep = depuisDebut ? depuisDebut.get(f.base) : p;
-    const depuisH = act ? dep?.parAct.get(act) ?? 0 : dep?.total ?? 0;
+    const depuisH = act ? dep?.parAct.get(act) ?? 0 : (dep?.total ?? 0) - hors(dep);
     const avant = Math.max(0, pointe - depuisH);
     return { chiffre, pointe, periode: periodeH, avant, fin: avant + periodeH };
   };
@@ -635,6 +640,9 @@ function AnalyseChiffreContenu() {
                                 ? v.fin > 0.5 && <Pastille genre="info">{formatHeures(v.fin)} passées</Pastille>
                                 : v.chiffre === 0 && v.fin > 0.5 && <Pastille genre="warn">non chiffré</Pastille>}
                               {dormance && <Pastille genre="info">💤 {libelleDormance(dormance)}</Pastille>}
+                              {f.horsIds.length > 0 && !estNegoceImp(f.imputation) && (
+                                <Pastille genre="info">+{formatHeures(f.activites.filter((d) => f.horsIds.includes(d.activite)).reduce((t, d) => t + d.pointe, 0))} scan / négoce</Pastille>
+                              )}
                               {(() => {
                                 const baseId = (f.membres.find((m) => /^\d+$/.test(m.numero)) ?? f.membres[0])?.id;
                                 const av = baseId ? avancements.get(baseId) : undefined;

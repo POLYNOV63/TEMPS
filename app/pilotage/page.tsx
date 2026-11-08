@@ -85,6 +85,9 @@ function normaliser(texte: string) {
     .toLowerCase();
 }
 
+/* MONTANT_HORS_COMPARAISON : activités vendues au montant (scan, négoce) */
+const estActiviteMontant = (nom?: string) => /^(negoce|scan)/.test((nom ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
+
 function PortefeuilleContenu() {
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
   const [erreurPlanning, setErreurPlanning] = useState("");
@@ -245,9 +248,13 @@ function PortefeuilleContenu() {
     const aujourdhui = aujourdhuiISO();
 
     const brut: Ligne[] = affaires.map((affaire) => {
+      // MONTANT_HORS_COMPARAISON : scan / négoce pointés sans chiffré correspondant : hors comparaison au chiffré
+      const actChiffrees = new Set((parAffaireCharges.get(affaire.id) ?? []).filter((c) => (Number(c.heures) || 0) > 0).map((c) => c.activite_id));
       const totaux = totauxAffaire(
         parAffaireCharges.get(affaire.id) ?? [],
-        parAffaireRealise.get(cleAffaire(affaire.type, affaire.numero)) ?? []
+        (parAffaireRealise.get(cleAffaire(affaire.type, affaire.numero)) ?? []).filter(
+          (r) => !(r.activite_id && !actChiffrees.has(r.activite_id) && estActiviteMontant(nomsActivites.get(r.activite_id)?.nom))
+        )
       );
 
       const p = planifies.get(affaire.id) ?? { planifie: 0, fin: null, nb: 0 };
@@ -312,7 +319,11 @@ function PortefeuilleContenu() {
       const actives = membres.filter((m) => !inactive(m.affaire));
       const laBase = membres.find((m) => m.affaire.numero === base);
       const porteur = laBase && !inactive(laBase.affaire) ? laBase : actives[0] ?? laBase ?? membres[0];
-      const realiseFamille = totauxAffaire([], parAffaireRealise.get(cleAffaire("CBE", base)) ?? []).realise
+      const actFamille = new Set(membres.flatMap((m) => (parAffaireCharges.get(m.affaire.id) ?? []).filter((c) => (Number(c.heures) || 0) > 0).map((c) => c.activite_id)));
+      const realiseFamille = totauxAffaire(
+        [],
+        (parAffaireRealise.get(cleAffaire("CBE", base)) ?? []).filter((r) => !(r.activite_id && !actFamille.has(r.activite_id) && estActiviteMontant(nomsActivites.get(r.activite_id)?.nom)))
+      ).realise
         + membres.reduce((t, m) => t + (parAffaireCharges.get(m.affaire.id) ?? []).reduce((u, c) => u + (Number(c.realise_initial) || 0), 0), 0);
       const chiffreFamille = membres.filter((m) => m.affaire.statut !== "ABANDONNEE").reduce((t, m) => t + m.totaux.chiffre, 0);
       for (const m of membres) {

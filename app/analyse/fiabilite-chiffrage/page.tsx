@@ -167,7 +167,9 @@ function FiabiliteContenu() {
         continue;
       }
       if (totalCh <= 0) continue; // sans chiffré, rien à comparer
-      parAffaire.push({ base, designation: laBase.designation, fin: dateFin, chiffre: totalCh, realise: totalRe });
+      // MONTANT_HORS_COMPARAISON : scan / négoce pointés sans chiffré : hors comparaison
+      const totalReCompare = [...re.entries()].filter(([id]) => (ch.get(id) ?? 0) > 0 || !estNegoceImp(nomAct.get(id)?.nom)).reduce((t, [, x]) => t + x, 0);
+      parAffaire.push({ base, designation: laBase.designation, fin: dateFin, chiffre: totalCh, realise: totalReCompare });
 
       for (const id of new Set([...ch.keys(), ...re.keys()])) {
         const c = ch.get(id) ?? 0;
