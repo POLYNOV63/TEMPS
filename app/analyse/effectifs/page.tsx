@@ -75,6 +75,7 @@ function CartographieContenu() {
   const [membres, setMembres] = useState<Membre[]>([]);
   const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
   const [estAdmin, setEstAdmin] = useState(false);
+  const [voirNoms, setVoirNoms] = useState(false); // NOMS_PAR_NIVEAU : ADMIN seulement
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
 
@@ -176,8 +177,23 @@ function CartographieContenu() {
               <Tuile libelle="Effectif" valeur={String(vue.equipe.length)} sous="personnes actives, hors encadrement" />
               {/* BARRE_LISIBLE : la tuile des niveaux montre la barre */}
               {/* NIVEAUX_EN_LIGNE : la carte des niveaux, dans la ligne des vignettes */}
-              <div style={{ ...page.carte, padding: "12px 16px", flex: "2 1 380px", minWidth: 300 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Niveaux de l’équipe</div>
+              <div
+                {...(estAdmin
+                  ? {
+                      role: "button",
+                      tabIndex: 0,
+                      "aria-expanded": voirNoms,
+                      title: voirNoms ? "Masquer les personnes" : "Voir qui est à quel niveau",
+                      onClick: () => setVoirNoms((v) => !v),
+                      onKeyDown: (e: { key: string }) => (e.key === "Enter" || e.key === " ") && setVoirNoms((v) => !v),
+                    }
+                  : {})}
+                style={{ ...page.carte, padding: "12px 16px", flex: "2 1 380px", minWidth: 300, cursor: estAdmin ? "pointer" : "default", outline: voirNoms ? `2px solid ${C.rouge}` : undefined }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>
+                  Niveaux de l’équipe
+                  {estAdmin && <span style={{ textTransform: "none", fontWeight: 700, color: C.rougeFonce, marginLeft: 8 }}>{voirNoms ? "▾ masquer les noms" : "▸ voir les noms"}</span>}
+                </div>
                 <div style={{ marginTop: 8 }}>
                   <BarreNiveaux nb={vue.niveauxEquipe} largeur="100%" />
                 </div>
@@ -204,6 +220,50 @@ function CartographieContenu() {
                 accent={fragiles.length > 0}
               />
             </div>
+
+            {/* NOMS_PAR_NIVEAU : qui est à quel niveau (ADMIN seulement) */}
+            {estAdmin && voirNoms && (
+              <section style={{ ...page.carte, padding: 14, marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <strong>Qui est à quel niveau</strong>
+                  <span style={{ fontSize: 12, color: C.gris }}>visible de l’administration seulement · à modifier dans la fiche collaborateur</span>
+                  <span style={{ flex: 1 }} />
+                  <button type="button" onClick={() => setVoirNoms(false)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 20, cursor: "pointer" }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {[2, 1, 0, 3].map((k) => {
+                    const nv = NIVEAUX[k];
+                    const gens = vue.equipe.filter((m) => (niveaux.get(m.id) ?? 0) === nv.n).sort((a, b) => nomPersonne(a).localeCompare(nomPersonne(b), "fr"));
+                    if (nv.n === 0 && gens.length === 0) return null;
+                    return (
+                      <div key={nv.n} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                        <span style={{ minWidth: 150, fontSize: 13 }}>
+                          <i style={{ display: "inline-block", width: 12, height: 12, background: nv.couleur, borderRadius: 3, border: "1px solid #c9d1c9", marginRight: 6, verticalAlign: "middle" }} />
+                          <strong>{nv.n === 0 ? "Non renseigné" : `Niveau ${nv.n}`}</strong> ({gens.length})
+                        </span>
+                        <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {gens.length === 0 ? (
+                            <span style={{ color: C.gris, fontSize: 13 }}>personne</span>
+                          ) : (
+                            gens.map((m) => (
+                              <span
+                                key={m.id}
+                                title={`${m.prenom ?? ""} ${m.nom ?? ""}`.trim()}
+                                style={{ background: nv.couleur, color: nv.n === 3 ? "#ffffff" : "#13361a", borderRadius: 999, padding: "2px 10px", fontSize: 13, fontWeight: 800 }}
+                              >
+                                {nomPersonne(m)}
+                              </span>
+                            ))
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
             {(vue.sansPredo.length > 0 || vue.sansNiveau.length > 0) && (
               <Message genre="info">
