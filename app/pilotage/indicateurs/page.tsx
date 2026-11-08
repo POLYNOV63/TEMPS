@@ -54,6 +54,7 @@ type Consultation = {
   issue: Issue;
   principale: Discipline;
   parts: Record<Discipline, number>; // part de chaque activité (somme = 1)
+  source: "MONTANT" | "HEURES" | "IMPUTATION" | "AUCUNE"; // DETAIL_AUTRE : d'où vient l'activité
 };
 type Stat = { n: number; g: number; p: number; a: number; v: number; vg: number; vp: number };
 const vide = (): Stat => ({ n: 0, g: 0, p: 0, a: 0, v: 0, vg: 0, vp: 0 });
@@ -93,6 +94,7 @@ function IndicateursContenu() {
   const [erreur, setErreur] = useState("");
   const [tousClients, setTousClients] = useState(false);
   const [detailMontants, setDetailMontants] = useState<Map<string, Detail>>(new Map()); // ACTIVITES_NEGOCE
+  const [voirAutre, setVoirAutre] = useState(false); // DETAIL_AUTRE
 
   useEffect(() => {
     let actif = true;
@@ -193,10 +195,12 @@ function IndicateursContenu() {
           : sommeD(parHeures) > 0
             ? parHeures
             : { meca: 0, calcul: 0, elec: 0, scan: imp.startsWith("scan") ? 1 : 0, negoce: imp.startsWith("negoce") ? 1 : 0, autre: imp.startsWith("scan") || imp.startsWith("negoce") ? 0 : 1 };
+      const source: Consultation["source"] =
+        dm && sommeD(dm) > 0 ? "MONTANT" : sommeD(parHeures) > 0 ? "HEURES" : imp.startsWith("scan") || imp.startsWith("negoce") ? "IMPUTATION" : "AUCUNE";
       const tot = sommeD(base);
       const parts = Object.fromEntries(DISCIPLINES.map((d) => [d, base[d] / tot])) as Record<Discipline, number>;
       const principale: Discipline = DISCIPLINES.reduce((a, d) => (base[d] > base[a] ? d : a), DISCIPLINES[0]);
-      res.push({ numero, l, ouverture, issue: issueDevis(l), principale, parts });
+      res.push({ numero, l, ouverture, issue: issueDevis(l), principale, parts, source });
     }
     return res;
   }, [lignes, detailMontants]);
@@ -483,6 +487,67 @@ function IndicateursContenu() {
                   {ligne("Total", t, undefined, true)}
                 </tbody>
               </table>
+              {/* DETAIL_AUTRE : de quoi est fait « Autre / non ventilé » */}
+              {(() => {
+                const autres = vue.periode.filter((c) => c.principale === "autre").sort((a, b) => a.ouverture.localeCompare(b.ouverture));
+                if (autres.length === 0) return null;
+                const sansRien = autres.filter((c) => c.source === "AUCUNE");
+                const parStatut = new Map<string, number>();
+                for (const c of sansRien) parStatut.set(c.l.statut ?? "sans statut", (parStatut.get(c.l.statut ?? "sans statut") ?? 0) + 1);
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <button type="button" onClick={() => setVoirAutre((v) => !v)} style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce }}>
+                      {voirAutre ? "▾" : "▸"} De quoi sont faites les {autres.length} consultations « Autre / non ventilé » ?
+                    </button>
+                    {voirAutre && (
+                      <>
+                        <p style={{ margin: "6px 0", fontSize: 13, color: "#3b4046" }}>
+                          <strong>{sansRien.length}</strong> n’ont <strong>ni montant détaillé par activité, ni heures chiffrées</strong> dans le Suivi d’affaire (et
+                          une imputation qui ne dit pas l’activité) :{" "}
+                          {[...parStatut.entries()].sort((a, b) => b[1] - a[1]).map(([st, n]) => `${n} « ${st} »`).join(", ")}.{" "}
+                          {autres.length - sansRien.length > 0 && (
+                            <>
+                              Les <strong>{autres.length - sansRien.length}</strong> autres ont surtout de la colonne « Autre » du classeur.
+                            </>
+                          )}
+                        </p>
+                        <div style={{ maxHeight: 360, overflow: "auto", border: `1px solid ${C.ligne}`, borderRadius: 8 }}>
+                          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                            <thead>
+                              <tr>
+                                {["Devis", "Client", "Désignation", "Ouvert le", "Statut", "Imputation", montantsVisibles ? "Montant" : "", "Heures", "Pourquoi « Autre »"]
+                                  .filter(Boolean)
+                                  .map((h) => (
+                                    <th key={h} style={{ ...page.th, position: "sticky", top: 0, background: "#f4f5f7", textAlign: "left" }}>
+                                      {h}
+                                    </th>
+                                  ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {autres.map((c) => (
+                                <tr key={c.numero}>
+                                  <td style={{ ...page.td, fontWeight: 800, whiteSpace: "nowrap" }}>DBE{c.numero}</td>
+                                  <td style={page.td}>{c.l.client ?? "—"}</td>
+                                  <td style={page.td}>{c.l.designation ?? "—"}</td>
+                                  <td style={{ ...page.td, whiteSpace: "nowrap" }}>{formatDate(c.ouverture)}</td>
+                                  <td style={page.td}>{c.l.statut ?? "—"}</td>
+                                  <td style={page.td}>{c.l.imputation ?? "—"}</td>
+                                  {montantsVisibles && <td style={{ ...page.td, textAlign: "right", whiteSpace: "nowrap" }}>{c.l.montant ? keuros(c.l.montant) : "0"}</td>}
+                                  <td style={{ ...page.td, textAlign: "right" }}>{c.l.heures_total ? formatHeures(c.l.heures_total) : "0"}</td>
+                                  <td style={{ ...page.td, color: C.gris }}>
+                                    {c.source === "AUCUNE" ? "ni montant détaillé, ni heures chiffrées" : "chiffré surtout dans la colonne « Autre »"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </section>
 
             {/* ---------- clients ---------- */}
