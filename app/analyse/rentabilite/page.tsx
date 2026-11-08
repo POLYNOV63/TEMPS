@@ -61,7 +61,7 @@ type LigneRenta = {
   cout: number | null;
   auMontant: boolean;
 };
-type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null };
+type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null };
 type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string> };
 
 const tauxVendu = (l: LigneRenta) => (!l.auMontant && l.hc > 0 ? (l.ca - l.achats) / l.hc : null);
@@ -78,6 +78,7 @@ function RentabiliteContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
+  const [seulementNonVentile, setSeulementNonVentile] = useState(false); // RENTABILITE_V3
   /* RENTABILITE_V2 : prestations PE / PI facturées (par affaire, par mois) et heures pointées sur l'exercice */
   const [prestations, setPrestations] = useState<{ base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[]>([]);
   const [pointeExercice, setPointeExercice] = useState<Map<string, number>>(new Map());
@@ -271,6 +272,24 @@ function RentabiliteContenu() {
       const hc = GROUPES.reduce((t, g) => t + a.heuresChiffrees[g], 0);
       const c = coutHoraire(couts, a.date_fin);
       const montant = venteAuMontant(a.imputation);
+      /* RENTABILITE_V3 : montant non détaillé par activité dans le Suivi d'affaire : réparti au prorata des heures chiffrées
+         (à défaut, des heures passées), pour ne pas laisser le CA d'un côté et le coût des heures de l'autre */
+      const pg: ParGroupe = { ...a.parGroupe };
+      let nonVentile: Affaire["nonVentile"] = null;
+      if (!montant && pg["Non ventilé"] > 0.01) {
+        const poids = (src: ParGroupe) => GROUPES.filter((g) => g !== "Non ventilé" && g !== "Négoce").map((g) => [g, src[g]] as const);
+        let w = poids(a.heuresChiffrees);
+        nonVentile = "CHIFFRE";
+        if (w.reduce((t, [, x]) => t + x, 0) <= 0) {
+          w = poids(rg);
+          nonVentile = "PASSE";
+        }
+        const tot = w.reduce((t, [, x]) => t + x, 0);
+        if (tot > 0) {
+          for (const [g, x] of w) pg[g] += pg["Non ventilé"] * (x / tot);
+          pg["Non ventilé"] = 0;
+        } else nonVentile = "AUCUN";
+      }
       affaires.push({
         cle: base,
         libelle: `CBE ${base}`,
@@ -285,6 +304,7 @@ function RentabiliteContenu() {
         hr,
         cout: c === null ? null : a.achats + hr * c,
         auMontant: montant,
+        nonVentile,
       });
       if (montant) {
         // négoce / scan pur : l'affaire entière dans sa ligne, heures passées comprises
@@ -293,11 +313,11 @@ function RentabiliteContenu() {
       }
       for (const g of GROUPES) {
         if (g === "Négoce") continue;
-        if (a.parGroupe[g] === 0 && rg[g] === 0 && a.heuresChiffrees[g] === 0) continue;
-        ajouter(g, a.parGroupe[g], 0, a.heuresChiffrees[g], rg[g], c === null ? null : rg[g] * c, false);
+        if (pg[g] === 0 && rg[g] === 0 && a.heuresChiffrees[g] === 0) continue;
+        ajouter(g, pg[g], 0, a.heuresChiffrees[g], rg[g], c === null ? null : rg[g] * c, false);
       }
-      if (a.parGroupe["Négoce"] > 0 || a.achats > 0 || rg["Négoce"] > 0)
-        ajouter("Négoce", a.parGroupe["Négoce"], a.achats, 0, rg["Négoce"], c === null ? null : a.achats + rg["Négoce"] * c, true);
+      if (pg["Négoce"] > 0 || a.achats > 0 || rg["Négoce"] > 0)
+        ajouter("Négoce", pg["Négoce"], a.achats, 0, rg["Négoce"], c === null ? null : a.achats + rg["Négoce"] * c, true);
     }
 
     // RENTABILITE_V2 : PE / PI, mois facturés de l'exercice
@@ -512,21 +532,51 @@ function RentabiliteContenu() {
                       </tr>
                     </tbody>
                   </table>
+                  {/* RENTABILITE_V3 : les affaires dont le montant n'est pas détaillé par activité */}
+                  {vue.affaires.some((a) => a.nonVentile) && (
+                    <p style={{ margin: "10px 0 0", fontSize: 13, color: "#7a3e00", background: "#fff4e5", borderRadius: 8, padding: "8px 10px" }}>
+                      ⚠ <strong>{vue.affaires.filter((a) => a.nonVentile).length} affaire(s)</strong> n’ont pas leur montant détaillé par activité dans le Suivi
+                      d’affaire (colonnes Méca, Calcul, Elec…). Leur prix a été réparti au prorata des heures chiffrées, à défaut des heures passées
+                      {vue.affaires.some((a) => a.nonVentile === "AUCUN") ? " ; sans aucune heure, il reste en « Non ventilé »" : ""}.{" "}
+                      <button
+                        type="button"
+                        onClick={() => setSeulementNonVentile((v) => !v)}
+                        style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textDecoration: "underline" }}
+                      >
+                        {seulementNonVentile ? "revoir toutes les affaires" : "voir lesquelles"}
+                      </button>
+                      {" "}— à compléter dans le classeur pour un résultat exact.
+                    </p>
+                  )}
                 </section>
 
                 <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
-                  <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Forfaits livrés, affaire par affaire</h2>
+                  <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
+                    Forfaits livrés, affaire par affaire{seulementNonVentile ? " — montant non détaillé par activité" : ""}
+                  </h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>Les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.</p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Affaire", ["Client", "Livrée le"])}</thead>
                     <tbody>
-                      {vue.affaires.map((a) => (
+                      {vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile).map((a) => (
                         <tr key={a.base}>
                           <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
                             <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
                               CBE {a.base}
                             </Link>{" "}
                             {a.auMontant && <span style={{ fontSize: 11, fontWeight: 700, color: "#b35c00" }}>{a.imputation}</span>}
+                            {a.nonVentile && (
+                              <span
+                                title={
+                                  a.nonVentile === "AUCUN"
+                                    ? "Montant non détaillé par activité dans le Suivi d’affaire, et aucune heure : il reste en « Non ventilé »"
+                                    : `Montant non détaillé par activité dans le Suivi d’affaire : réparti au prorata des heures ${a.nonVentile === "CHIFFRE" ? "chiffrées" : "passées"}`
+                                }
+                                style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", background: "#fff4e5", borderRadius: 999, padding: "0 6px" }}
+                              >
+                                ⚠ non ventilé
+                              </span>
+                            )}
                             <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
                           </td>
                           <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
@@ -586,6 +636,10 @@ function RentabiliteContenu() {
                 </li>
                 <li>
                   <strong>Coût</strong> = achats + heures passées × coût horaire de structure de l’exercice de livraison. <strong>Marge</strong> = prix − coût.
+                </li>
+                <li>
+                  <strong>Non ventilé</strong> : une affaire dont le montant n’est pas détaillé par activité dans le Suivi d’affaire voit son prix réparti au
+                  prorata de ses heures chiffrées (à défaut, passées). Ne reste en « Non ventilé » que le prix d’une affaire sans aucune heure.
                 </li>
                 <li>
                   <strong>Négoce et scan</strong> (imputation NEGOCE / SCAN) : vendus au montant, sans taux vendu ; leurs heures passées comptent dans leur coût.
