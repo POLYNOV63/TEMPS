@@ -34,7 +34,10 @@ import {
    marge = prix − coût.
    Négoce et scan (imputation NEGOCE / SCAN) sont vendus au montant : pas
    de taux vendu, ils comptent entiers dans leur ligne « Négoce » / « Scan ».
-   PE / PI (au temps passé) : pas encore dans cette page.
+   RENTABILITE_V2 - PE / PI (au temps passé) : sur l'exercice, mois facturés
+   (relevé validé, et historique importé pour les mois d'avant le relevé) ;
+   taux vendu = CA ÷ heures facturées, taux obtenu = CA ÷ heures pointées sur
+   l'exercice, coût = heures pointées × coût horaire.
 ================================================================ */
 
 const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -59,6 +62,7 @@ type LigneRenta = {
   auMontant: boolean;
 };
 type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null };
+type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string> };
 
 const tauxVendu = (l: LigneRenta) => (!l.auMontant && l.hc > 0 ? (l.ca - l.achats) / l.hc : null);
 const tauxObtenu = (l: LigneRenta) => (l.hr > 0 ? (l.ca - l.achats) / l.hr : null);
@@ -74,6 +78,9 @@ function RentabiliteContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
+  /* RENTABILITE_V2 : prestations PE / PI facturées (par affaire, par mois) et heures pointées sur l'exercice */
+  const [prestations, setPrestations] = useState<{ base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[]>([]);
+  const [pointeExercice, setPointeExercice] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     let actif = true;
@@ -162,6 +169,41 @@ function RentabiliteContenu() {
       setRealiseParBase(rb);
       setCouts(new Map(((co.data ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => [c.annee, Number(c.cout_horaire)])));
       setEstAdmin(Boolean(moi?.estAdmin));
+
+      // RENTABILITE_V2 : mois facturés des PE / PI (relevé validé) et historique importé
+      const [pl, pm, af, hi] = await Promise.all([
+        supabase.from("prestation_lignes").select("id,affaire_id"),
+        chargerTout<{ ligne_id: string; mois: string; montant_fige: number | string | null; heures_fige: number | string | null }>((a, b) =>
+          supabase.from("prestation_mois").select("ligne_id,mois,montant_fige,heures_fige").eq("valide", true).order("ligne_id").range(a, b)
+        ),
+        supabase.from("pilotage_affaires").select("id,numero,imputation,designation").eq("type", "CBE"),
+        chargerTout<{ mois: string; type: string; numero: string; heures: number | string; montant: number | string }>((a, b) =>
+          supabase.from("prestation_historique").select("mois,type,numero,heures,montant").order("id").range(a, b)
+        ).catch(() => []),
+      ]);
+      if (!actif) return;
+      const affaires = new Map(((af.data ?? []) as { id: string; numero: string; imputation: string | null; designation: string | null }[]).map((a) => [a.id, a]));
+      const ligneAffaire = new Map(((pl.data ?? []) as { id: string; affaire_id: string }[]).map((l) => [l.id, l.affaire_id]));
+      const prest: { base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number }[] = [];
+      const moisReleve = new Set<string>();
+      for (const m of pm) {
+        const a = affaires.get(ligneAffaire.get(m.ligne_id) ?? "");
+        if (!a || (a.imputation !== "PE" && a.imputation !== "PI")) continue;
+        const mois = String(m.mois).slice(0, 7);
+        moisReleve.add(mois);
+        prest.push({ base: (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""), imputation: a.imputation, designation: a.designation, mois, ca: n(m.montant_fige), hFact: n(m.heures_fige) });
+      }
+      // l'historique ne sert que pour les mois sans relevé validé (pas de double compte)
+      const designations = new Map([...affaires.values()].map((a) => [(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""), a.designation]));
+      for (const h of hi) {
+        const mois = String(h.mois).slice(0, 7);
+        const type = String(h.type ?? "").toUpperCase();
+        if (moisReleve.has(mois) || (type !== "PE" && type !== "PI")) continue;
+        const base = (String(h.numero ?? "").match(/\d+/)?.[0] ?? "").replace(/^0+/, "");
+        if (!base) continue;
+        prest.push({ base, imputation: type, designation: designations.get(base) ?? null, mois, ca: n(h.montant), hFact: n(h.heures) });
+      }
+      setPrestations(prest);
     })()
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Impossible de charger la rentabilité."))
       .finally(() => actif && setChargement(false));
@@ -169,6 +211,27 @@ function RentabiliteContenu() {
       actif = false;
     };
   }, []);
+
+  useEffect(() => {
+    let actif = true;
+    void (async () => {
+      const m = new Map<string, number>();
+      for (let a = 0; a < 300000; a += 1000) {
+        const r = await supabase.rpc("pointage_periode", { p_debut: `${exercice}-11-01`, p_fin: `${exercice + 1}-10-31` }).range(a, a + 999);
+        if (r.error || !r.data) break;
+        for (const x of r.data as { type_affaire: string; numero: string; heures: number | string }[]) {
+          if (x.type_affaire !== "CBE") continue;
+          const k = String(x.numero ?? "").replace(/^0+/, "");
+          m.set(k, (m.get(k) ?? 0) + (Number(x.heures) || 0));
+        }
+        if ((r.data as unknown[]).length < 1000) break;
+      }
+      if (actif) setPointeExercice(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [exercice]);
 
   const coutExercice = coutHoraire(couts, `${exercice}-11-01`);
   const coutPropre = couts.has(exercice);
@@ -237,16 +300,41 @@ function RentabiliteContenu() {
         ajouter("Négoce", a.parGroupe["Négoce"], a.achats, 0, rg["Négoce"], c === null ? null : a.achats + rg["Négoce"] * c, true);
     }
 
-    const ordre = [...GROUPES, "Scan"];
+    // RENTABILITE_V2 : PE / PI, mois facturés de l'exercice
+    const moisEx = new Set(Array.from({ length: 12 }, (_, k) => new Date(Date.UTC(exercice, 10 + k, 1)).toISOString().slice(0, 7)));
+    const parPrest = new Map<string, Prestation>();
+    for (const p of prestations) {
+      if (!moisEx.has(p.mois)) continue;
+      const x = parPrest.get(p.base) ?? { base: p.base, imputation: p.imputation, designation: p.designation, ca: 0, hFact: 0, mois: new Set<string>() };
+      x.ca += p.ca;
+      x.hFact += p.hFact;
+      x.mois.add(p.mois);
+      parPrest.set(p.base, x);
+    }
+    const cEx = coutHoraire(couts, debut);
+    const prestationsEx: (LigneRenta & { base: string; designation: string | null; imputation: string; nbMois: number })[] = [...parPrest.values()].map((p) => {
+      const hr = pointeExercice.get(p.base) ?? 0;
+      return { cle: p.base, libelle: `CBE ${p.base}`, base: p.base, designation: p.designation, imputation: p.imputation, nbMois: p.mois.size, ca: p.ca, achats: 0, hc: p.hFact, hr, cout: cEx === null ? null : hr * cEx, auMontant: false };
+    });
+    for (const p of prestationsEx) ajouter(p.imputation, p.ca, 0, p.hc, p.hr, p.cout, false);
+    prestationsEx.sort((x, y) => {
+      const mx = marge(x);
+      const my = marge(y);
+      if (mx === null || my === null) return 0;
+      return mx / (x.ca || 1) - my / (y.ca || 1);
+    });
+
+    const ordre = [...GROUPES, "Scan", "PE", "PI"];
     const groupes = [...parGroupe.values()].sort((x, y) => ordre.indexOf(x.cle) - ordre.indexOf(y.cle));
+    const tout: LigneRenta[] = [...affaires, ...prestationsEx];
     const total: LigneRenta = {
       cle: "Total",
       libelle: "Total",
-      ca: affaires.reduce((t, a) => t + a.ca, 0),
-      achats: affaires.reduce((t, a) => t + a.achats, 0),
-      hc: affaires.filter((a) => !a.auMontant).reduce((t, a) => t + a.hc, 0),
-      hr: affaires.reduce((t, a) => t + a.hr, 0),
-      cout: affaires.some((a) => a.cout === null) ? null : affaires.reduce((t, a) => t + (a.cout ?? 0), 0),
+      ca: tout.reduce((t, a) => t + a.ca, 0),
+      achats: tout.reduce((t, a) => t + a.achats, 0),
+      hc: tout.filter((a) => !a.auMontant).reduce((t, a) => t + a.hc, 0),
+      hr: tout.reduce((t, a) => t + a.hr, 0),
+      cout: tout.some((a) => a.cout === null) ? null : tout.reduce((t, a) => t + (a.cout ?? 0), 0),
       auMontant: false,
     };
     affaires.sort((x, y) => {
@@ -255,8 +343,8 @@ function RentabiliteContenu() {
       if (mx === null || my === null) return 0;
       return mx / (x.ca || 1) - my / (y.ca || 1);
     });
-    return { affaires, groupes, total };
-  }, [lignesFin, realiseParBase, couts, exercice]);
+    return { affaires, groupes, total, prestationsEx };
+  }, [lignesFin, realiseParBase, couts, exercice, prestations, pointeExercice]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 6px", textAlign: "center" };
   const td: CSSProperties = { ...page.td, padding: "7px 6px", fontSize: 13, textAlign: "right", whiteSpace: "nowrap" };
@@ -373,9 +461,9 @@ function RentabiliteContenu() {
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
               <Tuile
-                libelle="Affaires livrées"
-                valeur={String(vue.affaires.length)}
-                sous={`dont ${vue.affaires.filter((a) => a.auMontant).length} de négoce ou de scan · ${euros(t.ca)}`}
+                libelle="Affaires analysées"
+                valeur={String(vue.affaires.length + vue.prestationsEx.length)}
+                sous={`${vue.affaires.length} forfaits livrés (dont ${vue.affaires.filter((a) => a.auMontant).length} négoce / scan) · ${vue.prestationsEx.length} PE / PI · ${euros(t.ca)}`}
               />
               <Tuile
                 libelle="Taux horaire obtenu"
@@ -397,8 +485,8 @@ function RentabiliteContenu() {
               />
             </div>
 
-            {vue.affaires.length === 0 ? (
-              <Message genre="info">Aucune affaire au forfait entièrement livrée sur cet exercice.</Message>
+            {vue.affaires.length === 0 && vue.prestationsEx.length === 0 ? (
+              <Message genre="info">Aucune affaire au forfait livrée ni aucun mois de PE / PI facturé sur cet exercice.</Message>
             ) : (
               <>
                 <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
@@ -427,7 +515,7 @@ function RentabiliteContenu() {
                 </section>
 
                 <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
-                  <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Affaire par affaire</h2>
+                  <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Forfaits livrés, affaire par affaire</h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>Les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.</p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Affaire", ["Client", "Livrée le"])}</thead>
@@ -449,6 +537,35 @@ function RentabiliteContenu() {
                     </tbody>
                   </table>
                 </section>
+
+                {/* RENTABILITE_V2 : prestations au temps passé */}
+                {vue.prestationsEx.length > 0 && (
+                  <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
+                    <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>PE / PI, sur l’exercice</h2>
+                    <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
+                      Mois facturés de l’exercice (relevé validé, historique avant le relevé). « H. chiffrées » = heures facturées ; taux vendu = CA ÷ heures
+                      facturées (le taux du contrat) ; taux obtenu = CA ÷ heures pointées sur l’exercice. Un taux obtenu plus bas : des heures passées non facturées.
+                    </p>
+                    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                      <thead>{enTetes("Affaire", ["Type", "Mois facturés"])}</thead>
+                      <tbody>
+                        {vue.prestationsEx.map((a) => (
+                          <tr key={a.base}>
+                            <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
+                              <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                CBE {a.base}
+                              </Link>
+                              <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
+                            </td>
+                            <td style={{ ...tdG, fontWeight: 800 }}>{a.imputation}</td>
+                            <td style={{ ...td, textAlign: "center" }}>{a.nbMois}</td>
+                            {ligneTableau(a)}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                )}
               </>
             )}
 
@@ -457,7 +574,7 @@ function RentabiliteContenu() {
               <ul style={{ lineHeight: 1.6 }}>
                 <li>
                   <strong>Affaires analysées</strong> : les forfaits dont toutes les commandes (base et avenants) sont livrées, à la date de la dernière
-                  livraison, dans l’exercice. PE / PI non comprises (vendues au temps passé).
+                  livraison, dans l’exercice. <strong>PE / PI</strong> : les mois facturés de l’exercice, avec les heures pointées sur l’exercice.
                 </li>
                 <li>
                   <strong>Prix</strong> : montant des commandes et avenants retenus (Suivi d’affaire BE). <strong>Achats</strong> : achats des commandes et de
