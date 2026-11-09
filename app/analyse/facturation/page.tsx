@@ -539,6 +539,35 @@ function FacturationContenu() {
   const [tri, setTri] = useState<{ cle: keyof LigneFacturation; sens: 1 | -1 }>({ cle: "client", sens: 1 });
   // RECHERCHE_FACTURATION : client, n° CBE / DBE / ARC Louxor, désignation, personne, statut
   const [recherche, setRecherche] = useState("");
+  /* FACTURATION_LIENS : menu d'une affaire (bilan, planning, relevé) et identifiants du planning */
+  const [menuAffaire, setMenuAffaire] = useState<string | null>(null);
+  const [idsPlanning, setIdsPlanning] = useState<Map<string, string>>(new Map());
+  const numNorm = (s: string) => s.toUpperCase().replace(/^CBE/, "").replace(/^0+/, "");
+  const numBase = (s: string) => numNorm(s).match(/^\d+/)?.[0] ?? numNorm(s);
+  useEffect(() => {
+    let actif = true;
+    supabase
+      .from("pilotage_affaires")
+      .select("id,numero")
+      .eq("type", "CBE")
+      .then(({ data }) => {
+        if (actif) setIdsPlanning(new Map(((data ?? []) as { id: string; numero: string }[]).map((a) => [numNorm(a.numero), a.id])));
+      });
+    return () => {
+      actif = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!menuAffaire) return;
+    const fermer = () => setMenuAffaire(null);
+    const touche = (e: KeyboardEvent) => e.key === "Escape" && setMenuAffaire(null);
+    document.addEventListener("click", fermer);
+    document.addEventListener("keydown", touche);
+    return () => {
+      document.removeEventListener("click", fermer);
+      document.removeEventListener("keydown", touche);
+    };
+  }, [menuAffaire]);
   const lignesTriees = useMemo(
     () =>
       [...lignes]
@@ -906,7 +935,54 @@ function FacturationContenu() {
                                 : undefined
                         }>
                         <td style={{ ...td, fontWeight: 700 }}>{l.client || "—"}</td>
-                        <td style={{ ...td, fontWeight: 800, color: C.rougeFonce, whiteSpace: "nowrap" }}>{l.numero}</td>
+                        <td style={{ ...td, fontWeight: 800, whiteSpace: "nowrap", position: "relative" }}>
+                          {(() => {
+                            const cleMenu = `${l.type}-${l.numero}-${l.personne}-${i}`;
+                            const ouvert = menuAffaire === cleMenu;
+                            const idPlanning = idsPlanning.get(numNorm(l.numero)) ?? idsPlanning.get(numBase(l.numero));
+                            const lien: CSSProperties = { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", color: "#1f2328", textDecoration: "none", fontWeight: 700, fontStyle: "normal", whiteSpace: "nowrap" };
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  aria-haspopup="menu"
+                                  aria-expanded={ouvert}
+                                  title="Bilan, planning ou relevé de cette affaire"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setMenuAffaire(ouvert ? null : cleMenu);
+                                  }}
+                                  style={{ all: "unset", cursor: "pointer", color: C.rougeFonce, fontWeight: 800, textDecoration: "underline dotted", textUnderlineOffset: 3 }}
+                                >
+                                  {l.numero} <span style={{ fontSize: 10 }}>▾</span>
+                                </button>
+                                {ouvert && (
+                                  <div
+                                    role="menu"
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ position: "absolute", top: "100%", left: 4, zIndex: 50, background: "#ffffff", border: `1px solid ${C.ligne}`, borderRadius: 10, boxShadow: "0 10px 24px rgba(0,0,0,.16)", padding: 4, minWidth: 220 }}
+                                  >
+                                    <Link role="menuitem" href={`/affaires/bilan?affaire=CBE${numBase(l.numero)}&commande=${encodeURIComponent(numNorm(l.numero))}`} style={lien}>
+                                      📊 Bilan de l’affaire
+                                    </Link>
+                                    {idPlanning ? (
+                                      <Link role="menuitem" href={`/pilotage/affaires?ouvrir=${idPlanning}`} style={lien}>
+                                        📅 Voir au planning
+                                      </Link>
+                                    ) : (
+                                      <span style={{ ...lien, color: C.gris, fontWeight: 400 }}>📅 Pas au planning</span>
+                                    )}
+                                    {l.type === "PE / PI" && estAdmin && (
+                                      <Link role="menuitem" href={`/pilotage/prestations?mois=${mois}`} style={lien}>
+                                        🧾 Relevé PE / PI du mois
+                                      </Link>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
                         <td style={{ ...td, whiteSpace: "nowrap" }}>{l.dbe || "—"}</td>
                         <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>
                           {celluleLouxor(l.arc || null, l.statut)}
