@@ -973,7 +973,7 @@ function FacturationContenu() {
                                       <span style={{ ...lien, color: C.gris, fontWeight: 400 }}>📅 Pas au planning</span>
                                     )}
                                     {l.type === "PE / PI" && estAdmin && (
-                                      <Link role="menuitem" href={`/pilotage/prestations?mois=${mois}`} style={lien}>
+                                      <Link role="menuitem" href={/* RELEVE_FILTRE_AFFAIRE */ `/pilotage/prestations?mois=${mois}&affaire=${encodeURIComponent(numNorm(l.numero))}`} style={lien}>
                                         🧾 Relevé PE / PI du mois
                                       </Link>
                                     )}

@@ -184,6 +184,11 @@ function PrestationsContenu() {
   const [ajout, setAjout] = useState<{ affaire_id: string; collaborateur_id: string } | null>(null);
   // recherche : client, affaire (désignation), n° (CBE, avenant, DBE), trigramme ou nom
   const [recherche, setRecherche] = useState("");
+  /* RELEVE_FILTRE_AFFAIRE : ouvert depuis une autre page (?affaire=1604R2) : le relevé est filtré sur cette commande */
+  useEffect(() => {
+    const cible = new URLSearchParams(window.location.search).get("affaire");
+    if (cible) setRecherche(cible.replace(/^CBE/i, ""));
+  }, []);
   const [editeurReport, setEditeurReport] = useState<null | { ligne: Ligne; heures: string; jour: string; separee: boolean }>(null);
   const [enCours, setEnCours] = useState("");
   /* DECALER_JOUR : heures retirées d'une ligne (jour vidé, remplacé par CP…), qu'on propose de décaler à la fin */
