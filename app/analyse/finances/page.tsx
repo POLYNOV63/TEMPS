@@ -84,6 +84,7 @@ function FinancesContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [onglet, setOnglet] = useState<"CA" | "ACTIVITES">("CA"); // FINANCES_ONGLETS
+  const [moisVu, setMoisVu] = useState<number | null>(null); // FINANCES_MOIS_NAV : rang du mois regardé (null = mois en cours)
 
   const [lignesFin, setLignesFin] = useState<LigneFin[]>([]);
   const [releve, setReleve] = useState<Releve[]>([]);
@@ -1293,60 +1294,112 @@ function FinancesContenu() {
   // à rapprocher : fait dans l'exercice, facturé après sa fin (ou date de facture pas encore connue)
   const aRapprocher = reportsPEPI.filter((r) => r.m >= mois[0] && r.m <= mois[11] && !(r.facture && r.factureValide)).reduce((t, r) => t + r.montant, 0);
 
-  /* FINANCES_TRAME : vignettes et barre du mois en cours, affichées dans la trame CA */
+  /* FINANCES_MOIS_NAV : vignettes et barre du mois regardé (flèches), comparé au même mois N-1 et N-2 */
   const blocMois = (() => {
-    const k = mois.indexOf(moisCourant);
-    const i = k >= 0 ? k : mois[11] < moisCourant ? 11 : 0;
-    const duMois = mouvements.filter((x) => x.date.startsWith(mois[i]));
+    const auto = Math.max(0, mois.findIndex((m) => m.slice(5, 7) === moisCourant.slice(5, 7)));
+    const i = moisVu ?? auto;
+    const anMoins = (m: string, n: number) => `${Number(m.slice(0, 4)) - n}${m.slice(4)}`;
+    const stats = (m: string) => {
+      const du = mouvements.filter((x) => x.date.startsWith(m));
+      return {
+        m,
+        fait: du.reduce((s, x) => s + x.montant, 0),
+        achats: du.reduce((s, x) => s + x.achats, 0),
+        parAct: GROUPES.map((g) => ({ g, v: du.reduce((s, x) => s + x.parGroupe[g], 0) })).filter((x) => x.v > 0.5),
+      };
+    };
+    const cur = stats(mois[i]);
+    const n1 = stats(anMoins(mois[i], 1));
+    const n2 = stats(anMoins(mois[i], 2));
     const attMois = attendus.mouvements.filter((x) => x.date.startsWith(mois[i]));
-    const fait = duMois.reduce((s, x) => s + x.montant, 0);
-    const achatsFait = duMois.reduce((s, x) => s + x.achats, 0);
     const attenduM = attMois.reduce((s, x) => s + x.montant, 0);
     const achatsAtt = attMois.reduce((s, x) => s + x.achats, 0);
     const objectif = vue.prevu[i];
-    const parAct = GROUPES.map((g) => ({ g, v: duMois.reduce((s, x) => s + x.parGroupe[g], 0) })).filter((x) => x.v > 0.5);
-    const echelle = Math.max(objectif, fait + Math.max(0, attenduM), 1);
+    const echelle = Math.max(objectif, cur.fait + Math.max(0, attenduM), n1.fait, n2.fait, 1);
     const ROUGES: Record<string, string> = { "Méca": "#8e0000", Calcul: "#b3261e", "Elec / Pneu": "#d9534f", Scan: "#e57f7a", "Négoce": "#efa29d", Autre: "#f4c3bf", "Non ventilé": "#f6d6d3" };
-    const nomDuMois = new Date(`${mois[i]}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    const nomLong = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+    const nomCourt = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+    const aller = (sens: 1 | -1) => {
+      const k = i + sens;
+      if (k < 0) {
+        setExercice((e) => e - 1);
+        setMoisVu(11);
+      } else if (k > 11) {
+        setExercice((e) => e + 1);
+        setMoisVu(0);
+      } else setMoisVu(k);
+    };
     const etiquette: CSSProperties = { fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris };
     const vignette: CSSProperties = { ...page.carte, padding: "12px 16px", minWidth: 0 };
+    const fleche: CSSProperties = { border: `1.5px solid ${C.ligne}`, background: "#ffffff", borderRadius: 6, minWidth: 28, height: 26, cursor: "pointer", color: C.rougeFonce, fontWeight: 800, fontFamily: "inherit" };
     const pastille = (fond: string) => <i style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: fond, marginRight: 5, verticalAlign: "middle" }} />;
+    const barreDe = (s: ReturnType<typeof stats>, hauteur: number, principale: boolean) => (
+      <div style={{ position: "relative", height: hauteur, background: "#f3f4f6", borderRadius: 6, overflow: "hidden", display: "flex", opacity: principale ? 1 : 0.55 }}>
+        {s.parAct.map(({ g, v }) => (
+          <div key={g} title={`${g} : ${euros(v)}`} style={{ width: `${(v / echelle) * 100}%`, background: ROUGES[g] ?? "#d9534f", borderRight: "1px solid #ffffff" }} />
+        ))}
+        {principale && attenduM > 0.5 && (
+          <div title={`Encore attendu : ${euros(attenduM)}`} style={{ width: `${(attenduM / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 5px,#fbe6e6 5px,#fbe6e6 10px)" }} />
+        )}
+        {principale && objectif > 0 && (
+          <div title={`Objectif : ${euros(objectif)}`} style={{ position: "absolute", left: `calc(${(objectif / echelle) * 100}% - 1.5px)`, top: 0, bottom: 0, width: 3, background: "#1f2328" }} />
+        )}
+      </div>
+    );
     const vignettes = (
       <>
-        <div style={{ ...vignette, flex: "2 1 340px", borderTop: `4px solid ${C.rouge}` }}>
-          <div style={etiquette}>
-            CA facturé · <span style={{ textTransform: "capitalize" }}>{nomDuMois}</span>
+        <div style={{ ...vignette, flex: "2 1 360px", borderTop: `4px solid ${C.rouge}` }}>
+          <div style={{ ...etiquette, display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" style={fleche} onClick={() => aller(-1)} aria-label="Mois précédent" title="Mois précédent">
+              ◀
+            </button>
+            <span>
+              CA facturé · <span style={{ textTransform: "capitalize" }}>{nomLong(cur.m)}</span>
+            </span>
+            <button type="button" style={fleche} onClick={() => aller(1)} aria-label="Mois suivant" title="Mois suivant">
+              ▶
+            </button>
+            {((moisVu !== null && i !== auto) || exercice !== exerciceCourant()) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMoisVu(null);
+                  setExercice(exerciceCourant());
+                }} style={{ all: "unset", cursor: "pointer", fontSize: 12, textTransform: "none", color: "#1f4e99", textDecoration: "underline" }}>
+                mois en cours
+              </button>
+            )}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 26px", marginTop: 6 }}>
             <span>
-              <strong style={{ fontSize: 24, color: "#b3261e" }}>{euros(fait)}</strong> <span style={{ fontSize: 12, color: C.gris }}>avec achats</span>
+              <strong style={{ fontSize: 24, color: "#b3261e" }}>{euros(cur.fait)}</strong> <span style={{ fontSize: 12, color: C.gris }}>avec achats</span>
             </span>
             <span title="CA facturé moins les achats revendus (négoce, sous-traitance)">
-              <strong style={{ fontSize: 24, color: "#5d6b78" }}>{euros(fait - achatsFait)}</strong> <span style={{ fontSize: 12, color: C.gris }}>hors achats</span>
+              <strong style={{ fontSize: 24, color: "#5d6b78" }}>{euros(cur.fait - cur.achats)}</strong> <span style={{ fontSize: 12, color: C.gris }}>hors achats</span>
             </span>
           </div>
         </div>
         <div style={{ ...vignette, flex: "1 1 190px" }}>
-          <div style={etiquette}>Encore attendu ce mois</div>
+          <div style={etiquette}>Encore attendu</div>
           <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>{euros(attenduM)}</div>
           {achatsAtt > 0.5 && <div style={{ fontSize: 12, color: C.gris }}>{euros(attenduM - achatsAtt)} hors achats</div>}
         </div>
       </>
     );
+    const ligneBarre = (s: ReturnType<typeof stats>, libelle: string, principale: boolean) => (
+      <div style={{ display: "grid", gridTemplateColumns: "92px minmax(0, 1fr) 96px", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: principale ? 13 : 12, fontWeight: principale ? 800 : 600, color: principale ? C.rougeFonce : C.gris, textTransform: "capitalize" }}>{libelle}</span>
+        {barreDe(s, principale ? 28 : 12, principale)}
+        <span style={{ textAlign: "right", fontSize: principale ? 14 : 12, fontWeight: principale ? 800 : 600, color: principale ? "#1f2328" : C.gris }}>{keuros(s.fait)}</span>
+      </div>
+    );
     const barre = (
-      <div style={{ margin: "0 0 14px" }}>
-        <div style={{ position: "relative", height: 28, background: "#f3f4f6", borderRadius: 8, overflow: "hidden", display: "flex" }}>
-          {parAct.map(({ g, v }) => (
-            <div key={g} title={`${g} : ${euros(v)}`} style={{ width: `${(v / echelle) * 100}%`, background: ROUGES[g] ?? "#d9534f", borderRight: "1px solid #ffffff" }} />
-          ))}
-          {attenduM > 0.5 && (
-            <div title={`Encore attendu : ${euros(attenduM)}`} style={{ width: `${(attenduM / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 5px,#fbe6e6 5px,#fbe6e6 10px)" }} />
-          )}
-          {objectif > 0 && <div title={`Objectif : ${euros(objectif)}`} style={{ position: "absolute", left: `calc(${(objectif / echelle) * 100}% - 1.5px)`, top: 0, bottom: 0, width: 3, background: "#1f2328" }} />}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, marginTop: 8, color: "#3b4046" }}>
-          <strong style={{ textTransform: "capitalize" }}>{nomDuMois} :</strong>
-          {parAct.map(({ g, v }) => (
+      <div style={{ margin: "0 0 14px", display: "grid", gap: 6 }}>
+        {ligneBarre(cur, nomCourt(cur.m), true)}
+        {ligneBarre(n1, `N-1 · ${nomCourt(n1.m)}`, false)}
+        {ligneBarre(n2, `N-2 · ${nomCourt(n2.m)}`, false)}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, marginTop: 4, color: "#3b4046" }}>
+          {cur.parAct.map(({ g, v }) => (
             <span key={g}>
               {pastille(ROUGES[g] ?? "#d9534f")}
               {g} <strong>{keuros(v)}</strong>
