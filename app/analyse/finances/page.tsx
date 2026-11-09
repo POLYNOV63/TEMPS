@@ -1425,48 +1425,6 @@ function FinancesContenu() {
 
             {onglet === "CA" && (
               <>
-            {/* FINANCES_MOIS : le mois en cours, sans comparaison à N-1 */}
-            {(() => {
-              const k = mois.indexOf(moisCourant);
-              const i = k >= 0 ? k : mois[11] < moisCourant ? 11 : 0;
-              const prevuM = vue.prevu[i];
-              const fait = vue.realise[i];
-              const attenduM = vue.attendu[i];
-              const echelle = Math.max(prevuM, fait + attenduM, 1);
-              const nomMois = new Date(`${mois[i]}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
-              return (
-                <section style={{ ...page.carte, padding: "12px 16px", marginBottom: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 20px" }}>
-                  <strong style={{ fontSize: 17, textTransform: "capitalize" }}>{nomMois}</strong>
-                  <span>
-                    déjà facturé <strong>{euros(fait)}</strong>
-                  </span>
-                  <span>
-                    encore attendu <strong>{euros(attenduM)}</strong>
-                  </span>
-                  <span>
-                    prévu <strong>{prevuM > 0 ? euros(prevuM) : "—"}</strong>
-                  </span>
-                  <div
-                    title={`Facturé ${euros(fait)} · attendu ${euros(attenduM)}${prevuM > 0 ? ` · prévu ${euros(prevuM)}` : ""}`}
-                    style={{ flex: "1 1 260px", position: "relative", height: 14, background: "#eef0f3", borderRadius: 7, overflow: "hidden" }}
-                  >
-                    <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(fait / echelle) * 100}%`, background: "#34506b" }} />
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: `${(fait / echelle) * 100}%`,
-                        top: 0,
-                        bottom: 0,
-                        width: `${(attenduM / echelle) * 100}%`,
-                        background: "repeating-linear-gradient(45deg,#9fb6cf,#9fb6cf 4px,#dbe5f0 4px,#dbe5f0 8px)",
-                      }}
-                    />
-                    {prevuM > 0 && <div style={{ position: "absolute", left: `calc(${(prevuM / echelle) * 100}% - 1px)`, top: 0, bottom: 0, width: 2, background: "#1f2328" }} />}
-                  </div>
-                </section>
-              );
-            })()}
-
             {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
               <Message genre="info">
                 {attendus.enRetard.length > 0 && (
@@ -1484,6 +1442,86 @@ function FinancesContenu() {
               </Message>
             )}
 
+
+            {/* FINANCES_MOIS_V2 : le mois en cours, juste au-dessus du tableau */}
+            {(() => {
+              const k = mois.indexOf(moisCourant);
+              const i = k >= 0 ? k : mois[11] < moisCourant ? 11 : 0;
+              const duMois = mouvements.filter((x) => x.date.startsWith(mois[i]));
+              const attMois = attendus.mouvements.filter((x) => x.date.startsWith(mois[i]));
+              const fait = duMois.reduce((s, x) => s + x.montant, 0);
+              const achatsFait = duMois.reduce((s, x) => s + x.achats, 0);
+              const attenduM = attMois.reduce((s, x) => s + x.montant, 0);
+              const achatsAtt = attMois.reduce((s, x) => s + x.achats, 0);
+              const prevuM = vue.prevu[i];
+              const parAct = GROUPES.map((g) => ({ g, v: duMois.reduce((s, x) => s + x.parGroupe[g], 0) })).filter((x) => x.v > 0.5);
+              const echelle = Math.max(prevuM, fait + Math.max(0, attenduM), 1);
+              const ROUGES: Record<string, string> = {
+                "Méca": "#8e0000",
+                Calcul: "#b3261e",
+                "Elec / Pneu": "#d9534f",
+                Scan: "#e57f7a",
+                "Négoce": "#efa29d",
+                Autre: "#f4c3bf",
+                "Non ventilé": "#f6d6d3",
+              };
+              const nomMois = new Date(`${mois[i]}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+              const pastille = (fond: string) => <i style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: fond, marginRight: 5, verticalAlign: "middle" }} />;
+              return (
+                <section style={{ ...page.carte, padding: "14px 18px", marginBottom: 12, borderLeft: `5px solid ${C.rouge}` }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px 26px", marginBottom: 10 }}>
+                    <strong style={{ fontSize: 19, textTransform: "capitalize", color: C.rougeFonce }}>{nomMois}</strong>
+                    <span style={{ fontSize: 15 }}>
+                      CA facturé <strong style={{ fontSize: 21, color: "#b3261e" }}>{euros(fait)}</strong>
+                    </span>
+                    <span style={{ fontSize: 15 }} title="CA facturé moins les achats revendus (négoce, sous-traitance)">
+                      hors achats <strong style={{ fontSize: 21, color: "#5d6b78" }}>{euros(fait - achatsFait)}</strong>
+                    </span>
+                    <span style={{ fontSize: 14, color: C.gris }}>
+                      encore attendu <strong style={{ color: "#3b4046" }}>{euros(attenduM)}</strong>
+                      {achatsAtt > 0.5 ? ` (${euros(attenduM - achatsAtt)} hors achats)` : ""}
+                    </span>
+                    <span style={{ fontSize: 14, color: C.gris }}>
+                      prévu <strong style={{ color: "#3b4046" }}>{prevuM > 0 ? euros(prevuM) : "—"}</strong>
+                    </span>
+                  </div>
+                  <div style={{ position: "relative", height: 26, background: "#f3f4f6", borderRadius: 8, overflow: "hidden", display: "flex" }}>
+                    {parAct.map(({ g, v }) => (
+                      <div key={g} title={`${g} : ${euros(v)}`} style={{ width: `${(v / echelle) * 100}%`, background: ROUGES[g] ?? "#d9534f", borderRight: "1px solid #ffffff" }} />
+                    ))}
+                    {attenduM > 0.5 && (
+                      <div
+                        title={`Encore attendu : ${euros(attenduM)}`}
+                        style={{ width: `${(attenduM / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 5px,#fbe6e6 5px,#fbe6e6 10px)" }}
+                      />
+                    )}
+                    {prevuM > 0 && (
+                      <div title={`Prévu : ${euros(prevuM)}`} style={{ position: "absolute", left: `calc(${(prevuM / echelle) * 100}% - 1.5px)`, top: 0, bottom: 0, width: 3, background: "#1f2328" }} />
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, marginTop: 8, color: "#3b4046" }}>
+                    {parAct.map(({ g, v }) => (
+                      <span key={g}>
+                        {pastille(ROUGES[g] ?? "#d9534f")}
+                        {g} <strong>{keuros(v)}</strong>
+                      </span>
+                    ))}
+                    {attenduM > 0.5 && (
+                      <span>
+                        {pastille("repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe6e6 3px,#fbe6e6 6px)")}
+                        attendu <strong>{keuros(attenduM)}</strong>
+                      </span>
+                    )}
+                    {prevuM > 0 && (
+                      <span>
+                        <i style={{ display: "inline-block", width: 3, height: 12, background: "#1f2328", marginRight: 6, verticalAlign: "middle" }} />
+                        prévu
+                      </span>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
 
             {/* ---------- TRAME_CA_V2 : la trame CA remplace le tableau des 12 mois ---------- */}
             <div>
