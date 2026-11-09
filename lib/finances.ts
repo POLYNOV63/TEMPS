@@ -196,6 +196,21 @@ export type AffaireTerminee = {
 };
 
 /* Affaires au forfait dont toutes les commandes retenues sont livrées */
+/* LOTS_REGROUPES : le détail d'une commande, sinon celui de ses découpages (lots, échéances, échéances d'un lot), additionnés */
+function detailAvecDecoupages(l: LigneFin, f: LigneFin[]): { m: Montants; heures: Record<Discipline, number> } {
+  const sommeM = (m: Montants) => m.meca + m.calcul + m.elec_pneu + m.scan + m.autre + m.negoce;
+  const sommeH = (h: Record<Discipline, number>) => Object.values(h).reduce((x, v) => x + v, 0);
+  const enfants = f.filter((e) => estDecoupage(e) && e.parent_cle === l.cle && !e.disparue);
+  const m: Montants = { ...l.m };
+  const heures: Record<Discipline, number> = { ...l.heures };
+  if (enfants.length === 0) return { m, heures };
+  const sous = enfants.map((e) => detailAvecDecoupages(e, f));
+  if (sommeM(l.m) <= 0)
+    for (const k of ["meca", "calcul", "elec_pneu", "scan", "autre", "negoce"] as const) m[k] = sous.reduce((x, s) => x + s.m[k], 0);
+  if (sommeH(l.heures) <= 0) for (const d of Object.keys(heures) as Discipline[]) heures[d] = sous.reduce((x, s) => x + (s.heures[d] ?? 0), 0);
+  return { m, heures };
+}
+
 export function affairesTerminees(lignes: LigneFin[]): AffaireTerminee[] {
   const familles = new Map<string, LigneFin[]>();
   for (const l of lignes) if (l.base_affaire) familles.set(l.base_affaire, [...(familles.get(l.base_affaire) ?? []), l]);
@@ -216,9 +231,10 @@ export function affairesTerminees(lignes: LigneFin[]): AffaireTerminee[] {
     for (const l of commandes) {
       montant += l.m.montant;
       negoce += l.m.negoce;
-      const r = repartir(l.m, l.m.montant);
+      const det = detailAvecDecoupages(l, f);
+      const r = repartir(det.m, l.m.montant);
       for (const g of GROUPES) parGroupe[g] += r[g];
-      for (const d of Object.keys(GROUPE_DISCIPLINE) as Discipline[]) heuresChiffrees[GROUPE_DISCIPLINE[d]] += l.heures[d];
+      for (const d of Object.keys(GROUPE_DISCIPLINE) as Discipline[]) heuresChiffrees[GROUPE_DISCIPLINE[d]] += det.heures[d];
       // achats : sur la commande, sinon sur ses découpages
       const dec = f.filter((e) => estDecoupage(e) && e.parent_cle === l.cle);
       achats += l.m.achats !== 0 ? l.m.achats : dec.reduce((t, e) => t + e.m.achats, 0);
