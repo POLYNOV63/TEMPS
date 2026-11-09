@@ -184,7 +184,7 @@ function IndicateursContenu() {
       const l = ls.find((x) => (x.genre === "BASE" || x.genre === "AVENANT") && x.statut !== "Devis perdu") ?? ls[0];
       const ouverture = ls.map((x) => x.date_ouverture ?? "").sort()[0];
       /* ACTIVITES_NEGOCE : répartition par activité, d'après le détail du MONTANT (qui contient le négoce) ; à défaut, les heures
-         chiffrées ; à défaut, l'imputation (NEGOCE, SCAN) ; sinon « Autre / non ventilé » */
+         chiffrées ; à défaut, l'imputation (NEGOCE, SCAN) ; sinon « Non ventilé » */
       const dm = detailMontants.get(l.id);
       const parHeures: Detail = { meca: l.heures.meca, calcul: l.heures.calcul, elec: l.heures.elec + l.heures.pneu, scan: l.heures.scan, negoce: l.heures.autre, autre: 0 };
       const sommeD = (d: Detail) => DISCIPLINES.reduce((t, k) => t + d[k], 0);
@@ -491,7 +491,7 @@ function IndicateursContenu() {
               <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
                 Une consultation qui mêle plusieurs activités compte une fois, dans son activité principale ; son {montantsVisibles ? "montant" : "chiffrage"} est
                 réparti entre ses activités d’après le détail du montant dans le Suivi d’affaire (qui contient le négoce), à défaut des heures chiffrées, à
-                défaut de son imputation (NEGOCE, SCAN). « Autre / non ventilé » : la colonne « Autre » du classeur, et les consultations sans aucun détail.
+                défaut de son imputation (NEGOCE, SCAN). « Non ventilé » : les consultations sans aucun détail par activité (ni montants, ni heures, ni imputation parlante).
               </p>
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                 {entete("Activité")}
@@ -510,7 +510,7 @@ function IndicateursContenu() {
                 return (
                   <div style={{ marginTop: 10 }}>
                     <button type="button" onClick={() => setVoirAutre((v) => !v)} style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce }}>
-                      {voirAutre ? "▾" : "▸"} De quoi sont faites les {autres.length} consultations « Autre / non ventilé » ?
+                      {voirAutre ? "▾" : "▸"} De quoi sont faites les {autres.length} consultations « Non ventilé » ?
                     </button>
                     {voirAutre && (
                       <>
