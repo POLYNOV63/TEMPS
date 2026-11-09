@@ -63,7 +63,9 @@ type LigneRenta = {
   cout: number | null;
   auMontant: boolean;
 };
-type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null };
+type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
+/* RENTABILITE_ACTIVITE : couleurs des activités (celles des Indicateurs commerciaux) */
+const COULEUR_ACTIVITE: Record<string, string> = { "Méca": "#c00000", Calcul: "#6b58a8", "Elec / Pneu": "#34506b", Scan: "#e08a1e", "Négoce": "#8d6e63", Autre: "#9aa0a6", "Non ventilé": "#9aa0a6" };
 type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string> };
 
 const tauxVendu = (l: LigneRenta) => (!l.auMontant && l.hc > 0 ? (l.ca - l.achats) / l.hc : null);
@@ -316,7 +318,16 @@ function RentabiliteContenu() {
           pg["Non ventilé"] = 0;
         } else nonVentile = "AUCUN";
       }
+      const activite = (() => {
+        if (montant) return /^scan/.test(sansAccents(a.imputation)) ? "Scan" : "Négoce";
+        let meilleure = "Non ventilé";
+        let plus = 0;
+        for (const g of GROUPES) if (g !== "Non ventilé" && (pg[g] ?? 0) > plus) [meilleure, plus] = [g, pg[g]];
+        if (plus <= 0) for (const g of GROUPES) if ((rg[g] ?? 0) > plus) [meilleure, plus] = [g, rg[g]];
+        return meilleure;
+      })();
       affaires.push({
+        activite,
         cle: base,
         libelle: `CBE ${base}`,
         base,
@@ -470,12 +481,13 @@ function RentabiliteContenu() {
   };
   /* RENTABILITE_V5 : tri des tableaux d'affaires */
   type Tri = { col: string; sens: 1 | -1 };
-  type LigneTri = LigneRenta & { base?: string; client?: string | null; fin?: string; imputation?: string | null; nbMois?: number };
+  type LigneTri = LigneRenta & { base?: string; client?: string | null; fin?: string; imputation?: string | null; nbMois?: number; activite?: string };
   const valeurTri = (l: LigneTri, col: string): number | string => {
     const bas = -1e12;
     switch (col) {
       case "numero": return Number(l.base) || 0;
       case "client": return (l.client ?? "~").toLowerCase();
+      case "activite": return l.activite ?? "~";
       case "fin": return l.fin ?? "";
       case "type": return l.imputation ?? "";
       case "nbMois": return l.nbMois ?? 0;
@@ -501,10 +513,10 @@ function RentabiliteContenu() {
       return c * tri.sens;
     });
   const changerTri = (set: (f: (t: Tri) => Tri) => void) => (col: string) =>
-    set((t) => ({ col, sens: t.col === col ? (t.sens === 1 ? -1 : 1) : col === "numero" || col === "client" || col === "type" ? 1 : -1 }));
+    set((t) => ({ col, sens: t.col === col ? (t.sens === 1 ? -1 : 1) : col === "numero" || col === "client" || col === "type" || col === "activite" ? 1 : -1 }));
 
   const enTetes = (premiere: string, autres: string[] = [], tri?: { etat: Tri; changer: (c: string) => void }, libelleHc = "H. chiffrées") => {
-    const cles: Record<string, string> = { Affaire: "numero", Client: "client", "Livrée le": "fin", Type: "type", "Mois facturés": "nbMois" };
+    const cles: Record<string, string> = { Affaire: "numero", "Activité": "activite", Client: "client", "Livrée le": "fin", Type: "type", "Mois facturés": "nbMois" };
     const cellule = (libelle: string, col: string | null, style: CSSProperties, title?: string) => (
       <th key={libelle} style={style} title={title}>
         {tri && col ? (
@@ -729,7 +741,7 @@ function RentabiliteContenu() {
                   </h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>Les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.</p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                    <thead>{enTetes("Affaire", ["Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
+                    <thead>{enTetes("Affaire", ["Activité", "Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
                     <tbody>
                       {trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF).map((a) => (
                         <tr key={a.base}>
@@ -751,6 +763,10 @@ function RentabiliteContenu() {
                               </span>
                             )}
                             <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
+                          </td>
+                          <td style={{ ...tdG, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[a.activite] ?? "#9aa0a6", marginRight: 6 }} />
+                            {a.activite}
                           </td>
                           <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
                           <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.fin)}</td>
