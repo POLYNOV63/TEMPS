@@ -32,7 +32,7 @@
    au « Réalisé » du tableau des 12 mois.
 ================================================================ */
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { C, Tuile, page } from "@/components/pilotage/ui";
 import { exporterExcelPolynov, type ColonneExcel } from "@/lib/excelPolynov";
 import { supabase } from "@/lib/supabase";
@@ -130,12 +130,14 @@ export default function TrameCA(props: {
   onDetailReport?: (i: number) => void;
   onPrevuTous?: (valeurs: Map<string, number>) => unknown;
   onAjustementsModifies?: (liste: { mois: string; montant: number; motif: string }[]) => void;
+  vignettes?: ReactNode; // FINANCES_TRAME : vignettes du mois, fournies par la page
+  barre?: ReactNode; // la barre du mois, entre les vignettes et le tableau
 }) {
   const { exercice, mois, moisN1, mouvements, prevu, estAdmin, onPrevu, onDetail, onDetailReport, onPrevuTous } = props;
   const attendu = props.attendu ?? mois.map(() => 0);
   const faitPlusTard = props.faitPlusTard ?? mois.map(() => 0);
   const [afficherPct, setAfficherPct] = useState(false);
-  const [voirAttendu, setVoirAttendu] = useState(true);
+  const voirAttendu = true; // l'attendu est toujours affiché
   const [pctN1, setPctN1] = useState("100");
   const [totalSaisi, setTotalSaisi] = useState("");
   const [message, setMessage] = useState("");
@@ -432,7 +434,7 @@ export default function TrameCA(props: {
   const td: CSSProperties = { textAlign: "right", whiteSpace: "nowrap", padding: "3px 4px", fontSize: 12, borderBottom: `1px solid ${C.ligne}` };
   const tdPct: CSSProperties = { ...td, color: C.gris, fontSize: 11 };
   const colPoste: CSSProperties = { position: "sticky", left: 0, background: "#ffffff", zIndex: 1, textAlign: "left", minWidth: 190, maxWidth: 230, whiteSpace: "normal" };
-  const nbCol = 1 + (mois.length + 1) * (afficherPct ? 2 : 1) + 1;
+  const nbCol = 1 + mois.length + 1 + 1;
 
   const rendre = (liste: Ligne[], prefixe: string) =>
     liste.map((l, k) => {
@@ -500,16 +502,16 @@ export default function TrameCA(props: {
                 affiche(v)
               )}
               {voirAttendu && l.attendu && Math.abs(l.attendu[i]) >= 0.5 && <div style={styleAttendu} title="Attendu : pas encore livré ou facturé">+ {nombre(l.attendu[i])}</div>}
+              {afficherPct && part(v, l.base?.[i]) && <div style={{ ...tdPct, border: "none", padding: 0 }}>{part(v, l.base?.[i])}</div>}
             </td>,
-            afficherPct ? <td key={`p${i}`} style={tdPct}>{part(v, l.base?.[i])}</td> : null,
           ])}
           <td style={{ ...td, fontWeight: 800, color: couleur(l.total), borderLeft: `2px solid ${C.ligne}` }}>
             {affiche(l.total)}
             {voirAttendu && l.attendu && Math.abs(l.attendu.reduce((t, x) => t + x, 0)) >= 0.5 && (
               <div style={styleAttendu}>+ {nombre(l.attendu.reduce((t, x) => t + x, 0))}</div>
             )}
+            {afficherPct && part(l.total, l.baseTotal) && <div style={{ ...tdPct, border: "none", padding: 0 }}>{part(l.total, l.baseTotal)}</div>}
           </td>
-          {afficherPct && <td style={tdPct}>{part(l.total, l.baseTotal)}</td>}
           <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined ? "" : l.moyenne === null ? "—" : affiche(l.moyenne)}</td>
         </tr>
       );
@@ -520,12 +522,7 @@ export default function TrameCA(props: {
   return (
     <section style={{ ...page.carte, padding: 16, marginBottom: 14, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 17 }}>Trame CA — exercice {exercice}-{exercice + 1}</h2>
-        <span style={{ fontSize: 13, color: C.gris }}>la présentation du classeur « trame_CA », remplie automatiquement</span>
         <span style={{ flex: 1 }} />
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", color: ROUGE_ATTENDU, fontWeight: 600 }}>
-          <input type="checkbox" checked={voirAttendu} onChange={(e) => setVoirAttendu(e.target.checked)} /> Afficher l’attendu
-        </label>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
           <input type="checkbox" checked={afficherPct} onChange={(e) => setAfficherPct(e.target.checked)} /> Afficher les %
         </label>
@@ -535,20 +532,28 @@ export default function TrameCA(props: {
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
+        {props.vignettes}
         <Tuile libelle="Total CA en cours" valeur={euros(trame.cumulADate)} sous={`en date du ${new Date().toLocaleDateString("fr-FR")}`} />
-        <Tuile
-          libelle="Écart CA / prévi"
-          valeur={ecartPrevi === null ? "—" : euros(ecartPrevi)}
-          sous={trame.objectif > 0 ? `prévisionnel annuel ${euros(trame.objectif)}` : "prévisionnel non saisi"}
-          accent={ecartPrevi !== null && ecartPrevi < 0}
-        />
-        <Tuile
-          libelle="Écart CA / prévi avec achats"
-          valeur={ecartPrevi === null ? "—" : euros(ecartPrevi - trame.achatsTotal)}
-          sous={`achats sur affaires ${euros(trame.achatsTotal)}`}
-          accent={ecartPrevi !== null && ecartPrevi - trame.achatsTotal < 0}
-        />
+        <div style={{ ...page.carte, padding: "12px 16px", flex: "1 1 280px", minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Écart CA / objectif</div>
+          {ecartPrevi === null ? (
+            <div style={{ fontSize: 24, fontWeight: 800, marginTop: 6 }}>—</div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "4px 22px", marginTop: 6 }}>
+              <span>
+                <strong style={{ fontSize: 22, color: "#b3261e" }}>{euros(ecartPrevi)}</strong> <span style={{ fontSize: 12, color: C.gris }}>avec achats</span>
+              </span>
+              <span>
+                <strong style={{ fontSize: 22, color: "#5d6b78" }}>{euros(ecartPrevi - trame.achatsTotal)}</strong> <span style={{ fontSize: 12, color: C.gris }}>hors achats</span>
+              </span>
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: C.gris }}>
+            {trame.objectif > 0 ? `objectif annuel ${euros(trame.objectif)}` : "objectif non saisi"} · achats sur affaires {euros(trame.achatsTotal)}
+          </div>
+        </div>
       </div>
+      {props.barre}
 
       <div style={{ overflowX: "auto", maxWidth: "100%" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -559,10 +564,8 @@ export default function TrameCA(props: {
                 <th key={m} style={{ ...th, background: m === moisCourant ? "#fff4f4" : undefined }}>
                   {nomMois(m)} {m.slice(2, 4)}
                 </th>,
-                afficherPct ? <th key={`${m}-p`} style={th}>%</th> : null,
               ])}
               <th style={{ ...th, borderLeft: `2px solid ${C.ligne}` }}>Totaux</th>
-              {afficherPct && <th style={th}>%</th>}
               <th
                 style={{ ...th, whiteSpace: "normal", minWidth: 70 }}
                 title="Réalisé : moyenne des mois clôturés (le mois en cours n’est pas compté, il n’est pas terminé). Prévisionnel et atterrissage : moyenne sur les 12 mois."
