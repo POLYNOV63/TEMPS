@@ -152,6 +152,9 @@ type Champ =
   | "h_meca" | "h_calcul" | "h_elec" | "h_pneu" | "h_scan" | "h_autre" | "h_total"
   | "m_montant" | "m_echeances" | "m_meca" | "m_calcul" | "m_elec_pneu" | "m_scan" | "m_autre"
   | "m_achats" | "m_negoce"
+  // DEVIS_PERDU_MONTANTS : colonnes « … DEVIS PERDU » (BX à CL)
+  | "hp_meca" | "hp_calcul" | "hp_elec" | "hp_pneu" | "hp_scan" | "hp_autre" | "hp_total"
+  | "mp_montant" | "mp_meca" | "mp_calcul" | "mp_elec_pneu" | "mp_scan" | "mp_autre" | "mp_achats" | "mp_negoce"
   | "date_livraison_estimee" | "date_envoi" | "numero_offre" | "date_reception_commande"
   | "delai" | "date_livraison" | "livre_par" | "format_livraison" | "numero_client"
   | "numero_arc_louxor";
@@ -168,6 +171,12 @@ const COLONNES: Record<string, Champ> = {
   montant: "m_montant", montantecheances: "m_echeances", montantmeca: "m_meca",
   montantcalcul: "m_calcul", montantelecpneu: "m_elec_pneu", montantscan: "m_scan",
   montantautre: "m_autre", montantachats: "m_achats", montantnegoce: "m_negoce",
+  // DEVIS_PERDU_MONTANTS
+  heuresmecadevisperdu: "hp_meca", heurescalculdevisperdu: "hp_calcul", heureselecdevisperdu: "hp_elec",
+  heurespneudevisperdu: "hp_pneu", heuresscandevisperdu: "hp_scan", heuresautredevisperdu: "hp_autre",
+  totalheuresdevisperdu: "hp_total", montantdevisperdu: "mp_montant", montantmecadevisperdu: "mp_meca",
+  montantcalculdevisperdu: "mp_calcul", montantelecpneudevisperdu: "mp_elec_pneu", montantscandevisperdu: "mp_scan",
+  montantautredevisperdu: "mp_autre", montantachatsdevisperdu: "mp_achats", montantnegocedevisperdu: "mp_negoce",
   datedelivraisonestimee: "date_livraison_estimee", dateenvoidevis: "date_envoi",
   numerodoffre: "numero_offre", datereceptioncommande: "date_reception_commande",
   delai: "delai", datedelivraison: "date_livraison", livrepar: "livre_par",
@@ -478,14 +487,20 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
       if (r.texte) nombresTexte++;
       return r.valeur;
     };
+    // DEVIS_PERDU_MONTANTS : un devis perdu porte ses heures et montants dans les colonnes « … DEVIS PERDU »
+    const perdu = statut === "Devis perdu";
+    const lireP = (champ: Champ, champPerdu: Champ, nom: string): number => {
+      const x = lireN(champ, nom);
+      return perdu && x === 0 ? lireN(champPerdu, `${nom} DEVIS PERDU`) : x;
+    };
     const h = {
-      meca: lireN("h_meca", "Heures méca"), calcul: lireN("h_calcul", "Heures calcul"),
-      elec: lireN("h_elec", "Heures élec"), pneu: lireN("h_pneu", "Heures pneu"),
-      scan: lireN("h_scan", "Heures scan"), autre: lireN("h_autre", "Heures autre"),
+      meca: lireP("h_meca", "hp_meca", "Heures méca"), calcul: lireP("h_calcul", "hp_calcul", "Heures calcul"),
+      elec: lireP("h_elec", "hp_elec", "Heures élec"), pneu: lireP("h_pneu", "hp_pneu", "Heures pneu"),
+      scan: lireP("h_scan", "hp_scan", "Heures scan"), autre: lireP("h_autre", "hp_autre", "Heures autre"),
     };
     const detailH = arrondi(DISCIPLINES.reduce((s, d) => s + h[d], 0));
-    const vTotal = v.h_total;
-    let heures_total = lireN("h_total", "Total heures");
+    const vTotal = perdu && !lireNombre(v.h_total).valeur ? v.hp_total : v.h_total;
+    let heures_total = lireP("h_total", "hp_total", "Total heures");
     if (vTotal === null || vTotal === undefined || vTotal === "") heures_total = detailH;
     if (genre === "LOT" || genre === "ECHEANCE") {
       if (heures_total > 0 || detailH > 0)
@@ -510,11 +525,11 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
 
     // Montants
     const m = {
-      montant: lireN("m_montant", "Montant"), montant_echeances: lireN("m_echeances", "Montant échéances"),
-      montant_meca: lireN("m_meca", "Montant méca"), montant_calcul: lireN("m_calcul", "Montant calcul"),
-      montant_elec_pneu: lireN("m_elec_pneu", "Montant Elec/pneu"), montant_scan: lireN("m_scan", "Montant Scan"),
-      montant_autre: lireN("m_autre", "Montant autre"), montant_achats: lireN("m_achats", "Montant achats"),
-      montant_negoce: lireN("m_negoce", "Montant négoce"),
+      montant: lireP("m_montant", "mp_montant", "Montant"), montant_echeances: lireN("m_echeances", "Montant échéances"),
+      montant_meca: lireP("m_meca", "mp_meca", "Montant méca"), montant_calcul: lireP("m_calcul", "mp_calcul", "Montant calcul"),
+      montant_elec_pneu: lireP("m_elec_pneu", "mp_elec_pneu", "Montant Elec/pneu"), montant_scan: lireP("m_scan", "mp_scan", "Montant Scan"),
+      montant_autre: lireP("m_autre", "mp_autre", "Montant autre"), montant_achats: lireP("m_achats", "mp_achats", "Montant achats"),
+      montant_negoce: lireP("m_negoce", "mp_negoce", "Montant négoce"),
     };
 
     // Client
