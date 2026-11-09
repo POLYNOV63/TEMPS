@@ -1557,7 +1557,8 @@ function FinancesContenu() {
               <>
             {/* FINANCES_GRAPHIQUE : CA mois par mois, par activité, avec N-1 et N-2 ; un clic choisit le mois */}
             {(() => {
-              const ROUGES: Record<string, string> = { "Méca": "#8e0000", Calcul: "#b3261e", "Elec / Pneu": "#d9534f", Scan: "#e57f7a", "Négoce": "#efa29d", Autre: "#f4c3bf", "Non ventilé": "#f6d6d3" };
+              // FINANCES_GRAPHIQUE_V3 : couleurs des activités des Indicateurs commerciaux
+              const ROUGES: Record<string, string> = { "Méca": "#c00000", Calcul: "#6b58a8", "Elec / Pneu": "#34506b", Scan: "#e08a1e", "Négoce": "#8d6e63", Autre: "#9aa0a6", "Non ventilé": "#9aa0a6" };
               const anMoins = (m: string, n: number) => `${Number(m.slice(0, 4)) - n}${m.slice(4)}`;
               const sommeMois = (m: string) => mouvements.filter((x) => x.date.startsWith(m)).reduce((s, x) => s + x.montant, 0);
               const parAct = mois.map((m) => {
@@ -1574,7 +1575,12 @@ function FinancesContenu() {
                 <section style={{ ...page.carte, padding: "12px 16px", marginBottom: 12 }}>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 14px", marginBottom: 8, fontSize: 12, color: "#3b4046" }}>
                     <h2 style={{ margin: 0, fontSize: 16, marginRight: 8 }}>Chiffre d’affaires mois par mois</h2>
-                    <span>{pastille("#b3261e")}réalisé</span>
+                    {presents.map((g) => (
+                      <span key={g}>
+                        {pastille(ROUGES[g] ?? "#9aa0a6")}
+                        {g}
+                      </span>
+                    ))}
                     <span>{pastille("repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe6e6 3px,#fbe6e6 6px)")}attendu</span>
                     <span>
                       <i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", marginRight: 5, verticalAlign: "middle" }} />
@@ -1595,7 +1601,9 @@ function FinancesContenu() {
                         >
                           <div style={{ width: "26%", height: `${(vue.realiseN1[i] / haut) * 100}%`, background: "#c3c8ce", borderRadius: "2px 2px 0 0" }} />
                           <div style={{ width: "46%", height: `${(Math.max(0, att) / haut) * 100}%`, display: "flex", flexDirection: "column-reverse", borderRadius: "3px 3px 0 0", overflow: "hidden" }}>
-                            <div style={{ height: `${att > 0 ? (Math.max(0, vue.realise[i]) / att) * 100 : 0}%`, background: "#b3261e" }} />
+                            {parAct[i].map(({ g, v }) => (
+                              <div key={g} style={{ height: `${att > 0 ? (v / att) * 100 : 0}%`, background: ROUGES[g] ?? "#9aa0a6", borderTop: "1px solid #ffffff" }} />
+                            ))}
                             {vue.attendu[i] > 0.5 && (
                               <div style={{ height: `${att > 0 ? (vue.attendu[i] / att) * 100 : 0}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe6e6 4px,#fbe6e6 8px)" }} />
                             )}
