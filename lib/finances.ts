@@ -32,7 +32,7 @@ export const GROUPE_DISCIPLINE: Record<Discipline, Groupe> = {
   elec: "Elec / Pneu",
   pneu: "Elec / Pneu",
   scan: "Scan",
-  autre: "Autre",
+  autre: "Négoce", // NEGOCE_INTERGROUPE : la colonne « Heures négoce » (ex-« Heures autre »)
 };
 
 export type Montants = {
@@ -100,8 +100,8 @@ function repartir(m: Montants, valeur: number): ParGroupe {
   g.Calcul = m.calcul * k;
   g["Elec / Pneu"] = m.elec_pneu * k;
   g.Scan = m.scan * k;
-  g.Autre = m.autre * k;
-  g["Négoce"] = m.negoce * k;
+  // « Montant heures négoce » (ex-« Montant autre ») va avec le négoce
+  g["Négoce"] = (m.negoce + m.autre) * k;
   return g;
 }
 

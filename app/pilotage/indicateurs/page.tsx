@@ -34,7 +34,7 @@ const ACTIVITES: Record<Discipline, { nom: string; couleur: string }> = {
   elec: { nom: "Elec / Pneu", couleur: "#34506b" },
   scan: { nom: "Scan", couleur: "#e08a1e" },
   negoce: { nom: "Négoce", couleur: "#8d6e63" },
-  autre: { nom: "Autre / non ventilé", couleur: "#9aa0a6" },
+  autre: { nom: "Non ventilé", couleur: "#9aa0a6" }, // NEGOCE_INTERGROUPE
 };
 type Detail = Record<Discipline, number>;
 const sansAccents = (t: string | null) => (t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -153,7 +153,7 @@ function IndicateursContenu() {
           new Map(
             montants.map((m) => [
               m.ligne_id,
-              { meca: n(m.montant_meca), calcul: n(m.montant_calcul), elec: n(m.montant_elec_pneu), scan: n(m.montant_scan), negoce: n(m.montant_negoce), autre: n(m.montant_autre) },
+              { meca: n(m.montant_meca), calcul: n(m.montant_calcul), elec: n(m.montant_elec_pneu), scan: n(m.montant_scan), negoce: n(m.montant_negoce) + n(m.montant_autre), autre: 0 },
             ])
           )
         );
@@ -186,7 +186,7 @@ function IndicateursContenu() {
       /* ACTIVITES_NEGOCE : répartition par activité, d'après le détail du MONTANT (qui contient le négoce) ; à défaut, les heures
          chiffrées ; à défaut, l'imputation (NEGOCE, SCAN) ; sinon « Autre / non ventilé » */
       const dm = detailMontants.get(l.id);
-      const parHeures: Detail = { meca: l.heures.meca, calcul: l.heures.calcul, elec: l.heures.elec + l.heures.pneu, scan: l.heures.scan, negoce: 0, autre: l.heures.autre };
+      const parHeures: Detail = { meca: l.heures.meca, calcul: l.heures.calcul, elec: l.heures.elec + l.heures.pneu, scan: l.heures.scan, negoce: l.heures.autre, autre: 0 };
       const sommeD = (d: Detail) => DISCIPLINES.reduce((t, k) => t + d[k], 0);
       const imp = sansAccents(l.imputation);
       const base: Detail =

@@ -171,7 +171,8 @@ type Champ =
   | "mp_montant" | "mp_meca" | "mp_calcul" | "mp_elec_pneu" | "mp_scan" | "mp_autre" | "mp_achats" | "mp_negoce"
   | "date_livraison_estimee" | "date_envoi" | "numero_offre" | "date_reception_commande"
   | "delai" | "date_livraison" | "livre_par" | "format_livraison" | "numero_client"
-  | "numero_arc_louxor";
+  | "numero_arc_louxor"
+  | "intergroupe"; // NEGOCE_INTERGROUPE
 
 /** Titre normalisé -> champ. Le titre Excel est comparé sans accents, espaces ni ponctuation. */
 const COLONNES: Record<string, Champ> = {
@@ -196,6 +197,10 @@ const COLONNES: Record<string, Champ> = {
   delai: "delai", datedelivraison: "date_livraison", livrepar: "livre_par",
   formatdelivraison: "format_livraison", nclient: "numero_client",
   narclouxor: "numero_arc_louxor",
+  // NEGOCE_INTERGROUPE : nouveaux titres du classeur (les anciens restent compris)
+  negoce: "ind_autre", heuresnegoce: "h_autre", montantheuresnegoce: "m_autre",
+  heuresnegocedevisperdu: "hp_autre", montantheurenegocedevisperdu: "mp_autre", montantheuresnegocedevisperdu: "mp_autre",
+  intergroupe: "intergroupe",
 };
 
 /** Colonnes sans lesquelles on refuse le classeur. */
@@ -469,6 +474,9 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
     const active = !STATUTS_INACTIFS.includes(statut ?? "");
 
     let imputation = texte(v.imputation);
+    // NEGOCE_INTERGROUPE : « Forfait » vaut BE ; une ligne au forfait cochée « Intergroupe » reste IG pour l'application
+    if (imputation && sansAccent(imputation) === "forfait") imputation = "BE";
+    if (["oui", "o", "x", "1", "vrai", "yes", "true"].includes(sansAccent(texte(v.intergroupe) ?? "")) && (!imputation || sansAccent(imputation) === "be")) imputation = "IG";
     if (imputation) {
       const trouve = imputations.find((i) => sansAccent(i) === sansAccent(imputation!));
       if (trouve) imputation = trouve;
@@ -510,7 +518,7 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
     const h = {
       meca: lireP("h_meca", "hp_meca", "Heures méca"), calcul: lireP("h_calcul", "hp_calcul", "Heures calcul"),
       elec: lireP("h_elec", "hp_elec", "Heures élec"), pneu: lireP("h_pneu", "hp_pneu", "Heures pneu"),
-      scan: lireP("h_scan", "hp_scan", "Heures scan"), autre: lireP("h_autre", "hp_autre", "Heures autre"),
+      scan: lireP("h_scan", "hp_scan", "Heures scan"), autre: lireP("h_autre", "hp_autre", "Heures négoce"),
     };
     const detailH = arrondi(DISCIPLINES.reduce((s, d) => s + h[d], 0));
     const vTotal = perdu && !lireNombre(v.h_total).valeur ? v.hp_total : v.h_total;
@@ -542,7 +550,7 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
       montant: lireP("m_montant", "mp_montant", "Montant"), montant_echeances: lireN("m_echeances", "Montant échéances"),
       montant_meca: lireP("m_meca", "mp_meca", "Montant méca"), montant_calcul: lireP("m_calcul", "mp_calcul", "Montant calcul"),
       montant_elec_pneu: lireP("m_elec_pneu", "mp_elec_pneu", "Montant Elec/pneu"), montant_scan: lireP("m_scan", "mp_scan", "Montant Scan"),
-      montant_autre: lireP("m_autre", "mp_autre", "Montant autre"), montant_achats: lireP("m_achats", "mp_achats", "Montant achats"),
+      montant_autre: lireP("m_autre", "mp_autre", "Montant heures négoce"), montant_achats: lireP("m_achats", "mp_achats", "Montant achats"),
       montant_negoce: lireP("m_negoce", "mp_negoce", "Montant négoce"),
     };
 
