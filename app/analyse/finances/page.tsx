@@ -83,6 +83,7 @@ function FinancesContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
+  const [onglet, setOnglet] = useState<"CA" | "ACTIVITES">("CA"); // FINANCES_ONGLETS
 
   const [lignesFin, setLignesFin] = useState<LigneFin[]>([]);
   const [releve, setReleve] = useState<Releve[]>([]);
@@ -1329,8 +1330,7 @@ function FinancesContenu() {
           <div>
             <h1 style={page.titre}>Finances</h1>
             <p style={page.sousTitre}>
-              Exercice du 1er novembre {exercice} au 31 octobre {exercice + 1} : chiffre d’affaires réalisé face au prévisionnel, par
-              imputation et par activité, et rentabilité.
+              Exercice du 1er novembre {exercice} au 31 octobre {exercice + 1} : où en est le chiffre d’affaires, et d’où il vient.
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1369,9 +1369,44 @@ function FinancesContenu() {
         {info && <Message genre="ok">{info}</Message>}
         {chargement && <Message genre="info">Chargement…</Message>}
 
+        {/* FINANCES_ONGLETS : deux onglets */}
+        {!chargement && (
+          <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 14, borderBottom: `2px solid ${C.ligne}` }}>
+            {(
+              [
+                ["CA", "💶 CA de l’exercice", "Où en est-on : réalisé, attendu, atterrissage, mois par mois"],
+                ["ACTIVITES", "🧩 Par activité", "D’où vient le CA : activités, imputations, négoce, PE / PI"],
+              ] as const
+            ).map(([cle, libelle, aide]) => (
+              <button
+                key={cle}
+                type="button"
+                role="tab"
+                aria-selected={onglet === cle}
+                title={aide}
+                onClick={() => setOnglet(cle)}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  padding: "10px 16px",
+                  fontWeight: 800,
+                  fontSize: 15,
+                  color: onglet === cle ? C.rougeFonce : "#3b4046",
+                  borderBottom: `3px solid ${onglet === cle ? C.rouge : "transparent"}`,
+                  marginBottom: -2,
+                }}
+              >
+                {libelle}
+              </button>
+            ))}
+          </div>
+        )}
+
         {!chargement && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
+              {onglet === "CA" && (
+                <>
               {(() => {
                 // N1_MEME_DATE : on compare les mêmes mois écoulés (exercice en cours) ou l'exercice entier
                 const ecoules = mois.filter((m) => m <= moisCourant).length;
@@ -1396,8 +1431,10 @@ function FinancesContenu() {
                 sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
                 accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
               />
+                </>
+              )}
               {/* VIGNETTES_ALLEGEES : le détail du travail facturé plus tard reste dans le tableau (ligne cliquable) */}
-              {(() => {
+              {onglet === "ACTIVITES" && (() => {
                 // NEGOCE_A_PART : marge brute (revente − achats) et nette (après les heures passées × coût de structure)
                 const ng = vue.parGroupeRenta.find(([g]) => g === "Négoce")?.[1];
                 const brute = vue.negoce > 0 ? (vue.negoce - vue.achats) / vue.negoce : null;
@@ -1413,6 +1450,8 @@ function FinancesContenu() {
               })()}
             </div>
 
+            {onglet === "CA" && (
+              <>
             {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
               <Message genre="info">
                 {attendus.enRetard.length > 0 && (
@@ -1572,6 +1611,11 @@ function FinancesContenu() {
               {/* TRAME_CA_V3 : « Remplir le prévisionnel » est dans la trame */}
             </div>
 
+              </>
+            )}
+
+            {onglet === "ACTIVITES" && (
+              <>
             {/* ---------- taux de vente moyen des PE / PI ---------- */}
             {vue.tauxPEPI.some((t) => t.exercice.heures > 0 || t.n1.heures > 0) && (
               <section style={{ ...page.carte, padding: 16, marginBottom: 14, overflowX: "auto" }}>
@@ -1666,6 +1710,9 @@ function FinancesContenu() {
               </Link>
             </section>
 
+              </>
+            )}
+
             <details style={{ fontSize: 13, color: "#3b4046" }}>
               <summary style={{ cursor: "pointer", fontWeight: 700, minHeight: 32 }}>Comment sont calculés ces chiffres ?</summary>
               <ul style={{ lineHeight: 1.6 }}>
@@ -1673,7 +1720,7 @@ function FinancesContenu() {
                 <li><strong>Attendu</strong> : forfaits « Commande reçue » ou « Intention de commande » non livrés, au mois de leur « Délai estimé » (déjà dépassé : mois en cours ; sans délai : non comptés, listés à dater) ; PE / PI : mois non validés du relevé (heures × taux), sinon onglets futurs du Suivi des prestations. <strong>Atterrissage</strong> = réalisé + attendu, comparé au prévisionnel.</li>
                 <li><strong>Chiffre d’affaires</strong> : une commande ou un avenant compte au mois de sa livraison ; une échéance ou un lot au mois de sa propre livraison (la commande ne compte alors que pour le reste) ; une PE / PI suivie dans le relevé, pour le montant de ses mois validés.</li>
                 <li><strong>PE / PI / IG</strong> : uniquement le relevé des prestations (mois validés) ; pour les mois qu’il ne couvre pas, l’historique importé de l’ancien classeur « Suivi des prestations ».</li>
-                <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Autre, Négoce) ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
+                <li><strong>Activités</strong> : d’après le détail des montants du classeur (Méca, Calcul, Elec / Pneu, Scan, Négoce, celui-ci avec le « Montant heures négoce ») ; une PE / PI, d’après l’activité de la ligne du relevé.</li>
                 <li><strong>Rentabilité</strong> : affaires au forfait dont toutes les commandes sont livrées dans l’exercice, et mois validés des PE / PI. Coût = heures réellement passées × coût de structure de l’exercice + achats.</li>
                 <li><strong>Prévisionnel</strong> : un montant par mois, saisi ici (ADMIN).</li>
                 <li>
