@@ -1405,34 +1405,7 @@ function FinancesContenu() {
         {!chargement && (
           <>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 14 }}>
-              {onglet === "CA" && (
-                <>
-              {(() => {
-                // N1_MEME_DATE : on compare les mêmes mois écoulés (exercice en cours) ou l'exercice entier
-                const ecoules = mois.filter((m) => m <= moisCourant).length;
-                const nb = ecoules === 0 ? 12 : ecoules;
-                const somme = (v: number[]) => v.slice(0, nb).reduce((t, x) => t + x, 0);
-                const r = somme(vue.realise);
-                const n1 = somme(vue.realiseN1);
-                const evol = n1 > 0 ? r / n1 - 1 : null;
-                return (
-                  <Tuile
-                    libelle="Réalisé"
-                    valeur={keuros(vue.total)}
-                    sous={`${pct(evol)} par rapport à N-1${nb < 12 ? ` (à fin ${libMois(mois[nb - 1])} : ${keuros(n1)})` : ` (${keuros(n1)})`}`}
-                    accent={evol !== null && evol < 0}
-                  />
-                );
-              })()}
-              <Tuile libelle="Attendu" valeur={keuros(vue.totalAttendu)} sous="pas encore livré ou facturé, sur l’exercice" />
-              <Tuile
-                libelle="Atterrissage"
-                valeur={keuros(totalAtterrissage)}
-                sous={vue.totalPrevu > 0 ? `${Math.round((totalAtterrissage / vue.totalPrevu) * 100)} % du prévisionnel (${keuros(vue.totalPrevu)})` : "réalisé + attendu"}
-                accent={vue.totalPrevu > 0 && totalAtterrissage < vue.totalPrevu}
-              />
-                </>
-              )}
+              {/* FINANCES_MOIS : vignettes du CA retirées (voir le mois en cours) */}
               {/* VIGNETTES_ALLEGEES : le détail du travail facturé plus tard reste dans le tableau (ligne cliquable) */}
               {onglet === "ACTIVITES" && (() => {
                 // NEGOCE_A_PART : marge brute (revente − achats) et nette (après les heures passées × coût de structure)
@@ -1452,6 +1425,48 @@ function FinancesContenu() {
 
             {onglet === "CA" && (
               <>
+            {/* FINANCES_MOIS : le mois en cours, sans comparaison à N-1 */}
+            {(() => {
+              const k = mois.indexOf(moisCourant);
+              const i = k >= 0 ? k : mois[11] < moisCourant ? 11 : 0;
+              const prevuM = vue.prevu[i];
+              const fait = vue.realise[i];
+              const attenduM = vue.attendu[i];
+              const echelle = Math.max(prevuM, fait + attenduM, 1);
+              const nomMois = new Date(`${mois[i]}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+              return (
+                <section style={{ ...page.carte, padding: "12px 16px", marginBottom: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 20px" }}>
+                  <strong style={{ fontSize: 17, textTransform: "capitalize" }}>{nomMois}</strong>
+                  <span>
+                    déjà facturé <strong>{euros(fait)}</strong>
+                  </span>
+                  <span>
+                    encore attendu <strong>{euros(attenduM)}</strong>
+                  </span>
+                  <span>
+                    prévu <strong>{prevuM > 0 ? euros(prevuM) : "—"}</strong>
+                  </span>
+                  <div
+                    title={`Facturé ${euros(fait)} · attendu ${euros(attenduM)}${prevuM > 0 ? ` · prévu ${euros(prevuM)}` : ""}`}
+                    style={{ flex: "1 1 260px", position: "relative", height: 14, background: "#eef0f3", borderRadius: 7, overflow: "hidden" }}
+                  >
+                    <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(fait / echelle) * 100}%`, background: "#34506b" }} />
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: `${(fait / echelle) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: `${(attenduM / echelle) * 100}%`,
+                        background: "repeating-linear-gradient(45deg,#9fb6cf,#9fb6cf 4px,#dbe5f0 4px,#dbe5f0 8px)",
+                      }}
+                    />
+                    {prevuM > 0 && <div style={{ position: "absolute", left: `calc(${(prevuM / echelle) * 100}% - 1px)`, top: 0, bottom: 0, width: 2, background: "#1f2328" }} />}
+                  </div>
+                </section>
+              );
+            })()}
+
             {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
               <Message genre="info">
                 {attendus.enRetard.length > 0 && (
@@ -1469,47 +1484,6 @@ function FinancesContenu() {
               </Message>
             )}
 
-            {/* ---------- graphique 12 mois ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Chiffre d’affaires mois par mois</h2>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 200, borderBottom: `1px solid ${C.ligne}` }}>
-                {mois.map((m, i) => (
-                  <div key={m} style={{ flex: 1, height: "100%", position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2 }}>
-                    <div title={`${libMois(moisN1[i])} : ${euros(vue.realiseN1[i])}`} style={{ width: "30%", height: `${(vue.realiseN1[i] / maxBarre) * 100}%`, background: "#c9cdd2", borderRadius: "3px 3px 0 0" }} />
-                    <div
-                      title={`${libMois(m)} : réalisé ${euros(vue.realise[i])}${vue.attendu[i] > 0 ? ` + attendu ${euros(vue.attendu[i])}` : ""}`}
-                      style={{ width: "40%", height: `${(atterrissage[i] / maxBarre) * 100}%`, display: "flex", flexDirection: "column-reverse" }}
-                    >
-                      <div style={{ height: `${atterrissage[i] > 0 ? (vue.realise[i] / atterrissage[i]) * 100 : 0}%`, background: vue.prevu[i] > 0 && atterrissage[i] < vue.prevu[i] && m < moisCourant ? "#e57373" : C.rouge }} />
-                      <div
-                        style={{
-                          height: `${atterrissage[i] > 0 ? (vue.attendu[i] / atterrissage[i]) * 100 : 0}%`,
-                          background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe3e3 4px,#fbe3e3 8px)",
-                          borderRadius: "3px 3px 0 0",
-                          border: vue.attendu[i] > 0 ? `1px dashed ${C.rouge}` : undefined,
-                          boxSizing: "border-box",
-                        }}
-                      />
-                    </div>
-                    {vue.prevu[i] > 0 && (
-                      <div title={`Prévu ${libMois(m)} : ${euros(vue.prevu[i])}`} style={{ position: "absolute", left: "8%", right: "8%", bottom: `${(vue.prevu[i] / maxBarre) * 100}%`, borderTop: "3px solid #1f2328" }} />
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                {mois.map((m) => (
-                  <div key={m} style={{ flex: 1, textAlign: "center", fontSize: 11, color: C.gris }}>{libMois(m)}</div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, flexWrap: "wrap" }}>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: C.rouge }} /> réalisé</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe3e3 3px,#fbe3e3 6px)", border: `1px dashed ${C.rouge}` }} /> attendu (pas encore livré / facturé)</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#e57373" }} /> mois passé sous le prévu</span>
-                <span><i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", verticalAlign: "middle" }} /> prévisionnel</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#c9cdd2" }} /> exercice précédent</span>
-              </div>
-            </section>
 
             {/* ---------- TRAME_CA_V2 : la trame CA remplace le tableau des 12 mois ---------- */}
             <div>
@@ -1610,6 +1584,48 @@ function FinancesContenu() {
 
               {/* TRAME_CA_V3 : « Remplir le prévisionnel » est dans la trame */}
             </div>
+
+            {/* ---------- graphique 12 mois ---------- */}
+            <section style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
+              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Chiffre d’affaires mois par mois</h2>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 200, borderBottom: `1px solid ${C.ligne}` }}>
+                {mois.map((m, i) => (
+                  <div key={m} style={{ flex: 1, height: "100%", position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2 }}>
+                    <div title={`${libMois(moisN1[i])} : ${euros(vue.realiseN1[i])}`} style={{ width: "30%", height: `${(vue.realiseN1[i] / maxBarre) * 100}%`, background: "#c9cdd2", borderRadius: "3px 3px 0 0" }} />
+                    <div
+                      title={`${libMois(m)} : réalisé ${euros(vue.realise[i])}${vue.attendu[i] > 0 ? ` + attendu ${euros(vue.attendu[i])}` : ""}`}
+                      style={{ width: "40%", height: `${(atterrissage[i] / maxBarre) * 100}%`, display: "flex", flexDirection: "column-reverse" }}
+                    >
+                      <div style={{ height: `${atterrissage[i] > 0 ? (vue.realise[i] / atterrissage[i]) * 100 : 0}%`, background: vue.prevu[i] > 0 && atterrissage[i] < vue.prevu[i] && m < moisCourant ? "#e57373" : C.rouge }} />
+                      <div
+                        style={{
+                          height: `${atterrissage[i] > 0 ? (vue.attendu[i] / atterrissage[i]) * 100 : 0}%`,
+                          background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe3e3 4px,#fbe3e3 8px)",
+                          borderRadius: "3px 3px 0 0",
+                          border: vue.attendu[i] > 0 ? `1px dashed ${C.rouge}` : undefined,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                    {vue.prevu[i] > 0 && (
+                      <div title={`Prévu ${libMois(m)} : ${euros(vue.prevu[i])}`} style={{ position: "absolute", left: "8%", right: "8%", bottom: `${(vue.prevu[i] / maxBarre) * 100}%`, borderTop: "3px solid #1f2328" }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                {mois.map((m) => (
+                  <div key={m} style={{ flex: 1, textAlign: "center", fontSize: 11, color: C.gris }}>{libMois(m)}</div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, flexWrap: "wrap" }}>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: C.rouge }} /> réalisé</span>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe3e3 3px,#fbe3e3 6px)", border: `1px dashed ${C.rouge}` }} /> attendu (pas encore livré / facturé)</span>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#e57373" }} /> mois passé sous le prévu</span>
+                <span><i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", verticalAlign: "middle" }} /> prévisionnel</span>
+                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#c9cdd2" }} /> exercice précédent</span>
+              </div>
+            </section>
 
               </>
             )}
