@@ -1555,6 +1555,78 @@ function FinancesContenu() {
 
             {onglet === "CA" && (
               <>
+            {/* FINANCES_GRAPHIQUE : CA mois par mois, par activité, avec N-1 et N-2 ; un clic choisit le mois */}
+            {(() => {
+              const ROUGES: Record<string, string> = { "Méca": "#8e0000", Calcul: "#b3261e", "Elec / Pneu": "#d9534f", Scan: "#e57f7a", "Négoce": "#efa29d", Autre: "#f4c3bf", "Non ventilé": "#f6d6d3" };
+              const anMoins = (m: string, n: number) => `${Number(m.slice(0, 4)) - n}${m.slice(4)}`;
+              const sommeMois = (m: string) => mouvements.filter((x) => x.date.startsWith(m)).reduce((s, x) => s + x.montant, 0);
+              const parAct = mois.map((m) => {
+                const du = mouvements.filter((x) => x.date.startsWith(m));
+                return GROUPES.map((g) => ({ g, v: du.reduce((s, x) => s + x.parGroupe[g], 0) })).filter((x) => x.v > 0.5);
+              });
+              const n2 = mois.map((m) => sommeMois(anMoins(m, 2)));
+              const haut = Math.max(1, ...atterrissage, ...vue.realiseN1, ...n2, ...vue.prevu);
+              const auto = Math.max(0, mois.findIndex((m) => m.slice(5, 7) === moisCourant.slice(5, 7)));
+              const choisi = moisVu ?? auto;
+              const presents = GROUPES.filter((g) => parAct.some((l) => l.some((x) => x.g === g)));
+              const pastille = (fond: string) => <i style={{ display: "inline-block", width: 12, height: 12, borderRadius: 3, background: fond, marginRight: 5, verticalAlign: "middle" }} />;
+              return (
+                <section style={{ ...page.carte, padding: "12px 16px", marginBottom: 12 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 14px", marginBottom: 8, fontSize: 12, color: "#3b4046" }}>
+                    <h2 style={{ margin: 0, fontSize: 16, marginRight: 8 }}>Chiffre d’affaires mois par mois</h2>
+                    {presents.map((g) => (
+                      <span key={g}>
+                        {pastille(ROUGES[g] ?? "#d9534f")}
+                        {g}
+                      </span>
+                    ))}
+                    <span>{pastille("repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe6e6 3px,#fbe6e6 6px)")}attendu</span>
+                    <span>
+                      <i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", marginRight: 5, verticalAlign: "middle" }} />
+                      objectif
+                    </span>
+                    <span>{pastille("#c3c8ce")}N-1</span>
+                    <span>{pastille("#e3e6ea")}N-2</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 150, borderBottom: `1px solid ${C.ligne}` }}>
+                    {mois.map((m, i) => {
+                      const att = atterrissage[i];
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setMoisVu(i)}
+                          title={`${libMois(m)} : facturé ${euros(vue.realise[i])}${vue.attendu[i] > 0.5 ? ` + attendu ${euros(vue.attendu[i])}` : ""}${vue.prevu[i] > 0 ? ` · objectif ${euros(vue.prevu[i])}` : ""} · N-1 ${euros(vue.realiseN1[i])} · N-2 ${euros(n2[i])}\nCliquer pour voir ce mois`}
+                          style={{ all: "unset", cursor: "pointer", flex: 1, height: "100%", position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2, borderRadius: 4, background: i === choisi ? "#fff1f1" : undefined, outline: i === choisi ? `1.5px solid ${C.rouge}` : undefined }}
+                        >
+                          <div style={{ width: "12%", height: `${(n2[i] / haut) * 100}%`, background: "#e3e6ea", borderRadius: "2px 2px 0 0" }} />
+                          <div style={{ width: "18%", height: `${(vue.realiseN1[i] / haut) * 100}%`, background: "#c3c8ce", borderRadius: "2px 2px 0 0" }} />
+                          <div style={{ width: "42%", height: `${(Math.max(0, att) / haut) * 100}%`, display: "flex", flexDirection: "column-reverse", borderRadius: "3px 3px 0 0", overflow: "hidden" }}>
+                            {parAct[i].map(({ g, v }) => (
+                              <div key={g} style={{ height: `${att > 0 ? (v / att) * 100 : 0}%`, background: ROUGES[g] ?? "#d9534f", borderTop: "1px solid #ffffff" }} />
+                            ))}
+                            {vue.attendu[i] > 0.5 && (
+                              <div style={{ height: `${att > 0 ? (vue.attendu[i] / att) * 100 : 0}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe6e6 4px,#fbe6e6 8px)" }} />
+                            )}
+                          </div>
+                          {vue.prevu[i] > 0 && (
+                            <div style={{ position: "absolute", left: "10%", right: "10%", bottom: `${(vue.prevu[i] / haut) * 100}%`, borderTop: "3px solid #1f2328" }} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    {mois.map((m, i) => (
+                      <div key={m} style={{ flex: 1, textAlign: "center", fontSize: 11, fontWeight: i === choisi ? 800 : 400, color: i === choisi ? C.rougeFonce : C.gris }}>
+                        {libMois(m)}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            })()}
+
             {(attendus.aDater.length > 0 || attendus.enRetard.length > 0) && (
               <Message genre="info">
                 {attendus.enRetard.length > 0 && (
@@ -1577,7 +1649,6 @@ function FinancesContenu() {
             <div>
               <TrameCA
                 vignettes={blocMois.vignettes}
-                barre={blocMois.barre}
                 exercice={exercice}
                 mois={mois}
                 moisN1={moisN1}
@@ -1675,47 +1746,6 @@ function FinancesContenu() {
               {/* TRAME_CA_V3 : « Remplir le prévisionnel » est dans la trame */}
             </div>
 
-            {/* ---------- graphique 12 mois ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 17 }}>Chiffre d’affaires mois par mois</h2>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 200, borderBottom: `1px solid ${C.ligne}` }}>
-                {mois.map((m, i) => (
-                  <div key={m} style={{ flex: 1, height: "100%", position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "center", gap: 2 }}>
-                    <div title={`${libMois(moisN1[i])} : ${euros(vue.realiseN1[i])}`} style={{ width: "30%", height: `${(vue.realiseN1[i] / maxBarre) * 100}%`, background: "#c9cdd2", borderRadius: "3px 3px 0 0" }} />
-                    <div
-                      title={`${libMois(m)} : réalisé ${euros(vue.realise[i])}${vue.attendu[i] > 0 ? ` + attendu ${euros(vue.attendu[i])}` : ""}`}
-                      style={{ width: "40%", height: `${(atterrissage[i] / maxBarre) * 100}%`, display: "flex", flexDirection: "column-reverse" }}
-                    >
-                      <div style={{ height: `${atterrissage[i] > 0 ? (vue.realise[i] / atterrissage[i]) * 100 : 0}%`, background: vue.prevu[i] > 0 && atterrissage[i] < vue.prevu[i] && m < moisCourant ? "#e57373" : C.rouge }} />
-                      <div
-                        style={{
-                          height: `${atterrissage[i] > 0 ? (vue.attendu[i] / atterrissage[i]) * 100 : 0}%`,
-                          background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 4px,#fbe3e3 4px,#fbe3e3 8px)",
-                          borderRadius: "3px 3px 0 0",
-                          border: vue.attendu[i] > 0 ? `1px dashed ${C.rouge}` : undefined,
-                          boxSizing: "border-box",
-                        }}
-                      />
-                    </div>
-                    {vue.prevu[i] > 0 && (
-                      <div title={`Prévu ${libMois(m)} : ${euros(vue.prevu[i])}`} style={{ position: "absolute", left: "8%", right: "8%", bottom: `${(vue.prevu[i] / maxBarre) * 100}%`, borderTop: "3px solid #1f2328" }} />
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                {mois.map((m) => (
-                  <div key={m} style={{ flex: 1, textAlign: "center", fontSize: 11, color: C.gris }}>{libMois(m)}</div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 16, fontSize: 12, marginTop: 6, flexWrap: "wrap" }}>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: C.rouge }} /> réalisé</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 3px,#fbe3e3 3px,#fbe3e3 6px)", border: `1px dashed ${C.rouge}` }} /> attendu (pas encore livré / facturé)</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#e57373" }} /> mois passé sous le prévu</span>
-                <span><i style={{ display: "inline-block", width: 14, borderTop: "3px solid #1f2328", verticalAlign: "middle" }} /> prévisionnel</span>
-                <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#c9cdd2" }} /> exercice précédent</span>
-              </div>
-            </section>
 
               </>
             )}
