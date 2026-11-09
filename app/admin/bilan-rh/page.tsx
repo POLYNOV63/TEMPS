@@ -275,15 +275,19 @@ export default function BilanRHPage() {
         let jours: Jour[] = [];
 
         if (feuilleIds.length > 0) {
-          const { data: joursData, error: erreurJours } = await supabase
-            .from("feuilles_heures_jours")
-            .select(
-              "id, feuille_id, date_jour, presence, absence, ticket_restaurant"
-            )
-            .in("feuille_id", feuilleIds);
+          // lecture par paquets de 1 000 (limite de Supabase)
+          for (let debut = 0; ; debut += 1000) {
+            const { data: joursData, error: erreurJours } = await supabase
+              .from("feuilles_heures_jours")
+              .select("id, feuille_id, date_jour, presence, absence, ticket_restaurant")
+              .in("feuille_id", feuilleIds)
+              .order("id")
+              .range(debut, debut + 999);
 
-          if (erreurJours) throw erreurJours;
-          jours = (joursData ?? []) as Jour[];
+            if (erreurJours) throw erreurJours;
+            jours.push(...((joursData ?? []) as Jour[]));
+            if ((joursData ?? []).length < 1000) break;
+          }
         }
 
         const aujourdHui = dateISO(new Date());
@@ -291,9 +295,11 @@ export default function BilanRHPage() {
         const periodeEstCourante =
           aujourdHui >= periode.debutCycle && aujourdHui <= periode.dateCloture;
 
+        // BILAN_RH_ETATS : la semaine en cours n'est attendue qu'à partir de son vendredi
+        const derniereSemaineFinie = aujourdHui >= ajouterJoursISO(semaineCourante, 4) ? semaineCourante : ajouterJoursISO(semaineCourante, -7);
         const derniereSemaineAttendue = periodeEstCourante
-          ? semaineCourante < periode.semaineCloture
-            ? semaineCourante
+          ? derniereSemaineFinie < periode.semaineCloture
+            ? derniereSemaineFinie
             : periode.semaineCloture
           : periode.semaineCloture;
 
@@ -467,11 +473,12 @@ export default function BilanRHPage() {
   const bilanPret = useMemo(() => {
     // Le bilan RH n'est prêt que si chaque collaborateur concerné
     // a au moins une semaine attendue et que toutes ces semaines sont validées.
+    // les personnes non concernées (aucune semaine attendue) n'empêchent pas le bilan d'être prêt
+    const concernees = lignes.filter((ligne) => ligne.feuillesAttendues > 0);
     return (
-      lignes.length > 0 &&
-      lignes.every(
+      concernees.length > 0 &&
+      concernees.every(
         (ligne) =>
-          ligne.feuillesAttendues > 0 &&
           ligne.feuillesManquantes === 0 &&
           ligne.brouillons === 0 &&
           ligne.feuillesValidees >= ligne.feuillesAttendues
@@ -766,8 +773,15 @@ export default function BilanRHPage() {
                           (ligne.feuillesManquantes > 0 || ligne.brouillons > 0 ||
                             ligne.feuillesValidees < ligne.feuillesAttendues);
 
+                        const c = ligne.collaborateur;
+                        const raison =
+                          c.date_sortie && periode && c.date_sortie < periode.debutCycle
+                            ? ` · plus dispo après le ${formatDate(c.date_sortie)}`
+                            : c.date_entree && periode && c.date_entree > periode.dateCloture
+                              ? ` · entrée le ${formatDate(c.date_entree)}`
+                              : " · aucune semaine terminée";
                         const etat = aucuneFeuilleAttendue
-                          ? "Non concerné"
+                          ? `Non concerné${raison}`
                           : ligne.feuillesManquantes > 0
                             ? "Feuille manquante"
                             : ligne.brouillons > 0
@@ -840,6 +854,7 @@ export default function BilanRHPage() {
                 <div style={styles.infoTitle}>⚠️ Absences</div>
                 <div style={styles.infoText}>
                   Toute absence saisie hors FE est remontée ici pour permettre au service RH de vérifier qu'elle a bien été justifiée dans les outils RH.
+                  La semaine en cours n'est attendue qu'à partir de son vendredi.
                 </div>
               </div>
             </section>
