@@ -955,7 +955,7 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
           <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
           <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
           <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
-          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes" onClick={() => aller("/pilotage/indicateurs")} />
+          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Consultations, taux de transformation, top 10 clients, comparatif sur 3 ans" onClick={() => aller("/pilotage/indicateurs")} />
         </div>
       </Groupe>
     </>
@@ -1128,17 +1128,13 @@ function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
           <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
         </div>
       </Groupe>
-      <Groupe titre="Rentabilité" description="Ce qu'ont rapporté les affaires livrées, face au coût d'une heure">
+      {/* TABLEAU_FINITIONS : rentabilité et chiffre d'affaires réunis ; la facturation du mois est dans Exports */}
+      <Groupe titre="Rentabilité et chiffre d'affaires" description="Ce qu'ont rapporté les affaires, le CA de l'exercice, les consultations">
         <div style={stylesV2.grille}>
           {/* RENTABILITE_V1 FIABILITE_CHIFFRAGE : la fiabilité du chiffrage est reprise dans la rentabilité */}
           <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
-        </div>
-      </Groupe>
-      <Groupe titre="Chiffre d'affaires et commercial" description="Facturé, attendu, prévisionnel, devis et commandes">
-        <div style={stylesV2.grille}>
           <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
-          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Le point de fin de mois avec la compta" onClick={() => aller("/analyse/facturation")} />
-          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Devis, prise de commande, top 10 clients, carnet" onClick={() => aller("/pilotage/indicateurs")} />
+          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Consultations, taux de transformation, top 10 clients, comparatif sur 3 ans" onClick={() => aller("/pilotage/indicateurs")} />
         </div>
       </Groupe>
     </>
