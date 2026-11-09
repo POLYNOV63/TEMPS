@@ -404,7 +404,7 @@ function PlanningRessourcesContenu() {
           <span style={{ fontSize: 13, color: C.gris }}>essai · consultation : on affecte toujours depuis le planning des affaires</span>
         </div>
 
-        <div style={{ ...page.carte, padding: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12, position: "sticky", top: 50, zIndex: 20 }}>
+        <div style={{ ...page.carte, padding: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 20 }}>
           <button type="button" style={btn} onClick={() => setLundi(ajouterJours(lundi, -7))} aria-label="Semaine précédente">◀</button>
           <strong>
             {formatDate(debut)} → {formatDate(fin)}
@@ -445,7 +445,7 @@ function PlanningRessourcesContenu() {
         {!chargement && (
           <section style={{ ...page.carte, padding: 10, minWidth: LARGEUR_NOM + 96 + colonnes.length * 22 }}>
             {/* en-tête fixe : mois, semaines, jours */}
-            <div style={{ display: "grid", gridTemplateColumns: gabarit, position: "sticky", top: 112, zIndex: 15, background: "#ffffff", boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: gabarit, position: "sticky", top: "calc(var(--hauteur-nav, 50px) + 62px)", zIndex: 15, background: "#ffffff", boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)" }}>
               <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, textTransform: "uppercase", color: C.gris }}>Personne</div>
               {mois.map((m) => (
                 <div key={m.cle} style={{ gridColumn: `${col(m.debut)} / span ${m.nb}`, gridRow: 1, textAlign: "center", fontWeight: 800, fontSize: 13, color: C.rougeFonce, borderLeft: "2px solid #b3b9c0", whiteSpace: "nowrap", overflow: "hidden", textTransform: "capitalize", padding: "3px 0" }}>

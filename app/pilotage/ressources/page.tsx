@@ -669,11 +669,11 @@ function RessourcesContenu() {
               </colgroup>
               <thead>
                 <tr>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("NOM", "Ressource")}</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "center" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("CHARGE", "Charge")}</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("ECART", "Écart")}</th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("NOM", "Ressource")}</th>
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4", textAlign: "center" }} title="Heures affectées / capacité disponible (fériés et absences déduits)">Affecté / capacité</th>
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("CHARGE", "Charge")}</th>
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>{enteteTri("ECART", "Écart")}</th>
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4", textAlign: "center" }}>
                     Affectations{" "}
                     <button
                       type="button"
@@ -686,7 +686,7 @@ function RessourcesContenu() {
                       {toutDeplie ? "tout replier" : "tout déplier"}
                     </button>
                   </th>
-                  <th style={{ ...page.th, position: "sticky", top: 50, zIndex: 5, background: "#f1f2f4" }} />
+                  <th style={{ ...page.th, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 5, background: "#f1f2f4" }} />
                 </tr>
               </thead>
               <tbody>

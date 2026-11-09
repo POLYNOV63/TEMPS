@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { C } from "@/components/pilotage/ui";
 import { peut, type Droit } from "@/lib/droits";
@@ -56,6 +56,18 @@ export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
       .catch(() => setRole(null));
   }, []);
 
+  /* PLANNING_NAV_UNIQUE : la hauteur du bandeau, pour que les éléments figés des pages se placent juste dessous */
+  const refNav = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = refNav.current;
+    if (!el) return;
+    const maj = () => document.documentElement.style.setProperty("--hauteur-nav", `${Math.round(el.getBoundingClientRect().height)}px`);
+    maj();
+    const ro = new ResizeObserver(maj);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const courant = ONGLETS.find((o) => o.cle === actif);
   const axeCourant: Axe = courant?.axe ?? "affaires";
   // Tant que le rôle n'est pas connu, seul l'onglet courant est affiché
@@ -65,6 +77,7 @@ export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
 
   return (
     <nav
+      ref={refNav}
       aria-label="Navigation"
       style={{
         position: "sticky",

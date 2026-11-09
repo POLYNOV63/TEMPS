@@ -1041,7 +1041,7 @@ function PortefeuilleContenu() {
         }
         .portefeuille-entete th {
           position: sticky;
-          top: 49px;
+          top: var(--hauteur-nav, 49px);
           z-index: 5;
           background: #f4f5f7;
           box-shadow: inset 0 -2px 0 #d5d9de;

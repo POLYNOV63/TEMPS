@@ -2033,18 +2033,41 @@ function PlanningAffairesContenu() {
                 marginBottom: 12,
                 // reste visible sous les onglets du Pilotage quand on descend dans les affaires
                 position: "sticky",
-                top: 50,
+                top: "var(--hauteur-nav, 50px)",
                 zIndex: 20,
                 boxShadow: "0 4px 10px -6px rgba(0,0,0,.35)",
               }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
                 <button type="button" aria-label="Semaine précédente" onClick={() => setLundi(ajouterJours(lundi, -7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>◀</button>
+                {/* PLANNING_NAV_UNIQUE : toute la navigation dans ce bandeau figé */}
                 <span>
                   {formatDate(lundi)} → {formatDate(colonnes[colonnes.length - 1])}
-                  <span style={{ color: C.gris, fontWeight: 600 }}> · S{numeroSemaine(lundi)}</span>
+                  <span style={{ color: C.gris, fontWeight: 600 }}>
+                    {" "}
+                    · S{numeroSemaine(lundi)} à S{numeroSemaine(colonnes[colonnes.length - 1] ?? lundi)}
+                  </span>
                 </span>
                 <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>▶</button>
+                <button
+                  type="button"
+                  onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
+                  style={{ all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1f4e99", textDecoration: "underline" }}
+                >
+                  Aujourd’hui
+                </button>
+                <select
+                  value={nbSemaines}
+                  onChange={(e) => setNbSemaines(Number(e.target.value))}
+                  aria-label="Durée affichée"
+                  style={{ minHeight: 28, borderRadius: 6, border: "1.5px solid #c9cdd2", fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
+                >
+                  {[2, 4, 8, 12, 26, 52].map((n) => (
+                    <option key={n} value={n}>
+                      {n === 52 ? "1 an" : `${n} semaines`}
+                    </option>
+                  ))}
+                </select>
                 <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
                   <span aria-hidden="true">👁</span>
                   <select
@@ -2099,16 +2122,6 @@ function PlanningAffairesContenu() {
         })()}
 
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" aria-label="Période précédente" style={fleche} onClick={() => setLundi(ajouterJours(lundi, -7 * Math.max(1, Math.floor(nbSemaines / 3))))}>◀</button>
-            <div style={{ fontWeight: 800, fontSize: 18, minWidth: 220, textAlign: "center" }}>
-              {formatDate(lundi)} → {formatDate(colonnes[colonnes.length - 1])}
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.gris }}>S{numeroSemaine(lundi)} à S{numeroSemaine(colonnes[colonnes.length - 1] ?? lundi)}</div>
-            </div>
-            <button type="button" aria-label="Période suivante" style={fleche} onClick={() => setLundi(ajouterJours(lundi, 7 * Math.max(1, Math.floor(nbSemaines / 3))))}>▶</button>
-            <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}>Aujourd’hui</button>
-          </div>
-
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input
               type="search"
@@ -2121,12 +2134,6 @@ function PlanningAffairesContenu() {
             {(["TOUS", "CBE", "DBE", "PE", "PI"] as const).map((t) => (
               <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>
                 {t === "TOUS" ? "Tout" : t === "CBE" ? "Forfait" : t}
-              </button>
-            ))}
-            <span style={{ width: 8 }} />
-            {[2, 4, 8, 12, 26, 52].map((n) => (
-              <button key={n} type="button" aria-pressed={nbSemaines === n} style={bouton(nbSemaines === n)} onClick={() => setNbSemaines(n)}>
-                {n === 52 ? "1 an" : `${n} sem.`}
               </button>
             ))}
           </div>
@@ -2213,7 +2220,7 @@ function PlanningAffairesContenu() {
         )}
 
         {blocChoisi && (
-          <div style={{ position: "sticky", top: 56, zIndex: 30, marginBottom: 10 }}>
+          <div style={{ position: "sticky", top: "calc(var(--hauteur-nav, 50px) + 6px)", zIndex: 30, marginBottom: 10 }}>
             <Message genre="info">
               Barre sélectionnée : <strong>{nomCollab(annuaire.find((c) => c.id === blocChoisi.affectation.collaborateur_id))}</strong>,{" "}
               {formatHeures(blocChoisi.heures)}. Touche <strong>Suppr</strong> pour la supprimer, double-clic pour la modifier,{" "}
@@ -2270,7 +2277,7 @@ function PlanningAffairesContenu() {
                   display: "grid",
                   gridTemplateColumns: gabarit,
                   position: "sticky",
-                  top: 128,
+                  top: "calc(var(--hauteur-nav, 50px) + 78px)",
                   zIndex: 15,
                   background: "#ffffff",
                   boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)",
