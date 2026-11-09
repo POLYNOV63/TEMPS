@@ -282,7 +282,10 @@ function RentabiliteContenu() {
       const hr = GROUPES.reduce((t, g) => t + rg[g], 0);
       const hc = GROUPES.reduce((t, g) => t + a.heuresChiffrees[g], 0);
       const c = coutHoraire(couts, a.date_fin);
-      const montant = venteAuMontant(a.imputation);
+      // RENTABILITE_NEGOCE : une affaire de négoce / scan qui a des heures chiffrées se compare comme les autres
+      const montant = venteAuMontant(a.imputation) && hc <= 0.01;
+      const hcNegoce = a.heuresChiffrees["Négoce"];
+      const cleNegoce = hcNegoce > 0.01 ? "Négoce" : "Négoce au montant";
       /* RENTABILITE_V3 : montant non détaillé par activité dans le Suivi d'affaire : réparti au prorata des heures chiffrées
          (à défaut, des heures passées), pour ne pas laisser le CA d'un côté et le coût des heures de l'autre */
       const pg: ParGroupe = { ...a.parGroupe };
@@ -319,7 +322,7 @@ function RentabiliteContenu() {
       });
       if (montant) {
         // négoce / scan pur : l'affaire entière dans sa ligne, heures passées comprises
-        ajouter(/^scan/.test(sansAccents(a.imputation)) ? "Scan" : "Négoce", a.montant, a.achats, 0, hr, c === null ? null : a.achats + hr * c, true);
+        ajouter(/^scan/.test(sansAccents(a.imputation)) ? "Scan" : "Négoce au montant", a.montant, a.achats, 0, hr, c === null ? null : a.achats + hr * c, true);
         continue;
       }
       for (const g of GROUPES) {
@@ -328,7 +331,7 @@ function RentabiliteContenu() {
         ajouter(g, pg[g], 0, a.heuresChiffrees[g], rg[g], c === null ? null : rg[g] * c, false);
       }
       if (pg["Négoce"] > 0 || a.achats > 0 || rg["Négoce"] > 0)
-        ajouter("Négoce", pg["Négoce"], a.achats, 0, rg["Négoce"], c === null ? null : a.achats + rg["Négoce"] * c, true);
+        ajouter(cleNegoce, pg["Négoce"], a.achats, hcNegoce > 0.01 ? hcNegoce : 0, rg["Négoce"], c === null ? null : a.achats + rg["Négoce"] * c, hcNegoce <= 0.01);
     }
 
     // RENTABILITE_V2 : PE / PI, mois facturés de l'exercice
@@ -357,7 +360,7 @@ function RentabiliteContenu() {
       return mx / (x.ca || 1) - my / (y.ca || 1);
     });
 
-    const ordre = [...GROUPES, "Scan", "PE", "PI"];
+    const ordre = [...GROUPES, "Négoce au montant", "Scan", "PE", "PI"];
     const groupes = [...parGroupe.values()].sort((x, y) => ordre.indexOf(x.cle) - ordre.indexOf(y.cle));
     const tout: LigneRenta[] = [...affaires, ...prestationsEx];
     const total: LigneRenta = {
@@ -673,7 +676,7 @@ function RentabiliteContenu() {
                     Taux obtenu <span style={{ color: "#1b5e20", fontWeight: 800 }}>vert</span> : au niveau du taux vendu ·{" "}
                     <span style={{ color: "#b35c00", fontWeight: 800 }}>orange</span> : plus bas (heures en plus) ·{" "}
                     <span style={{ color: "#b3261e", fontWeight: 800 }}>rouge</span> : sous le coût de structure (perte). Les achats sont portés par la ligne
-                    Négoce ; négoce et scan purs comptent entiers dans leur ligne.
+                    Négoce ; le négoce sans heures chiffrées est à part (« Négoce au montant »), comme le scan pur.
                   </p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Activité")}</thead>
@@ -803,7 +806,7 @@ function RentabiliteContenu() {
                   prorata de ses heures chiffrées (à défaut, passées). Ne reste en « Non ventilé » que le prix d’une affaire sans aucune heure.
                 </li>
                 <li>
-                  <strong>Négoce et scan</strong> (imputation NEGOCE / SCAN) : vendus au montant, sans taux vendu ; leurs heures passées comptent dans leur coût.
+                  <strong>Négoce</strong> : avec des heures de négoce chiffrées (colonne « Heures négoce » du Suivi d’affaire), il a un taux vendu et un taux obtenu comme les autres activités ; sans heures chiffrées (anciennes affaires), il est sur la ligne « Négoce au montant », sans taux vendu. <strong>Scan</strong> pur (imputation SCAN, sans heures chiffrées) : au montant, de même. Leurs heures passées comptent toujours dans leur coût.
                 </li>
               </ul>
             </details>
