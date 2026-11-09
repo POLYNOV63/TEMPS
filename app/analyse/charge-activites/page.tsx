@@ -205,22 +205,21 @@ function ChargeActivitesContenu() {
                   {semaines.map((l, w) => {
                     const capa = d.capa[w];
                     const occ = d.occ[w];
-                    const exces = d.surcharge[w];
+                    // DISPOS_SANS_SURCHARGE : plus de surcharge dans le graphique
                     const occUtile = Math.max(0, capa - d.dispo[w]);
                     return (
                       <div
                         key={l}
                         title={`S${numeroSemaine(l)} : capacité ${h(capa)} · occupées ${h(occ)} · disponibles ${h(d.dispo[w])}${
                           d.dispo[w] >= 0.5 ? ` (${NIVEAUX.map((nv, k) => (d.parNiveau[k][w] >= 0.5 ? `${nv.libelle.replace("Niveau non renseigné", "non renseigné")} ${h(d.parNiveau[k][w])}` : "")).filter(Boolean).join(", ")})` : ""
-                        }${d.prev[w] >= 0.5 ? ` · dont prévisionnel ${h(d.prev[w])}` : ""}${exces >= 0.5 ? ` · surcharge ${h(exces)}` : ""}`}
+                        }${d.prev[w] >= 0.5 ? ` · dont prévisionnel ${h(d.prev[w])}` : ""}`}
                         onClick={() => setDetail(detail?.cle === d.cle && detail.w === w ? null : { cle: d.cle, w })}
                         style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column-reverse", cursor: "pointer", outline: detail?.cle === d.cle && detail.w === w ? `2px solid ${C.encre}` : undefined }}
                       >
                         <div style={{ height: `${(Math.max(0, occUtile - d.prevUtile[w]) / max) * 100}%`, background: d.couleur, opacity: 0.85 }} />
                         {d.prevUtile[w] > 0 && (
-                          <div style={{ height: `${(d.prevUtile[w] / max) * 100}%`, background: `repeating-linear-gradient(45deg,${d.couleur},${d.couleur} 3px,#ffffff 3px,#ffffff 6px)`, opacity: 0.6 }} />
+                          <div style={{ height: `${(d.prevUtile[w] / max) * 100}%`, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 3px,#c3cad3 3px,#c3cad3 6px)" }} />
                         )}
-                        {exces > 0 && <div style={{ height: `${(exces / max) * 100}%`, background: `repeating-linear-gradient(45deg,${ROUGE},${ROUGE} 3px,#f3b1ae 3px,#f3b1ae 6px)` }} />}
                         {/* disponibles, du niveau 3 (foncé, en bas) au niveau 1 (clair), puis non renseigné */}
                         {[2, 1, 0, 3].map((k) =>
                           d.parNiveau[k][w] > 0 ? <div key={k} style={{ height: `${(d.parNiveau[k][w] / max) * 100}%`, background: NIVEAUX[k].couleur }} /> : null
@@ -242,14 +241,13 @@ function ChargeActivitesContenu() {
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, margin: "-6px 0 16px" }}>
           <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#7b8189", verticalAlign: "middle" }} /> occupées (couleur de l’activité)</span>
-          <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#7b8189,#7b8189 3px,#ffffff 3px,#ffffff 6px)", verticalAlign: "middle", opacity: 0.7 }} /> dont prévisionnel (non confirmé)</span>
+          <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 3px,#c3cad3 3px,#c3cad3 6px)", verticalAlign: "middle" }} /> dont prévisionnel (non confirmé)</span>
           {NIVEAUX.map((nv) => (
             <span key={nv.n} title={nv.aide}>
               <i style={{ display: "inline-block", width: 12, height: 12, background: nv.couleur, verticalAlign: "middle", border: "1px solid #c9d1c9" }} /> disponibles · {nv.libelle.toLowerCase()}
               {nv.n > 0 ? <span style={{ color: C.gris }}> ({nv.aide})</span> : null}
             </span>
           ))}
-          <span><i style={{ display: "inline-block", width: 12, height: 12, background: `repeating-linear-gradient(45deg,${ROUGE},${ROUGE} 3px,#f3b1ae 3px,#f3b1ae 6px)`, verticalAlign: "middle" }} /> surcharge</span>
           <span style={{ color: C.gris }}>La hauteur totale d’une barre est la capacité de la semaine. Cliquez sur une barre ou une case pour voir le détail par personne.</span>
         </div>
 
@@ -377,7 +375,6 @@ function ChargeActivitesContenu() {
                         ["Disponibles", d.dispo, null],
                         ...NIVEAUX.map((nv, i) => [`dont ${nv.libelle.replace("Niveau non renseigné", "non renseigné").toLowerCase()}`, d.parNiveau[i], nv] as [string, number[], (typeof NIVEAUX)[number]])
                           .filter(([, v, nv]) => nv && (nv.n > 0 || v.some((x) => x >= 0.5))),
-                        ...(d.surcharge.some((x) => x >= 0.5) ? [["Surcharge", d.surcharge.map((x) => -x), null] as [string, number[], null]] : []),
                       ] as [string, number[], (typeof NIVEAUX)[number] | "PREV" | null][]
                     ).map(([lib, v, nvOuPrev], k) => {
                       if (nvOuPrev === "PREV")
@@ -456,8 +453,8 @@ function ChargeActivitesContenu() {
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>
           Chaque activité regroupe les personnes dont c’est une activité principale (fiche collaborateur), encadrement exclu ; une personne qui a
           plusieurs activités principales compte dans chacune, les activités ne s’additionnent donc pas entre elles. Occupées : tout ce qui leur est
-          planifié, affaires, PE / PI, hors affaire et prévisionnel (charge probable, non confirmée, montrée à part). Disponibles : les heures libres de chacun, détaillées par niveau (fiche collaborateur) ; surcharge :
-          ce qui dépasse la capacité de certains. Capacité − occupées = disponibles − surcharge. Détail par personne et par affaire :{" "}
+          planifié, affaires, PE / PI, hors affaire et prévisionnel (charge probable, non confirmée, montrée à part). Disponibles : les heures libres de chacun, détaillées par niveau (fiche collaborateur).
+          Ce qui est planifié au-delà de la capacité d’une personne n’est pas montré ici (voir le détail d’une semaine). Détail par personne et par affaire :{" "}
           <Link href="/pilotage/ressources" style={{ fontWeight: 700, color: C.rougeFonce }}>
             Charge par ressource →
           </Link>

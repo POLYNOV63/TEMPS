@@ -37,12 +37,13 @@ const ONGLETS = [
   { cle: "charge-activites", axe: "charge", libelle: "Disponibilités par activité", href: "/analyse/charge-activites", droit: "chargeRessources" },
   { cle: "feuilles-route", axe: "charge", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
   // Analyses : ce qui a été fait, ce que ça a rapporté
-  { cle: "capacite", axe: "analyses", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
-  { cle: "effectifs", axe: "analyses", libelle: "Cartographie de l’équipe", href: "/analyse/effectifs", droit: "indicateurs" },
-  { cle: "rentabilite", axe: "analyses", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
+  // DISPOS_SANS_SURCHARGE : Analyse de capacité en dernier (la plus longue à charger)
   { cle: "finances", axe: "analyses", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "facturation", axe: "analyses", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
+  { cle: "rentabilite", axe: "analyses", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
   { cle: "indicateurs", axe: "analyses", libelle: "Indicateurs commerciaux", href: "/pilotage/indicateurs", droit: "indicateurs" },
+  { cle: "effectifs", axe: "analyses", libelle: "Cartographie de l’équipe", href: "/analyse/effectifs", droit: "indicateurs" },
+  { cle: "capacite", axe: "analyses", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
 ] as const satisfies readonly { cle: string; axe: Axe; libelle: string; href: string; droit: Droit }[];
 
 export type OngletActif = (typeof ONGLETS)[number]["cle"];
