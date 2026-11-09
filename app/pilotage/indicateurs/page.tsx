@@ -51,13 +51,13 @@ type Consultation = {
   numero: string;
   l: LigneInd;
   ouverture: string;
-  issue: Issue;
+  issue: Issue | "FERME"; // DEVIS_FERMES : « Devis perdu » sans montant ni heures = fermé sans devis
   principale: Discipline;
   parts: Record<Discipline, number>; // part de chaque activité (somme = 1)
   source: "MONTANT" | "HEURES" | "IMPUTATION" | "AUCUNE"; // DETAIL_AUTRE : d'où vient l'activité
 };
-type Stat = { n: number; g: number; p: number; a: number; v: number; vg: number; vp: number };
-const vide = (): Stat => ({ n: 0, g: 0, p: 0, a: 0, v: 0, vg: 0, vp: 0 });
+type Stat = { n: number; g: number; p: number; a: number; f: number; v: number; vg: number; vp: number };
+const vide = (): Stat => ({ n: 0, g: 0, p: 0, a: 0, f: 0, v: 0, vg: 0, vp: 0 });
 
 type LigneBrute = {
   id: string;
@@ -200,7 +200,9 @@ function IndicateursContenu() {
       const tot = sommeD(base);
       const parts = Object.fromEntries(DISCIPLINES.map((d) => [d, base[d] / tot])) as Record<Discipline, number>;
       const principale: Discipline = DISCIPLINES.reduce((a, d) => (base[d] > base[a] ? d : a), DISCIPLINES[0]);
-      res.push({ numero, l, ouverture, issue: issueDevis(l), principale, parts, source });
+      const issue0 = issueDevis(l);
+      const ferme = issue0 === "PERDU" && !(l.montant > 0) && !(l.heures_total > 0);
+      res.push({ numero, l, ouverture, issue: ferme ? "FERME" : issue0, principale, parts, source });
     }
     return res;
   }, [lignes, detailMontants]);
@@ -219,6 +221,7 @@ function IndicateursContenu() {
         s.n++;
         if (c.issue === "GAGNE") s.g++;
         else if (c.issue === "PERDU") s.p++;
+        else if (c.issue === "FERME") s.f++;
         else s.a++;
       }
       s.v += val(c) * part;
@@ -230,7 +233,7 @@ function IndicateursContenu() {
     const totalN1 = stat(n1);
 
     const parAct = new Map<Discipline, Stat>();
-    for (const c of periode)
+    for (const c of periode.filter((x) => x.issue !== "FERME"))
       for (const d of DISCIPLINES) {
         if (c.parts[d] <= 0 && d !== c.principale) continue;
         const s = parAct.get(d) ?? vide();
@@ -248,15 +251,16 @@ function IndicateursContenu() {
     const clients = [...parClient.entries()].sort((x, y) => y[1].v - x[1].v || y[1].n - x[1].n);
 
     // mois de la période (au plus 24), consultations par activité principale
-    const mois: { cle: string; label: string; parAct: Record<Discipline, number>; n: number }[] = [];
+    const mois: { cle: string; label: string; parAct: Record<Discipline, number>; n: number; fermes: number }[] = [];
     for (let d = new Date(`${bornes.du.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 7) <= bornes.au.slice(0, 7) && mois.length < 24; d.setUTCMonth(d.getUTCMonth() + 1)) {
       const cle = d.toISOString().slice(0, 7);
-      mois.push({ cle, label: `${MOIS_COURTS[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`, parAct: Object.fromEntries(DISCIPLINES.map((x) => [x, 0])) as Record<Discipline, number>, n: 0 });
+      mois.push({ cle, label: `${MOIS_COURTS[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`, parAct: Object.fromEntries(DISCIPLINES.map((x) => [x, 0])) as Record<Discipline, number>, n: 0, fermes: 0 });
     }
     for (const c of periode) {
       const m = mois.find((x) => x.cle === c.ouverture.slice(0, 7));
       if (!m) continue;
-      m.parAct[c.principale]++;
+      if (c.issue === "FERME") m.fermes++;
+      else m.parAct[c.principale]++;
       m.n++;
     }
 
@@ -282,7 +286,7 @@ function IndicateursContenu() {
 
   function exporter() {
     const wb = XLSX.utils.book_new();
-    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse" } as const;
+    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse", FERME: "Fermé sans devis" } as const;
     XLSX.utils.book_append_sheet(
       wb,
       XLSX.utils.json_to_sheet(
@@ -323,6 +327,7 @@ function IndicateursContenu() {
         <th style={thD}>Remportées</th>
         <th style={thD}>Perdues</th>
         <th style={thD}>Sans réponse</th>
+        <th style={thD} title="Classées « Devis perdu » sans montant ni heures : jamais chiffrées ni envoyées">Fermées</th>
         <th style={thD} title="Taux de transformation en nombre : remportées ÷ (remportées + perdues). Les consultations sans réponse ne comptent pas.">Transformées</th>
         <th style={thD}>{montantsVisibles ? "Chiffré" : "Heures chiffrées"}</th>
         <th style={thD}>{montantsVisibles ? "Remporté" : "Heures remportées"}</th>
@@ -340,6 +345,7 @@ function IndicateursContenu() {
       <td style={{ ...tdD, color: "#1b5e20", fontWeight: 700 }}>{s.g}</td>
       <td style={tdD}>{s.p}</td>
       <td style={{ ...tdD, color: C.gris }}>{s.a}</td>
+      <td style={{ ...tdD, color: C.gris }}>{s.f || "—"}</td>
       <td style={tdD} title={`${s.g} remportée(s) sur ${s.g + s.p} consultation(s) dont on connaît l’issue`}>
         <strong>{taux(s.g, s.p)}</strong>
         {s.g + s.p > 0 && (
@@ -423,7 +429,7 @@ function IndicateursContenu() {
           <>
             {/* ---------- vignettes ---------- */}
             <div style={rangee}>
-              <Tuile libelle="Consultations" valeur={String(t.n)} sous={`devis ouverts · ${evol(t.n, tN1.n)}`} />
+              <Tuile libelle="Consultations" valeur={String(t.n)} sous={`devis ouverts${t.f ? ` · dont ${t.f} fermées sans devis` : ""} · ${evol(t.n, tN1.n)}`} />
               <Tuile libelle={montantsVisibles ? "Montant chiffré" : "Heures chiffrées"} valeur={fmt(t.v)} sous={evol(t.v, tN1.v)} />
               <Tuile libelle={montantsVisibles ? "Montant remporté" : "Heures remportées"} valeur={fmt(t.vg)} sous={`${t.g} consultation${t.g > 1 ? "s" : ""} devenue${t.g > 1 ? "s" : ""} commande · ${evol(t.vg, tN1.vg)}`} />
               <Tuile
@@ -451,6 +457,7 @@ function IndicateursContenu() {
                           <div key={d} title={`${m.label} · ${ACTIVITES[d].nom} : ${m.parAct[d]}`} style={{ flex: m.parAct[d], background: ACTIVITES[d].couleur }} />
                         ) : null
                       )}
+                      {m.fermes > 0 && <div title={`${m.label} · fermées sans devis : ${m.fermes}`} style={{ flex: m.fermes, background: "#dfe2e6" }} />}
                     </div>
                   </div>
                 ))}
@@ -469,6 +476,12 @@ function IndicateursContenu() {
                     {ACTIVITES[d].nom}
                   </span>
                 ))}
+                {vue.mois.some((m) => m.fermes > 0) && (
+                  <span>
+                    {pastille("#dfe2e6")}
+                    fermées sans devis
+                  </span>
+                )}
               </div>
             </section>
 
@@ -489,7 +502,7 @@ function IndicateursContenu() {
               </table>
               {/* DETAIL_AUTRE : de quoi est fait « Autre / non ventilé » */}
               {(() => {
-                const autres = vue.periode.filter((c) => c.principale === "autre").sort((a, b) => a.ouverture.localeCompare(b.ouverture));
+                const autres = vue.periode.filter((c) => c.principale === "autre" && c.issue !== "FERME").sort((a, b) => a.ouverture.localeCompare(b.ouverture));
                 if (autres.length === 0) return null;
                 const sansRien = autres.filter((c) => c.source === "AUCUNE");
                 const parStatut = new Map<string, number>();
