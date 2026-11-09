@@ -160,6 +160,8 @@ function FacturationContenu() {
   const [clients, setClients] = useState<Map<string, string>>(new Map());
   const [prestations, setPrestations] = useState<LignePrestation[]>([]);
   const [reportes, setReportes] = useState<Reporte[]>([]);
+  // PEPI_SANS_HEURES : montant du classeur Suivi des prestations alors que le relevé est vide ce mois-ci
+  const [classeurSeul, setClasseurSeul] = useState<{ numero: string; client: string | null; personne: string; montant: number }[]>([]);
 
   /* Suivi d'affaire BE : chargé une fois */
   useEffect(() => {
@@ -271,6 +273,7 @@ function FacturationContenu() {
           return t;
         };
         const reportes: Reporte[] = [];
+        const classeurSeul: { numero: string; client: string | null; personne: string; montant: number }[] = [];
         const res: LignePrestation[] = [];
         for (const [id, l] of lignesP) {
           const m = moisLignes.get(id);
@@ -308,7 +311,16 @@ function FacturationContenu() {
               ? 0
               : (facturees + (Number(m?.hs_refacturer) || 0) * 1.25) * tauxH;
           const classeur = m?.montant_import !== null && m?.montant_import !== undefined ? Number(m.montant_import) : null;
-          if (montant <= 0.004 && facturees <= 0 && !(classeur !== null && classeur > 0.5)) continue;
+          // PEPI_SANS_HEURES : rien au relevé ce mois-ci : pas de ligne ; un montant venu du classeur seul est signalé à part
+          if (montant <= 0.004 && facturees <= 0) {
+            if (classeur !== null && classeur > 0.5) {
+              const slC = parNumero.get(a.numero.toUpperCase());
+              const baseC = slC ? baseDe(slC) : undefined;
+              const idC = slC?.client_id ?? baseC?.client_id;
+              classeurSeul.push({ numero: `CBE${a.numero}`, client: idC ? clients.get(idC) ?? null : null, personne: trig.get(l.collaborateur_id) ?? "?", montant: classeur });
+            }
+            continue;
+          }
           const sl = parNumero.get(a.numero.toUpperCase());
           const base = sl ? baseDe(sl) : undefined;
           res.push({
@@ -339,6 +351,7 @@ function FacturationContenu() {
         res.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }) || x.personne.localeCompare(y.personne));
         setPrestations(res);
         setReportes(reportes.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true })));
+        setClasseurSeul(classeurSeul.sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true })));
       } catch (e) {
         if (actif) setErreur(e instanceof Error ? e.message : "Chargement impossible.");
       } finally {
@@ -1067,6 +1080,46 @@ function FacturationContenu() {
                 </table>
               )}
             </section>
+
+            {classeurSeul.length > 0 && (
+              <details style={{ ...page.carte, padding: "10px 14px", marginTop: 14, borderLeft: "5px solid #c76500" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 800, color: "#7a3e00" }}>
+                  Le classeur prévoit un montant, le relevé est vide ({classeurSeul.length}) · {euros(classeurSeul.reduce((s, x) => s + x.montant, 0))}, compté nulle part
+                </summary>
+                <p style={{ margin: "6px 0", fontSize: 13, color: C.gris }}>
+                  Ces PE / PI n’ont aucune heure au relevé ce mois-ci : elles ne sont donc pas à facturer. Le Suivi des prestations leur donne
+                  pourtant un montant : vérifiez le relevé (heures oubliées ?) ou le classeur.
+                </p>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Client</th>
+                      <th style={th}>N° CBE</th>
+                      <th style={th}>Pers.</th>
+                      <th style={thD}>Montant du classeur</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {classeurSeul.map((x, i) => (
+                      <tr key={`${x.numero}-${x.personne}-${i}`}>
+                        <td style={{ ...td, fontWeight: 700 }}>{x.client ?? "—"}</td>
+                        <td style={{ ...td, fontWeight: 800, whiteSpace: "nowrap" }}>
+                          {estAdmin ? (
+                            <Link href={`/pilotage/prestations?mois=${mois}&affaire=${encodeURIComponent(x.numero.replace(/^CBE/i, ""))}`} style={{ color: C.rougeFonce }}>
+                              {x.numero}
+                            </Link>
+                          ) : (
+                            x.numero
+                          )}
+                        </td>
+                        <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
+                        <td style={tdD}>{euros(x.montant)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            )}
 
             {reportes.length > 0 && (
               <section style={{ ...page.carte, padding: 16, marginTop: 14, borderLeft: "5px solid #7a3e00", overflowX: "auto" }}>
