@@ -278,7 +278,19 @@ function RentabiliteContenu() {
     for (const a of affairesTerminees(lignesFin)) {
       if (a.date_fin < debut || a.date_fin > fin) continue;
       const base = a.base_affaire.replace(/^0+/, "");
-      const rg = realiseParBase.get(base) ?? groupesVides();
+      // HEURES_SANS_GROUPE : heures sans activité reconnue, réparties sur les activités de l'affaire
+      // (au prorata de ses autres heures passées, à défaut de ses heures chiffrées)
+      const rg: ParGroupe = { ...(realiseParBase.get(base) ?? groupesVides()) };
+      if (rg["Autre"] > 0.01) {
+        const cibles = GROUPES.filter((g) => g !== "Autre" && g !== "Non ventilé");
+        let poids = cibles.map((g) => [g, rg[g]] as const);
+        if (poids.reduce((s, [, x]) => s + x, 0) <= 0.01) poids = cibles.map((g) => [g, a.heuresChiffrees[g]] as const);
+        const tot = poids.reduce((s, [, x]) => s + x, 0);
+        if (tot > 0.01) {
+          for (const [g, x] of poids) rg[g] += rg["Autre"] * (x / tot);
+          rg["Autre"] = 0;
+        }
+      }
       const hr = GROUPES.reduce((t, g) => t + rg[g], 0);
       const hc = GROUPES.reduce((t, g) => t + a.heuresChiffrees[g], 0);
       const c = coutHoraire(couts, a.date_fin);
