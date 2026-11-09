@@ -24,7 +24,7 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    Mon espace RH (soldes), Ma semaine (compteur initial), Validation RH.
 ================================================================ */
 
-type Collab = { id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null; actif: boolean; inclus_statistiques: boolean | null };
+type Collab = { id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null; actif: boolean; inclus_statistiques: boolean | null; date_entree?: string | null };
 type Droit = {
   collaborateur_id: string;
   exercice: number;
@@ -94,6 +94,13 @@ const libelleType: Record<string, string> = {
 };
 const nomDe = (c?: Collab) => (c ? `${c.prenom ?? ""} ${c.nom ?? ""}`.trim() : "");
 
+/* CP_ANTICIPATION : moins d'un an d'ancienneté au dernier 1er juin = droits CP pas encore connus */
+function seuilAncienneteCP() {
+  const d = new Date();
+  const annee = d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${annee - 1}-06-01`;
+}
+
 function SuiviRHContenu() {
   const [exercice, setExercice] = useState(() => exerciceDe(new Date().toISOString().slice(0, 10)));
   const [chargement, setChargement] = useState(true);
@@ -134,7 +141,7 @@ function SuiviRHContenu() {
     (async () => {
       try {
         const [co, dr, de, fe, rg] = await Promise.all([
-          supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques").order("nom"),
+          supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques,date_entree").order("nom"),
           supabase.from("rh_droits").select("*").eq("exercice", exercice),
           chargerTout<Demande>((a, b) =>
             supabase.from("rh_demandes").select("id,collaborateur_id,type_demande,date_debut,date_fin,duree_jours,heures_re,statut,created_at").gte("date_debut", debutEx).lte("date_debut", finEx).order("date_debut").range(a, b)
@@ -571,6 +578,11 @@ function SuiviRHContenu() {
                             <span style={{ color: C.gris, marginRight: 6 }}>{ouverte ? "▾" : "▸"}</span>
                             <strong>{l.c.trigramme}</strong> <span style={{ color: C.gris }}>{nomDe(l.c)}</span>
                             {!l.d && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#7a3e00" }}>droits non saisis</span>}
+                            {l.c.date_entree && l.c.date_entree > seuilAncienneteCP() && Math.abs(l.cpDroits) < 0.001 && (
+                              <span title="Moins d'un an d'ancienneté au dernier 1er juin : son solde de CP est masqué dans son espace RH tant qu'il n'est pas saisi" style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: "#1f4e79" }}>
+                                arrivée récente : solde CP à saisir
+                              </span>
+                            )}
                           </td>
                           <td style={{ ...td, ...sep }}>{fmt(l.cpDroits)}</td>
                           <td style={td}>{fmt(l.cpPris)}</td>

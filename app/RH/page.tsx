@@ -15,6 +15,7 @@ type Collaborateur = {
   profil_horaire_id: string | null;
   actif: boolean | null;
   compteur_recuperation: number | null;
+  date_entree?: string | null;
 };
 
 type Droit = {
@@ -55,6 +56,13 @@ type Demande = {
 
 const rouge = "#c00000";
 const MAX_COMPTEUR = 30;
+
+/* CP_ANTICIPATION : moins d'un an d'ancienneté au dernier 1er juin = droits CP pas encore connus */
+function seuilAncienneteCP() {
+  const d = new Date();
+  const annee = d.getMonth() >= 5 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${annee - 1}-06-01`;
+}
 
 function exerciceActuel() {
   const d = new Date();
@@ -725,7 +733,7 @@ export default function RHPage() {
       } = await supabase
         .from("collaborateurs")
         .select(
-          "id,auth_user_id,prenom,nom,email,trigramme,role,profil_horaire_id,actif,compteur_recuperation"
+          "id,auth_user_id,prenom,nom,email,trigramme,role,profil_horaire_id,actif,compteur_recuperation,date_entree"
         )
         .eq("auth_user_id", user.id)
         .single();
@@ -990,6 +998,9 @@ export default function RHPage() {
 
   const resteCP =
     totalCP - prisesCP - attenteCP;
+
+  // CP_ANTICIPATION : nouvel arrivant dont le service RH n'a pas encore saisi les droits CP : solde non affiché
+  const soldeMasque = Boolean(collab?.date_entree && collab.date_entree > seuilAncienneteCP()) && Math.abs(totalCP) < 0.001;
 
   const prisesRTT = useMemo(
     () =>
@@ -1256,15 +1267,11 @@ export default function RHPage() {
       return;
     }
 
-    if (
-      estCP(type) &&
-      dureeDemandee > resteCP
-    ) {
-      setErreur(
-        "Le solde disponible de CP est insuffisant en tenant compte des demandes déjà en validation."
-      );
-      return;
-    }
+    // CP_ANTICIPATION : solde insuffisant = prise par anticipation (autorisée, signalée aux validateurs)
+    const anticipation = estCP(type) && dureeDemandee > resteCP;
+    const noteAnticipation = anticipation
+      ? `⚠ Prise par anticipation (${soldeMasque ? "solde pas encore communiqué par le service RH" : `solde disponible avant la demande : ${fmt(resteCP)} j`})`
+      : "";
 
     if (
       type === "RTT" &&
@@ -1300,7 +1307,7 @@ export default function RHPage() {
       !window.confirm(
         `Confirmer l'envoi de cette demande ?\n\n${libelleType(
           type
-        )}\n${texteDate}\nDurée : ${texteDuree}\n\nUne notification sera envoyée automatiquement aux administrateurs AMA / PLG.`
+        )}\n${texteDate}\nDurée : ${texteDuree}${anticipation ? `\n\n${noteAnticipation} : la demande sera examinée par AMA / PLG.` : ""}\n\nUne notification sera envoyée automatiquement aux administrateurs AMA / PLG.`
       )
     ) {
       return;
@@ -1377,7 +1384,7 @@ export default function RHPage() {
                   )
                 : null,
             commentaire:
-              commentaire ||
+              [noteAnticipation, commentaire].filter(Boolean).join(" · ") ||
               null,
             justificatif_nom,
             justificatif_url,
@@ -1654,11 +1661,15 @@ export default function RHPage() {
 
           {droit ? (
             <>
-              <div style={{ ...styles.big, color: resteCP < 0 ? rouge : undefined }}>
-                {fmt(resteCP)} <span style={styles.unit}>j disponibles</span>
-              </div>
+              {soldeMasque ? (
+                <div style={{ fontSize: 18, fontWeight: 800, color: "#6d737a", margin: "8px 0" }}>Solde communiqué par le service RH</div>
+              ) : (
+                <div style={{ ...styles.big, color: resteCP < 0 ? rouge : undefined }}>
+                  {fmt(resteCP)} <span style={styles.unit}>j disponibles</span>
+                </div>
+              )}
               <div style={styles.muted}>
-                Droits : {fmt(totalCP)} j
+                {soldeMasque ? "Arrivée récente : droits saisis par le service RH" : <>Droits : {fmt(totalCP)} j</>}
                 {Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0) > 0
                   ? ` (dont ${fmt(Number(droit.cp_exceptionnels_avec_justificatif || 0) + Number(droit.cp_exceptionnels_sans_justificatif || 0))} j exceptionnels)`
                   : ""}{" "}
