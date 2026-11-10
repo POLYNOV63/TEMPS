@@ -615,7 +615,7 @@ function PrestationsContenu() {
   const estReporte = useCallback(
     (l: Ligne) => {
       const ml = moisLignes.get(l.id);
-      return ml ? ml.reporte : affairesParId.get(l.affaire_id)?.statut === "EN_ATTENTE";
+      return ml ? ml.reporte : false; // REPORT_MANUEL : le report ne se fait qu'à la main
     },
     [moisLignes, affairesParId]
   );
@@ -2218,8 +2218,8 @@ function PrestationsContenu() {
                                       <BadgeType type={a.type} />
                                       <Link
                                         href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`}
-                                        title={nonFacturable ? "Commande pas encore reçue : NON FACTURABLE en l’état" : undefined}
-                                        style={{ fontWeight: 800, color: C.rougeFonce, ...(nonFacturable ? { background: "#ffe94d", padding: "0 4px", borderRadius: 3 } : {}) }}
+                                        title={nonFacturable ? "Commande pas encore reçue : NON FACTURABLE en l’état" : a.statut === "LIVREE" ? `Commande livrée${a.date_livraison ? ` le ${new Date(`${a.date_livraison.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR")}` : ""}` : undefined}
+                                        style={{ fontWeight: 800, color: C.rougeFonce, ...(nonFacturable ? { background: "#ffe94d", padding: "0 4px", borderRadius: 3 } : a.statut === "LIVREE" ? { background: "#c8ecc9", padding: "0 4px", borderRadius: 3 } : {}) }}
                                       >
                                         {nf?.numero}
                                       </Link>

@@ -156,7 +156,7 @@ function FinancesContenu() {
       const tauxH = l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
       const reporteEn = (m: string) => {
         const row = moisLignes.get(`${l.id}|${m}`);
-        return row ? row.reporte : a.statut === "EN_ATTENTE";
+        return row ? row.reporte : false; // REPORT_MANUEL
       };
       for (const [cle, h] of heures) {
         if (!cle.startsWith(`${l.id}|`) || h <= 0) continue;

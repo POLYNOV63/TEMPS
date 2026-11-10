@@ -284,7 +284,7 @@ function FacturationContenu() {
           if (!a) continue;
           const tauxH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / (Number(l.base_horaire) || 7) : l.taux;
           // mois reporté (enregistré, ou commande pas encore reçue) : rien à facturer ce mois-ci, listé à part
-          const reporte = m ? Boolean(m.reporte) : a.statut === "EN_ATTENTE";
+          const reporte = m ? Boolean(m.reporte) : false; // REPORT_MANUEL
           if (reporte && !m?.valide) {
             if (h0 > 0) {
               const slR = parNumero.get(a.numero.toUpperCase());
