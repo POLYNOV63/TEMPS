@@ -75,7 +75,7 @@ type Ligne = {
 
 type FiltreStatut = "ACTIVES" | "EN_COURS" | "EN_ATTENTE";
 type FiltrePlanning = "TOUS" | "AU" | "HORS";
-type ColonneTri = "numero" | "designation" | "client" | "imputation" | "resp" | "echeance" | "chiffre" | "realise" | "reste";
+type ColonneTri = "numero" | "designation" | "client" | "imputation" | "resp" | "echeance" | "chiffre" | "realise" | "reste" | "depassement";
 // TYPE_FORFAIT_PEPI : forfaits (CBE hors PE / PI), PE / PI, devis
 type FiltreType = "FORFAIT" | "PEPI" | "DBE";
 
@@ -475,6 +475,11 @@ function PortefeuilleContenu() {
             return l.dansFamille ? -2 : ch > 0 ? l.totaux.realise / ch : -1;
           }
           case "reste": return l.totaux.reste;
+          case "depassement": {
+            if (l.dansFamille || l.affaire.imputation === "PE" || l.affaire.imputation === "PI") return -1e9;
+            const v = valeursLigne(l);
+            return v.chiffre > 0 ? v.realise - v.chiffre : -1e9;
+          }
         }
       };
       return [...liste].sort((x, y) => {
@@ -484,7 +489,8 @@ function PortefeuilleContenu() {
         return c * tri.sens || Number(y.affaire.numero) - Number(x.affaire.numero);
       });
     },
-    [tri, collabs]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tri, collabs, activiteFiltre, surPeriode]
   );
 
   const actives = useMemo(
@@ -543,7 +549,7 @@ function PortefeuilleContenu() {
   }
 
   function changerTri(col: ColonneTri) {
-    setTri((t) => (t.col === col ? { col, sens: t.sens === 1 ? -1 : 1 } : { col, sens: 1 }));
+    setTri((t) => (t.col === col ? { col, sens: t.sens === 1 ? -1 : 1 } : { col, sens: col === "depassement" ? -1 : 1 }));
   }
 
   // TUILES_PORTEFEUILLE : des chiffres concrets, commandes et devis séparés
@@ -700,6 +706,7 @@ function PortefeuilleContenu() {
         "Réalisé (h)": arrondi(v.realise),
         ...(bornes ? { "Sur la période (h)": arrondi(v.periode) } : {}),
         "Consommé (%)": v.chiffre > 0 ? Math.round((v.realise / v.chiffre) * 100) : "",
+        "Dépassement (h)": v.chiffre > 0 && !(l.affaire.imputation === "PE" || l.affaire.imputation === "PI") && v.realise - v.chiffre > toleranceAffectation(v.chiffre) ? arrondi(v.realise - v.chiffre) : "",
         "À affecter (h)": arrondi(l.aAffecter),
         État: l.etat.texte,
       };
@@ -722,7 +729,7 @@ function PortefeuilleContenu() {
   const petit: CSSProperties = { fontSize: 12, color: C.gris, marginTop: 2 };
 
   function rendreTableau(liste: Ligne[]) {
-    const nbColonnes = bornes ? 9 : 8;
+    const nbColonnes = bornes ? 10 : 9;
     return (
       <table className="portefeuille-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
         <thead className="portefeuille-entete">
@@ -733,6 +740,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="resp" libelle="Resp." />
             <EnTeteTri col="echeance" libelle="Délai" />
             <EnTeteTri col="realise" libelle="Réalisé / Chiffré" centre />
+            <EnTeteTri col="depassement" libelle="Dépassement" num />
             {bornes && <th style={thNum} title="Heures pointées sur la période choisie">Sur la période</th>}
             <th style={thNum} title="Reste à faire non encore affecté dans le planning">À affecter</th>
             <th style={thCourt}>État / planning</th>
@@ -855,6 +863,39 @@ function PortefeuilleContenu() {
                         );
                       })()
                     )}
+                  </td>
+                  {/* DEPASSEMENT_COLONNE : constaté (pointé − chiffré) et prévu (pointé + planifié − chiffré) */}
+                  <td style={tdNum}>
+                    {(() => {
+                      const prest = affaire.imputation === "PE" || affaire.imputation === "PI";
+                      const ch = vl.chiffre;
+                      if (l.dansFamille || prest || ch <= 0) return gris("—");
+                      const tol = toleranceAffectation(ch);
+                      const constate = vl.realise - ch;
+                      const baseNum = affaire.numero.match(/^\d+/)?.[0] ?? "";
+                      const planifie = activiteFiltre
+                        ? null
+                        : l.famille
+                          ? lignes.filter((x) => x.affaire.type === "CBE" && (x.affaire.numero.match(/^\d+/)?.[0] ?? "") === baseNum).reduce((s, x) => s + x.planning.planifie, 0)
+                          : planning.planifie;
+                      const prevu = planifie === null ? null : vl.realise + planifie - ch;
+                      return (
+                        <>
+                          {constate > tol ? (
+                            <strong style={{ color: C.rougeTexte }} title={`${formatHeures(vl.realise)} pointées pour ${formatHeures(ch)} chiffrées`}>
+                              +{formatHeures(constate)} <span style={{ fontWeight: 600, fontSize: 12 }}>(+{Math.round((constate / ch) * 100)} %)</span>
+                            </strong>
+                          ) : (
+                            gris("—")
+                          )}
+                          {prevu !== null && prevu > tol && prevu - Math.max(0, constate) > 0.5 && (
+                            <div style={{ ...petit, color: "#b35c00", fontWeight: 700 }} title={`Pointé ${formatHeures(vl.realise)} + planifié à venir ${formatHeures(planifie ?? 0)}, pour ${formatHeures(ch)} chiffrées`}>
+                              +{formatHeures(prevu)} prévues
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
                   {bornes && (
                     <td style={tdNum}>{l.dansFamille ? gris("—") : vl.periode > 0.01 ? <strong style={{ color: C.rougeFonce }}>{formatHeures(vl.periode)}</strong> : gris("—")}</td>
