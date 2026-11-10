@@ -1238,6 +1238,40 @@ function PrestationsContenu() {
     [suivi, lignes, reglages, consoLigneAvant, calcul]
   );
 
+  /* FIN_COMMANDE_JAUNE : jour où chaque commande est épuisée (dans le mois affiché), par ligne, et ce qu'il en restait ce jour-là (en heures) */
+  const finCommande = useMemo(() => {
+    const m = new Map<string, { jour: string; resteH: number }>();
+    for (const a of affaires) {
+      const ls = lignes.filter((l) => l.affaire_id === a.id);
+      if (ls.length === 0) continue;
+      const f = ficheDe(a);
+      if (f.quantite === null || f.quantite <= 0) continue;
+      const tauxH = (l: Ligne) => (l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux);
+      const enEuros = f.montant > 0 && ls.every((l) => tauxH(l) !== null);
+      const valeur = (l: Ligne, h: number) => (enEuros ? h * (tauxH(l) as number) : h);
+      const plafond = enEuros ? f.montant : f.quantite * (f.unite === "JOUR" ? f.base : 1);
+      let cumul = ls.reduce((s, l) => s + valeur(l, consoLigneAvant.get(l.id) ?? 0), 0);
+      if (cumul >= plafond - 0.01) continue; // déjà épuisée avant ce mois
+      let trouve = false;
+      for (const j of jours) {
+        for (const l of ls) {
+          const h = saisieParCle.get(`${l.id}|${j.date}`)?.heures ?? 0;
+          if (h <= 0) continue;
+          const avant = cumul;
+          cumul += valeur(l, h);
+          if (cumul >= plafond - 0.01) {
+            const resteV = plafond - avant;
+            m.set(l.id, { jour: j.date, resteH: Math.max(0, enEuros ? resteV / (tauxH(l) as number) : resteV) });
+            trouve = true;
+            break;
+          }
+        }
+        if (trouve) break;
+      }
+    }
+    return m;
+  }, [affaires, lignes, ficheDe, consoLigneAvant, jours, saisieParCle]);
+
   /* Unité ou base de la commande : ses lignes suivent ; le taux de chaque ligne est converti si l'unité change */
   async function reglerCommande(a: AffaireP, patch: { unite?: "JOUR" | "HEURE"; base?: number }) {
     const f = ficheDe(a);
@@ -1409,7 +1443,7 @@ function PrestationsContenu() {
           <div>
             <h1 style={page.titre}>Prestations PE / PI — relevé du mois</h1>
             <p style={page.sousTitre}>
-              Ce relevé fait foi et alimente le planning. <strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: "#ffe94d", padding: "0 3px" }}>en jaune</span> = dernier jour planifié · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
+              Ce relevé fait foi et alimente le planning. <strong>↦ reste</strong> planifie le reste de la commande · jour <span style={{ background: "#ffe94d", padding: "0 3px" }}>en jaune</span> = fin de la commande (tout ce qui est commandé est consommé) · <strong>⚙</strong> ouvre ses réglages · cliquer-glisser sur des jours puis taper
               une valeur et <strong>Entrée</strong> · <strong>Suppr</strong> vide la sélection · coin orange = la feuille d’heures dit autre chose · <strong>« 7A »</strong> = absent mais facturé quand même (pas au planning).
             </p>
           </div>
@@ -2068,13 +2102,14 @@ function PrestationsContenu() {
                                 const ferme = j.weekend || j.ferie;
                                 // congé validé (Validation RH) : proposé en grisé, on peut toujours forcer une autre valeur
                                 const conge = !s && absent(l.collaborateur_id, j.date);
-                                const dernierPlanifie = j.date === dernierJourLigne(l);
+                                const fin = finCommande.get(l.id);
+                                const dernierPlanifie = fin?.jour === j.date;
                                 return (
                                   <td
                                     key={j.date}
                                     onMouseDown={(e) => !verrou && surSourisBas(l, j.date, e.shiftKey)}
                                     onMouseEnter={() => !verrou && surSourisEntre(l, j.date)}
-                                    title={force ? `${s?.code === "ABS" ? "Absent" : s?.code}, facturé quand même (${texteHeures(s?.heures ?? 0)} h) : compté dans la facture, mais la personne reste absente au planning` : dernierPlanifie ? "Dernier jour planifié de cette ligne" : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
+                                    title={force ? `${s?.code === "ABS" ? "Absent" : s?.code}, facturé quand même (${texteHeures(s?.heures ?? 0)} h) : compté dans la facture, mais la personne reste absente au planning` : dernierPlanifie ? `Fin de la commande : ce qui est commandé est consommé ce jour-là (il en restait ${texteHeures(Math.round((fin?.resteH ?? 0) * 100) / 100)} h)` : different ? `Saisi ${texteHeures(factureH)} h · feuille d’heures ${texteHeures(r)} h` : conge ? "Congé validé : tapez une valeur pour forcer" : undefined}
                                     style={{
                                       ...bordHaut,
                                       padding: 0,
