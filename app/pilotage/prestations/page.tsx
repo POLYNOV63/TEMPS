@@ -2312,16 +2312,23 @@ function PrestationsContenu() {
                                             const planifie = f.consomme + futurU;
                                             const restant = q - planifie;
                                             const n = (v: number) => texteHeures(Math.round(v * 10) / 10);
+                                            // JAUGE_COMMANDE : planifié / commandé, une jauge fine, et ce qui reste
+                                            const depasse = restant < -0.05;
+                                            const part = q > 0 ? Math.min(1, planifie / q) : 0;
                                             return (
-                                              <div style={{ fontSize: 12, lineHeight: 1.4, textAlign: "right", whiteSpace: "nowrap" }}>
+                                              <div
+                                                title={`Commande ${n(q)} ${u} · planifié ${n(planifie)} ${u} (fait et à venir) · ${depasse ? `dépassé de ${n(-restant)} ${u}` : `reste ${n(Math.max(0, restant))} ${u} à planifier`}`}
+                                                style={{ width: 92, marginLeft: "auto", textAlign: "right", fontSize: 12, lineHeight: 1.25, whiteSpace: "nowrap" }}
+                                              >
                                                 <div>
-                                                  commande <strong>{n(q)} {u}</strong>
+                                                  <strong style={{ fontSize: 13, color: "#1f2328" }}>{n(planifie)}</strong>
+                                                  <span style={{ color: C.gris }}> / {n(q)} {u}</span>
                                                 </div>
-                                                <div>
-                                                  planifié <strong>{n(planifie)} {u}</strong>
+                                                <div style={{ height: 5, background: "#e6e8eb", borderRadius: 3, margin: "4px 0 3px", overflow: "hidden" }}>
+                                                  <div style={{ width: `${part * 100}%`, height: "100%", background: depasse ? "#b3261e" : "#34506b", borderRadius: 3 }} />
                                                 </div>
-                                                <div style={{ fontWeight: 800, color: restant < -0.05 ? "#b3261e" : "#1f2328" }}>
-                                                  {restant < -0.05 ? `dépassé ${n(-restant)} ${u}` : `reste ${n(Math.max(0, restant))} ${u}`}
+                                                <div style={{ fontSize: 11, fontWeight: 700, color: depasse ? "#b3261e" : C.gris }}>
+                                                  {depasse ? `dépassé ${n(-restant)} ${u}` : restant <= 0.05 ? "✓ tout planifié" : `reste ${n(restant)} ${u}`}
                                                 </div>
                                               </div>
                                             );
