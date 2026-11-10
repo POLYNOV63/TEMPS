@@ -2076,8 +2076,8 @@ function PrestationsContenu() {
                       Mois
                     </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_MONTANT, L_MONTANT, "#f1f2f4"), zIndex: 5, textAlign: "center" }}>Montant</th>
-                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "center" }} title="Reste sur la commande à la fin du mois affiché, consommé sur commandé, et ce qui reste à planifier après">
-                      Reste commande
+                    <th rowSpan={2} style={{ ...entete, ...fixeG(X_RESTE, L_RESTE, "#f1f2f4"), zIndex: 5, textAlign: "center" }} title="Ce qui est commandé, ce qui est planifié au relevé (fait et à venir), et ce qui reste à planifier">
+                      Commande
                     </th>
                     <th rowSpan={2} style={{ ...entete, ...fixeG(X_OUTILS, L_OUTILS, "#f1f2f4"), zIndex: 5, borderRight: `2px solid ${C.ligne}` }} />
                     {semainesMois.map((w) => (
@@ -2303,24 +2303,27 @@ function PrestationsContenu() {
                                           title={`Commande ${texteHeures(Math.round((f.quantite ?? 0) * 100) / 100)} ${u} · consommé ${texteHeures(Math.round(f.consomme * 100) / 100)} ${u}${f.resteE !== null ? ` · reste ${euros(f.resteE)}` : ""}`}
                                           style={{ all: "unset", cursor: "pointer" }}
                                         >
-                                          <Pastille genre={f.reste <= 0 ? "crit" : f.quantite && f.reste / f.quantite < 0.2 ? "warn" : "ok"}>
-                                            {texteHeures(Math.round(f.reste * 10) / 10)} {u}
-                                          </Pastille>
-                                          {/* CONSO_PLANIFIE : consommé sur commandé, et ce qui reste à planifier après ce mois */}
+                                          {/* RESTE_TROIS_CHIFFRES : commandé, planifié (fait et à venir), reste à planifier */}
                                           {(() => {
                                             const futurU = lignes
                                               .filter((x) => x.affaire_id === a.id)
-                                              .reduce((t, x) => t + (planif.futur.get(x.id)?.heures ?? 0) / (f.unite === "JOUR" ? x.base_horaire || f.base : 1), 0);
-                                            const aPlanifier = f.reste - futurU;
+                                              .reduce((s, x) => s + (planif.futur.get(x.id)?.heures ?? 0) / (f.unite === "JOUR" ? x.base_horaire || f.base : 1), 0);
+                                            const q = f.quantite ?? 0;
+                                            const planifie = f.consomme + futurU;
+                                            const restant = q - planifie;
+                                            const n = (v: number) => texteHeures(Math.round(v * 10) / 10);
                                             return (
-                                              <>
-                                                <div style={{ fontSize: 10, color: C.gris, whiteSpace: "nowrap" }}>
-                                                  {texteHeures(Math.round(f.consomme * 10) / 10)} / {texteHeures(Math.round((f.quantite ?? 0) * 10) / 10)} {u} consommés
+                                              <div style={{ fontSize: 12, lineHeight: 1.4, textAlign: "right", whiteSpace: "nowrap" }}>
+                                                <div>
+                                                  commande <strong>{n(q)} {u}</strong>
                                                 </div>
-                                                <div style={{ fontSize: 10, fontWeight: 800, whiteSpace: "nowrap", color: aPlanifier <= 0.05 ? "#1b5e20" : "#b35c00" }}>
-                                                  {aPlanifier <= 0.05 ? "✓ tout planifié" : `${texteHeures(Math.round(aPlanifier * 10) / 10)} ${u} à planifier`}
+                                                <div>
+                                                  planifié <strong>{n(planifie)} {u}</strong>
                                                 </div>
-                                              </>
+                                                <div style={{ fontWeight: 800, color: restant < -0.05 ? "#b3261e" : "#1f2328" }}>
+                                                  {restant < -0.05 ? `dépassé ${n(-restant)} ${u}` : `reste ${n(Math.max(0, restant))} ${u}`}
+                                                </div>
+                                              </div>
                                             );
                                           })()}
                                         </button>
