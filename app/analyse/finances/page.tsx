@@ -10,6 +10,7 @@ import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import DetailMontant, { type DetailDemande } from "@/components/finances/DetailMontant";
 import TrameCA from "@/components/finances/TrameCA"; // TRAME_CA_V1
+import { chargerPrestationsMois } from "@/lib/facturationMois"; // FINANCES_PEPI_RELEVE
 import { chargerMoi, chargerRealise, chargerTout } from "@/lib/pilotageDonnees";
 import { exporterExcelPolynov, type ColonneExcel, type FeuilleExcel } from "@/lib/excelPolynov";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
@@ -357,19 +358,32 @@ function FinancesContenu() {
           });
         }
         setReleve(rel);
-        setPrevusReleve(
-          ((mp.data ?? []) as { numero: string; imputation: string | null; activite_id: string | null; mois: string; montant: number | string }[]).map((x) => {
-            const base = (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "");
-            return {
-              base,
-              mois: String(x.mois).slice(0, 10),
-              montant: Number(x.montant) || 0,
+        // FINANCES_PEPI_RELEVE : PE / PI pas encore clôturées, calculées comme la Facturation du mois et le relevé
+        // (12 mois en arrière, 18 en avant) ; les mois clôturés sont dans le réalisé
+        void mp;
+        const moisPrevus: string[] = [];
+        for (let k = -12; k <= 18; k++) {
+          const d = new Date();
+          d.setUTCDate(1);
+          d.setUTCMonth(d.getUTCMonth() + k);
+          moisPrevus.push(d.toISOString().slice(0, 7));
+        }
+        const prestationsParMois = await chargerPrestationsMois(moisPrevus);
+        if (!actif) return;
+        const prevus: { base: string; mois: string; montant: number; groupe: Groupe; imputation: string | null; client: string | null }[] = [];
+        for (const [m, liste] of prestationsParMois)
+          for (const x of liste) {
+            if (x.cloture || x.montant <= 0.004) continue;
+            prevus.push({
+              base: x.base,
+              mois: `${m}-01`,
+              montant: x.montant,
               groupe: (x.activite_id && groupeActivite.get(x.activite_id)) || "Non ventilé",
-              imputation: x.imputation,
-              client: clientDeBase.get(base) ?? null,
-            };
-          })
-        );
+              imputation: x.imputation ?? null,
+              client: clientDeBase.get(x.base) ?? null,
+            });
+          }
+        setPrevusReleve(prevus);
         setHistorique(
           hi.map((h) => ({
             ...h,
