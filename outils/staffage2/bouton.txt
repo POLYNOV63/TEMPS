@@ -1,0 +1,8 @@
+<button
+                              type="button"
+                              onClick={() => void ouvrirStaffage(a)}
+                              title="Personne, taux, rythme, dates de début et de fin"
+                              style={{ ...page.btnPrimaire, minHeight: 32, fontSize: 13, padding: "0 12px" }}
+                            >
+                              ⚙ Paramétrer
+                            </button>

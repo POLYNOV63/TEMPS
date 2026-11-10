@@ -313,10 +313,33 @@ function PrestationsContenu() {
     depart: string;
     dejaH: number;
     personneSource: string | null;
+    rythme: string[];
     remplir: boolean;
     source: string | null;
     enCours: boolean;
   }>(null);
+  /* STAFFAGE_V2 : absences de la personne choisie (18 mois à partir du départ), pour la date de fin */
+  const [absStaffage, setAbsStaffage] = useState<AbsenceRow[]>([]);
+  useEffect(() => {
+    if (!staffage?.personne || !staffage.depart) {
+      setAbsStaffage([]);
+      return;
+    }
+    let actif = true;
+    const qui = staffage.personne;
+    const d = new Date(`${staffage.depart}T00:00:00Z`);
+    d.setUTCMonth(d.getUTCMonth() + 18);
+    void chargerCapacitesAbsences(staffage.depart, d.toISOString().slice(0, 10))
+      .then((c) => {
+        if (actif) setAbsStaffage(c.absences.filter((x) => x.collaborateur_id === qui));
+      })
+      .catch(() => {
+        if (actif) setAbsStaffage([]);
+      });
+    return () => {
+      actif = false;
+    };
+  }, [staffage?.personne, staffage?.depart]);
 
   const jours = useMemo(() => joursDuMois(mois), [mois]);
   const debut = jours[0].date;
@@ -1162,8 +1185,9 @@ function PrestationsContenu() {
     setRechargement((n) => n + 1);
   }
 
-  /* STAFFAGE_CONTRATS : staffer une PE / PI : personne, unité, base, taux (contrat cadre, ou repris de la commande
-     sœur pour un avenant), et début du remplissage (à la suite du dernier jour de la commande sœur) */
+  /* STAFFAGE_V2 : paramétrer une PE / PI à staffer : personne, unité, base, taux (contrat cadre, ou repris de la
+     commande sœur pour un avenant), rythme du lundi au vendredi, date de début (à la suite de la commande sœur),
+     et date de fin calculée (jours ouvrés, fériés et absences de la personne évités) */
   async function ouvrirStaffage(a: AffaireP, personne = "") {
     const f = ficheDe(a);
     const k = contratDe(a);
@@ -1198,6 +1222,7 @@ function PrestationsContenu() {
     }
     const unite = modele?.unite ?? f.unite;
     const baseH = modele ? modele.base_horaire : k ? (k.base_hebdo || 37.5) / 5 : f.base;
+    const rythmeK = k ? (a.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
     setStaffage({
       affaire: a,
       personne: personne || modele?.collaborateur_id || "",
@@ -1208,11 +1233,51 @@ function PrestationsContenu() {
       depart,
       dejaH,
       personneSource: modele?.collaborateur_id ?? null,
+      rythme: (rythmeK ?? [baseH, baseH, baseH, baseH, baseH]).map((x) => String(x)),
       remplir: true,
       source,
       enCours: false,
     });
   }
+
+  /* les jours que le remplissage va saisir, et la date de fin */
+  const simulerStaffage = (s: NonNullable<typeof staffage>) => {
+    const f = ficheDe(s.affaire);
+    const base = Number(s.base.replace(",", "."));
+    const taux = s.taux.trim() === "" ? null : Number(s.taux.replace(",", "."));
+    const rythme = s.rythme.map((x) => Number(String(x).replace(",", ".")) || 0);
+    // quantité à planifier, en heures : le montant de la commande au taux choisi, sinon la quantité commandée
+    let heures: number | null = null;
+    if (f.montant > 0 && taux !== null && taux > 0 && base > 0) {
+      const q = f.montant / taux;
+      heures = s.unite === "JOUR" ? q * base : q;
+    } else if (f.quantite !== null) heures = f.quantite * (f.unite === "JOUR" ? f.base : 1);
+    const jours: { jour: string; heures: number }[] = [];
+    let evites = 0;
+    if (heures === null || heures <= 0 || !s.depart || rythme.every((x) => x <= 0)) return { heures, jours, fin: null as string | null, evites };
+    const absentLe = (date: string) => absStaffage.some((x) => x.genre !== "HEURES" && x.date_debut <= date && x.date_fin >= date);
+    const lendemain = (iso: string) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    };
+    let reste = heures;
+    let jour = s.depart;
+    for (let garde = 0; reste > 0.001 && garde < 900; garde++, jour = lendemain(jour)) {
+      const js = new Date(`${jour}T00:00:00Z`).getUTCDay();
+      if (js === 0 || js === 6 || estFerie(jour)) continue;
+      const cap = (rythme[js - 1] ?? 0) - (jour === s.depart && s.personne === s.personneSource ? s.dejaH : 0);
+      if (cap <= 0.01) continue;
+      if (absentLe(jour)) {
+        evites++;
+        continue;
+      }
+      const h = Math.round(Math.min(reste, cap) * 100) / 100;
+      jours.push({ jour, heures: h });
+      reste -= h;
+    }
+    return { heures, jours, fin: jours.length > 0 ? jours[jours.length - 1].jour : null, evites };
+  };
 
   async function validerStaffage() {
     if (!staffage) return;
@@ -1222,6 +1287,7 @@ function PrestationsContenu() {
     if (!s.personne) return setErreur("Choisissez la personne.");
     if (!Number.isFinite(base) || base <= 0 || base > 12) return setErreur("Base horaire invalide : entre 0 et 12 h.");
     if (taux !== null && !Number.isFinite(taux)) return setErreur("Taux invalide.");
+    const sim = simulerStaffage(s);
     setErreur("");
     setStaffage({ ...s, enCours: true });
     const { data, error } = await supabase
@@ -1230,16 +1296,29 @@ function PrestationsContenu() {
         { affaire_id: s.affaire.id, collaborateur_id: s.personne, actif: true, unite: s.unite, base_horaire: base, taux, ...(predo.get(s.personne) ? { activite_id: predo.get(s.personne) } : {}) },
         { onConflict: "affaire_id,collaborateur_id" }
       )
-      .select("*")
+      .select("id")
       .single();
     if (error || !data) {
       setStaffage({ ...s, enCours: false });
       return setErreur(traduireErreur(error?.message ?? "Staffage impossible."));
     }
+    const ligneId = (data as { id: string }).id;
     await supabase.from("pilotage_affaires").update({ releve_unite: s.unite, releve_base_horaire: base }).eq("id", s.affaire.id);
+    if (s.remplir && sim.jours.length > 0) {
+      const { error: es } = await supabase
+        .from("prestation_saisies")
+        .upsert(sim.jours.map((x) => ({ ligne_id: ligneId, jour: x.jour, heures: x.heures, code: null })), { onConflict: "ligne_id,jour" });
+      if (es) setErreur(`Ligne créée, mais remplissage impossible : ${traduireErreur(es.message)}`);
+      else {
+        for (const m of [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))]) {
+          const { error: ep } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: ligneId, p_mois: m });
+          if (ep) setErreur(`Planning non mis à jour (${m.slice(0, 7)}) : ${traduireErreur(ep.message)}`);
+        }
+        const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR");
+        setInfo(`${s.affaire.numero} staffé : ${texteHeures(Math.round(sim.jours.reduce((t, x) => t + x.heures, 0) * 100) / 100)} h du ${fr(sim.jours[0].jour)} au ${fr(sim.fin ?? sim.jours[0].jour)}.`);
+      }
+    }
     setStaffage(null);
-    const ligne = { ...(data as Ligne), base_horaire: base, taux };
-    if (s.remplir && s.depart) await planifierReste(ligne, { jour: s.depart, dejaH: s.personne === s.personneSource ? s.dejaH : 0 }, true);
     setRechargement((n) => n + 1);
   }
 
@@ -2071,25 +2150,21 @@ function PrestationsContenu() {
                           >
                             {numeroFacture(a).numero}
                           </button>
+                          {numeroFacture(a).devis && <span title="Devis d’origine (Suivi d’affaire BE)" style={{ fontSize: 11, fontWeight: 700, color: C.gris }}>DBE{String(numeroFacture(a).devis).replace(/^DBE/i, "")}</span>}
                           {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                         </span>
                       </td>
                       <td colSpan={nbCol - 1} style={cellule}>
                         <div style={{ position: "sticky", left: L_CMD, display: "inline-flex", alignItems: "center", gap: 10 }}>
                           {peutAgir ? (
-                            <select
-                              value=""
-                              onChange={(e) => void ouvrirStaffage(a, e.target.value)}
-                              style={{ ...champ, width: 120 }}
-                              aria-label={`Personne pour ${a.numero}`}
+                            <button
+                              type="button"
+                              onClick={() => void ouvrirStaffage(a)}
+                              title="Personne, taux, rythme, dates de début et de fin"
+                              style={{ ...page.btnPrimaire, minHeight: 32, fontSize: 13, padding: "0 12px" }}
                             >
-                              <option value="">Personne…</option>
-                              {annuaire.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {nomCollab(p)}
-                                </option>
-                              ))}
-                            </select>
+                              ⚙ Paramétrer
+                            </button>
                           ) : (
                             "—"
                           )}
@@ -2148,6 +2223,7 @@ function PrestationsContenu() {
                                       >
                                         {nf?.numero}
                                       </Link>
+                                      {nf?.devis && <span title="Devis d’origine (Suivi d’affaire BE)" style={{ fontSize: 11, fontWeight: 700, color: C.gris }}>DBE{String(nf?.devis).replace(/^DBE/i, "")}</span>}
                                       {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
                                       {/* REPERE_REPORT : heures reportées du mois précédent sur cette ligne */}
                                       {!c.reporte && c.reportEntrant > 0.01 && (
@@ -2609,6 +2685,7 @@ function PrestationsContenu() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <BadgeType type={a.type} />
                   <strong style={{ fontSize: 20, color: C.rougeFonce }}>{nf.numero}</strong>
+                  {nf.devis && <span title="Devis d’origine (Suivi d’affaire BE)" style={{ fontSize: 13, fontWeight: 700, color: C.gris }}>DBE{String(nf.devis).replace(/^DBE/i, "")}</span>}
                   <span style={{ fontSize: 12, fontWeight: 800, color: C.gris }}>{a.imputation}</span>
                   {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 12, color: "#7a3e00", fontWeight: 800 }}>Intention de commande</span>}
                   <span style={{ flex: 1 }} />
@@ -2838,31 +2915,35 @@ function PrestationsContenu() {
           );
         })()}
 
-      {/* STAFFAGE_CONTRATS : fenêtre de staffage d'une PE / PI */}
+      {/* STAFFAGE_V2 : paramétrer la commande à staffer */}
       {staffage &&
         (() => {
           const s = staffage;
           const k = contratDe(s.affaire);
           const f = ficheDe(s.affaire);
           const nf = numeroFacture(s.affaire);
-          const baseNum = Number(s.base.replace(",", "."));
           const libre = s.base !== "7" && s.base !== "7.5";
-          const rythme = k ? (s.affaire.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
           const u = s.unite === "JOUR" ? "jour" : "h";
+          const sim = simulerStaffage(s);
+          const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
           const avecTarif = (patch: Partial<typeof s>) => {
             const n = { ...s, ...patch };
+            // sans contrat, un rythme uniforme suit la base horaire
+            if (!k && patch.base !== undefined && s.rythme.every((x) => x === s.rythme[0]) && s.rythme[0] === s.base && patch.base !== "") n.rythme = n.rythme.map(() => patch.base as string);
             const t = k?.tarifs.find((x) => x.nom === n.tarif);
             const bn = Number(n.base.replace(",", "."));
             const tx = k && t ? tauxDepuisTarif(k, t, n.unite, Number.isFinite(bn) && bn > 0 ? bn : (k.base_hebdo || 37.5) / 5) : null;
             setStaffage(tx !== null ? { ...n, taux: String(tx) } : n);
           };
           const etiquetteS: CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 700, color: C.gris };
+          const totalRythme = s.rythme.reduce((t, x) => t + (Number(String(x).replace(",", ".")) || 0), 0);
           return (
-            <div role="dialog" aria-modal="true" aria-label="Staffer la commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => !s.enCours && setStaffage(null)}>
-              <div style={{ ...page.carte, padding: 20, width: 600, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div role="dialog" aria-modal="true" aria-label="Paramétrer la commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => !s.enCours && setStaffage(null)}>
+              <div style={{ ...page.carte, padding: 20, width: 640, maxWidth: "94vw", maxHeight: "92vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <BadgeType type={s.affaire.type} />
-                  <strong style={{ fontSize: 20, color: C.rougeFonce }}>Staffer {nf.numero}</strong>
+                  <strong style={{ fontSize: 20, color: C.rougeFonce }}>{nf.numero}</strong>
+                  {nf.devis && <span style={{ fontSize: 13, fontWeight: 800, color: C.gris }}>DBE{String(nf.devis).replace(/^DBE/i, "")}</span>}
                   <span style={{ fontSize: 12, fontWeight: 800, color: C.gris }}>{s.affaire.imputation}</span>
                   <span style={{ flex: 1 }} />
                   <button type="button" onClick={() => setStaffage(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
@@ -2872,19 +2953,19 @@ function PrestationsContenu() {
                 <div style={{ fontSize: 14, color: "#3b4046", margin: "2px 0 12px" }}>
                   {nf.client ? <strong>{nf.client} · </strong> : null}
                   {s.affaire.designation}
-                  {f.quantite !== null && <span style={{ color: C.gris }}> · {texteHeures(Math.round(f.quantite * 100) / 100)} {f.unite === "JOUR" ? "j" : "h"} commandés</span>}
+                  {f.montant > 0 && <span style={{ color: C.gris }}> · commande {euros(f.montant)}</span>}
                 </div>
                 {s.source && (
                   <Message genre="info">
-                    Avenant : personne, unité, base et taux repris de la commande <strong>{s.source}</strong>, et remplissage proposé à la suite de son dernier jour. Vérifiez, puis confirmez.
+                    Avenant : personne, unité, base et taux repris de <strong>{s.source}</strong>, début à la suite de son dernier jour. Vérifiez, puis confirmez.
                   </Message>
                 )}
                 {k && (
                   <div style={{ padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
-                    <strong>{k.libelle}</strong> · rythme {s.affaire.imputation === "PE" ? "PE" : "PI"} : {(rythme ?? []).map((h) => texteHeures(h)).join(" / ")} h
+                    <strong>{k.libelle}</strong>
                     <label style={{ ...etiquetteS, marginTop: 8 }}>
                       Prestation du contrat
-                      <select value={s.tarif} onChange={(e) => avecTarif({ tarif: e.target.value })} style={{ ...champ, maxWidth: 360 }}>
+                      <select value={s.tarif} onChange={(e) => avecTarif({ tarif: e.target.value })} style={{ ...champ, maxWidth: 380 }}>
                         <option value="">— taux libre —</option>
                         {k.tarifs.map((t) => (
                           <option key={t.nom} value={t.nom}>
@@ -2896,6 +2977,7 @@ function PrestationsContenu() {
                     </label>
                   </div>
                 )}
+
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
                   <label style={{ ...etiquetteS, width: 170 }}>
                     Personne
@@ -2934,25 +3016,68 @@ function PrestationsContenu() {
                     <input value={s.taux} onChange={(e) => setStaffage({ ...s, taux: e.target.value, tarif: "" })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
                   </label>
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700 }}>
-                    <input type="checkbox" checked={s.remplir} onChange={(e) => setStaffage({ ...s, remplir: e.target.checked })} style={{ width: 18, height: 18 }} />
-                    Remplir la commande à partir du
-                  </label>
-                  <input type="date" value={s.depart} disabled={!s.remplir} onChange={(e) => setStaffage({ ...s, depart: e.target.value, dejaH: 0 })} style={{ ...champ, width: 160 }} />
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 12 }}>
+                  <strong style={{ width: 70, fontSize: 13, alignSelf: "center" }}>Rythme</strong>
+                  {JOURS_SEMAINE.map((jour, d) => (
+                    <label key={jour} style={{ ...etiquetteS, width: 62 }}>
+                      {jour}
+                      <input
+                        value={s.rythme[d] ?? ""}
+                        onChange={(e) => setStaffage({ ...s, rythme: s.rythme.map((x, j) => (j === d ? e.target.value : x)) })}
+                        inputMode="decimal"
+                        style={{ ...champ, textAlign: "right" }}
+                      />
+                    </label>
+                  ))}
+                  <span style={{ fontSize: 12, color: C.gris, alignSelf: "center" }}>= {texteHeures(Math.round(totalRythme * 100) / 100)} h / semaine{k ? " (contrat)" : ""}</span>
+                </div>
+
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700 }}>
+                      <input type="checkbox" checked={s.remplir} onChange={(e) => setStaffage({ ...s, remplir: e.target.checked })} style={{ width: 18, height: 18 }} />
+                      Remplir à partir du
+                    </label>
+                    <input type="date" value={s.depart} disabled={!s.remplir} onChange={(e) => setStaffage({ ...s, depart: e.target.value, dejaH: 0 })} style={{ ...champ, width: 160 }} />
+                  </div>
                   {s.remplir && (
-                    <span style={{ fontSize: 12, color: C.gris, flexBasis: "100%" }}>
-                      {rythme ? `au rythme du contrat (${rythme.map((h) => texteHeures(h)).join(" / ")} h)` : `${Number.isFinite(baseNum) && baseNum > 0 ? texteHeures(baseNum) : "?"} h par jour ouvré`}, jusqu’à épuisement de la commande, mois suivants compris.
-                      {s.dejaH > 0.01 && s.personne === s.personneSource && ` Le ${new Date(`${s.depart}T00:00:00`).toLocaleDateString("fr-FR")}, ${texteHeures(s.dejaH)} h sont déjà prises par ${s.source} : on commence avec le reste de cette journée.`}
-                    </span>
+                    <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: sim.fin ? "#eef7ef" : "#fff7ea", fontSize: 14 }}>
+                      {sim.heures === null ? (
+                        "Commande non chiffrée (ni montant, ni heures dans le Suivi d’affaire) : rien à planifier."
+                      ) : !s.personne ? (
+                        "Choisissez la personne pour calculer la date de fin."
+                      ) : sim.fin ? (
+                        <>
+                          <strong>{texteHeures(Math.round(sim.heures * 100) / 100)} h</strong> à planifier
+                          {f.montant > 0 && s.taux.trim() !== "" ? ` (${euros(f.montant)} au taux de ${s.taux.replace(".", ",")} € / ${u})` : ""} :{" "}
+                          du <strong>{fr(sim.jours[0].jour)}</strong> au <strong>{fr(sim.fin)}</strong>, {sim.jours.length} jour{sim.jours.length > 1 ? "s" : ""}
+                          {sim.evites > 0 && (
+                            <span style={{ color: "#7a3e00" }}>
+                              {" "}
+                              · {sim.evites} jour{sim.evites > 1 ? "s" : ""} d’absence évité{sim.evites > 1 ? "s" : ""}
+                            </span>
+                          )}
+                          .
+                          {s.dejaH > 0.01 && s.personne === s.personneSource && (
+                            <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>
+                              Le premier jour, {texteHeures(s.dejaH)} h sont déjà prises par {s.source} : on commence avec le reste de la journée.
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        "Rien à planifier : vérifiez le rythme et la date."
+                      )}
+                    </div>
                   )}
                 </div>
+
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
                   <button type="button" style={page.btnSecondaire} onClick={() => setStaffage(null)} disabled={s.enCours}>
                     Annuler
                   </button>
                   <button type="button" style={page.btnPrimaire} onClick={() => void validerStaffage()} disabled={s.enCours || !s.personne}>
-                    {s.enCours ? "Staffage…" : s.source ? "Confirmer" : "Staffer"}
+                    {s.enCours ? "Enregistrement…" : s.source ? "Confirmer" : "Valider"}
                   </button>
                 </div>
               </div>

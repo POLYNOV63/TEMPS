@@ -1,0 +1,37 @@
+  const [staffage, setStaffage] = useState<null | {
+    affaire: AffaireP;
+    personne: string;
+    unite: "JOUR" | "HEURE";
+    base: string;
+    taux: string;
+    tarif: string;
+    depart: string;
+    dejaH: number;
+    personneSource: string | null;
+    rythme: string[];
+    remplir: boolean;
+    source: string | null;
+    enCours: boolean;
+  }>(null);
+  /* STAFFAGE_V2 : absences de la personne choisie (18 mois à partir du départ), pour la date de fin */
+  const [absStaffage, setAbsStaffage] = useState<AbsenceRow[]>([]);
+  useEffect(() => {
+    if (!staffage?.personne || !staffage.depart) {
+      setAbsStaffage([]);
+      return;
+    }
+    let actif = true;
+    const qui = staffage.personne;
+    const d = new Date(`${staffage.depart}T00:00:00Z`);
+    d.setUTCMonth(d.getUTCMonth() + 18);
+    void chargerCapacitesAbsences(staffage.depart, d.toISOString().slice(0, 10))
+      .then((c) => {
+        if (actif) setAbsStaffage(c.absences.filter((x) => x.collaborateur_id === qui));
+      })
+      .catch(() => {
+        if (actif) setAbsStaffage([]);
+      });
+    return () => {
+      actif = false;
+    };
+  }, [staffage?.personne, staffage?.depart]);

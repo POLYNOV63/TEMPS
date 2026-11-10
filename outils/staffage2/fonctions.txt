@@ -1,0 +1,137 @@
+  /* STAFFAGE_V2 : paramétrer une PE / PI à staffer : personne, unité, base, taux (contrat cadre, ou repris de la
+     commande sœur pour un avenant), rythme du lundi au vendredi, date de début (à la suite de la commande sœur),
+     et date de fin calculée (jours ouvrés, fériés et absences de la personne évités) */
+  async function ouvrirStaffage(a: AffaireP, personne = "") {
+    const f = ficheDe(a);
+    const k = contratDe(a);
+    const base = numeroBase(a.numero);
+    const famille = affaires.filter((x) => numeroBase(x.numero) === base && x.id !== a.id && x.numero.localeCompare(a.numero, "fr", { numeric: true }) < 0);
+    let source: string | null = null;
+    let modele: Ligne | null = null;
+    let depart = new Date().toISOString().slice(0, 10);
+    let dejaH = 0;
+    if (famille.length > 0) {
+      const { data } = await supabase.from("prestation_lignes").select("*").in("affaire_id", famille.map((x) => x.id));
+      const ls = ((data ?? []) as Ligne[]).map((l) => ({ ...l, taux: l.taux === null ? null : Number(l.taux), base_horaire: Number(l.base_horaire) || 7 }));
+      // la commande sœur la plus récente qui a des lignes : R1 pour un R2, la commande de base pour un R1
+      const soeur = [...famille].sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true })).find((x) => ls.some((l) => l.affaire_id === x.id));
+      if (soeur) {
+        const lsS = ls.filter((l) => l.affaire_id === soeur.id);
+        modele = lsS.find((l) => l.collaborateur_id === personne) ?? lsS[0];
+        source = soeur.numero;
+        const { data: sj } = await supabase
+          .from("prestation_saisies")
+          .select("ligne_id,jour,heures")
+          .in("ligne_id", lsS.map((l) => l.id))
+          .gt("heures", 0)
+          .order("jour", { ascending: false })
+          .limit(40);
+        const rows = (sj ?? []) as { ligne_id: string; jour: string; heures: number | string }[];
+        if (rows.length > 0) {
+          depart = rows[0].jour;
+          dejaH = rows.filter((r) => r.jour === depart && r.ligne_id === modele?.id).reduce((s, r) => s + (Number(r.heures) || 0), 0);
+        }
+      }
+    }
+    const unite = modele?.unite ?? f.unite;
+    const baseH = modele ? modele.base_horaire : k ? (k.base_hebdo || 37.5) / 5 : f.base;
+    const rythmeK = k ? (a.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
+    setStaffage({
+      affaire: a,
+      personne: personne || modele?.collaborateur_id || "",
+      unite,
+      base: String(baseH),
+      taux: modele?.taux !== null && modele?.taux !== undefined ? String(modele.taux) : f.taux !== null ? String(Math.round(f.taux * 100) / 100) : "",
+      tarif: "",
+      depart,
+      dejaH,
+      personneSource: modele?.collaborateur_id ?? null,
+      rythme: (rythmeK ?? [baseH, baseH, baseH, baseH, baseH]).map((x) => String(x)),
+      remplir: true,
+      source,
+      enCours: false,
+    });
+  }
+
+  /* les jours que le remplissage va saisir, et la date de fin */
+  const simulerStaffage = (s: NonNullable<typeof staffage>) => {
+    const f = ficheDe(s.affaire);
+    const base = Number(s.base.replace(",", "."));
+    const taux = s.taux.trim() === "" ? null : Number(s.taux.replace(",", "."));
+    const rythme = s.rythme.map((x) => Number(String(x).replace(",", ".")) || 0);
+    // quantité à planifier, en heures : le montant de la commande au taux choisi, sinon la quantité commandée
+    let heures: number | null = null;
+    if (f.montant > 0 && taux !== null && taux > 0 && base > 0) {
+      const q = f.montant / taux;
+      heures = s.unite === "JOUR" ? q * base : q;
+    } else if (f.quantite !== null) heures = f.quantite * (f.unite === "JOUR" ? f.base : 1);
+    const jours: { jour: string; heures: number }[] = [];
+    let evites = 0;
+    if (heures === null || heures <= 0 || !s.depart || rythme.every((x) => x <= 0)) return { heures, jours, fin: null as string | null, evites };
+    const absentLe = (date: string) => absStaffage.some((x) => x.genre !== "HEURES" && x.date_debut <= date && x.date_fin >= date);
+    const lendemain = (iso: string) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    };
+    let reste = heures;
+    let jour = s.depart;
+    for (let garde = 0; reste > 0.001 && garde < 900; garde++, jour = lendemain(jour)) {
+      const js = new Date(`${jour}T00:00:00Z`).getUTCDay();
+      if (js === 0 || js === 6 || estFerie(jour)) continue;
+      const cap = (rythme[js - 1] ?? 0) - (jour === s.depart && s.personne === s.personneSource ? s.dejaH : 0);
+      if (cap <= 0.01) continue;
+      if (absentLe(jour)) {
+        evites++;
+        continue;
+      }
+      const h = Math.round(Math.min(reste, cap) * 100) / 100;
+      jours.push({ jour, heures: h });
+      reste -= h;
+    }
+    return { heures, jours, fin: jours.length > 0 ? jours[jours.length - 1].jour : null, evites };
+  };
+
+  async function validerStaffage() {
+    if (!staffage) return;
+    const s = staffage;
+    const base = Number(s.base.replace(",", "."));
+    const taux = s.taux.trim() === "" ? null : Number(s.taux.replace(",", "."));
+    if (!s.personne) return setErreur("Choisissez la personne.");
+    if (!Number.isFinite(base) || base <= 0 || base > 12) return setErreur("Base horaire invalide : entre 0 et 12 h.");
+    if (taux !== null && !Number.isFinite(taux)) return setErreur("Taux invalide.");
+    const sim = simulerStaffage(s);
+    setErreur("");
+    setStaffage({ ...s, enCours: true });
+    const { data, error } = await supabase
+      .from("prestation_lignes")
+      .upsert(
+        { affaire_id: s.affaire.id, collaborateur_id: s.personne, actif: true, unite: s.unite, base_horaire: base, taux, ...(predo.get(s.personne) ? { activite_id: predo.get(s.personne) } : {}) },
+        { onConflict: "affaire_id,collaborateur_id" }
+      )
+      .select("id")
+      .single();
+    if (error || !data) {
+      setStaffage({ ...s, enCours: false });
+      return setErreur(traduireErreur(error?.message ?? "Staffage impossible."));
+    }
+    const ligneId = (data as { id: string }).id;
+    await supabase.from("pilotage_affaires").update({ releve_unite: s.unite, releve_base_horaire: base }).eq("id", s.affaire.id);
+    if (s.remplir && sim.jours.length > 0) {
+      const { error: es } = await supabase
+        .from("prestation_saisies")
+        .upsert(sim.jours.map((x) => ({ ligne_id: ligneId, jour: x.jour, heures: x.heures, code: null })), { onConflict: "ligne_id,jour" });
+      if (es) setErreur(`Ligne créée, mais remplissage impossible : ${traduireErreur(es.message)}`);
+      else {
+        for (const m of [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))]) {
+          const { error: ep } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: ligneId, p_mois: m });
+          if (ep) setErreur(`Planning non mis à jour (${m.slice(0, 7)}) : ${traduireErreur(ep.message)}`);
+        }
+        const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR");
+        setInfo(`${s.affaire.numero} staffé : ${texteHeures(Math.round(sim.jours.reduce((t, x) => t + x.heures, 0) * 100) / 100)} h du ${fr(sim.jours[0].jour)} au ${fr(sim.fin ?? sim.jours[0].jour)}.`);
+      }
+    }
+    setStaffage(null);
+    setRechargement((n) => n + 1);
+  }
+
