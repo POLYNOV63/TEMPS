@@ -93,6 +93,28 @@ type MoisLigne = {
 };
 type SuiviLigne = { id?: string; base_affaire: string | null; base_devis: string | null; numero_affaire: string | null; genre: string; statut: string | null; rang_avenant: number | null; client_id: string | null; date_livraison: string | null; heures_total?: number | string | null; montant?: number };
 
+/* STAFFAGE_CONTRATS : contrats cadres (MICHELIN…) : base hebdomadaire, rythme du lundi au vendredi pour les PE et les PI, tarifs nommés */
+type TarifContrat = { nom: string; montant: number | null; unite: "HEURE" | "JOUR" | "SEMAINE" };
+type Contrat = { id: string; client_motif: string; libelle: string; base_hebdo: number; rythme_pe: number[]; rythme_pi: number[]; tarifs: TarifContrat[]; actif: boolean };
+const normTexte = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const JOURS_SEMAINE = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven."];
+const contratVide = (motif = ""): Contrat => ({
+  id: "",
+  client_motif: motif,
+  libelle: motif ? `Contrat cadre ${motif}` : "Contrat cadre",
+  base_hebdo: 37.5,
+  rythme_pe: [7.5, 7.5, 7.5, 7.5, 7.5],
+  rythme_pi: [8, 8, 8, 8, 5.5],
+  tarifs: ["Etude", "Mise en plan", "Faisabilité", "AMO", "Calcul"].map((nom) => ({ nom, montant: null, unite: "SEMAINE" as const })),
+  actif: true,
+});
+/* taux d'une ligne (dans son unité) d'après un tarif du contrat */
+const tauxDepuisTarif = (k: Contrat, t: TarifContrat, unite: "JOUR" | "HEURE", base: number) => {
+  if (t.montant === null || !Number.isFinite(t.montant)) return null;
+  const parHeure = t.unite === "SEMAINE" ? t.montant / (k.base_hebdo || 37.5) : t.unite === "JOUR" ? t.montant / ((k.base_hebdo || 37.5) / 5) : t.montant;
+  return Math.round((unite === "JOUR" ? parHeure * base : parHeure) * 100) / 100;
+};
+
 const LETTRES = ["D", "L", "M", "M", "J", "V", "S"];
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
@@ -261,6 +283,40 @@ function PrestationsContenu() {
       .then(({ data }) => setPredo(new Map(((data ?? []) as { collaborateur_id: string; activite_id: string }[]).map((x) => [x.collaborateur_id, x.activite_id]))));
   }, []);
   const [reveillees, setReveillees] = useState<Set<string>>(new Set());
+  /* STAFFAGE_CONTRATS : contrats cadres, fenêtre de staffage */
+  const [contrats, setContrats] = useState<Contrat[]>([]);
+  const [contratsOuverts, setContratsOuverts] = useState(false);
+  const [brouillonContrats, setBrouillonContrats] = useState<Contrat[]>([]);
+  const chargerContrats = useCallback(async () => {
+    const { data, error } = await supabase.from("prestation_contrats").select("*").order("client_motif");
+    if (error) return; // script SQL 90 pas encore installé
+    setContrats(
+      ((data ?? []) as Contrat[]).map((k) => ({
+        ...k,
+        base_hebdo: Number(k.base_hebdo) || 37.5,
+        rythme_pe: (k.rythme_pe ?? []).map(Number),
+        rythme_pi: (k.rythme_pi ?? []).map(Number),
+        tarifs: Array.isArray(k.tarifs) ? k.tarifs : [],
+      }))
+    );
+  }, []);
+  useEffect(() => {
+    void chargerContrats();
+  }, [chargerContrats]);
+  const [staffage, setStaffage] = useState<null | {
+    affaire: AffaireP;
+    personne: string;
+    unite: "JOUR" | "HEURE";
+    base: string;
+    taux: string;
+    tarif: string;
+    depart: string;
+    dejaH: number;
+    personneSource: string | null;
+    remplir: boolean;
+    source: string | null;
+    enCours: boolean;
+  }>(null);
 
   const jours = useMemo(() => joursDuMois(mois), [mois]);
   const debut = jours[0].date;
@@ -759,7 +815,9 @@ function PrestationsContenu() {
         continue;
       }
       if (j.weekend || j.ferie) continue;
-      valeurs.push({ jour: j.date, valeur: absent(l.collaborateur_id, j.date) ? { heures: null, code: "CP" } : { heures: l.base_horaire, code: null } });
+      const hj = heuresDuJour(l, j.date); // rythme du contrat cadre, sinon la base de la ligne
+      if (hj <= 0) continue;
+      valeurs.push({ jour: j.date, valeur: absent(l.collaborateur_id, j.date) ? { heures: null, code: "CP" } : { heures: hj, code: null } });
     }
     void ecrire(l, valeurs);
   }
@@ -852,7 +910,7 @@ function PrestationsContenu() {
 
   /* PLANIFIER_RESTE : le reste non planifié de la commande, sur cette personne, une journée (base de la ligne)
      par jour ouvré à partir du lendemain du dernier jour saisi, mois suivants compris */
-  async function planifierReste(l: Ligne) {
+  async function planifierReste(l: Ligne, depart?: { jour: string; dejaH: number }, sansConfirmer = false) {
     const a = affairesParId.get(l.affaire_id);
     if (!a || !peutAgir) return;
     const f = ficheDe(a);
@@ -868,13 +926,15 @@ function PrestationsContenu() {
       return d.toISOString().slice(0, 10);
     };
     const dernier = dernierJourLigne(l);
-    let jour = dernier && dernier >= debut ? lendemain(dernier) : debut;
+    let jour = depart?.jour ?? (dernier && dernier >= debut ? lendemain(dernier) : debut);
     const parJour = Math.max(0.5, l.base_horaire);
     const ajouts: { jour: string; heures: number }[] = [];
     for (let garde = 0; resteH > 0.001 && garde < 800; garde++, jour = lendemain(jour)) {
       const js = new Date(`${jour}T00:00:00Z`).getUTCDay();
       if (js === 0 || js === 6 || estFerie(jour) || absent(l.collaborateur_id, jour)) continue;
-      const h = Math.min(resteH, parJour);
+      const cap = heuresDuJour(l, jour) - (depart && jour === depart.jour ? depart.dejaH : 0);
+      if (cap <= 0.01) continue;
+      const h = Math.min(resteH, cap);
       ajouts.push({ jour, heures: Math.round(h * 100) / 100 });
       resteH -= h;
     }
@@ -882,13 +942,14 @@ function PrestationsContenu() {
     const fr = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("fr-FR");
     const u = f.unite === "JOUR" ? "j" : "h";
     if (
+      !sansConfirmer &&
       !window.confirm(
         `Planifier ${texteHeures(Math.round(resteU * 100) / 100)} ${u} pour ${nomCollab(collabs.get(l.collaborateur_id))} sur ${a.numero}, du ${fr(ajouts[0].jour)} au ${fr(ajouts[ajouts.length - 1].jour)} (${ajouts.length} jour(s) ouvré(s)) ?`
       )
     )
       return;
-    const ceMois = ajouts.filter((x) => x.jour <= fin);
-    const ensuite = ajouts.filter((x) => x.jour > fin);
+    const ceMois = ajouts.filter((x) => x.jour >= debut && x.jour <= fin);
+    const ensuite = ajouts.filter((x) => x.jour < debut || x.jour > fin);
     if (ceMois.length) await ecrire(l, ceMois.map((x) => ({ jour: x.jour, valeur: { heures: x.heures, code: null } })), false);
     if (ensuite.length) {
       const { error } = await supabase
@@ -1101,6 +1162,110 @@ function PrestationsContenu() {
     setRechargement((n) => n + 1);
   }
 
+  /* STAFFAGE_CONTRATS : staffer une PE / PI : personne, unité, base, taux (contrat cadre, ou repris de la commande
+     sœur pour un avenant), et début du remplissage (à la suite du dernier jour de la commande sœur) */
+  async function ouvrirStaffage(a: AffaireP, personne = "") {
+    const f = ficheDe(a);
+    const k = contratDe(a);
+    const base = numeroBase(a.numero);
+    const famille = affaires.filter((x) => numeroBase(x.numero) === base && x.id !== a.id && x.numero.localeCompare(a.numero, "fr", { numeric: true }) < 0);
+    let source: string | null = null;
+    let modele: Ligne | null = null;
+    let depart = new Date().toISOString().slice(0, 10);
+    let dejaH = 0;
+    if (famille.length > 0) {
+      const { data } = await supabase.from("prestation_lignes").select("*").in("affaire_id", famille.map((x) => x.id));
+      const ls = ((data ?? []) as Ligne[]).map((l) => ({ ...l, taux: l.taux === null ? null : Number(l.taux), base_horaire: Number(l.base_horaire) || 7 }));
+      // la commande sœur la plus récente qui a des lignes : R1 pour un R2, la commande de base pour un R1
+      const soeur = [...famille].sort((x, y) => y.numero.localeCompare(x.numero, "fr", { numeric: true })).find((x) => ls.some((l) => l.affaire_id === x.id));
+      if (soeur) {
+        const lsS = ls.filter((l) => l.affaire_id === soeur.id);
+        modele = lsS.find((l) => l.collaborateur_id === personne) ?? lsS[0];
+        source = soeur.numero;
+        const { data: sj } = await supabase
+          .from("prestation_saisies")
+          .select("ligne_id,jour,heures")
+          .in("ligne_id", lsS.map((l) => l.id))
+          .gt("heures", 0)
+          .order("jour", { ascending: false })
+          .limit(40);
+        const rows = (sj ?? []) as { ligne_id: string; jour: string; heures: number | string }[];
+        if (rows.length > 0) {
+          depart = rows[0].jour;
+          dejaH = rows.filter((r) => r.jour === depart && r.ligne_id === modele?.id).reduce((s, r) => s + (Number(r.heures) || 0), 0);
+        }
+      }
+    }
+    const unite = modele?.unite ?? f.unite;
+    const baseH = modele ? modele.base_horaire : k ? (k.base_hebdo || 37.5) / 5 : f.base;
+    setStaffage({
+      affaire: a,
+      personne: personne || modele?.collaborateur_id || "",
+      unite,
+      base: String(baseH),
+      taux: modele?.taux !== null && modele?.taux !== undefined ? String(modele.taux) : f.taux !== null ? String(Math.round(f.taux * 100) / 100) : "",
+      tarif: "",
+      depart,
+      dejaH,
+      personneSource: modele?.collaborateur_id ?? null,
+      remplir: true,
+      source,
+      enCours: false,
+    });
+  }
+
+  async function validerStaffage() {
+    if (!staffage) return;
+    const s = staffage;
+    const base = Number(s.base.replace(",", "."));
+    const taux = s.taux.trim() === "" ? null : Number(s.taux.replace(",", "."));
+    if (!s.personne) return setErreur("Choisissez la personne.");
+    if (!Number.isFinite(base) || base <= 0 || base > 12) return setErreur("Base horaire invalide : entre 0 et 12 h.");
+    if (taux !== null && !Number.isFinite(taux)) return setErreur("Taux invalide.");
+    setErreur("");
+    setStaffage({ ...s, enCours: true });
+    const { data, error } = await supabase
+      .from("prestation_lignes")
+      .upsert(
+        { affaire_id: s.affaire.id, collaborateur_id: s.personne, actif: true, unite: s.unite, base_horaire: base, taux, ...(predo.get(s.personne) ? { activite_id: predo.get(s.personne) } : {}) },
+        { onConflict: "affaire_id,collaborateur_id" }
+      )
+      .select("*")
+      .single();
+    if (error || !data) {
+      setStaffage({ ...s, enCours: false });
+      return setErreur(traduireErreur(error?.message ?? "Staffage impossible."));
+    }
+    await supabase.from("pilotage_affaires").update({ releve_unite: s.unite, releve_base_horaire: base }).eq("id", s.affaire.id);
+    setStaffage(null);
+    const ligne = { ...(data as Ligne), base_horaire: base, taux };
+    if (s.remplir && s.depart) await planifierReste(ligne, { jour: s.depart, dejaH: s.personne === s.personneSource ? s.dejaH : 0 }, true);
+    setRechargement((n) => n + 1);
+  }
+
+  /* STAFFAGE_CONTRATS : enregistrer les contrats cadres */
+  async function enregistrerContrats() {
+    for (const k of brouillonContrats) {
+      const motif = k.client_motif.trim();
+      if (!motif) continue;
+      const ligne = {
+        client_motif: motif,
+        libelle: k.libelle.trim() || `Contrat cadre ${motif}`,
+        base_hebdo: Number(k.base_hebdo) || 37.5,
+        rythme_pe: k.rythme_pe.map((x) => Number(x) || 0),
+        rythme_pi: k.rythme_pi.map((x) => Number(x) || 0),
+        tarifs: k.tarifs.filter((t) => t.nom.trim() !== "").map((t) => ({ nom: t.nom.trim(), montant: t.montant === null || !Number.isFinite(t.montant) ? null : t.montant, unite: t.unite })),
+        actif: k.actif,
+        modifie_le: new Date().toISOString(),
+      };
+      const r = k.id ? await supabase.from("prestation_contrats").update(ligne).eq("id", k.id) : await supabase.from("prestation_contrats").insert(ligne);
+      if (r.error) return setErreur(/prestation_contrats/.test(r.error.message) ? "Installez d’abord le script SQL 90 (contrats cadres)." : traduireErreur(r.error.message));
+    }
+    await chargerContrats();
+    setContratsOuverts(false);
+    setInfo("Contrats cadres enregistrés.");
+  }
+
   async function ajouterLigne() {
     if (!ajout?.affaire_id || !ajout.collaborateur_id) return;
     const { error } = await supabase.from("prestation_lignes").upsert({ ...ajout, actif: true }, { onConflict: "affaire_id,collaborateur_id" });
@@ -1178,6 +1343,25 @@ function PrestationsContenu() {
     },
     [suivi]
   );
+
+  /* STAFFAGE_CONTRATS : contrat cadre d'une commande (le nom du client contient le mot du contrat) et heures d'un jour selon son rythme */
+  const contratDe = useCallback(
+    (a: AffaireP | undefined) => {
+      if (!a) return null;
+      const client = normTexte(numeroFacture(a).client ?? "");
+      if (!client) return null;
+      return contrats.find((k) => k.actif && k.client_motif.trim() !== "" && client.includes(normTexte(k.client_motif.trim()))) ?? null;
+    },
+    [contrats, numeroFacture]
+  );
+  const heuresDuJour = (l: Pick<Ligne, "affaire_id" | "base_horaire">, date: string) => {
+    const a = affairesParId.get(l.affaire_id);
+    const k = contratDe(a);
+    if (!k) return l.base_horaire;
+    const js = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const r = a?.imputation === "PE" ? k.rythme_pe : k.rythme_pi;
+    return js >= 1 && js <= 5 ? Number(r[js - 1]) || 0 : 0;
+  };
 
   /* FICHE_COMMANDE : ce que prévoit la commande (Suivi d'affaire : montant et total d'heures), sa vente
      (unité, base, taux = montant ÷ quantité) et où on en est (consommé : heures saisies au relevé, tous
@@ -1455,6 +1639,20 @@ function PrestationsContenu() {
             <Link href={`/analyse/facturation?mois=${mois.slice(0, 7)}`} title="La facturation de ce mois" style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
               Facturation du mois →
             </Link>
+            {/* STAFFAGE_CONTRATS */}
+            {peutAgir && (
+              <button
+                type="button"
+                style={page.btnSecondaire}
+                onClick={() => {
+                  setBrouillonContrats(contrats.length > 0 ? contrats.map((k) => ({ ...k, tarifs: k.tarifs.map((t) => ({ ...t })) })) : [contratVide("MICHELIN")]);
+                  setContratsOuverts(true);
+                }}
+                title="Tarifs et rythme des contrats cadres (MICHELIN…)"
+              >
+                Contrats cadres
+              </button>
+            )}
             <button type="button" style={page.btnSecondaire} onClick={() => void exporter()} disabled={lignes.length === 0 || enCours !== ""}>
               {enCours === "export" ? "Export…" : "Exporter (gabarit Excel)"}
             </button>
@@ -1879,7 +2077,12 @@ function PrestationsContenu() {
                       <td colSpan={nbCol - 1} style={cellule}>
                         <div style={{ position: "sticky", left: L_CMD, display: "inline-flex", alignItems: "center", gap: 10 }}>
                           {peutAgir ? (
-                            <select defaultValue="" onChange={(e) => void staffer(a.id, e.target.value)} style={{ ...champ, width: 120 }} aria-label={`Personne pour ${a.numero}`}>
+                            <select
+                              value=""
+                              onChange={(e) => void ouvrirStaffage(a, e.target.value)}
+                              style={{ ...champ, width: 120 }}
+                              aria-label={`Personne pour ${a.numero}`}
+                            >
                               <option value="">Personne…</option>
                               {annuaire.map((p) => (
                                 <option key={p.id} value={p.id}>
@@ -2559,8 +2762,8 @@ function PrestationsContenu() {
                         defaultValue=""
                         onChange={(e) => {
                           if (!e.target.value) return;
-                          void staffer(a.id, e.target.value);
                           setFiche(null);
+                          void ouvrirStaffage(a, e.target.value);
                         }}
                         style={{ ...champ, width: 160, marginLeft: 8 }}
                         aria-label={`Staffer ${a.numero}`}
@@ -2634,6 +2837,247 @@ function PrestationsContenu() {
             </div>
           );
         })()}
+
+      {/* STAFFAGE_CONTRATS : fenêtre de staffage d'une PE / PI */}
+      {staffage &&
+        (() => {
+          const s = staffage;
+          const k = contratDe(s.affaire);
+          const f = ficheDe(s.affaire);
+          const nf = numeroFacture(s.affaire);
+          const baseNum = Number(s.base.replace(",", "."));
+          const libre = s.base !== "7" && s.base !== "7.5";
+          const rythme = k ? (s.affaire.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
+          const u = s.unite === "JOUR" ? "jour" : "h";
+          const avecTarif = (patch: Partial<typeof s>) => {
+            const n = { ...s, ...patch };
+            const t = k?.tarifs.find((x) => x.nom === n.tarif);
+            const bn = Number(n.base.replace(",", "."));
+            const tx = k && t ? tauxDepuisTarif(k, t, n.unite, Number.isFinite(bn) && bn > 0 ? bn : (k.base_hebdo || 37.5) / 5) : null;
+            setStaffage(tx !== null ? { ...n, taux: String(tx) } : n);
+          };
+          const etiquetteS: CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 700, color: C.gris };
+          return (
+            <div role="dialog" aria-modal="true" aria-label="Staffer la commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => !s.enCours && setStaffage(null)}>
+              <div style={{ ...page.carte, padding: 20, width: 600, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <BadgeType type={s.affaire.type} />
+                  <strong style={{ fontSize: 20, color: C.rougeFonce }}>Staffer {nf.numero}</strong>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.gris }}>{s.affaire.imputation}</span>
+                  <span style={{ flex: 1 }} />
+                  <button type="button" onClick={() => setStaffage(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ fontSize: 14, color: "#3b4046", margin: "2px 0 12px" }}>
+                  {nf.client ? <strong>{nf.client} · </strong> : null}
+                  {s.affaire.designation}
+                  {f.quantite !== null && <span style={{ color: C.gris }}> · {texteHeures(Math.round(f.quantite * 100) / 100)} {f.unite === "JOUR" ? "j" : "h"} commandés</span>}
+                </div>
+                {s.source && (
+                  <Message genre="info">
+                    Avenant : personne, unité, base et taux repris de la commande <strong>{s.source}</strong>, et remplissage proposé à la suite de son dernier jour. Vérifiez, puis confirmez.
+                  </Message>
+                )}
+                {k && (
+                  <div style={{ padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+                    <strong>{k.libelle}</strong> · rythme {s.affaire.imputation === "PE" ? "PE" : "PI"} : {(rythme ?? []).map((h) => texteHeures(h)).join(" / ")} h
+                    <label style={{ ...etiquetteS, marginTop: 8 }}>
+                      Prestation du contrat
+                      <select value={s.tarif} onChange={(e) => avecTarif({ tarif: e.target.value })} style={{ ...champ, maxWidth: 360 }}>
+                        <option value="">— taux libre —</option>
+                        {k.tarifs.map((t) => (
+                          <option key={t.nom} value={t.nom}>
+                            {t.nom}
+                            {t.montant !== null ? ` · ${t.montant.toLocaleString("fr-FR")} € / ${t.unite === "HEURE" ? "h" : t.unite === "JOUR" ? "jour" : "semaine"}` : " · tarif non saisi"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+                  <label style={{ ...etiquetteS, width: 170 }}>
+                    Personne
+                    <select value={s.personne} onChange={(e) => setStaffage({ ...s, personne: e.target.value })} style={champ}>
+                      <option value="">Choisir…</option>
+                      {annuaire.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {nomCollab(p)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ ...etiquetteS, width: 110 }}>
+                    Vendue
+                    <select value={s.unite} onChange={(e) => avecTarif({ unite: e.target.value as "JOUR" | "HEURE" })} style={champ}>
+                      <option value="JOUR">au jour</option>
+                      <option value="HEURE">à l’heure</option>
+                    </select>
+                  </label>
+                  <label style={{ ...etiquetteS, width: 120 }} title="Heures d’une journée vendue">
+                    Base horaire
+                    <select value={libre ? "AUTRE" : s.base} onChange={(e) => avecTarif({ base: e.target.value === "AUTRE" ? "" : e.target.value })} style={champ}>
+                      <option value="7">7 h</option>
+                      <option value="7.5">7,5 h</option>
+                      <option value="AUTRE">autre…</option>
+                    </select>
+                  </label>
+                  {libre && (
+                    <label style={{ ...etiquetteS, width: 80 }}>
+                      Heures
+                      <input value={s.base} onChange={(e) => avecTarif({ base: e.target.value })} inputMode="decimal" placeholder="ex. 8" style={{ ...champ, textAlign: "right" }} />
+                    </label>
+                  )}
+                  <label style={{ ...etiquetteS, width: 120 }}>
+                    Taux (€ / {u})
+                    <input value={s.taux} onChange={(e) => setStaffage({ ...s, taux: e.target.value, tarif: "" })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                  </label>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700 }}>
+                    <input type="checkbox" checked={s.remplir} onChange={(e) => setStaffage({ ...s, remplir: e.target.checked })} style={{ width: 18, height: 18 }} />
+                    Remplir la commande à partir du
+                  </label>
+                  <input type="date" value={s.depart} disabled={!s.remplir} onChange={(e) => setStaffage({ ...s, depart: e.target.value, dejaH: 0 })} style={{ ...champ, width: 160 }} />
+                  {s.remplir && (
+                    <span style={{ fontSize: 12, color: C.gris, flexBasis: "100%" }}>
+                      {rythme ? `au rythme du contrat (${rythme.map((h) => texteHeures(h)).join(" / ")} h)` : `${Number.isFinite(baseNum) && baseNum > 0 ? texteHeures(baseNum) : "?"} h par jour ouvré`}, jusqu’à épuisement de la commande, mois suivants compris.
+                      {s.dejaH > 0.01 && s.personne === s.personneSource && ` Le ${new Date(`${s.depart}T00:00:00`).toLocaleDateString("fr-FR")}, ${texteHeures(s.dejaH)} h sont déjà prises par ${s.source} : on commence avec le reste de cette journée.`}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+                  <button type="button" style={page.btnSecondaire} onClick={() => setStaffage(null)} disabled={s.enCours}>
+                    Annuler
+                  </button>
+                  <button type="button" style={page.btnPrimaire} onClick={() => void validerStaffage()} disabled={s.enCours || !s.personne}>
+                    {s.enCours ? "Staffage…" : s.source ? "Confirmer" : "Staffer"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {/* STAFFAGE_CONTRATS : paramétrage des contrats cadres */}
+      {contratsOuverts && (
+        <div role="dialog" aria-modal="true" aria-label="Contrats cadres" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setContratsOuverts(false)}>
+          <div style={{ ...page.carte, padding: 20, width: 820, maxWidth: "96vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Contrats cadres</h2>
+              <span style={{ flex: 1 }} />
+              <button type="button" onClick={() => setContratsOuverts(false)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                ×
+              </button>
+            </div>
+            <p style={{ margin: "4px 0 12px", fontSize: 13, color: C.gris }}>
+              Un contrat s’applique aux PE / PI d’un client dont le nom <strong>contient</strong> le mot indiqué (MICHELIN : quel que soit le préfixe ou le suffixe). Son rythme sert au
+              remplissage (↦ reste, staffage) ; ses tarifs se choisissent au staffage.
+            </p>
+            {brouillonContrats.map((k, i) => {
+              const maj = (patch: Partial<Contrat>) => setBrouillonContrats((b) => b.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+              const nombre = (v: string) => {
+                const n = Number(v.replace(",", "."));
+                return v.trim() === "" || !Number.isFinite(n) ? null : n;
+              };
+              const etiquetteC: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
+              return (
+                <fieldset key={`${k.id}-${i}`} style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+                    <label style={{ ...etiquetteC, width: 160 }}>
+                      Le client contient
+                      <input defaultValue={k.client_motif} onBlur={(e) => maj({ client_motif: e.target.value })} style={champ} />
+                    </label>
+                    <label style={{ ...etiquetteC, width: 240 }}>
+                      Libellé
+                      <input defaultValue={k.libelle} onBlur={(e) => maj({ libelle: e.target.value })} style={champ} />
+                    </label>
+                    <label style={{ ...etiquetteC, width: 110 }}>
+                      Base / semaine
+                      <input defaultValue={texteHeures(k.base_hebdo)} onBlur={(e) => maj({ base_hebdo: nombre(e.target.value) ?? 37.5 })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                    </label>
+                    <label style={{ ...etiquetteC, flexDirection: "row", alignItems: "center", gap: 6, minHeight: 38 }}>
+                      <input type="checkbox" checked={k.actif} onChange={(e) => maj({ actif: e.target.checked })} style={{ width: 18, height: 18 }} />
+                      Actif
+                    </label>
+                  </div>
+                  {(["rythme_pe", "rythme_pi"] as const).map((cle) => (
+                    <div key={cle} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 10 }}>
+                      <strong style={{ width: 90, fontSize: 13, alignSelf: "center" }}>Rythme {cle === "rythme_pe" ? "PE" : "PI"}</strong>
+                      {JOURS_SEMAINE.map((jour, d) => (
+                        <label key={jour} style={{ ...etiquetteC, width: 64 }}>
+                          {jour}
+                          <input
+                            defaultValue={texteHeures(k[cle][d] ?? 0)}
+                            onBlur={(e) => maj({ [cle]: k[cle].map((x, j) => (j === d ? nombre(e.target.value) ?? 0 : x)) } as Partial<Contrat>)}
+                            inputMode="decimal"
+                            style={{ ...champ, textAlign: "right" }}
+                          />
+                        </label>
+                      ))}
+                      <span style={{ fontSize: 12, color: C.gris, alignSelf: "center" }}>= {texteHeures(k[cle].reduce((s, x) => s + (Number(x) || 0), 0))} h</span>
+                    </div>
+                  ))}
+                  <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 12, fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...page.th, padding: "6px 8px" }}>Prestation</th>
+                        <th style={{ ...page.th, padding: "6px 8px", textAlign: "right" }}>Tarif (€)</th>
+                        <th style={{ ...page.th, padding: "6px 8px" }}>par</th>
+                        <th style={{ ...page.th, padding: "6px 8px" }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {k.tarifs.map((t, ti) => {
+                        const majT = (patch: Partial<TarifContrat>) => maj({ tarifs: k.tarifs.map((x, j) => (j === ti ? { ...x, ...patch } : x)) });
+                        return (
+                          <tr key={`${ti}-${t.nom}`}>
+                            <td style={{ ...page.td, padding: "4px 8px" }}>
+                              <input defaultValue={t.nom} onBlur={(e) => majT({ nom: e.target.value })} style={champ} />
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 140 }}>
+                              <input defaultValue={t.montant === null ? "" : String(t.montant).replace(".", ",")} onBlur={(e) => majT({ montant: nombre(e.target.value) })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 190 }}>
+                              <select value={t.unite} onChange={(e) => majT({ unite: e.target.value as TarifContrat["unite"] })} style={champ}>
+                                <option value="SEMAINE">semaine ({texteHeures(k.base_hebdo)} h)</option>
+                                <option value="JOUR">jour ({texteHeures(k.base_hebdo / 5)} h)</option>
+                                <option value="HEURE">heure</option>
+                              </select>
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 40 }}>
+                              <button type="button" onClick={() => maj({ tarifs: k.tarifs.filter((_, j) => j !== ti) })} title="Retirer ce tarif" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16 }}>
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <button type="button" onClick={() => maj({ tarifs: [...k.tarifs, { nom: "", montant: null, unite: "SEMAINE" }] })} style={{ ...page.btnSecondaire, minHeight: 32, marginTop: 8, fontSize: 13 }}>
+                    + Ajouter un tarif
+                  </button>
+                </fieldset>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={page.btnSecondaire} onClick={() => setBrouillonContrats((b) => [...b, contratVide("")])}>
+                + Nouveau contrat
+              </button>
+              <span style={{ display: "inline-flex", gap: 8 }}>
+                <button type="button" style={page.btnSecondaire} onClick={() => setContratsOuverts(false)}>
+                  Annuler
+                </button>
+                <button type="button" style={page.btnPrimaire} onClick={() => void enregistrerContrats()}>
+                  Enregistrer
+                </button>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editeurReport && (
         <div role="dialog" aria-modal="true" aria-label="Heures reportées" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setEditeurReport(null)}>

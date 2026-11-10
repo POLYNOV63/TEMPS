@@ -1,0 +1,19 @@
+
+  /* STAFFAGE_CONTRATS : contrat cadre d'une commande (le nom du client contient le mot du contrat) et heures d'un jour selon son rythme */
+  const contratDe = useCallback(
+    (a: AffaireP | undefined) => {
+      if (!a) return null;
+      const client = normTexte(numeroFacture(a).client ?? "");
+      if (!client) return null;
+      return contrats.find((k) => k.actif && k.client_motif.trim() !== "" && client.includes(normTexte(k.client_motif.trim()))) ?? null;
+    },
+    [contrats, numeroFacture]
+  );
+  const heuresDuJour = (l: Pick<Ligne, "affaire_id" | "base_horaire">, date: string) => {
+    const a = affairesParId.get(l.affaire_id);
+    const k = contratDe(a);
+    if (!k) return l.base_horaire;
+    const js = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const r = a?.imputation === "PE" ? k.rythme_pe : k.rythme_pi;
+    return js >= 1 && js <= 5 ? Number(r[js - 1]) || 0 : 0;
+  };

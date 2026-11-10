@@ -1,0 +1,22 @@
+/* STAFFAGE_CONTRATS : contrats cadres (MICHELIN…) : base hebdomadaire, rythme du lundi au vendredi pour les PE et les PI, tarifs nommés */
+type TarifContrat = { nom: string; montant: number | null; unite: "HEURE" | "JOUR" | "SEMAINE" };
+type Contrat = { id: string; client_motif: string; libelle: string; base_hebdo: number; rythme_pe: number[]; rythme_pi: number[]; tarifs: TarifContrat[]; actif: boolean };
+const normTexte = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const JOURS_SEMAINE = ["Lun.", "Mar.", "Mer.", "Jeu.", "Ven."];
+const contratVide = (motif = ""): Contrat => ({
+  id: "",
+  client_motif: motif,
+  libelle: motif ? `Contrat cadre ${motif}` : "Contrat cadre",
+  base_hebdo: 37.5,
+  rythme_pe: [7.5, 7.5, 7.5, 7.5, 7.5],
+  rythme_pi: [8, 8, 8, 8, 5.5],
+  tarifs: ["Etude", "Mise en plan", "Faisabilité", "AMO", "Calcul"].map((nom) => ({ nom, montant: null, unite: "SEMAINE" as const })),
+  actif: true,
+});
+/* taux d'une ligne (dans son unité) d'après un tarif du contrat */
+const tauxDepuisTarif = (k: Contrat, t: TarifContrat, unite: "JOUR" | "HEURE", base: number) => {
+  if (t.montant === null || !Number.isFinite(t.montant)) return null;
+  const parHeure = t.unite === "SEMAINE" ? t.montant / (k.base_hebdo || 37.5) : t.unite === "JOUR" ? t.montant / ((k.base_hebdo || 37.5) / 5) : t.montant;
+  return Math.round((unite === "JOUR" ? parHeure * base : parHeure) * 100) / 100;
+};
+

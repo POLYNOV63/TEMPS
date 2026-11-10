@@ -1,0 +1,34 @@
+  /* STAFFAGE_CONTRATS : contrats cadres, fenêtre de staffage */
+  const [contrats, setContrats] = useState<Contrat[]>([]);
+  const [contratsOuverts, setContratsOuverts] = useState(false);
+  const [brouillonContrats, setBrouillonContrats] = useState<Contrat[]>([]);
+  const chargerContrats = useCallback(async () => {
+    const { data, error } = await supabase.from("prestation_contrats").select("*").order("client_motif");
+    if (error) return; // script SQL 90 pas encore installé
+    setContrats(
+      ((data ?? []) as Contrat[]).map((k) => ({
+        ...k,
+        base_hebdo: Number(k.base_hebdo) || 37.5,
+        rythme_pe: (k.rythme_pe ?? []).map(Number),
+        rythme_pi: (k.rythme_pi ?? []).map(Number),
+        tarifs: Array.isArray(k.tarifs) ? k.tarifs : [],
+      }))
+    );
+  }, []);
+  useEffect(() => {
+    void chargerContrats();
+  }, [chargerContrats]);
+  const [staffage, setStaffage] = useState<null | {
+    affaire: AffaireP;
+    personne: string;
+    unite: "JOUR" | "HEURE";
+    base: string;
+    taux: string;
+    tarif: string;
+    depart: string;
+    dejaH: number;
+    personneSource: string | null;
+    remplir: boolean;
+    source: string | null;
+    enCours: boolean;
+  }>(null);

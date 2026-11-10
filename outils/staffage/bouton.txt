@@ -1,0 +1,14 @@
+            {/* STAFFAGE_CONTRATS */}
+            {peutAgir && (
+              <button
+                type="button"
+                style={page.btnSecondaire}
+                onClick={() => {
+                  setBrouillonContrats(contrats.length > 0 ? contrats.map((k) => ({ ...k, tarifs: k.tarifs.map((t) => ({ ...t })) })) : [contratVide("MICHELIN")]);
+                  setContratsOuverts(true);
+                }}
+                title="Tarifs et rythme des contrats cadres (MICHELIN…)"
+              >
+                Contrats cadres
+              </button>
+            )}

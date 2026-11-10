@@ -1,0 +1,241 @@
+      {/* STAFFAGE_CONTRATS : fenêtre de staffage d'une PE / PI */}
+      {staffage &&
+        (() => {
+          const s = staffage;
+          const k = contratDe(s.affaire);
+          const f = ficheDe(s.affaire);
+          const nf = numeroFacture(s.affaire);
+          const baseNum = Number(s.base.replace(",", "."));
+          const libre = s.base !== "7" && s.base !== "7.5";
+          const rythme = k ? (s.affaire.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
+          const u = s.unite === "JOUR" ? "jour" : "h";
+          const avecTarif = (patch: Partial<typeof s>) => {
+            const n = { ...s, ...patch };
+            const t = k?.tarifs.find((x) => x.nom === n.tarif);
+            const bn = Number(n.base.replace(",", "."));
+            const tx = k && t ? tauxDepuisTarif(k, t, n.unite, Number.isFinite(bn) && bn > 0 ? bn : (k.base_hebdo || 37.5) / 5) : null;
+            setStaffage(tx !== null ? { ...n, taux: String(tx) } : n);
+          };
+          const etiquetteS: CSSProperties = { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 700, color: C.gris };
+          return (
+            <div role="dialog" aria-modal="true" aria-label="Staffer la commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => !s.enCours && setStaffage(null)}>
+              <div style={{ ...page.carte, padding: 20, width: 600, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <BadgeType type={s.affaire.type} />
+                  <strong style={{ fontSize: 20, color: C.rougeFonce }}>Staffer {nf.numero}</strong>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.gris }}>{s.affaire.imputation}</span>
+                  <span style={{ flex: 1 }} />
+                  <button type="button" onClick={() => setStaffage(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ fontSize: 14, color: "#3b4046", margin: "2px 0 12px" }}>
+                  {nf.client ? <strong>{nf.client} · </strong> : null}
+                  {s.affaire.designation}
+                  {f.quantite !== null && <span style={{ color: C.gris }}> · {texteHeures(Math.round(f.quantite * 100) / 100)} {f.unite === "JOUR" ? "j" : "h"} commandés</span>}
+                </div>
+                {s.source && (
+                  <Message genre="info">
+                    Avenant : personne, unité, base et taux repris de la commande <strong>{s.source}</strong>, et remplissage proposé à la suite de son dernier jour. Vérifiez, puis confirmez.
+                  </Message>
+                )}
+                {k && (
+                  <div style={{ padding: 10, background: "#f6f9ff", border: `1px solid ${C.ligne}`, borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
+                    <strong>{k.libelle}</strong> · rythme {s.affaire.imputation === "PE" ? "PE" : "PI"} : {(rythme ?? []).map((h) => texteHeures(h)).join(" / ")} h
+                    <label style={{ ...etiquetteS, marginTop: 8 }}>
+                      Prestation du contrat
+                      <select value={s.tarif} onChange={(e) => avecTarif({ tarif: e.target.value })} style={{ ...champ, maxWidth: 360 }}>
+                        <option value="">— taux libre —</option>
+                        {k.tarifs.map((t) => (
+                          <option key={t.nom} value={t.nom}>
+                            {t.nom}
+                            {t.montant !== null ? ` · ${t.montant.toLocaleString("fr-FR")} € / ${t.unite === "HEURE" ? "h" : t.unite === "JOUR" ? "jour" : "semaine"}` : " · tarif non saisi"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+                  <label style={{ ...etiquetteS, width: 170 }}>
+                    Personne
+                    <select value={s.personne} onChange={(e) => setStaffage({ ...s, personne: e.target.value })} style={champ}>
+                      <option value="">Choisir…</option>
+                      {annuaire.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {nomCollab(p)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ ...etiquetteS, width: 110 }}>
+                    Vendue
+                    <select value={s.unite} onChange={(e) => avecTarif({ unite: e.target.value as "JOUR" | "HEURE" })} style={champ}>
+                      <option value="JOUR">au jour</option>
+                      <option value="HEURE">à l’heure</option>
+                    </select>
+                  </label>
+                  <label style={{ ...etiquetteS, width: 120 }} title="Heures d’une journée vendue">
+                    Base horaire
+                    <select value={libre ? "AUTRE" : s.base} onChange={(e) => avecTarif({ base: e.target.value === "AUTRE" ? "" : e.target.value })} style={champ}>
+                      <option value="7">7 h</option>
+                      <option value="7.5">7,5 h</option>
+                      <option value="AUTRE">autre…</option>
+                    </select>
+                  </label>
+                  {libre && (
+                    <label style={{ ...etiquetteS, width: 80 }}>
+                      Heures
+                      <input value={s.base} onChange={(e) => avecTarif({ base: e.target.value })} inputMode="decimal" placeholder="ex. 8" style={{ ...champ, textAlign: "right" }} />
+                    </label>
+                  )}
+                  <label style={{ ...etiquetteS, width: 120 }}>
+                    Taux (€ / {u})
+                    <input value={s.taux} onChange={(e) => setStaffage({ ...s, taux: e.target.value, tarif: "" })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                  </label>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700 }}>
+                    <input type="checkbox" checked={s.remplir} onChange={(e) => setStaffage({ ...s, remplir: e.target.checked })} style={{ width: 18, height: 18 }} />
+                    Remplir la commande à partir du
+                  </label>
+                  <input type="date" value={s.depart} disabled={!s.remplir} onChange={(e) => setStaffage({ ...s, depart: e.target.value, dejaH: 0 })} style={{ ...champ, width: 160 }} />
+                  {s.remplir && (
+                    <span style={{ fontSize: 12, color: C.gris, flexBasis: "100%" }}>
+                      {rythme ? `au rythme du contrat (${rythme.map((h) => texteHeures(h)).join(" / ")} h)` : `${Number.isFinite(baseNum) && baseNum > 0 ? texteHeures(baseNum) : "?"} h par jour ouvré`}, jusqu’à épuisement de la commande, mois suivants compris.
+                      {s.dejaH > 0.01 && s.personne === s.personneSource && ` Le ${new Date(`${s.depart}T00:00:00`).toLocaleDateString("fr-FR")}, ${texteHeures(s.dejaH)} h sont déjà prises par ${s.source} : on commence avec le reste de cette journée.`}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+                  <button type="button" style={page.btnSecondaire} onClick={() => setStaffage(null)} disabled={s.enCours}>
+                    Annuler
+                  </button>
+                  <button type="button" style={page.btnPrimaire} onClick={() => void validerStaffage()} disabled={s.enCours || !s.personne}>
+                    {s.enCours ? "Staffage…" : s.source ? "Confirmer" : "Staffer"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {/* STAFFAGE_CONTRATS : paramétrage des contrats cadres */}
+      {contratsOuverts && (
+        <div role="dialog" aria-modal="true" aria-label="Contrats cadres" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setContratsOuverts(false)}>
+          <div style={{ ...page.carte, padding: 20, width: 820, maxWidth: "96vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Contrats cadres</h2>
+              <span style={{ flex: 1 }} />
+              <button type="button" onClick={() => setContratsOuverts(false)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer" }}>
+                ×
+              </button>
+            </div>
+            <p style={{ margin: "4px 0 12px", fontSize: 13, color: C.gris }}>
+              Un contrat s’applique aux PE / PI d’un client dont le nom <strong>contient</strong> le mot indiqué (MICHELIN : quel que soit le préfixe ou le suffixe). Son rythme sert au
+              remplissage (↦ reste, staffage) ; ses tarifs se choisissent au staffage.
+            </p>
+            {brouillonContrats.map((k, i) => {
+              const maj = (patch: Partial<Contrat>) => setBrouillonContrats((b) => b.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+              const nombre = (v: string) => {
+                const n = Number(v.replace(",", "."));
+                return v.trim() === "" || !Number.isFinite(n) ? null : n;
+              };
+              const etiquetteC: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
+              return (
+                <fieldset key={`${k.id}-${i}`} style={{ border: `1px solid ${C.ligne}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+                    <label style={{ ...etiquetteC, width: 160 }}>
+                      Le client contient
+                      <input defaultValue={k.client_motif} onBlur={(e) => maj({ client_motif: e.target.value })} style={champ} />
+                    </label>
+                    <label style={{ ...etiquetteC, width: 240 }}>
+                      Libellé
+                      <input defaultValue={k.libelle} onBlur={(e) => maj({ libelle: e.target.value })} style={champ} />
+                    </label>
+                    <label style={{ ...etiquetteC, width: 110 }}>
+                      Base / semaine
+                      <input defaultValue={texteHeures(k.base_hebdo)} onBlur={(e) => maj({ base_hebdo: nombre(e.target.value) ?? 37.5 })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                    </label>
+                    <label style={{ ...etiquetteC, flexDirection: "row", alignItems: "center", gap: 6, minHeight: 38 }}>
+                      <input type="checkbox" checked={k.actif} onChange={(e) => maj({ actif: e.target.checked })} style={{ width: 18, height: 18 }} />
+                      Actif
+                    </label>
+                  </div>
+                  {(["rythme_pe", "rythme_pi"] as const).map((cle) => (
+                    <div key={cle} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end", marginTop: 10 }}>
+                      <strong style={{ width: 90, fontSize: 13, alignSelf: "center" }}>Rythme {cle === "rythme_pe" ? "PE" : "PI"}</strong>
+                      {JOURS_SEMAINE.map((jour, d) => (
+                        <label key={jour} style={{ ...etiquetteC, width: 64 }}>
+                          {jour}
+                          <input
+                            defaultValue={texteHeures(k[cle][d] ?? 0)}
+                            onBlur={(e) => maj({ [cle]: k[cle].map((x, j) => (j === d ? nombre(e.target.value) ?? 0 : x)) } as Partial<Contrat>)}
+                            inputMode="decimal"
+                            style={{ ...champ, textAlign: "right" }}
+                          />
+                        </label>
+                      ))}
+                      <span style={{ fontSize: 12, color: C.gris, alignSelf: "center" }}>= {texteHeures(k[cle].reduce((s, x) => s + (Number(x) || 0), 0))} h</span>
+                    </div>
+                  ))}
+                  <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 12, fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...page.th, padding: "6px 8px" }}>Prestation</th>
+                        <th style={{ ...page.th, padding: "6px 8px", textAlign: "right" }}>Tarif (€)</th>
+                        <th style={{ ...page.th, padding: "6px 8px" }}>par</th>
+                        <th style={{ ...page.th, padding: "6px 8px" }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {k.tarifs.map((t, ti) => {
+                        const majT = (patch: Partial<TarifContrat>) => maj({ tarifs: k.tarifs.map((x, j) => (j === ti ? { ...x, ...patch } : x)) });
+                        return (
+                          <tr key={`${ti}-${t.nom}`}>
+                            <td style={{ ...page.td, padding: "4px 8px" }}>
+                              <input defaultValue={t.nom} onBlur={(e) => majT({ nom: e.target.value })} style={champ} />
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 140 }}>
+                              <input defaultValue={t.montant === null ? "" : String(t.montant).replace(".", ",")} onBlur={(e) => majT({ montant: nombre(e.target.value) })} inputMode="decimal" style={{ ...champ, textAlign: "right" }} />
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 190 }}>
+                              <select value={t.unite} onChange={(e) => majT({ unite: e.target.value as TarifContrat["unite"] })} style={champ}>
+                                <option value="SEMAINE">semaine ({texteHeures(k.base_hebdo)} h)</option>
+                                <option value="JOUR">jour ({texteHeures(k.base_hebdo / 5)} h)</option>
+                                <option value="HEURE">heure</option>
+                              </select>
+                            </td>
+                            <td style={{ ...page.td, padding: "4px 8px", width: 40 }}>
+                              <button type="button" onClick={() => maj({ tarifs: k.tarifs.filter((_, j) => j !== ti) })} title="Retirer ce tarif" style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16 }}>
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <button type="button" onClick={() => maj({ tarifs: [...k.tarifs, { nom: "", montant: null, unite: "SEMAINE" }] })} style={{ ...page.btnSecondaire, minHeight: 32, marginTop: 8, fontSize: 13 }}>
+                    + Ajouter un tarif
+                  </button>
+                </fieldset>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={page.btnSecondaire} onClick={() => setBrouillonContrats((b) => [...b, contratVide("")])}>
+                + Nouveau contrat
+              </button>
+              <span style={{ display: "inline-flex", gap: 8 }}>
+                <button type="button" style={page.btnSecondaire} onClick={() => setContratsOuverts(false)}>
+                  Annuler
+                </button>
+                <button type="button" style={page.btnPrimaire} onClick={() => void enregistrerContrats()}>
+                  Enregistrer
+                </button>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
