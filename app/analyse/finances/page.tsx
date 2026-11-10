@@ -453,7 +453,8 @@ function FinancesContenu() {
           return { date: p.mois, base_affaire: p.base, source: "ATTENDU" as const, montant: p.montant, parGroupe: g, negoce: 0, achats: 0, client: p.client, imputation: p.imputation };
         }),
       ...historique
-        .filter((h) => h.mois.slice(0, 7) >= moisCourantIso)
+        // SANS_CLASSEUR_PRESTATIONS : l'ancien classeur n'est plus tenu : ses mois à venir ne comptent plus dans l'attendu
+        .filter((h) => h.mois.slice(0, 7) >= moisCourantIso && false)
         .map((h) => {
           const g = groupesVides();
           g["Méca"] = h.montant_meca;

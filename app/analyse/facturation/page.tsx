@@ -104,6 +104,7 @@ const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juill
 const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nombre = (n: number) => (Math.round(n * 100) / 100).toLocaleString("fr-FR");
 const prestation = (imp: string | null) => imp === "PE" || imp === "PI";
+const LIRE_CLASSEUR = false as boolean; // SANS_CLASSEUR_PRESTATIONS
 /* « 2603 » ou « DBE2603 » -> « DBE2603 » */
 const numeroDbe = (v: string | null | undefined) => {
   const m = String(v ?? "").toUpperCase().replace(/\s/g, "").match(/^(?:DBE)?(\d.*)$/);
@@ -522,7 +523,8 @@ function FacturationContenu() {
           const consommeCalc = p.unite === "JOUR" ? p.consommeH / p.baseHoraire : p.consommeH;
           const resteCalc = commandeCalc === null ? null : commandeCalc - consommeCalc;
           // le classeur fait foi ; le calcul de l'application ne sert plus que de contrôle
-          if (p.resteClasseur !== null) {
+          // SANS_CLASSEUR_PRESTATIONS : le reste vient du relevé (le classeur n'est plus tenu)
+          if (LIRE_CLASSEUR && p.resteClasseur !== null) {
             const commande = p.commandeClasseur ?? commandeCalc;
             return {
               commande,
@@ -1102,14 +1104,6 @@ function FacturationContenu() {
                             {euros(l.montant)}
                           </span>
                           {l.cloture && <span title="Mois clôturé : montant figé"> 🔒</span>}
-                          {!l.cloture && l.classeurMontant !== null && l.classeurMontant !== undefined && Math.abs(l.classeurMontant - l.montant) > 0.5 && (
-                            <div
-                              title="Montant importé du Suivi des prestations, différent du relevé : les heures ne sont pas rangées pareil dans les deux. Le relevé fait foi."
-                              style={{ fontSize: 11, fontWeight: 800, color: "#c76500", fontStyle: "normal" }}
-                            >
-                              ⚠ classeur : {euros(l.classeurMontant)}
-                            </div>
-                          )}
                         </td>
                       </tr>
                     ))}
@@ -1136,46 +1130,7 @@ function FacturationContenu() {
               )}
             </section>
 
-            {classeurSeul.length > 0 && (
-              <details style={{ ...page.carte, padding: "10px 14px", marginTop: 14, borderLeft: "5px solid #c76500" }}>
-                <summary style={{ cursor: "pointer", fontWeight: 800, color: "#7a3e00" }}>
-                  Le classeur prévoit un montant, le relevé est vide ({classeurSeul.length}) · {euros(classeurSeul.reduce((s, x) => s + x.montant, 0))}, compté nulle part
-                </summary>
-                <p style={{ margin: "6px 0", fontSize: 13, color: C.gris }}>
-                  Ces PE / PI n’ont aucune heure au relevé ce mois-ci : elles ne sont donc pas à facturer. Le Suivi des prestations leur donne
-                  pourtant un montant : vérifiez le relevé (heures oubliées ?) ou le classeur.
-                </p>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Client</th>
-                      <th style={th}>N° CBE</th>
-                      <th style={th}>Pers.</th>
-                      <th style={thD}>Montant du classeur</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {classeurSeul.map((x, i) => (
-                      <tr key={`${x.numero}-${x.personne}-${i}`}>
-                        <td style={{ ...td, fontWeight: 700 }}>{x.client ?? "—"}</td>
-                        <td style={{ ...td, fontWeight: 800, whiteSpace: "nowrap" }}>
-                          {estAdmin ? (
-                            <Link href={`/pilotage/prestations?mois=${mois}&affaire=${encodeURIComponent(x.numero.replace(/^CBE/i, ""))}`} style={{ color: C.rougeFonce }}>
-                              {x.numero}
-                            </Link>
-                          ) : (
-                            x.numero
-                          )}
-                        </td>
-                        <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
-                        <td style={tdD}>{euros(x.montant)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </details>
-            )}
-
+            {/* SANS_CLASSEUR_PRESTATIONS : plus d'encadré du classeur */}
             {reportes.length > 0 && (
               <section style={{ ...page.carte, padding: 16, marginTop: 14, borderLeft: "5px solid #7a3e00", overflowX: "auto" }}>
                 <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
