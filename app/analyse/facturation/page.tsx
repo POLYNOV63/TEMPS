@@ -882,6 +882,17 @@ function FacturationContenu() {
                       : { bloque: "Commande introuvable dans le Suivi d’affaire", faire: "Vérifier le n° de commande, ou ajouter sa ligne dans le classeur." }
                 );
               }
+              // FORFAITS_INTENTION : forfait (ou échéance, lot) attendu ce mois-ci, mais encore en intention de commande
+              for (const f of forfaitsPrevus) {
+                if (f.statut !== "Intention de commande" && f.statutBase !== "Intention de commande") continue;
+                ajouter(f.numero, {
+                  bloque:
+                    f.statut === "Intention de commande"
+                      ? "Pas encore de commande du client (« Intention de commande »), alors que la livraison est prévue ce mois-ci"
+                      : "Prévue ce mois-ci, mais sa commande est encore en « Intention de commande »",
+                  faire: "À réception du bon de commande : passer la commande en « Commande reçue » dans le Suivi d’affaire BE (et renseigner son n° ARC Louxor).",
+                });
+              }
               for (const l of livreesSansDate) {
                 ajouter(l.numero, { bloque: "Livrée, mais sans date de livraison : elle n’entre dans aucun mois", faire: "Renseigner la date de livraison." });
                 if (l.sansLouxor) ajouter(l.numero, { bloque: "Pas de n° ARC Louxor", faire: "Renseigner le n° ARC Louxor." });
