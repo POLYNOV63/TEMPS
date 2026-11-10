@@ -644,6 +644,58 @@ function FacturationContenu() {
   ].filter((v, i, t) => t.indexOf(v) === i);
   const libMois = `${NOMS_MOIS[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
 
+  /* FACTURATION_SYNTHESE : une ligne, trois colonnes, en k€ HT */
+  async function exporterSynthese() {
+    const suivant = decaler(mois, 1);
+    const nomDe = (m: string) => {
+      const n = NOMS_MOIS[Number(m.slice(5, 7)) - 1];
+      return `${n.charAt(0).toUpperCase()}${n.slice(1)} ${m.slice(0, 4)}`;
+    };
+    // forfaits attendus le mois suivant, à leur date de livraison estimée
+    const enAttente = (l: LigneSuivi) => l.statut === "Commande reçue" || l.statut === "Intention de commande";
+    const couverts = new Map<string, number>();
+    for (const l of suivi) {
+      if ((l.genre !== "ECHEANCE" && l.genre !== "LOT") || !l.parent_cle || l.disparue) continue;
+      if (l.statut !== "Livrée" && !(enAttente(l) && l.date_livraison_estimee)) continue;
+      const m = montants.get(l.id);
+      couverts.set(l.parent_cle, (couverts.get(l.parent_cle) ?? 0) + ((m?.echeances || m?.montant) ?? 0));
+    }
+    let forfaitsSuivant = 0;
+    for (const l of suivi) {
+      if (l.disparue || !["BASE", "AVENANT", "ECHEANCE", "LOT"].includes(l.genre) || !enAttente(l)) continue;
+      if (!l.date_livraison_estimee?.startsWith(suivant)) continue;
+      const b = baseDe(l);
+      if (prestation(b.imputation ?? l.imputation)) continue;
+      const m = montants.get(l.id);
+      forfaitsSuivant +=
+        l.genre === "ECHEANCE" || l.genre === "LOT" ? (m?.echeances || m?.montant) ?? 0 : Math.max(0, (m?.montant ?? 0) - (couverts.get(l.cle) ?? 0));
+    }
+    // PE / PI prévues le mois suivant (relevé non clôturé, sinon Suivi des prestations importé)
+    let pepiSuivant = 0;
+    const { data } = await supabase.rpc("prestation_montants_prevus");
+    for (const x of ((data ?? []) as { mois: string; montant: number | string }[])) if (String(x.mois).startsWith(suivant)) pepiSuivant += Number(x.montant) || 0;
+
+    const k = (v: number) => Math.round(v / 100) / 10;
+    await exporterExcelPolynov(`Facturation_synthese_${mois}`, [
+      {
+        nom: "Synthèse",
+        titre: `Facturation — ${nomDe(mois)}`,
+        sousTitre: `en k€ HT · au ${new Date().toLocaleDateString("fr-FR")}`,
+        colonnes: [
+          { titre: `${nomDe(mois)} – Déjà facturé (k€ HT)`, cle: "facture", largeur: 30 },
+          { titre: `${nomDe(mois)} – Restant estimé à facturer (k€ HT)`, cle: "reste", largeur: 34 },
+          { titre: `${nomDe(suivant)} – Prévision totale (k€ HT)`, cle: "prevision", largeur: 32 },
+        ],
+        lignes: [{ facture: k(totalFacture), reste: k(resteAFacturer), prevision: k(forfaitsSuivant + pepiSuivant) }],
+        notes: [
+          "Déjà facturé : forfaits livrés dans le mois + PE / PI des mois clôturés.",
+          "Restant estimé : forfaits attendus dans le mois (date de livraison estimée) + PE / PI pas encore clôturées. Non facturable exclu.",
+          `Prévision ${nomDe(suivant)} : forfaits attendus ce mois-là + PE / PI prévues (${k(forfaitsSuivant)} k€ de forfaits, ${k(pepiSuivant)} k€ de PE / PI).`,
+        ],
+      },
+    ]);
+  }
+
   async function exporter() {
     await exporterExcelPolynov(`Facturation_${mois}`, [
       {
@@ -762,6 +814,9 @@ function FacturationContenu() {
               </Link>
             )}
             <button type="button" style={page.btnPrimaire} onClick={() => void exporter()} disabled={chargement}>Exporter en Excel</button>
+            <button type="button" style={page.btnSecondaire} onClick={() => void exporterSynthese()} disabled={chargement} title="Une ligne, trois colonnes en k€ HT : déjà facturé, restant estimé à facturer, prévision du mois suivant">
+              Synthèse (Excel)
+            </button>
           </div>
         </div>
 
