@@ -831,6 +831,18 @@ function FacturationContenu() {
               <Tuile libelle="Total facturable" valeur={euros(totalFacturable)} sous="forfaits livrés et prévus + PE / PI facturables du mois" />
               <Tuile libelle="Facturé" valeur={euros(totalFacture)} sous="forfaits livrés + PE / PI des mois clôturés" />
               <Tuile libelle="Reste à facturer" valeur={euros(resteAFacturer)} sous="forfaits prévus + PE / PI non clôturés" accent={resteAFacturer > 0.5} />
+              {/* FACTURATION_POTENTIEL_V2 : tout ce qui est à facturer ce mois-ci si rien ne bloquait (intentions et n° Louxor manquants compris) */}
+              {(() => {
+                const enIntention = lignes.filter((l) => l.statut === "Intention de commande" || l.statutBase === "Intention de commande").reduce((s, l) => s + l.montant, 0);
+                const sansLouxor = lignes.filter((l) => l.alerteLouxor).reduce((s, l) => s + l.montant, 0);
+                return (
+                  <Tuile
+                    libelle="Si tout était facturable"
+                    valeur={euros(totalFacturable + totalNonFacturable)}
+                    sous={[enIntention > 0.5 ? `dont ${euros(enIntention)} en intention de commande` : "", sansLouxor > 0.5 ? `dont ${euros(sansLouxor)} sans n° Louxor` : ""].filter(Boolean).join(" · ") || "rien ne bloque ce mois-ci"}
+                  />
+                );
+              })()}
             </div>
 
             {doublonsLouxor.size > 0 && (
