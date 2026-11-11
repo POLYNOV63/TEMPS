@@ -93,6 +93,15 @@ export default function ListeDevis() {
   const [erreurEd, setErreurEd] = useState("");
   const [historiques, setHistoriques] = useState<Set<string>>(new Set());
 
+  /* NOTIF_RELANCES : ouvert depuis la cloche (?devis=2715) : le devis cherché, son historique déplié */
+  useEffect(() => {
+    const n = numeroDevis(new URLSearchParams(window.location.search).get("devis"));
+    if (n) {
+      setRecherche(n);
+      setHistoriques(new Set([n]));
+    }
+  }, []);
+
   const chargerRelances = useCallback(async () => {
     const { data, error } = await supabase
       .from("suivi_devis_relances")

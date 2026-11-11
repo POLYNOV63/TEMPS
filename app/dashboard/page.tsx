@@ -122,32 +122,40 @@ export default function DashboardPage() {
     });
   }
 
-  // Cloche : demandes RH en attente de validation (ADMIN), actualisées chaque minute et au retour sur l'onglet
+  // Cloche : demandes RH en attente de validation (ADMIN) et relances de devis (NOTIF_RELANCES, tous sauf la
+  // Direction), actualisées chaque minute et au retour sur l'onglet
   const [demandesCloche, setDemandesCloche] = useState<DemandeCloche[]>([]);
+  const [notifsRelances, setNotifsRelances] = useState<NotifRelance[]>([]);
 
   useEffect(() => {
-    if (role !== "ADMIN") return;
+    if (!role || role === "DIRECTION") return;
 
     let actif = true;
 
     async function rafraichir() {
       try {
-        const { count } = await supabase
-          .from("rh_demandes")
-          .select("id", { count: "exact", head: true })
-          .eq("statut", "EN_ATTENTE");
+        if (role === "ADMIN") {
+          const { count } = await supabase
+            .from("rh_demandes")
+            .select("id", { count: "exact", head: true })
+            .eq("statut", "EN_ATTENTE");
 
-        const { data } = await supabase
-          .from("rh_demandes_admin")
-          .select("id, prenom, nom, trigramme, type_demande, date_debut, date_fin")
-          .eq("statut", "EN_ATTENTE")
-          .order("date_debut", { ascending: true })
-          .limit(5);
+          const { data } = await supabase
+            .from("rh_demandes_admin")
+            .select("id, prenom, nom, trigramme, type_demande, date_debut, date_fin")
+            .eq("statut", "EN_ATTENTE")
+            .order("date_debut", { ascending: true })
+            .limit(5);
 
-        if (!actif) return;
+          if (!actif) return;
 
-        if (typeof count === "number") setNombreDemandesRH(count);
-        setDemandesCloche((data ?? []) as DemandeCloche[]);
+          if (typeof count === "number") setNombreDemandesRH(count);
+          setDemandesCloche((data ?? []) as DemandeCloche[]);
+        }
+
+        // sans le SQL 94 : pas de notification de relance
+        const { data: rl, error: erl } = await supabase.rpc("mes_notifications_relances");
+        if (actif) setNotifsRelances(erl ? [] : ((rl ?? []) as NotifRelance[]));
       } catch {
         /* la cloche garde sa dernière valeur : on réessaiera à la prochaine actualisation */
       }
@@ -168,6 +176,16 @@ export default function DashboardPage() {
       document.removeEventListener("visibilitychange", auRetour);
     };
   }, [role]);
+
+  /* NOTIF_RELANCES : une notification vue (clic) ou toutes */
+  async function relanceVue(n: NotifRelance) {
+    setNotifsRelances((l) => l.filter((x) => !(x.relance_id === n.relance_id && x.evenement === n.evenement)));
+    await supabase.rpc("marquer_notification_relance_vue", { p_relance_id: n.relance_id, p_evenement: n.evenement });
+  }
+  async function toutesRelancesVues() {
+    setNotifsRelances([]);
+    await supabase.rpc("marquer_notifications_relances_vues");
+  }
 
   /* =============================================================
      CHARGEMENT
@@ -407,7 +425,19 @@ export default function DashboardPage() {
     <main style={styles.page}>
       <EnTete
         role={role}
-        cloche={role === "ADMIN" ? <ClocheDemandesRH nombre={nombreDemandesRH} demandes={demandesCloche} onAller={aller} /> : null}
+        cloche={
+          role && role !== "DIRECTION" ? (
+            <ClocheNotifications
+              admin={role === "ADMIN"}
+              nombre={nombreDemandesRH}
+              demandes={demandesCloche}
+              relances={notifsRelances}
+              onAller={aller}
+              onRelanceVue={(n) => void relanceVue(n)}
+              onToutVu={() => void toutesRelancesVues()}
+            />
+          ) : null
+        }
       />
 
       <div className="db-contenu" style={{ ...styles.container, padding: "14px 30px 32px 30px" }}>
@@ -907,14 +937,36 @@ const LIBELLES_DEMANDE: Record<string, string> = {
   RTT: "RTT",
 };
 
-function ClocheDemandesRH({
+/* NOTIF_RELANCES : notifications de relances de devis (SQL 94) */
+type NotifRelance = {
+  relance_id: string;
+  evenement: "AFFECTEE" | "FAITE";
+  numero_devis: string;
+  quand: string;
+  jour: string | null;
+  par: string | null;
+  reponse: string | null;
+  commentaire: string | null;
+  designation: string | null;
+  client: string | null;
+};
+
+function ClocheNotifications({
+  admin,
   nombre,
   demandes,
+  relances,
   onAller,
+  onRelanceVue,
+  onToutVu,
 }: {
+  admin: boolean;
   nombre: number;
   demandes: DemandeCloche[];
+  relances: NotifRelance[];
   onAller: (url: string) => void;
+  onRelanceVue: (n: NotifRelance) => void;
+  onToutVu: () => void;
 }) {
   const [ouverte, setOuverte] = useState(false);
 
@@ -938,7 +990,15 @@ function ClocheDemandesRH({
     };
   }, [ouverte]);
 
-  const dateFR = (valeur: string | null) => (valeur ? new Date(`${valeur}T00:00:00`).toLocaleDateString("fr-FR") : "");
+  const dateFR = (valeur: string | null) => (valeur ? new Date(`${valeur.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
+  const nombreRH = admin ? nombre : 0;
+  const total = nombreRH + relances.length;
+  const resume = [
+    nombreRH > 0 ? `${nombreRH} demande${nombreRH > 1 ? "s" : ""} RH à valider` : "",
+    relances.length > 0 ? `${relances.length} relance${relances.length > 1 ? "s" : ""} de devis` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div data-cloche style={stylesV2.clocheZone}>
@@ -946,66 +1006,105 @@ function ClocheDemandesRH({
         type="button"
         onClick={() => setOuverte((v) => !v)}
         aria-expanded={ouverte}
-        aria-label={
-          nombre > 0
-            ? `Notifications : ${nombre} demande${nombre > 1 ? "s" : ""} RH à valider`
-            : "Notifications : aucune demande RH à valider"
-        }
-        title={nombre > 0 ? `${nombre} demande${nombre > 1 ? "s" : ""} RH à valider` : "Aucune demande RH à valider"}
+        aria-label={total > 0 ? `Notifications : ${resume}` : "Notifications : rien de nouveau"}
+        title={total > 0 ? resume : "Rien de nouveau"}
         style={stylesV2.cloche}
       >
         <span aria-hidden="true" style={{ fontSize: 20 }}>🔔</span>
-        {nombre > 0 && <span style={stylesV2.clocheBadge}>{nombre > 99 ? "99+" : nombre}</span>}
+        {total > 0 && <span style={stylesV2.clocheBadge}>{total > 99 ? "99+" : total}</span>}
       </button>
 
       {ouverte && (
-        <div className="db-cloche-panneau" role="dialog" aria-label="Demandes RH à valider" style={stylesV2.clochePanneau}>
-          <div style={stylesV2.clocheTitre}>
-            {nombre > 0 ? `Demandes RH à valider (${nombre})` : "Aucune demande RH en attente ✓"}
-          </div>
+        <div className="db-cloche-panneau" role="dialog" aria-label="Notifications" style={{ ...stylesV2.clochePanneau, maxHeight: "75vh", overflowY: "auto" }}>
+          {/* ---------- demandes RH à valider (ADMIN) ---------- */}
+          {admin && (
+            <>
+              <div style={stylesV2.clocheTitre}>{nombre > 0 ? `Demandes RH à valider (${nombre})` : "Aucune demande RH en attente ✓"}</div>
 
-          {demandes.map((d) => (
-            <div
-              key={d.id}
-              className="db-cloche-ligne"
-              role="button"
-              tabIndex={0}
-              title="Ouvrir cette demande"
-              onClick={() => {
-                setOuverte(false);
-                onAller(`/admin/Valid_RH?demande=${d.id}`);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
+              {demandes.map((d) => (
+                <div
+                  key={d.id}
+                  className="db-cloche-ligne"
+                  role="button"
+                  tabIndex={0}
+                  title="Ouvrir cette demande"
+                  onClick={() => {
+                    setOuverte(false);
+                    onAller(`/admin/Valid_RH?demande=${d.id}`);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      setOuverte(false);
+                      onAller(`/admin/Valid_RH?demande=${d.id}`);
+                    }
+                  }}
+                  style={{ ...stylesV2.clocheLigne, cursor: "pointer" }}
+                >
+                  <strong>{[d.prenom, d.nom].filter(Boolean).join(" ") || d.trigramme || "—"}</strong>
+                  <span style={{ color: "#666666", fontSize: 12.5 }}>
+                    {LIBELLES_DEMANDE[String(d.type_demande ?? "")] ?? d.type_demande ?? "Demande"}
+                    {d.date_debut ? ` · ${dateFR(d.date_debut)}` : ""}
+                    {d.date_fin && d.date_fin !== d.date_debut ? ` → ${dateFR(d.date_fin)}` : ""}
+                  </span>
+                </div>
+              ))}
+
+              {nombre > demandes.length && demandes.length > 0 && (
+                <div style={{ color: "#666666", fontSize: 12.5, padding: "6px 14px" }}>… et {nombre - demandes.length} autre(s)</div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
                   setOuverte(false);
-                  onAller(`/admin/Valid_RH?demande=${d.id}`);
-                }
-              }}
-              style={{ ...stylesV2.clocheLigne, cursor: "pointer" }}
-            >
-              <strong>{[d.prenom, d.nom].filter(Boolean).join(" ") || d.trigramme || "—"}</strong>
-              <span style={{ color: "#666666", fontSize: 12.5 }}>
-                {LIBELLES_DEMANDE[String(d.type_demande ?? "")] ?? d.type_demande ?? "Demande"}
-                {d.date_debut ? ` · ${dateFR(d.date_debut)}` : ""}
-                {d.date_fin && d.date_fin !== d.date_debut ? ` → ${dateFR(d.date_fin)}` : ""}
-              </span>
-            </div>
-          ))}
-
-          {nombre > demandes.length && demandes.length > 0 && (
-            <div style={{ color: "#666666", fontSize: 12.5, padding: "6px 14px" }}>… et {nombre - demandes.length} autre(s)</div>
+                  onAller("/admin/Valid_RH");
+                }}
+                style={stylesV2.clocheBouton}
+              >
+                Ouvrir la validation RH →
+              </button>
+            </>
           )}
 
-          <button
-            type="button"
-            onClick={() => {
+          {/* ---------- NOTIF_RELANCES : relances de devis ---------- */}
+          <div style={stylesV2.clocheTitre}>{relances.length > 0 ? `Relances de devis (${relances.length})` : "Relances de devis : rien de nouveau ✓"}</div>
+          {relances.map((n) => {
+            const affectee = n.evenement === "AFFECTEE";
+            const ouvrir = () => {
               setOuverte(false);
-              onAller("/admin/Valid_RH");
-            }}
-            style={stylesV2.clocheBouton}
-          >
-            Ouvrir la validation RH →
-          </button>
+              onRelanceVue(n);
+              onAller(affectee ? "/ma-feuille-de-route" : `/pilotage/devis?devis=${encodeURIComponent(n.numero_devis)}`);
+            };
+            return (
+              <div
+                key={`${n.relance_id}-${n.evenement}`}
+                className="db-cloche-ligne"
+                role="button"
+                tabIndex={0}
+                title={affectee ? "Ouvrir ma feuille de route (« ✓ faite » une fois le client relancé)" : "Ouvrir le devis et son historique"}
+                onClick={ouvrir}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") ouvrir();
+                }}
+                style={{ ...stylesV2.clocheLigne, cursor: "pointer", borderLeft: `4px solid ${affectee ? "#1f4e8c" : "#1b5e20"}` }}
+              >
+                <strong style={{ color: affectee ? "#1f4e8c" : "#1b5e20" }}>
+                  {affectee ? `📞 À relancer : DBE${n.numero_devis}` : `✓ DBE${n.numero_devis} relancé par ${n.par ?? "—"}`}
+                </strong>
+                {(n.client || n.designation) && <span style={{ color: "#666666", fontSize: 12.5 }}>{[n.client, n.designation].filter(Boolean).join(" · ")}</span>}
+                <span style={{ color: "#444444", fontSize: 12.5 }}>
+                  {affectee
+                    ? `le ${dateFR(n.jour)}, demandé par ${n.par ?? "—"}${n.commentaire ? ` · « ${n.commentaire} »` : ""}`
+                    : `le ${dateFR(n.jour)}${n.reponse ? ` · réponse : « ${n.reponse.length > 120 ? `${n.reponse.slice(0, 120)}…` : n.reponse} »` : " · sans réponse notée"}`}
+                </span>
+              </div>
+            );
+          })}
+          {relances.length > 0 && (
+            <button type="button" onClick={onToutVu} style={{ ...stylesV2.clocheBouton, background: "#ffffff", color: "#333333", borderTop: "1px solid #eeeeee" }}>
+              Tout marquer comme vu
+            </button>
+          )}
         </div>
       )}
     </div>

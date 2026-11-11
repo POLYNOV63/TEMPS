@@ -83,6 +83,7 @@ for (const rel of [
   "lib/disponibilitesActivites.ts",
   "components/OngletsSection.tsx",
   "supabase/93_suivi_devis_relances_historique.sql",
+  "supabase/94_notifications_relances.sql",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
