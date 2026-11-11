@@ -87,6 +87,13 @@ function normaliser(texte: string) {
     .toLowerCase();
 }
 
+/* STATUT_SURLIGNE : surlignage du n° selon le statut du Suivi d'affaire BE */
+const SURLIGNE: Record<string, { background: string; borderRadius: number; padding: string }> = {
+  "Intention de commande": { background: "#ffe58a", borderRadius: 3, padding: "0 3px" },
+  "Livrée": { background: "#c8ecc9", borderRadius: 3, padding: "0 3px" },
+  "Devis envoyé": { background: "#d6e6fb", borderRadius: 3, padding: "0 3px" },
+};
+
 /* MONTANT_HORS_COMPARAISON : activités vendues au montant (scan, négoce) */
 const estActiviteMontant = (nom?: string) => /^(negoce|scan)/.test((nom ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
 
@@ -122,7 +129,8 @@ function PortefeuilleContenu() {
   });
   const [recherche, setRecherche] = useState("");
   /* DELAI_ESTIME : délai estimé et délai client de chaque commande (Suivi d'affaire BE), par n° (« 1604R2 ») */
-  const [delaisSuivi, setDelaisSuivi] = useState<Map<string, { estime: string | null; client: string | null }>>(new Map());
+  const [delaisSuivi, setDelaisSuivi] = useState<Map<string, { estime: string | null; client: string | null; statut?: string | null }>>(new Map());
+  const [statutsDevis, setStatutsDevis] = useState<Map<string, string>>(new Map()); // STATUT_SURLIGNE
   const [toutesAlertes, setToutesAlertes] = useState(false);
 
   /* PORTEFEUILLE_PERIODE : pointé sur une période (fonction pointage_periode, SQL 73), filtre d'activité */
@@ -255,8 +263,8 @@ function PortefeuilleContenu() {
         // Client (nom abrégé) : vient du Suivi d'affaire BE. Absent si la synchro n'a jamais tourné.
         try {
           const [sl, sc] = await Promise.all([
-            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string; numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null }>((de, a) =>
-              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id,numero_affaire,delai,date_livraison_estimee").order("cle").range(de, a)
+            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string; numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null; statut: string | null }>((de, a) =>
+              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id,numero_affaire,delai,date_livraison_estimee,statut").order("cle").range(de, a)
             ),
             chargerTout<{ id: string; nom_abrege: string }>((de, a) =>
               supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(de, a)
@@ -275,10 +283,13 @@ function PortefeuilleContenu() {
             if (l.base_devis && !dbe.has(l.base_devis)) dbe.set(l.base_devis, nom);
           }
           setClientsParAffaire({ cbe, dbe });
-          const delais = new Map<string, { estime: string | null; client: string | null }>();
+          const delais = new Map<string, { estime: string | null; client: string | null; statut?: string | null }>();
+          const devisStatuts = new Map<string, string>();
+          for (const l of sl) if (l.genre === "DEVIS" && l.base_devis && l.statut) devisStatuts.set(String(l.base_devis).replace(/^DBE/i, "").replace(/^0+/, ""), l.statut);
+          setStatutsDevis(devisStatuts);
           for (const l of sl)
             if (l.numero_affaire && (l.genre === "BASE" || l.genre === "AVENANT"))
-              delais.set(l.numero_affaire.toUpperCase().replace(/^\s*CBE\s*/, "").replace(/^0+/, ""), { estime: l.date_livraison_estimee?.slice(0, 10) ?? null, client: l.delai?.slice(0, 10) ?? null });
+              delais.set(l.numero_affaire.toUpperCase().replace(/^\s*CBE\s*/, "").replace(/^0+/, ""), { estime: l.date_livraison_estimee?.slice(0, 10) ?? null, client: l.delai?.slice(0, 10) ?? null, statut: l.statut });
           setDelaisSuivi(delais);
           setDevisParCbe(devis);
         } catch {
@@ -433,6 +444,15 @@ function PortefeuilleContenu() {
   }, [affaires, charges, realise, planifies, imputations, clientsParAffaire, nomsActivites, delaisSuivi]);
 
   const planningActif = planifies.size > 0;
+
+  /* STATUT_SURLIGNE : statut d'une commande (Suivi d'affaire BE), et son surlignage */
+  const statutSuivi = (a: AffaireP): string | null =>
+    (a.type === "DBE" ? statutsDevis.get(a.numero.replace(/^0+/, "")) : delaisSuivi.get(a.numero.toUpperCase().replace(/^0+/, ""))?.statut) ??
+    (a.statut === "EN_ATTENTE" ? "Intention de commande" : a.statut === "LIVREE" ? "Livrée" : null);
+  const surlignage = (a: AffaireP) => {
+    const s = statutSuivi(a);
+    return s ? SURLIGNE[s] ?? null : null;
+  };
 
   const estInactive = (a: AffaireP) => a.statut === "LIVREE" || a.statut === "ABANDONNEE";
 
@@ -780,7 +800,7 @@ function PortefeuilleContenu() {
                         {ouverte ? "▾" : "▸"}
                       </button>
                       <BadgeType type={affaire.type} />
-                      <Link href={`/pilotage/affaire/${affaire.id}`} title={(affaire.statut === "EN_ATTENTE" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE")) ? (affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : "La famille contient une intention de commande (voir le détail ▸)") : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...((affaire.statut === "EN_ATTENTE" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE")) ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) /* INTENTION_FAMILLE */ }}>
+                      <Link href={`/pilotage/affaire/${affaire.id}`} title={(affaire.statut === "EN_ATTENTE" || lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE")) ? (affaire.statut === "EN_ATTENTE" ? "Intention de commande : pas encore commandée" : "La famille contient une intention de commande (voir le détail ▸)") : undefined} style={{ fontWeight: 800, fontSize: 15, color: C.rougeFonce, ...(lignes.some((x) => x.dansFamille === affaire.numero && x.affaire.statut === "EN_ATTENTE") ? SURLIGNE["Intention de commande"] : surlignage(affaire) ?? {}) /* INTENTION_FAMILLE, STATUT_SURLIGNE */ }}>
                         {affaire.numero}
                       </Link>
                       {/* VERS_PLANNING : ouvre l'affaire au planning, dépliée, sur ses affectations */}
@@ -1007,13 +1027,14 @@ function PortefeuilleContenu() {
                                 {membres.map((m) => (
                                   <tr key={m.affaire.id}>
                                     <td style={{ ...tdCourt, padding: "6px 8px" }}>
-                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce, ...(m.affaire.statut === "EN_ATTENTE" ? { background: "#ffe58a", borderRadius: 3, padding: "0 3px" } : {}) }}>
+                                      <Link href={`/pilotage/affaire/${m.affaire.id}`} style={{ fontWeight: 800, color: C.rougeFonce, ...(surlignage(m.affaire) ?? {}) }}>
                                         {m.affaire.numero}
                                       </Link>
                                     </td>
-                                    <td style={{ ...tdCourt, padding: "6px 8px" }}>{libStatut(m.affaire.statut)}</td>
+                                    <td style={{ ...tdCourt, padding: "6px 8px" }}>{statutSuivi(m.affaire) ?? libStatut(m.affaire.statut)}</td>
                                     <td style={{ ...tdCourt, padding: "6px 8px" }}>
                                       {formatDate(m.affaire.statut === "LIVREE" && m.affaire.date_livraison ? m.affaire.date_livraison : m.affaire.echeance)}
+                                      {m.delaiClient && m.delaiClient !== m.affaire.echeance && m.affaire.statut !== "LIVREE" && <div style={petit}>client : {formatDate(m.delaiClient)}</div>}
                                     </td>
                                     <td style={{ ...tdNum, padding: "6px 8px" }}>{m.totaux.chiffre > 0 ? formatHeures(m.totaux.chiffre) : gris("—")}</td>
                                   </tr>
@@ -1320,6 +1341,13 @@ function PortefeuilleContenu() {
               <h2 style={{ margin: "8px 0", fontSize: 18 }}>
                 {recherche.trim() ? "Résultats de la recherche, tous statuts" : "Affaires actives"} <span style={{ color: C.gris, fontWeight: 600 }}>({actives.length})</span>
               </h2>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12.5, color: C.gris, margin: "-2px 0 8px" }}>
+                {Object.entries(SURLIGNE).map(([s, st]) => (
+                  <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <i style={{ display: "inline-block", width: 14, height: 12, borderRadius: 3, background: st.background, border: "1px solid #d5d9de" }} /> {s}
+                  </span>
+                ))}
+              </div>
               {actives.length === 0 ? (
                 <p style={{ color: C.gris, padding: "8px 4px" }}>
                   {affaires.length === 0 ? "Aucune affaire pour le moment." : "Aucune affaire active ne correspond à ces filtres."}
