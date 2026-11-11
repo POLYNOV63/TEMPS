@@ -40,7 +40,7 @@ const NIVEAU: Record<Role, number> = {
 };
 
 /* Ce que la Direction peut consulter (lecture seule) */
-const DROITS_DIRECTION: ReadonlySet<string> = new Set(["voirPlanning", "chargeRessources", "indicateurs"]);
+const DROITS_DIRECTION: ReadonlySet<string> = new Set(["voirPlanning", "chargeRessources", "indicateurs", "suiviDevis"]); // SUIVI_DEVIS
 
 /* Niveau minimum requis pour chaque droit. */
 export const DROITS = {
@@ -53,6 +53,7 @@ export const DROITS = {
   relevePrestations: 1, // relevé PE / PI (taux, heures facturées) : ADMIN et RESPONSABLE ; il alimente le planning des PE / PI
   chargeRessources: 2, // charge par ressource
   indicateurs: 2, // indicateurs et finances
+  suiviDevis: 1, // SUIVI_DEVIS : page Suivi des devis (liste : ADMIN, RESPONSABLE ; statistiques : ADMIN, DIRECTION)
   administration: 2, // codes, activités, profils, bilans, imports, export IA...
 } as const;
 

@@ -23,6 +23,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
 const ONGLETS = [
   // les affaires et leur planning
   { cle: "portefeuille", groupe: 1, court: "Suivi des affaires", libelle: "Suivi des affaires", href: "/pilotage", droit: "voirPlanning" },
+  { cle: "devis", groupe: 1, court: "Suivi des devis", libelle: "Suivi des devis", href: "/pilotage/devis", droit: "suiviDevis" }, // SUIVI_DEVIS
   { cle: "affaires", groupe: 1, court: "Planning affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
   { cle: "prestations", groupe: 1, court: "Relevé PE / PI", libelle: "Relevé PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
   { cle: "ressources-planning", groupe: 1, court: "Planning ressources", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
@@ -30,7 +31,6 @@ const ONGLETS = [
   { cle: "facturation", groupe: 2, court: "Facturation", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
   { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
-  { cle: "indicateurs", groupe: 2, court: "Indicateurs", libelle: "Indicateurs commerciaux", href: "/pilotage/indicateurs", droit: "indicateurs" },
   { cle: "bilan", groupe: 2, court: "Bilan affaire", libelle: "Bilan affaire", href: "/affaires/bilan", droit: "voirPlanning" },
   // la charge
   { cle: "ressources", groupe: 3, court: "Charge ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
