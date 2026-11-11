@@ -4260,7 +4260,7 @@ export default function MaSemainePage() {
         setMessage(
           `Semaine du ${dateAffichage(
             semaineDebut
-          )} validée et transmise à POLYNOV.`
+          )} envoyée aux RH.`
         );
       } else if (
         !automatique &&
@@ -4449,11 +4449,11 @@ export default function MaSemainePage() {
     return (
       <div style={styles.actionZone}>
         <div style={styles.actionExplanation}>
-          <strong>Enregistrer</strong> garde votre saisie en brouillon.
+          <strong>Enregistrer le brouillon</strong> garde votre saisie, que vous pouvez encore modifier.
           <span> · </span>
-          <strong>Valider ma semaine</strong> contrôle chaque journée puis transmet la feuille à POLYNOV.
+          <strong>Envoyer aux RH</strong> contrôle chaque journée puis transmet la feuille aux RH.
           <span> · </span>
-          <strong>Attention :</strong> la validation est définitive et verrouille la semaine pour le collaborateur.
+          <strong>Attention :</strong> l’envoi est définitif : la semaine n’est ensuite plus modifiable.
         </div>
 
         {!modeConsultationGestionnaire && !modeAdmin && (
@@ -4486,7 +4486,7 @@ export default function MaSemainePage() {
               cursor: boutonsBloques ? "not-allowed" : "pointer",
             }}
           >
-            {enregistrement ? "Enregistrement..." : "💾 Enregistrer"}
+            {enregistrement ? "Enregistrement..." : "💾 Enregistrer le brouillon"}
           </button>
 
           <button
@@ -4500,8 +4500,8 @@ export default function MaSemainePage() {
             }}
           >
             {semaineValidee && !semaineModifiee
-              ? "✓ Semaine validée"
-              : "✓ Valider ma semaine"}
+              ? "✓ Envoyée aux RH"
+              : "📤 Envoyer aux RH"}
           </button>
         </div>
       </div>
@@ -5024,7 +5024,7 @@ export default function MaSemainePage() {
                 </span>
               </div>
               <div style={{ fontSize: 11, fontWeight: 800, color: semaineModifiee ? "#a05a00" : semaineValidee ? "#138113" : "#777777" }}>
-                {semaineModifiee ? "● non enregistrée" : semaineValidee ? "✓ validée, transmise" : semaineEnregistree ? "✓ brouillon enregistré" : "○ non enregistrée"}
+                {semaineModifiee ? "● non enregistrée" : semaineValidee ? "✓ envoyée aux RH" : semaineEnregistree ? "✓ brouillon enregistré" : "○ non enregistrée"}
               </div>
             </div>
             <button type="button" onClick={semaineSuivante} aria-label="Semaine suivante" style={{ height: 40, border: "1px solid #cfcfcf", borderRadius: 8, background: "#ffffff", color: "#c00000", fontWeight: 800, fontSize: 16, fontFamily: "inherit" }}>
@@ -5065,7 +5065,7 @@ export default function MaSemainePage() {
             semaineModifiee
               ? "● Modifications non enregistrées"
               : semaineValidee
-                ? "✓ Semaine validée — transmise"
+                ? "✓ Envoyée aux RH"
                 : semaineEnregistree
                   ? "✓ Brouillon enregistré"
                   : "○ Semaine non enregistrée"
@@ -5145,7 +5145,7 @@ export default function MaSemainePage() {
             >
               <div style={styles.messageIcon}>✓</div>
               <div>
-                Cette semaine est <strong>validée</strong>.
+                Cette semaine est <strong>envoyée aux RH</strong>.
                 Vous pouvez la consulter, mais elle n'est plus modifiable.
               </div>
             </div>
@@ -6274,9 +6274,9 @@ export default function MaSemainePage() {
           <div style={styles.finalValidationWarning}>
             <div style={styles.finalValidationWarningIcon}>🔒</div>
             <div>
-              <strong>La validation est définitive.</strong>
+              <strong>L’envoi aux RH est définitif.</strong>
               <div>
-                Une fois votre semaine validée, vous ne pourrez plus la modifier. Vérifiez bien chaque journée, vos absences, vos RE et vos heures supplémentaires. Lors de la clôture mensuelle, vérifiez également la répartition entre compteur et heures payées.
+                Une fois votre semaine envoyée, vous ne pourrez plus la modifier. Vérifiez bien chaque journée, vos absences, vos RE et vos heures supplémentaires. Lors de la clôture mensuelle, vérifiez également la répartition entre compteur et heures payées.
               </div>
             </div>
           </div>
@@ -6625,7 +6625,7 @@ export default function MaSemainePage() {
                 color: "#8d0000",
               }}
             >
-              Valider définitivement la semaine ?
+              Envoyer la semaine aux RH ?
             </div>
 
             <div
@@ -6640,9 +6640,9 @@ export default function MaSemainePage() {
                 color: "#5d1b1b",
               }}
             >
-              <strong>Attention : cette validation est définitive.</strong>
+              <strong>Attention : l’envoi est définitif.</strong>
               <br />
-              Après validation, vous ne pourrez plus modifier cette semaine. Toute correction devra passer par l'administration.
+              Après l’envoi, vous ne pourrez plus modifier cette semaine. Toute correction devra passer par l'administration.
             </div>
 
             <div style={{ lineHeight: 1.6, color: "#444", marginBottom: 18 }}>
@@ -6723,7 +6723,7 @@ export default function MaSemainePage() {
                   cursor: "pointer",
                 }}
               >
-                🔒 Valider définitivement
+                📤 Envoyer aux RH
               </button>
             </div>
           </div>

@@ -4,7 +4,23 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
+import CarteBilanRH from "@/components/rh/BilanRHEnvoi";
 import { peut } from "@/lib/droits";
+
+/* ===============================================================
+   RH - FEUILLES D'HEURES (FEUILLES_V2)
+
+   - Les semaines PASSÉES et la semaine EN COURS, les plus récentes
+     d'abord : 6 affichées, « semaines plus anciennes » pour en voir plus.
+   - Les semaines À VENIR déjà remplies par anticipation ne créent plus
+     un bloc chacune : elles sont résumées par personne, dans un encart
+     replié.
+   - Plus de verrouillage : une feuille est en brouillon (modifiable par
+     le collaborateur) ou envoyée aux RH (figée pour lui). L'ADMIN peut
+     la rouvrir (« ↩ Rouvrir ») si le collaborateur doit la corriger.
+   - En tête : le Bilan RH mensuel et le rappel de fin de mois
+     (BILAN_RH_RAPPEL).
+================================================================ */
 
 type Collaborateur = {
   id: string;
@@ -31,61 +47,31 @@ type Feuille = {
 
 type Statut = "complete" | "incomplete" | "missing";
 
+const NB_SEMAINES_INITIAL = 6;
+
 function numeroSemaine(dateString: string) {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
-
   const semaine1 = new Date(date.getFullYear(), 0, 4);
-
-  return (
-    1 +
-    Math.round(
-      (((date.getTime() - semaine1.getTime()) / 86400000 -
-        3 +
-        ((semaine1.getDay() + 6) % 7)) /
-        7)
-    )
-  );
+  return 1 + Math.round(((date.getTime() - semaine1.getTime()) / 86400000 - 3 + ((semaine1.getDay() + 6) % 7)) / 7);
 }
 
 function libelleSemaine(dateDebut: string) {
   const debut = new Date(`${dateDebut}T00:00:00`);
   const fin = new Date(debut);
   fin.setDate(fin.getDate() + 6);
-
-  return {
-    numero: numeroSemaine(dateDebut),
-    debut: debut.toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }),
-    fin: fin.toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }),
-  };
+  const f = (d: Date) => d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return { numero: numeroSemaine(dateDebut), debut: f(debut), fin: f(fin) };
 }
 
-function estPresentSemaine(
-  collaborateur: Collaborateur,
-  semaineDebut: string
-) {
+function estPresentSemaine(collaborateur: Collaborateur, semaineDebut: string) {
   const debutSemaine = new Date(`${semaineDebut}T00:00:00`);
   const finSemaine = new Date(debutSemaine);
   finSemaine.setDate(finSemaine.getDate() + 6);
-
-  const entree = collaborateur.date_entree
-    ? new Date(`${collaborateur.date_entree}T00:00:00`)
-    : null;
-  const sortie = collaborateur.date_sortie
-    ? new Date(`${collaborateur.date_sortie}T00:00:00`)
-    : null;
-
+  const entree = collaborateur.date_entree ? new Date(`${collaborateur.date_entree}T00:00:00`) : null;
+  const sortie = collaborateur.date_sortie ? new Date(`${collaborateur.date_sortie}T00:00:00`) : null;
   if (entree && entree > finSemaine) return false;
   if (sortie && sortie < debutSemaine) return false;
-
   return true;
 }
 
@@ -95,14 +81,8 @@ function statutFeuille(feuille: Feuille | undefined): Statut {
   return "incomplete";
 }
 
-function etatWorkflowFeuille(feuille: Feuille | undefined) {
-  if (!feuille) return "missing" as const;
-  if (Boolean(feuille.verrouillee)) return "verrouillee" as const;
-  if ((feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER") {
-    return "envoyee" as const;
-  }
-  return "brouillon" as const;
-}
+/* envoyée aux RH = statut A_TRAITER (une ancienne feuille verrouillée compte comme envoyée) */
+const estEnvoyee = (f: Feuille | undefined) => Boolean(f && (f.verrouillee || (f.statut ?? "").trim().toUpperCase() === "A_TRAITER"));
 
 function formatHeures(value: number) {
   if (Number.isInteger(value)) return `${value} h`;
@@ -112,11 +92,14 @@ function formatHeures(value: number) {
 function formatDateMaj(dateString: string) {
   const date = new Date(dateString);
   if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+}
 
-  return date.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-  });
+function lundiCourant() {
+  const d = new Date();
+  const jour = d.getDay();
+  d.setDate(d.getDate() + (jour === 0 ? -6 : 1 - jour));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export default function FeuillesPage() {
@@ -128,10 +111,11 @@ export default function FeuillesPage() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [suppressionEnCours, setSuppressionEnCours] = useState<string | null>(null);
-  const [verrouillageEnCours, setVerrouillageEnCours] = useState<string | null>(null);
-  const [lotEnCours, setLotEnCours] = useState<string | null>(null);
-  const [messageLot, setMessageLot] = useState("");
+  const [reouvertureEnCours, setReouvertureEnCours] = useState<string | null>(null);
   const [peutAdministrer, setPeutAdministrer] = useState(false);
+  const [voitBilanRH, setVoitBilanRH] = useState(false);
+  const [nbSemaines, setNbSemaines] = useState(NB_SEMAINES_INITIAL);
+  const [futuresOuvertes, setFuturesOuvertes] = useState(false);
 
   useEffect(() => {
     let actif = true;
@@ -150,11 +134,7 @@ export default function FeuillesPage() {
         return;
       }
 
-      const { data: moi } = await supabase
-        .from("collaborateurs")
-        .select("role")
-        .eq("auth_user_id", user.id)
-        .maybeSingle();
+      const { data: moi } = await supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle();
 
       if (!actif) return;
 
@@ -164,17 +144,11 @@ export default function FeuillesPage() {
       }
 
       setPeutAdministrer(peut(moi?.role, "administrerFeuilles"));
+      setVoitBilanRH(peut(moi?.role, "bilanRH"));
 
       const [collaborateursResult, feuillesResult] = await Promise.all([
-        supabase
-          .from("collaborateurs")
-          .select("*")
-          .order("nom", { ascending: true })
-          .order("prenom", { ascending: true }),
-        supabase
-          .from("feuilles_heures")
-          .select("*")
-          .order("semaine_debut", { ascending: false }),
+        supabase.from("collaborateurs").select("*").order("nom", { ascending: true }).order("prenom", { ascending: true }),
+        supabase.from("feuilles_heures").select("*").order("semaine_debut", { ascending: false }),
       ]);
 
       if (!actif) return;
@@ -198,165 +172,46 @@ export default function FeuillesPage() {
     return () => {
       actif = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const estEnvoyeeNonVerrouillee = (f: Feuille) =>
-    !f.verrouillee && (f.statut ?? "").trim().toUpperCase() === "A_TRAITER";
+  /* ↩ Rouvrir : la feuille revient en brouillon, le collaborateur peut la corriger et la renvoyer.
+     Sa répartition mensuelle des heures sup n'est plus définitive. */
+  async function rouvrirFeuille(feuille: Feuille, collaborateur: Collaborateur) {
+    if (!window.confirm(`Rouvrir la feuille de ${collaborateur.prenom} ${collaborateur.nom} (S${libelleSemaine(feuille.semaine_debut).numero}) ?\n\nElle repasse en brouillon : ${collaborateur.prenom} pourra la corriger et devra la renvoyer aux RH.`)) return;
 
-  /* Verrouille directement (sans confirmation) une ou plusieurs feuilles envoyées. */
-  async function verrouillerFeuilles(liste: Feuille[], cleLot: string) {
-    const cibles = liste.filter(estEnvoyeeNonVerrouillee);
-    if (cibles.length === 0) return;
-
-    setLotEnCours(cleLot);
-    setErreur("");
-    setMessageLot("");
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) throw new Error("Session utilisateur introuvable.");
-
-      const { data: admin } = await supabase
-        .from("collaborateurs")
-        .select("id, role")
-        .eq("auth_user_id", user.id)
-        .maybeSingle();
-
-      if (admin?.role !== "ADMIN") {
-        throw new Error("Seul un administrateur peut verrouiller une feuille.");
-      }
-
-      const now = new Date().toISOString();
-      const ids = cibles.map((f) => f.id);
-
-      // par paquets de 100 (limite de longueur des requêtes)
-      for (let i = 0; i < ids.length; i += 100) {
-        const { error } = await supabase
-          .from("feuilles_heures")
-          .update({ verrouillee: true, verrouillee_le: now, verrouillee_par: admin.id, updated_at: now })
-          .in("id", ids.slice(i, i + 100));
-
-        if (error) throw error;
-      }
-
-      const verrouillees = new Set(ids);
-      setFeuilles((anciennes) =>
-        anciennes.map((f) => (verrouillees.has(f.id) ? { ...f, verrouillee: true, verrouillee_le: now } : f))
-      );
-      if (cibles.length > 1) setMessageLot(`${cibles.length} feuilles verrouillées.`);
-    } catch (error: any) {
-      console.error("Erreur verrouillage par lot :", error);
-      setErreur(error?.message || "Impossible de verrouiller les feuilles.");
-    } finally {
-      setLotEnCours(null);
-    }
-  }
-
-  async function basculerVerrouillage(feuille: Feuille) {
-    const estEnvoyee =
-      (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER";
-
-    if (!feuille.verrouillee && !estEnvoyee) {
-      setErreur(
-        "Le verrouillage administratif n'est disponible qu'après l'envoi de la feuille par le collaborateur."
-      );
-      return;
-    }
-
-    const verrouiller = !Boolean(feuille.verrouillee);
-    const action = verrouiller ? "verrouiller" : "déverrouiller";
-
-    // Verrouiller : directement, sans confirmation.
-    if (verrouiller) {
-      setVerrouillageEnCours(feuille.id);
-      await verrouillerFeuilles([feuille], feuille.id);
-      setVerrouillageEnCours(null);
-      return;
-    }
-
-    // Déverrouiller remet la feuille en brouillon et annule sa clôture mensuelle : on confirme.
-    if (
-      !window.confirm(
-        "Déverrouiller cette feuille ?\n\nElle repassera en brouillon et le collaborateur devra la renvoyer."
-      )
-    )
-      return;
-
-    setVerrouillageEnCours(feuille.id);
+    setReouvertureEnCours(feuille.id);
     setErreur("");
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) throw new Error("Session utilisateur introuvable.");
-
-      const { data: admin } = await supabase
-        .from("collaborateurs")
-        .select("id, role")
-        .eq("auth_user_id", user.id)
-        .maybeSingle();
-
-      if (admin?.role !== "ADMIN") {
-        throw new Error(
-          "Seul un administrateur peut verrouiller ou déverrouiller une feuille."
-        );
-      }
-
       const now = new Date().toISOString();
-
       const { error } = await supabase
         .from("feuilles_heures")
         .update({
-          // Quand l'administration déverrouille une feuille, elle revient
-          // volontairement en BROUILLON : le collaborateur doit pouvoir
-          // la rouvrir, la corriger puis la valider à nouveau.
-          statut: verrouiller
-            ? feuille.statut
-            : "BROUILLON",
-          verrouillee: verrouiller,
-          verrouillee_le: verrouiller ? now : null,
-          verrouillee_par: verrouiller ? admin.id : null,
-          // Une feuille rouverte doit refaire son circuit de validation.
-          // La répartition mensuelle précédente n'est donc plus définitive.
-          cloture_mensuelle: verrouiller ? undefined : false,
-          heures_supplementaires_a_repartir: verrouiller ? undefined : 0,
-          heures_supplementaires_compteur: verrouiller ? undefined : 0,
-          heures_supplementaires_payees: verrouiller ? undefined : 0,
+          statut: "BROUILLON",
+          verrouillee: false,
+          verrouillee_le: null,
+          verrouillee_par: null,
+          cloture_mensuelle: false,
+          heures_supplementaires_a_repartir: 0,
+          heures_supplementaires_compteur: 0,
+          heures_supplementaires_payees: 0,
           updated_at: now,
         })
         .eq("id", feuille.id);
 
       if (error) throw error;
 
-      setFeuilles((anciennes) =>
-        anciennes.map((f) =>
-          f.id === feuille.id
-            ? {
-                ...f,
-                statut: verrouiller ? f.statut : "BROUILLON",
-                verrouillee: verrouiller,
-                verrouillee_le: verrouiller ? now : null,
-              }
-            : f
-        )
-      );
-    } catch (error: any) {
-      console.error("Erreur verrouillage feuille :", error);
-      setErreur(error?.message || `Impossible de ${action} la feuille.`);
+      setFeuilles((anciennes) => anciennes.map((f) => (f.id === feuille.id ? { ...f, statut: "BROUILLON", verrouillee: false, verrouillee_le: null, updated_at: now } : f)));
+    } catch (error: unknown) {
+      console.error("Erreur réouverture feuille :", error);
+      setErreur(error instanceof Error ? error.message : "Impossible de rouvrir la feuille.");
     } finally {
-      setVerrouillageEnCours(null);
+      setReouvertureEnCours(null);
     }
   }
 
-  async function supprimerFeuille(
-    feuille: Feuille,
-    collaborateur: Collaborateur
-  ) {
+  async function supprimerFeuille(feuille: Feuille, collaborateur: Collaborateur) {
     if (suppressionEnCours !== null) return;
 
     const libelle = libelleSemaine(feuille.semaine_debut);
@@ -374,116 +229,88 @@ export default function FeuillesPage() {
     setErreur("");
 
     try {
-      /*
-       * Toute la suppression est maintenant effectuée côté PostgreSQL
-       * dans une seule transaction via la RPC sécurisée.
-       *
-       * L'ordre est géré par la fonction SQL :
-       *   1. imputations
-       *   2. journées
-       *   3. feuille
-       *
-       * Si une étape échoue, la transaction est annulée.
-       */
-      const { error } = await supabase.rpc("supprimer_feuille_heures", {
-        p_feuille_id: feuille.id,
-      });
-
+      // Suppression complète côté PostgreSQL, en une transaction (imputations, journées, feuille)
+      const { error } = await supabase.rpc("supprimer_feuille_heures", { p_feuille_id: feuille.id });
       if (error) throw error;
-
-      setFeuilles((anciennesFeuilles) =>
-        anciennesFeuilles.filter((f) => f.id !== feuille.id)
-      );
-    } catch (error: any) {
+      setFeuilles((anciennesFeuilles) => anciennesFeuilles.filter((f) => f.id !== feuille.id));
+    } catch (error: unknown) {
       console.error("Erreur suppression feuille :", error);
-
-      setErreur(
-        error?.message ||
-          `Impossible de supprimer la feuille de ${collaborateur.prenom} ${collaborateur.nom}.`
-      );
+      setErreur(error instanceof Error ? error.message : `Impossible de supprimer la feuille de ${collaborateur.prenom} ${collaborateur.nom}.`);
     } finally {
       setSuppressionEnCours(null);
     }
   }
 
   const rechercheNormalisee = recherche.toLowerCase().trim();
+  const semaineCourante = useMemo(() => lundiCourant(), []);
 
   const feuillesParSemaine = useMemo(() => {
     const index: Record<string, Record<string, Feuille>> = {};
-
     for (const feuille of feuilles) {
       if (!index[feuille.semaine_debut]) index[feuille.semaine_debut] = {};
       index[feuille.semaine_debut][feuille.collaborateur_id] = feuille;
     }
-
     return index;
   }, [feuilles]);
 
-  const semainesDisponibles = useMemo(() => {
-    const aujourdHui = new Date();
-    const jour = aujourdHui.getDay();
-    const decalage = jour === 0 ? -6 : 1 - jour;
-
-    aujourdHui.setDate(aujourdHui.getDate() + decalage);
-
-    const semaineCourante = `${aujourdHui.getFullYear()}-${String(
-      aujourdHui.getMonth() + 1
-    ).padStart(2, "0")}-${String(aujourdHui.getDate()).padStart(2, "0")}`;
-
-    return Array.from(
-      new Set([semaineCourante, ...feuilles.map((f) => f.semaine_debut)])
-    ).sort((a, b) => b.localeCompare(a));
-  }, [feuilles]);
-
-  const collaborateursActifs = collaborateurs.filter((c) => c.actif).length;
-
-  const statistiquesFeuilles = semainesDisponibles.reduce(
-    (acc, semaine) => {
-      const presents = collaborateurs.filter(
-        (c) =>
-          Boolean(feuillesParSemaine[semaine]?.[c.id]) ||
-          estPresentSemaine(c, semaine)
-      );
-
-      for (const collaborateur of presents) {
-        const feuille = feuillesParSemaine[semaine]?.[collaborateur.id];
-        if (!feuille) continue;
-
-        if (feuille.total_heures >= feuille.total_theorique) {
-          acc.completes += 1;
-        } else {
-          acc.incompletes += 1;
-        }
-      }
-
-      return acc;
-    },
-    { completes: 0, incompletes: 0 }
+  /* les semaines passées et la semaine en cours (pas les semaines à venir) */
+  const semainesPassees = useMemo(
+    () => Array.from(new Set([semaineCourante, ...feuilles.map((f) => f.semaine_debut).filter((s) => s <= semaineCourante)])).sort((a, b) => b.localeCompare(a)),
+    [feuilles, semaineCourante]
   );
+  const semainesAffichees = semainesPassees.slice(0, nbSemaines);
 
-  const feuillesCompletes = statistiquesFeuilles.completes;
-  const feuillesIncompletes = statistiquesFeuilles.incompletes;
+  /* les semaines à venir déjà remplies, résumées par personne */
+  const anticipations = useMemo(() => {
+    const parCollab = new Map<string, { nb: number; premiere: string; derniere: string }>();
+    for (const f of feuilles) {
+      if (f.semaine_debut <= semaineCourante) continue;
+      const v = parCollab.get(f.collaborateur_id) ?? { nb: 0, premiere: f.semaine_debut, derniere: f.semaine_debut };
+      v.nb += 1;
+      if (f.semaine_debut < v.premiere) v.premiere = f.semaine_debut;
+      if (f.semaine_debut > v.derniere) v.derniere = f.semaine_debut;
+      parCollab.set(f.collaborateur_id, v);
+    }
+    return [...parCollab.entries()]
+      .map(([id, v]) => ({ collaborateur: collaborateurs.find((c) => c.id === id), ...v }))
+      .filter((x): x is typeof x & { collaborateur: Collaborateur } => Boolean(x.collaborateur))
+      .sort((a, b) => b.nb - a.nb);
+  }, [feuilles, semaineCourante, collaborateurs]);
+
+  /* les chiffres d'en-tête : la semaine en cours */
+  const statsSemaine = useMemo(() => {
+    const presents = collaborateurs.filter((c) => c.actif && estPresentSemaine(c, semaineCourante));
+    const map = feuillesParSemaine[semaineCourante] ?? {};
+    return {
+      actifs: presents.length,
+      envoyees: presents.filter((c) => estEnvoyee(map[c.id])).length,
+      completes: presents.filter((c) => statutFeuille(map[c.id]) === "complete").length,
+      nonSaisies: presents.filter((c) => !map[c.id]).length,
+    };
+  }, [collaborateurs, feuillesParSemaine, semaineCourante]);
 
   return (
     <main style={styles.page}>
-      <EnTetePage section="Feuilles collaborateurs" />
+      <EnTetePage section="Feuilles d’heures" />
 
       <div style={styles.container}>
         <section style={styles.pageIntro}>
           <div>
-            <div style={styles.eyebrow}>ADMINISTRATION</div>
-            <h1 style={styles.pageTitle}>Feuilles collaborateurs</h1>
-            <p style={styles.pageDescription}>
-              Suivez l'état des feuilles de temps semaine par semaine.
-            </p>
+            <div style={styles.eyebrow}>RH</div>
+            <h1 style={styles.pageTitle}>Feuilles d’heures</h1>
+            <p style={styles.pageDescription}>L’état des feuilles de temps, semaine par semaine, et le bilan RH du mois.</p>
           </div>
 
-          <div style={styles.headerStats}>
-            <MiniStat value={collaborateursActifs} label="actifs" />
-            <MiniStat value={feuillesCompletes} label="complètes" tone="green" />
-            <MiniStat value={feuillesIncompletes} label="incomplètes" tone="orange" />
+          <div style={styles.headerStats} title={`Semaine en cours (S${libelleSemaine(semaineCourante).numero})`}>
+            <MiniStat value={statsSemaine.actifs} label="présents" />
+            <MiniStat value={statsSemaine.envoyees} label="envoyées" tone="green" />
+            <MiniStat value={statsSemaine.completes} label="complètes" tone="green" />
+            <MiniStat value={statsSemaine.nonSaisies} label="non saisies" tone="orange" />
           </div>
         </section>
+
+        {/* BILAN_RH_RAPPEL : le bilan RH du mois et le rappel de fin de mois */}
+        {voitBilanRH && <CarteBilanRH />}
 
         {erreur && (
           <div style={styles.errorCard}>
@@ -492,89 +319,26 @@ export default function FeuillesPage() {
               <strong>Erreur</strong>
               <div style={styles.errorText}>{erreur}</div>
             </div>
-            <button
-              type="button"
-              onClick={() => setErreur("")}
-              style={styles.errorClose}
-            >
+            <button type="button" onClick={() => setErreur("")} style={styles.errorClose}>
               ×
             </button>
           </div>
         )}
 
-        {peutAdministrer && (() => {
-          const aVerrouiller = feuilles.filter(estEnvoyeeNonVerrouillee);
-          return (
-            <section
-              style={{
-                ...styles.searchCard,
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <div>
-                <div style={styles.searchTitle}>Verrouillage des feuilles envoyées</div>
-                <div style={styles.searchDescription}>
-                  {aVerrouiller.length === 0
-                    ? "Aucune feuille envoyée en attente de verrouillage."
-                    : `${aVerrouiller.length} feuille${aVerrouiller.length > 1 ? "s" : ""} envoyée${aVerrouiller.length > 1 ? "s" : ""}, pas encore verrouillée${aVerrouiller.length > 1 ? "s" : ""}. Chaque semaine a aussi son propre bouton.`}
-                  {messageLot && <strong style={{ color: "#138113", marginLeft: 8 }}>{messageLot}</strong>}
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={aVerrouiller.length === 0 || lotEnCours !== null}
-                onClick={() => verrouillerFeuilles(aVerrouiller, "TOUTES")}
-                style={{
-                  minHeight: 44,
-                  padding: "0 18px",
-                  borderRadius: 10,
-                  border: "1.5px solid #e6c36a",
-                  background: aVerrouiller.length === 0 ? "#f4f4f4" : "#fff7e6",
-                  color: aVerrouiller.length === 0 ? "#999" : "#8a6500",
-                  fontWeight: 800,
-                  fontSize: 15,
-                  cursor: aVerrouiller.length === 0 ? "default" : "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                {lotEnCours === "TOUTES" ? "Verrouillage…" : `🔒 Tout verrouiller (${aVerrouiller.length})`}
-              </button>
-            </section>
-          );
-        })()}
-
         <section style={styles.searchCard}>
           <div style={styles.searchHeader}>
             <div>
               <div style={styles.searchTitle}>Rechercher un collaborateur</div>
-              <div style={styles.searchDescription}>
-                Filtrez par trigramme, prénom ou nom.
-              </div>
+              <div style={styles.searchDescription}>Filtrez par trigramme, prénom ou nom.</div>
             </div>
-
             {recherche && <div style={styles.searchResult}>Filtre actif</div>}
           </div>
 
           <div style={styles.searchWrapper}>
             <span style={styles.searchIcon}>⌕</span>
-            <input
-              value={recherche}
-              onChange={(e) => setRecherche(e.target.value)}
-              placeholder="Ex. PLG, Pierre, Gaufier..."
-              style={styles.searchInput}
-              aria-label="Rechercher un collaborateur"
-            />
+            <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Ex. PLG, Pierre, Gaufier..." style={styles.searchInput} aria-label="Rechercher un collaborateur" />
             {recherche && (
-              <button
-                type="button"
-                onClick={() => setRecherche("")}
-                style={styles.clearButton}
-                aria-label="Effacer la recherche"
-              >
+              <button type="button" onClick={() => setRecherche("")} style={styles.clearButton} aria-label="Effacer la recherche">
                 ×
               </button>
             )}
@@ -588,136 +352,114 @@ export default function FeuillesPage() {
             </div>
             <div>
               <strong>Chargement des feuilles</strong>
-              <p style={styles.loadingText}>
-                Récupération des collaborateurs et des feuilles de temps...
-              </p>
+              <p style={styles.loadingText}>Récupération des collaborateurs et des feuilles de temps...</p>
             </div>
           </div>
         )}
 
-        {!chargement && semainesDisponibles.length === 0 && (
-          <div style={styles.emptyCard}>
-            <div style={styles.emptyIcon}>
-              <span>✓</span>
+        {/* FEUILLES_V2 : les semaines à venir déjà remplies, résumées */}
+        {!chargement && anticipations.length > 0 && (
+          <details open={futuresOuvertes} onToggle={(e) => setFuturesOuvertes((e.currentTarget as HTMLDetailsElement).open)} style={{ ...styles.searchCard, padding: "12px 18px" }}>
+            <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 14 }}>
+              📅 Semaines à venir déjà remplies par anticipation · {anticipations.length} personne{anticipations.length > 1 ? "s" : ""}
+            </summary>
+            <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
+              {anticipations
+                .filter((a) => !rechercheNormalisee || `${a.collaborateur.prenom} ${a.collaborateur.nom} ${a.collaborateur.trigramme}`.toLowerCase().includes(rechercheNormalisee))
+                .map((a) => (
+                  <div key={a.collaborateur.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, fontSize: 13 }}>
+                    <span style={styles.trigramme}>{a.collaborateur.trigramme}</span>
+                    <strong>
+                      {a.collaborateur.prenom} {a.collaborateur.nom}
+                    </strong>
+                    <span style={{ color: "#666" }}>
+                      {a.nb} semaine{a.nb > 1 ? "s" : ""} : de S{libelleSemaine(a.premiere).numero} ({libelleSemaine(a.premiere).debut}) à S{libelleSemaine(a.derniere).numero} ({libelleSemaine(a.derniere).debut})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/ma-semaine?semaine=${a.premiere}&collaborateur=${a.collaborateur.id}`)}
+                      style={{ ...styles.openButton, background: "#5b6168" }}
+                    >
+                      Voir la première →
+                    </button>
+                  </div>
+                ))}
             </div>
-            <h2 style={styles.emptyTitle}>Aucune feuille de temps</h2>
-            <p style={styles.emptyText}>
-              Les feuilles de temps enregistrées apparaîtront ici.
-            </p>
-          </div>
+          </details>
         )}
 
         {!chargement &&
-          semainesDisponibles.map((semaine, index) => {
-            const feuillesSemaine = feuilles.filter(
-              (f) => f.semaine_debut === semaine
-            );
+          semainesAffichees.map((semaine, index) => {
+            const feuillesSemaine = feuilles.filter((f) => f.semaine_debut === semaine);
+            const collaborateursPresents = collaborateurs.filter((collaborateur) => Boolean(feuillesParSemaine[semaine]?.[collaborateur.id]) || (collaborateur.actif && estPresentSemaine(collaborateur, semaine)));
 
-            const collaborateursPresents = collaborateurs.filter(
-              (collaborateur) =>
-                Boolean(feuillesParSemaine[semaine]?.[collaborateur.id]) ||
-                estPresentSemaine(collaborateur, semaine)
-            );
-
+            const ordre: Record<Statut, number> = { missing: 0, incomplete: 1, complete: 2 };
             const collaborateursFiltres = collaborateursPresents
-              .filter((c) => {
-                if (!rechercheNormalisee) return true;
-
-                return `${c.prenom} ${c.nom} ${c.trigramme}`
-                  .toLowerCase()
-                  .includes(rechercheNormalisee);
-              })
+              .filter((c) => !rechercheNormalisee || `${c.prenom} ${c.nom} ${c.trigramme}`.toLowerCase().includes(rechercheNormalisee))
               .sort((a, b) => {
-                const feuilleA = feuillesParSemaine[semaine]?.[a.id];
-                const feuilleB = feuillesParSemaine[semaine]?.[b.id];
-
-                const scoreA = statutFeuille(feuilleA);
-                const scoreB = statutFeuille(feuilleB);
-
-                const ordre: Record<Statut, number> = {
-                  missing: 0,
-                  incomplete: 1,
-                  complete: 2,
-                };
-
-                if (ordre[scoreA] !== ordre[scoreB]) {
-                  return ordre[scoreA] - ordre[scoreB];
-                }
-
-                return `${a.nom}${a.prenom}`.localeCompare(
-                  `${b.nom}${b.prenom}`,
-                  "fr"
-                );
+                const sa = statutFeuille(feuillesParSemaine[semaine]?.[a.id]);
+                const sb = statutFeuille(feuillesParSemaine[semaine]?.[b.id]);
+                if (ordre[sa] !== ordre[sb]) return ordre[sa] - ordre[sb];
+                return `${a.nom}${a.prenom}`.localeCompare(`${b.nom}${b.prenom}`, "fr");
               });
 
             const feuillesMap = feuillesParSemaine[semaine] ?? {};
-
-            const complets = collaborateursPresents.filter(
-              (c) => statutFeuille(feuillesMap[c.id]) === "complete"
-            ).length;
-
-            const incomplets = collaborateursPresents.filter(
-              (c) => statutFeuille(feuillesMap[c.id]) === "incomplete"
-            ).length;
-
-            const aCreer = collaborateursPresents.filter(
-              (c) => statutFeuille(feuillesMap[c.id]) === "missing"
-            ).length;
-
-            const libelle = libelleSemaine(semaine);
+            const complets = collaborateursPresents.filter((c) => statutFeuille(feuillesMap[c.id]) === "complete").length;
+            const incomplets = collaborateursPresents.filter((c) => statutFeuille(feuillesMap[c.id]) === "incomplete").length;
+            const aCreer = collaborateursPresents.filter((c) => statutFeuille(feuillesMap[c.id]) === "missing").length;
+            const envoyees = collaborateursPresents.filter((c) => estEnvoyee(feuillesMap[c.id])).length;
 
             return (
               <SemaineCard
                 key={semaine}
                 semaine={semaine}
-                libelle={libelle}
+                enCours={semaine === semaineCourante}
+                libelle={libelleSemaine(semaine)}
                 feuillesSemaine={feuillesSemaine}
                 feuillesMap={feuillesMap}
                 collaborateurs={collaborateursFiltres}
                 complets={complets}
                 incomplets={incomplets}
                 aCreer={aCreer}
+                envoyees={envoyees}
                 totalPresents={collaborateursPresents.length}
                 router={router}
                 ouverte={index === 0}
                 suppressionEnCours={suppressionEnCours}
                 supprimerFeuille={supprimerFeuille}
-                verrouillageEnCours={verrouillageEnCours}
-                basculerVerrouillage={basculerVerrouillage}
+                reouvertureEnCours={reouvertureEnCours}
+                rouvrirFeuille={rouvrirFeuille}
                 peutAdministrer={peutAdministrer}
-                verrouillerSemaine={() => verrouillerFeuilles(feuillesSemaine, semaine)}
-                aVerrouiller={feuillesSemaine.filter(estEnvoyeeNonVerrouillee).length}
-                lotEnCours={lotEnCours === semaine || lotEnCours === "TOUTES"}
               />
             );
           })}
+
+        {!chargement && semainesPassees.length > nbSemaines && (
+          <div style={{ textAlign: "center", margin: "6px 0 20px" }}>
+            <button
+              type="button"
+              onClick={() => setNbSemaines((n) => n + 8)}
+              style={{ minHeight: 42, padding: "0 18px", borderRadius: 9, border: "1.5px solid #cfcfcf", background: "#ffffff", fontWeight: 800, fontSize: 14, fontFamily: "inherit", cursor: "pointer" }}
+            >
+              Semaines plus anciennes ({semainesPassees.length - nbSemaines}) ▾
+            </button>
+          </div>
+        )}
       </div>
     </main>
   );
 }
 
-function MiniStat({
-  value,
-  label,
-  tone = "neutral",
-}: {
-  value: number;
-  label: string;
-  tone?: "neutral" | "green" | "orange";
-}) {
+function MiniStat({ value, label, tone = "neutral" }: { value: number; label: string; tone?: "neutral" | "green" | "orange" }) {
   const colors = {
     neutral: { number: "#222", background: "#ffffff" },
     green: { number: "#138113", background: "#f0f8f1" },
     orange: { number: "#a07700", background: "#fff9e9" },
   };
-
   const color = colors[tone];
-
   return (
     <div style={{ ...styles.miniStat, background: color.background }}>
-      <strong style={{ ...styles.miniStatNumber, color: color.number }}>
-        {value}
-      </strong>
+      <strong style={{ ...styles.miniStatNumber, color: color.number }}>{value}</strong>
       <span style={styles.miniStatLabel}>{label}</span>
     </div>
   );
@@ -725,6 +467,7 @@ function MiniStat({
 
 function SemaineCard({
   semaine,
+  enCours,
   libelle,
   feuillesSemaine,
   feuillesMap,
@@ -732,19 +475,18 @@ function SemaineCard({
   complets,
   incomplets,
   aCreer,
+  envoyees,
   totalPresents,
   router,
   ouverte,
   suppressionEnCours,
   supprimerFeuille,
-  verrouillageEnCours,
-  basculerVerrouillage,
+  reouvertureEnCours,
+  rouvrirFeuille,
   peutAdministrer,
-  verrouillerSemaine,
-  aVerrouiller,
-  lotEnCours,
 }: {
   semaine: string;
+  enCours: boolean;
   libelle: { numero: number; debut: string; fin: string };
   feuillesSemaine: Feuille[];
   feuillesMap: Record<string, Feuille>;
@@ -752,46 +494,25 @@ function SemaineCard({
   complets: number;
   incomplets: number;
   aCreer: number;
+  envoyees: number;
   totalPresents: number;
   router: ReturnType<typeof useRouter>;
   ouverte: boolean;
   suppressionEnCours: string | null;
-  supprimerFeuille: (
-    feuille: Feuille,
-    collaborateur: Collaborateur
-  ) => Promise<void>;
-  verrouillageEnCours: string | null;
-  basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  supprimerFeuille: (feuille: Feuille, collaborateur: Collaborateur) => Promise<void>;
+  reouvertureEnCours: string | null;
+  rouvrirFeuille: (feuille: Feuille, collaborateur: Collaborateur) => Promise<void>;
   peutAdministrer: boolean;
-  verrouillerSemaine: () => Promise<void>;
-  aVerrouiller: number;
-  lotEnCours: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
-
-  const progression =
-    totalPresents > 0 ? Math.round((complets / totalPresents) * 100) : 0;
-
-  const totalHeures = feuillesSemaine.reduce(
-    (total, feuille) => total + Number(feuille.total_heures || 0),
-    0
-  );
-
-  const totalTheorique = feuillesSemaine.reduce(
-    (total, feuille) => total + Number(feuille.total_theorique || 0),
-    0
-  );
+  const progression = totalPresents > 0 ? Math.round((envoyees / totalPresents) * 100) : 0;
+  const totalHeures = feuillesSemaine.reduce((total, feuille) => total + Number(feuille.total_heures || 0), 0);
+  const totalTheorique = feuillesSemaine.reduce((total, feuille) => total + Number(feuille.total_theorique || 0), 0);
 
   return (
     <details
       open={ouverte}
-      style={{
-        ...styles.weekCard,
-        borderColor: survol ? "#d30000" : "#e2e2e2",
-        boxShadow: survol
-          ? "0 7px 20px rgba(0,0,0,0.09)"
-          : "0 2px 8px rgba(0,0,0,0.055)",
-      }}
+      style={{ ...styles.weekCard, borderColor: survol ? "#d30000" : "#e2e2e2", boxShadow: survol ? "0 7px 20px rgba(0,0,0,0.09)" : "0 2px 8px rgba(0,0,0,0.055)" }}
       onMouseEnter={() => setSurvol(true)}
       onMouseLeave={() => setSurvol(false)}
     >
@@ -801,7 +522,10 @@ function SemaineCard({
             <span style={styles.weekIconText}>S</span>
           </div>
           <div>
-            <div style={styles.weekTitle}>S{libelle.numero}</div>
+            <div style={styles.weekTitle}>
+              S{libelle.numero}
+              {enCours && <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: "#c00000", background: "#fdecec", borderRadius: 999, padding: "2px 8px", verticalAlign: "middle" }}>en cours</span>}
+            </div>
             <div style={styles.weekDates}>
               {libelle.debut} → {libelle.fin}
             </div>
@@ -809,18 +533,13 @@ function SemaineCard({
         </div>
 
         <div style={styles.weekRight}>
-          <div style={styles.weekProgressBlock}>
+          <div style={styles.weekProgressBlock} title="Part des feuilles envoyées aux RH">
             <div style={styles.weekProgressLabel}>
-              <span>Avancement</span>
+              <span>Envoyées aux RH</span>
               <strong>{progression} %</strong>
             </div>
             <div style={styles.weekProgressTrack}>
-              <div
-                style={{
-                  ...styles.weekProgressBar,
-                  width: `${progression}%`,
-                }}
-              />
+              <div style={{ ...styles.weekProgressBar, width: `${progression}%` }} />
             </div>
           </div>
 
@@ -840,6 +559,10 @@ function SemaineCard({
           <strong>{totalPresents}</strong>
         </div>
         <div>
+          <span style={styles.metaLabel}>ENVOYÉES AUX RH</span>
+          <strong>{envoyees}</strong>
+        </div>
+        <div>
           <span style={styles.metaLabel}>HEURES SAISIES</span>
           <strong>{formatHeures(totalHeures)}</strong>
         </div>
@@ -847,31 +570,6 @@ function SemaineCard({
           <div>
             <span style={styles.metaLabel}>THÉORIQUE</span>
             <strong>{formatHeures(totalTheorique)}</strong>
-          </div>
-        )}
-        {peutAdministrer && (
-          <div style={{ marginLeft: "auto", alignSelf: "center" }}>
-            <button
-              type="button"
-              disabled={aVerrouiller === 0 || lotEnCours}
-              onClick={() => verrouillerSemaine()}
-              title={aVerrouiller === 0 ? "Aucune feuille envoyée à verrouiller cette semaine" : "Verrouiller toutes les feuilles envoyées de cette semaine"}
-              style={{
-                minHeight: 38,
-                padding: "0 14px",
-                borderRadius: 10,
-                border: "1.5px solid #e6c36a",
-                background: aVerrouiller === 0 ? "#f4f4f4" : "#fff7e6",
-                color: aVerrouiller === 0 ? "#999" : "#8a6500",
-                fontWeight: 800,
-                fontSize: 14,
-                cursor: aVerrouiller === 0 ? "default" : "pointer",
-                fontFamily: "inherit",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {lotEnCours ? "Verrouillage…" : `🔒 Verrouiller la semaine (${aVerrouiller})`}
-            </button>
           </div>
         )}
       </div>
@@ -882,33 +580,26 @@ function SemaineCard({
             <div style={styles.noResultIcon}>⌕</div>
             <div>
               <strong>Aucun collaborateur trouvé</strong>
-              <p>
-                Aucun collaborateur ne correspond à votre recherche pour cette
-                semaine.
-              </p>
+              <p>Aucun collaborateur ne correspond à votre recherche pour cette semaine.</p>
             </div>
           </div>
         ) : (
           <div>
-            {collaborateurs.map((collaborateur, index) => {
-              const feuille = feuillesMap[collaborateur.id];
-
-              return (
-                <CollaborateurRow
-                  key={collaborateur.id}
-                  collaborateur={collaborateur}
-                  feuille={feuille}
-                  router={router}
-                  semaine={semaine}
-                  dernier={index === collaborateurs.length - 1}
-                  suppressionEnCours={suppressionEnCours}
-                  supprimerFeuille={supprimerFeuille}
-                  verrouillageEnCours={verrouillageEnCours}
-                  basculerVerrouillage={basculerVerrouillage}
-                  peutAdministrer={peutAdministrer}
-                />
-              );
-            })}
+            {collaborateurs.map((collaborateur, index) => (
+              <CollaborateurRow
+                key={collaborateur.id}
+                collaborateur={collaborateur}
+                feuille={feuillesMap[collaborateur.id]}
+                router={router}
+                semaine={semaine}
+                dernier={index === collaborateurs.length - 1}
+                suppressionEnCours={suppressionEnCours}
+                supprimerFeuille={supprimerFeuille}
+                reouvertureEnCours={reouvertureEnCours}
+                rouvrirFeuille={rouvrirFeuille}
+                peutAdministrer={peutAdministrer}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -924,8 +615,8 @@ function CollaborateurRow({
   dernier,
   suppressionEnCours,
   supprimerFeuille,
-  verrouillageEnCours,
-  basculerVerrouillage,
+  reouvertureEnCours,
+  rouvrirFeuille,
   peutAdministrer,
 }: {
   collaborateur: Collaborateur;
@@ -934,36 +625,25 @@ function CollaborateurRow({
   semaine: string;
   dernier: boolean;
   suppressionEnCours: string | null;
-  supprimerFeuille: (
-    feuille: Feuille,
-    collaborateur: Collaborateur
-  ) => Promise<void>;
-  verrouillageEnCours: string | null;
-  basculerVerrouillage: (feuille: Feuille) => Promise<void>;
+  supprimerFeuille: (feuille: Feuille, collaborateur: Collaborateur) => Promise<void>;
+  reouvertureEnCours: string | null;
+  rouvrirFeuille: (feuille: Feuille, collaborateur: Collaborateur) => Promise<void>;
   peutAdministrer: boolean;
 }) {
   const [survol, setSurvol] = useState(false);
   const status = statutFeuille(feuille);
-
   const total = Number(feuille?.total_heures ?? 0);
   const theorique = Number(feuille?.total_theorique ?? 0);
   const heuresSupplementaires = Number(feuille?.heures_supplementaires ?? 0);
-
-  const pourcentage =
-    theorique > 0 ? Math.round((total / theorique) * 100) : 0;
-
+  const pourcentage = theorique > 0 ? Math.round((total / theorique) * 100) : 0;
   const pourcentageBarre = Math.min(100, Math.max(0, pourcentage));
   const reste = theorique > total ? theorique - total : 0;
   const suppression = feuille && suppressionEnCours === feuille.id;
+  const envoyee = estEnvoyee(feuille);
 
   return (
     <div
-      style={{
-        ...styles.collaborateurRow,
-        borderBottom: dernier ? "none" : "1px solid #eeeeee",
-        background: survol ? "#fafafa" : "white",
-        opacity: suppression ? 0.55 : 1,
-      }}
+      style={{ ...styles.collaborateurRow, borderBottom: dernier ? "none" : "1px solid #eeeeee", background: survol ? "#fafafa" : "white", opacity: suppression ? 0.55 : 1 }}
       onMouseEnter={() => setSurvol(true)}
       onMouseLeave={() => setSurvol(false)}
     >
@@ -974,9 +654,7 @@ function CollaborateurRow({
         <div style={styles.identityText}>
           <div style={styles.name}>
             {collaborateur.prenom} {collaborateur.nom}
-            {!collaborateur.actif && (
-              <span style={styles.inactif}>Inactif</span>
-            )}
+            {!collaborateur.actif && <span style={styles.inactif}>Inactif</span>}
           </div>
 
           {feuille ? (
@@ -985,22 +663,16 @@ function CollaborateurRow({
               <span>/ {formatHeures(theorique)}</span>
               <span style={styles.separator}>•</span>
               <span>{pourcentage} %</span>
-
               {reste > 0 && (
                 <>
                   <span style={styles.separator}>•</span>
-                  <span style={styles.remaining}>
-                    reste {formatHeures(reste)}
-                  </span>
+                  <span style={styles.remaining}>reste {formatHeures(reste)}</span>
                 </>
               )}
-
               {heuresSupplementaires > 0 && (
                 <>
                   <span style={styles.separator}>•</span>
-                  <span style={styles.overtime}>
-                    + {formatHeures(heuresSupplementaires)} HS
-                  </span>
+                  <span style={styles.overtime}>+ {formatHeures(heuresSupplementaires)} HS</span>
                 </>
               )}
             </div>
@@ -1008,26 +680,14 @@ function CollaborateurRow({
             <div style={styles.missingText}>Aucune feuille de temps enregistrée</div>
           )}
 
-          {feuille?.updated_at && (
-            <div style={styles.lastUpdate}>
-              Mise à jour le {formatDateMaj(feuille.updated_at)}
-            </div>
-          )}
+          {feuille?.updated_at && <div style={styles.lastUpdate}>Mise à jour le {formatDateMaj(feuille.updated_at)}</div>}
         </div>
       </div>
 
       <div style={styles.progressArea}>
         {feuille ? (
-          <div>
-            <div style={styles.progressTrack}>
-              <div
-                style={{
-                  ...styles.progressBar,
-                  width: `${pourcentageBarre}%`,
-                  background: status === "complete" ? "#138113" : "#c08a00",
-                }}
-              />
-            </div>
+          <div style={styles.progressTrack}>
+            <div style={{ ...styles.progressBar, width: `${pourcentageBarre}%`, background: status === "complete" ? "#138113" : "#c08a00" }} />
           </div>
         ) : (
           <div style={styles.progressEmpty}>—</div>
@@ -1035,207 +695,73 @@ function CollaborateurRow({
       </div>
 
       <div style={styles.statusArea}>
-        {status === "complete" && (
-          <span style={styles.statusComplete}>✓ Complète</span>
-        )}
-        {status === "incomplete" && (
-          <span style={styles.statusIncomplete}>! Incomplète</span>
-        )}
-        {status === "missing" && (
+        {feuille ? (
+          envoyee ? (
+            <span style={{ ...styles.pillEtat, background: "#edf8ef", border: "1px solid #cfe8d4", color: "#138113" }}>📤 Envoyée aux RH</span>
+          ) : (
+            <span style={{ ...styles.pillEtat, background: "#fff8e7", border: "1px solid #f0dfaa", color: "#9a7000" }}>
+              📝 Brouillon{status === "incomplete" ? " · incomplète" : ""}
+            </span>
+          )
+        ) : (
           <span style={styles.statusMissing}>× À créer</span>
         )}
       </div>
-
-      {feuille && (
-        <div style={styles.statusArea}>
-          {(() => {
-            const workflow = etatWorkflowFeuille(feuille);
-
-            if (workflow === "envoyee") {
-              return (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 8px",
-                    borderRadius: 7,
-                    background: "#edf8ef",
-                    border: "1px solid #cfe8d4",
-                    color: "#138113",
-                    fontWeight: 800,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  📤 Envoyée
-                </span>
-              );
-            }
-
-            if (workflow === "verrouillee") {
-              return (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 8px",
-                    borderRadius: 7,
-                    background: "#fff7e6",
-                    border: "1px solid #eed39a",
-                    color: "#7a4b00",
-                    fontWeight: 800,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  🔒 Verrouillée
-                </span>
-              );
-            }
-
-            return (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "5px 8px",
-                  borderRadius: 7,
-                  background: "#fff8e7",
-                  border: "1px solid #f0dfaa",
-                  color: "#9a7000",
-                  fontWeight: 800,
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                📝 Brouillon
-              </span>
-            );
-          })()}
-        </div>
-      )}
 
       <div style={styles.actions}>
         {(peutAdministrer || feuille) && (
           <button
             type="button"
             disabled={Boolean(suppression)}
-            style={{
-              ...styles.openButton,
-              background: feuille
-                ? survol
-                  ? "#a80000"
-                  : "#c00000"
-                : survol
-                  ? "#0e6c0e"
-                  : "#138113",
-              opacity: suppression ? 0.7 : 1,
-            }}
-            onClick={() =>
-              router.push(
-                `/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`
-              )
-            }
+            style={{ ...styles.openButton, background: feuille ? (survol ? "#a80000" : "#c00000") : survol ? "#0e6c0e" : "#138113", opacity: suppression ? 0.7 : 1 }}
+            onClick={() => router.push(`/ma-semaine?semaine=${semaine}&collaborateur=${collaborateur.id}`)}
           >
             {feuille ? (peutAdministrer ? "Modifier" : "Consulter") : "Créer"}
             <span style={styles.buttonArrow}>→</span>
           </button>
         )}
 
-        {peutAdministrer && feuille && (
-          <>
-            <button
-              type="button"
-              disabled={
-                Boolean(suppression) ||
-                verrouillageEnCours === feuille.id ||
-                (!feuille.verrouillee &&
-                  (feuille.statut ?? "").trim().toUpperCase() !== "A_TRAITER")
-              }
-              title={
-                feuille.verrouillee
-                  ? "Déverrouiller cette feuille"
-                  : (feuille.statut ?? "").trim().toUpperCase() === "A_TRAITER"
-                    ? "Verrouiller administrativement cette feuille"
-                    : "Disponible après envoi de la feuille"
-              }
-              onClick={() => basculerVerrouillage(feuille)}
-              style={{
-                ...styles.deleteButton,
-                background: feuille.verrouillee ? "#fff7e6" : "#f4f4f4",
-                color: feuille.verrouillee ? "#8a6500" : "#555",
-                borderColor: feuille.verrouillee ? "#e6c36a" : "#ddd",
-              }}
-            >
-              {verrouillageEnCours === feuille.id
-                ? "…"
-                : feuille.verrouillee
-                  ? "🔓"
-                  : "🔒"}
-            </button>
+        {peutAdministrer && feuille && envoyee && (
+          <button
+            type="button"
+            disabled={Boolean(suppression) || reouvertureEnCours === feuille.id}
+            title="Rouvrir : la feuille repasse en brouillon, le collaborateur peut la corriger et la renvoyer"
+            onClick={() => void rouvrirFeuille(feuille, collaborateur)}
+            style={{ ...styles.deleteButton, width: "auto", padding: "0 8px", background: "#f4f6fa", color: "#1f4e99", borderColor: "#c9d6ea", fontSize: 12, cursor: "pointer" }}
+          >
+            {reouvertureEnCours === feuille.id ? "…" : "↩ Rouvrir"}
+          </button>
+        )}
 
-            <button
-              type="button"
-              disabled={Boolean(suppression)}
-              title="Supprimer cette feuille"
-              onClick={() => supprimerFeuille(feuille, collaborateur)}
-              style={{
-                ...styles.deleteButton,
-                background: suppression
-                  ? "#f5f5f5"
-                  : survol
-                    ? "#ffe8e8"
-                    : "#fff4f4",
-                color: suppression ? "#999" : "#c00000",
-                borderColor: suppression ? "#dddddd" : "#efcccc",
-                cursor: suppression ? "default" : "pointer",
-              }}
-            >
-              {suppression ? "…" : "🗑"}
-            </button>
-          </>
+        {peutAdministrer && feuille && (
+          <button
+            type="button"
+            disabled={Boolean(suppression)}
+            title="Supprimer cette feuille"
+            onClick={() => void supprimerFeuille(feuille, collaborateur)}
+            style={{
+              ...styles.deleteButton,
+              background: suppression ? "#f5f5f5" : survol ? "#ffe8e8" : "#fff4f4",
+              color: suppression ? "#999" : "#c00000",
+              borderColor: suppression ? "#dddddd" : "#efcccc",
+              cursor: suppression ? "default" : "pointer",
+            }}
+          >
+            {suppression ? "…" : "🗑"}
+          </button>
         )}
       </div>
     </div>
   );
 }
 
-function StatusBadge({
-  type,
-  label,
-}: {
-  type: "complete" | "incomplete" | "missing";
-  label: string;
-}) {
+function StatusBadge({ type, label }: { type: "complete" | "incomplete" | "missing"; label: string }) {
   const config = {
-    complete: {
-      background: "#edf8ef",
-      color: "#138113",
-      border: "#d5ead8",
-      icon: "✓",
-      text: "complètes",
-    },
-    incomplete: {
-      background: "#fff8e7",
-      color: "#9a7000",
-      border: "#f0dfaa",
-      icon: "!",
-      text: "incomplètes",
-    },
-    missing: {
-      background: "#fff0f0",
-      color: "#c00000",
-      border: "#f0d0d0",
-      icon: "×",
-      text: "à créer",
-    },
+    complete: { background: "#edf8ef", color: "#138113", border: "#d5ead8", icon: "✓", text: "complètes" },
+    incomplete: { background: "#fff8e7", color: "#9a7000", border: "#f0dfaa", icon: "!", text: "incomplètes" },
+    missing: { background: "#fff0f0", color: "#c00000", border: "#f0d0d0", icon: "×", text: "à créer" },
   };
-
   const c = config[type];
-
   return (
     <span
       title={`${label} ${c.text}`}
@@ -1263,18 +789,8 @@ function StatusBadge({
   );
 }
 
-function StatusDot({
-  status,
-}: {
-  status: "complete" | "incomplete" | "missing";
-}) {
-  const background =
-    status === "complete"
-      ? "#138113"
-      : status === "incomplete"
-        ? "#c08a00"
-        : "#c00000";
-
+function StatusDot({ status }: { status: "complete" | "incomplete" | "missing" }) {
+  const background = status === "complete" ? "#138113" : status === "incomplete" ? "#c08a00" : "#c00000";
   return (
     <span
       style={{
@@ -1283,591 +799,87 @@ function StatusDot({
         borderRadius: "50%",
         background,
         flexShrink: 0,
-        boxShadow: `0 0 0 3px ${
-          status === "complete"
-            ? "rgba(19,129,19,0.10)"
-            : status === "incomplete"
-              ? "rgba(192,138,0,0.10)"
-              : "rgba(192,0,0,0.10)"
-        }`,
+        boxShadow: `0 0 0 3px ${status === "complete" ? "rgba(19,129,19,0.10)" : status === "incomplete" ? "rgba(192,138,0,0.10)" : "rgba(192,0,0,0.10)"}`,
       }}
     />
   );
 }
 
-const styles: any = {
-  page: {
-    minHeight: "100vh",
-    background: "#f4f4f4",
-    fontFamily: "Calibri, Arial, sans-serif",
-    color: "#222",
-  },
-  header: {
-    background: "#c00000",
-    color: "white",
-    padding: "20px 30px 23px 30px",
-    boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
-  },
-  headerInner: {
-    maxWidth: 1200,
-    margin: "0 auto",
-  },
-  retour: {
-    background: "rgba(255,255,255,0.14)",
-    border: "1px solid rgba(255,255,255,0.25)",
-    color: "white",
-    borderRadius: 7,
-    padding: "7px 11px",
-    cursor: "pointer",
-    marginBottom: 16,
-    fontFamily: "Calibri, Arial, sans-serif",
-    fontSize: 13,
-    fontWeight: 600,
-    transition: "background 0.15s ease",
-  },
-  brandLine: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-  logo: {
-    fontSize: 32,
-    fontWeight: 900,
-    letterSpacing: "-0.5px",
-    lineHeight: 1,
-  },
-  headerSeparator: {
-    opacity: 0.45,
-    fontSize: 20,
-  },
-  headerSubtitle: {
-    fontSize: 15,
-    opacity: 0.9,
-  },
-  container: {
-    maxWidth: 1200,
-    margin: "0 auto",
-    padding: "30px 30px 60px 30px",
-  },
-  pageIntro: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 25,
-    marginBottom: 25,
-    flexWrap: "wrap",
-  },
-  eyebrow: {
-    color: "#c00000",
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "1.2px",
-    marginBottom: 5,
-  },
-  pageTitle: {
-    margin: 0,
-    fontSize: 32,
-    color: "#222",
-    fontWeight: 800,
-    letterSpacing: "-0.5px",
-  },
-  pageDescription: {
-    margin: "6px 0 0 0",
-    color: "#707070",
-    fontSize: 15,
-  },
-  headerStats: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  miniStat: {
-    minWidth: 80,
-    padding: "9px 13px",
-    border: "1px solid #e2e2e2",
-    borderRadius: 9,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    boxSizing: "border-box",
-  },
-  miniStatNumber: {
-    fontSize: 19,
-    lineHeight: 1,
-    fontWeight: 800,
-  },
-  miniStatLabel: {
-    marginTop: 4,
-    color: "#777",
-    fontSize: 11,
-    fontWeight: 600,
-  },
-  errorCard: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    background: "#fff1f1",
-    border: "1px solid #efcaca",
-    borderRadius: 10,
-    padding: "12px 15px",
-    marginBottom: 18,
-    color: "#9c0000",
-  },
-  errorIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    background: "#c00000",
-    color: "white",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: 900,
-    flexShrink: 0,
-  },
-  errorText: {
-    marginTop: 2,
-    color: "#9c0000",
-    fontSize: 13,
-  },
-  errorClose: {
-    border: "none",
-    background: "transparent",
-    color: "#a00000",
-    fontSize: 22,
-    cursor: "pointer",
-    padding: "2px 6px",
-    lineHeight: 1,
-  },
-  searchCard: {
-    background: "white",
-    border: "1px solid #e3e3e3",
-    borderRadius: 11,
-    padding: "17px 19px",
-    marginBottom: 20,
-    boxShadow: "0 2px 7px rgba(0,0,0,0.045)",
-  },
-  searchHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 15,
-    marginBottom: 10,
-  },
-  searchTitle: {
-    color: "#222",
-    fontSize: 14,
-    fontWeight: 800,
-  },
-  searchDescription: {
-    marginTop: 2,
-    color: "#888",
-    fontSize: 12,
-  },
-  searchResult: {
-    color: "#c00000",
-    background: "#fff1f1",
-    border: "1px solid #f0d4d4",
-    borderRadius: 20,
-    padding: "4px 9px",
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  searchWrapper: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-  },
-  searchIcon: {
-    position: "absolute",
-    left: 13,
-    color: "#888",
-    fontSize: 21,
-    lineHeight: 1,
-    pointerEvents: "none",
-  },
-  searchInput: {
-    width: "100%",
-    boxSizing: "border-box",
-    border: "1px solid #d9d9d9",
-    borderRadius: 7,
-    padding: "10px 42px 10px 38px",
-    fontFamily: "Calibri, Arial, sans-serif",
-    fontSize: 14,
-    color: "#222",
-    outline: "none",
-    background: "#fff",
-  },
-  clearButton: {
-    position: "absolute",
-    right: 9,
-    width: 25,
-    height: 25,
-    borderRadius: "50%",
-    border: "none",
-    background: "#eeeeee",
-    color: "#666",
-    cursor: "pointer",
-    fontSize: 17,
-    lineHeight: "20px",
-  },
-  loadingCard: {
-    display: "flex",
-    alignItems: "center",
-    gap: 14,
-    background: "white",
-    border: "1px solid #e3e3e3",
-    borderRadius: 11,
-    padding: 20,
-    boxShadow: "0 2px 7px rgba(0,0,0,0.045)",
-  },
-  spinner: {
-    width: 28,
-    height: 28,
-    border: "3px solid #eeeeee",
-    borderTop: "3px solid #c00000",
-    borderRadius: "50%",
-    animation: "polynov-spin 0.8s linear infinite",
-    flexShrink: 0,
-  },
-  spinnerInner: {
-    width: 1,
-    height: 1,
-  },
-  loadingText: {
-    margin: "3px 0 0 0",
-    color: "#777",
-    fontSize: 12,
-  },
-  emptyCard: {
-    background: "white",
-    border: "1px solid #e3e3e3",
-    borderRadius: 11,
-    padding: "55px 30px",
-    textAlign: "center",
-    boxShadow: "0 2px 7px rgba(0,0,0,0.045)",
-  },
-  emptyIcon: {
-    width: 55,
-    height: 55,
-    margin: "0 auto 14px auto",
-    borderRadius: 11,
-    background: "#f8e8e8",
-    color: "#c00000",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 24,
-    fontWeight: 800,
-  },
-  emptyTitle: {
-    margin: 0,
-    fontSize: 20,
-    fontWeight: 800,
-  },
-  emptyText: {
-    margin: "6px 0 0 0",
-    color: "#777",
-    fontSize: 13,
-  },
-  weekCard: {
-    background: "white",
-    borderRadius: 11,
-    marginBottom: 13,
-    border: "1px solid #e3e3e3",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-    overflow: "hidden",
-    transition: "border-color 0.15s ease, box-shadow 0.15s ease",
-  },
-  weekSummary: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 20,
-    padding: "14px 17px",
-    cursor: "pointer",
-    listStyle: "none",
-    userSelect: "none",
-  },
-  weekLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 11,
-    minWidth: 160,
-  },
-  weekIcon: {
-    width: 39,
-    height: 39,
-    borderRadius: 8,
-    background: "#f8e8e8",
-    color: "#c00000",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  weekIconText: {
-    fontSize: 15,
-    fontWeight: 900,
-  },
-  weekTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    color: "#222",
-  },
-  weekDates: {
-    marginTop: 2,
-    fontSize: 12,
-    color: "#777",
-  },
-  weekRight: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 13,
-    flex: 1,
-  },
-  weekProgressBlock: {
-    width: 150,
-  },
-  weekProgressLabel: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 5,
-    color: "#888",
-    fontSize: 10,
-  },
-  weekProgressTrack: {
-    height: 5,
-    width: "100%",
-    borderRadius: 10,
-    background: "#eeeeee",
-    overflow: "hidden",
-  },
-  weekProgressBar: {
-    height: "100%",
-    borderRadius: 10,
-    background: "#138113",
-    transition: "width 0.2s ease",
-  },
-  statusContainer: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-  },
-  chevron: {
-    color: "#aaa",
-    fontSize: 10,
-    marginLeft: 3,
-  },
-  weekMeta: {
-    display: "flex",
-    alignItems: "center",
-    gap: 25,
-    padding: "9px 18px",
-    background: "#fafafa",
-    borderTop: "1px solid #eeeeee",
-    borderBottom: "1px solid #eeeeee",
-    color: "#444",
-  },
-  metaLabel: {
-    display: "block",
-    marginBottom: 2,
-    color: "#999",
-    fontSize: 9,
-    fontWeight: 800,
-    letterSpacing: "0.7px",
-  },
-  weekContent: {
-    padding: "2px 17px 5px 17px",
-  },
-  collaborateurRow: {
-    display: "grid",
-    gridTemplateColumns:
-      "minmax(300px, 1fr) minmax(130px, 190px) 100px 120px",
-    alignItems: "center",
-    gap: 18,
-    minHeight: 65,
-    padding: "9px 3px",
-    transition: "background 0.12s ease, opacity 0.15s ease",
-  },
-  identity: {
-    display: "flex",
-    alignItems: "center",
-    gap: 9,
-    minWidth: 0,
-  },
-  trigramme: {
-    minWidth: 40,
-    boxSizing: "border-box",
-    padding: "4px 6px",
-    borderRadius: 5,
-    background: "#f8e8e8",
-    color: "#c00000",
-    fontSize: 10,
-    fontWeight: 900,
-    textAlign: "center",
-  },
-  identityText: {
-    minWidth: 0,
-  },
-  name: {
-    color: "#222",
-    fontSize: 14,
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  inactif: {
-    display: "inline-block",
-    marginLeft: 6,
-    background: "#e8e8e8",
-    color: "#666",
-    padding: "2px 5px",
-    borderRadius: 4,
-    fontSize: 9,
-    fontWeight: 700,
-    verticalAlign: "middle",
-  },
-  hoursLine: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    marginTop: 2,
-    color: "#777",
-    fontSize: 11,
-    flexWrap: "wrap",
-  },
-  totalHours: {
-    color: "#333",
-  },
-  separator: {
-    color: "#c2c2c2",
-  },
-  remaining: {
-    color: "#a07700",
-    fontWeight: 600,
-  },
-  overtime: {
-    color: "#c00000",
-    fontWeight: 700,
-  },
-  missingText: {
-    marginTop: 2,
-    color: "#c00000",
-    fontSize: 11,
-    fontWeight: 600,
-  },
-  lastUpdate: {
-    marginTop: 2,
-    color: "#aaa",
-    fontSize: 9,
-  },
-  progressArea: {
-    width: "100%",
-  },
-  progressTrack: {
-    width: "100%",
-    height: 5,
-    borderRadius: 10,
-    background: "#eeeeee",
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: "100%",
-    borderRadius: 10,
-    transition: "width 0.2s ease",
-  },
-  progressEmpty: {
-    textAlign: "center",
-    color: "#ccc",
-    fontSize: 15,
-  },
-  statusArea: {
-    display: "flex",
-    justifyContent: "flex-start",
-    alignItems: "center",
-    whiteSpace: "nowrap",
-  },
-  statusComplete: {
-    color: "#138113",
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  statusIncomplete: {
-    color: "#a07700",
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  statusMissing: {
-    color: "#c00000",
-    fontSize: 11,
-    fontWeight: 700,
-  },
-  actions: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: 6,
-  },
-  openButton: {
-    border: "none",
-    color: "white",
-    borderRadius: 6,
-    padding: "7px 10px",
-    cursor: "pointer",
-    fontFamily: "Calibri, Arial, sans-serif",
-    fontSize: 12,
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-    transition: "background 0.15s ease, opacity 0.15s ease",
-  },
-  buttonArrow: {
-    marginLeft: 4,
-    fontSize: 12,
-  },
-  deleteButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    border: "1px solid #efcccc",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
-    fontFamily: "Calibri, Arial, sans-serif",
-    fontSize: 14,
-    fontWeight: 700,
-    transition:
-      "background 0.15s ease, border-color 0.15s ease, color 0.15s ease",
-  },
-  noResult: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: "20px 4px",
-    color: "#666",
-  },
-  noResultIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    background: "#f5f5f5",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 19,
-    color: "#888",
-    flexShrink: 0,
-  },
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: "100vh", background: "#f4f4f4", fontFamily: "Calibri, Arial, sans-serif", color: "#222" },
+  container: { maxWidth: 1200, margin: "0 auto", padding: "30px 30px 60px 30px" },
+  pageIntro: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 25, marginBottom: 20, flexWrap: "wrap" },
+  eyebrow: { color: "#c00000", fontSize: 11, fontWeight: 800, letterSpacing: "1.2px", marginBottom: 5 },
+  pageTitle: { margin: 0, fontSize: 32, color: "#222", fontWeight: 800, letterSpacing: "-0.5px" },
+  pageDescription: { margin: "6px 0 0 0", color: "#707070", fontSize: 15 },
+  headerStats: { display: "flex", gap: 8, flexWrap: "wrap" },
+  miniStat: { minWidth: 80, padding: "9px 13px", border: "1px solid #e2e2e2", borderRadius: 9, display: "flex", flexDirection: "column", alignItems: "center", boxSizing: "border-box" },
+  miniStatNumber: { fontSize: 19, lineHeight: 1, fontWeight: 800 },
+  miniStatLabel: { marginTop: 4, color: "#777", fontSize: 11, fontWeight: 600 },
+  errorCard: { display: "flex", alignItems: "center", gap: 12, background: "#fff1f1", border: "1px solid #efcaca", borderRadius: 10, padding: "12px 15px", marginBottom: 18, color: "#9c0000" },
+  errorIcon: { width: 28, height: 28, borderRadius: "50%", background: "#c00000", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, flexShrink: 0 },
+  errorText: { marginTop: 2, color: "#9c0000", fontSize: 13 },
+  errorClose: { border: "none", background: "transparent", color: "#a00000", fontSize: 22, cursor: "pointer", padding: "2px 6px", lineHeight: 1 },
+  searchCard: { background: "white", border: "1px solid #e3e3e3", borderRadius: 11, padding: "17px 19px", marginBottom: 20, boxShadow: "0 2px 7px rgba(0,0,0,0.045)" },
+  searchHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 15, marginBottom: 10 },
+  searchTitle: { color: "#222", fontSize: 14, fontWeight: 800 },
+  searchDescription: { marginTop: 2, color: "#888", fontSize: 12 },
+  searchResult: { color: "#c00000", background: "#fff1f1", border: "1px solid #f0d4d4", borderRadius: 20, padding: "4px 9px", fontSize: 11, fontWeight: 700 },
+  searchWrapper: { position: "relative", display: "flex", alignItems: "center" },
+  searchIcon: { position: "absolute", left: 13, color: "#888", fontSize: 21, lineHeight: 1, pointerEvents: "none" },
+  searchInput: { width: "100%", boxSizing: "border-box", border: "1px solid #d9d9d9", borderRadius: 7, padding: "10px 42px 10px 38px", fontFamily: "Calibri, Arial, sans-serif", fontSize: 14, color: "#222", outline: "none", background: "#fff" },
+  clearButton: { position: "absolute", right: 9, width: 25, height: 25, borderRadius: "50%", border: "none", background: "#eeeeee", color: "#666", cursor: "pointer", fontSize: 17, lineHeight: "20px" },
+  loadingCard: { display: "flex", alignItems: "center", gap: 14, background: "white", border: "1px solid #e3e3e3", borderRadius: 11, padding: 20, boxShadow: "0 2px 7px rgba(0,0,0,0.045)" },
+  spinner: { width: 28, height: 28, border: "3px solid #eeeeee", borderTop: "3px solid #c00000", borderRadius: "50%", animation: "polynov-spin 0.8s linear infinite", flexShrink: 0 },
+  spinnerInner: { width: 1, height: 1 },
+  loadingText: { margin: "3px 0 0 0", color: "#777", fontSize: 12 },
+  weekCard: { background: "white", borderRadius: 11, marginBottom: 13, border: "1px solid #e3e3e3", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", overflow: "hidden", transition: "border-color 0.15s ease, box-shadow 0.15s ease" },
+  weekSummary: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, padding: "14px 17px", cursor: "pointer", listStyle: "none", userSelect: "none" },
+  weekLeft: { display: "flex", alignItems: "center", gap: 11, minWidth: 160 },
+  weekIcon: { width: 39, height: 39, borderRadius: 8, background: "#f8e8e8", color: "#c00000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  weekIconText: { fontSize: 15, fontWeight: 900 },
+  weekTitle: { fontSize: 18, fontWeight: 800, color: "#222" },
+  weekDates: { marginTop: 2, fontSize: 12, color: "#777" },
+  weekRight: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 13, flex: 1 },
+  weekProgressBlock: { width: 150 },
+  weekProgressLabel: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, color: "#888", fontSize: 10 },
+  weekProgressTrack: { height: 5, width: "100%", borderRadius: 10, background: "#eeeeee", overflow: "hidden" },
+  weekProgressBar: { height: "100%", borderRadius: 10, background: "#138113", transition: "width 0.2s ease" },
+  statusContainer: { display: "flex", alignItems: "center", gap: 5 },
+  chevron: { color: "#aaa", fontSize: 10, marginLeft: 3 },
+  weekMeta: { display: "flex", alignItems: "center", gap: 25, padding: "9px 18px", background: "#fafafa", borderTop: "1px solid #eeeeee", borderBottom: "1px solid #eeeeee", color: "#444" },
+  metaLabel: { display: "block", marginBottom: 2, color: "#999", fontSize: 9, fontWeight: 800, letterSpacing: "0.7px" },
+  weekContent: { padding: "2px 17px 5px 17px" },
+  collaborateurRow: { display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(130px, 190px) 170px 210px", alignItems: "center", gap: 18, minHeight: 65, padding: "9px 3px", transition: "background 0.12s ease, opacity 0.15s ease" },
+  identity: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 },
+  trigramme: { minWidth: 40, boxSizing: "border-box", padding: "4px 6px", borderRadius: 5, background: "#f8e8e8", color: "#c00000", fontSize: 10, fontWeight: 900, textAlign: "center" },
+  identityText: { minWidth: 0 },
+  name: { color: "#222", fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  inactif: { display: "inline-block", marginLeft: 6, background: "#e8e8e8", color: "#666", padding: "2px 5px", borderRadius: 4, fontSize: 9, fontWeight: 700, verticalAlign: "middle" },
+  hoursLine: { display: "flex", alignItems: "center", gap: 5, marginTop: 2, color: "#777", fontSize: 11, flexWrap: "wrap" },
+  totalHours: { color: "#333" },
+  separator: { color: "#c2c2c2" },
+  remaining: { color: "#a07700", fontWeight: 600 },
+  overtime: { color: "#c00000", fontWeight: 700 },
+  missingText: { marginTop: 2, color: "#c00000", fontSize: 11, fontWeight: 600 },
+  lastUpdate: { marginTop: 2, color: "#aaa", fontSize: 9 },
+  progressArea: { width: "100%" },
+  progressTrack: { width: "100%", height: 5, borderRadius: 10, background: "#eeeeee", overflow: "hidden" },
+  progressBar: { height: "100%", borderRadius: 10, transition: "width 0.2s ease" },
+  progressEmpty: { textAlign: "center", color: "#ccc", fontSize: 15 },
+  statusArea: { display: "flex", justifyContent: "flex-start", alignItems: "center", whiteSpace: "nowrap" },
+  pillEtat: { display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 8px", borderRadius: 7, fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" },
+  statusMissing: { color: "#c00000", fontSize: 11, fontWeight: 700 },
+  actions: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 },
+  openButton: { border: "none", color: "white", borderRadius: 6, padding: "7px 10px", cursor: "pointer", fontFamily: "Calibri, Arial, sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", transition: "background 0.15s ease, opacity 0.15s ease" },
+  buttonArrow: { marginLeft: 4, fontSize: 12 },
+  deleteButton: { width: 32, height: 32, borderRadius: 6, border: "1px solid #efcccc", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "Calibri, Arial, sans-serif", fontSize: 14, fontWeight: 700, transition: "background 0.15s ease, border-color 0.15s ease, color 0.15s ease" },
+  noResult: { display: "flex", alignItems: "center", gap: 12, padding: "20px 4px", color: "#666" },
+  noResultIcon: { width: 38, height: 38, borderRadius: 8, background: "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, color: "#888", flexShrink: 0 },
 };
 
 if (typeof document !== "undefined") {
   const styleId = "polynov-feuilles-animations";
-
   if (!document.getElementById(styleId)) {
     const style = document.createElement("style");
     style.id = styleId;
@@ -1876,7 +888,6 @@ if (typeof document !== "undefined") {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
       }
-
       details > summary::-webkit-details-marker {
         display: none;
       }

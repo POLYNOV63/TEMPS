@@ -27,8 +27,9 @@ const SECTIONS: { cle: string; titre: string; onglets: Onglet[]; affichageSur: s
       { href: "/admin/Valid_RH", libelle: "Validation RH", droit: "administration" },
       { href: "/admin/suivi-rh", libelle: "Absences et compteurs", droit: "administration" },
       { href: "/admin/suivi-notes-frais", libelle: "Notes de frais", droit: "administration" },
+      { href: "/admin/bilan-rh", libelle: "Bilan RH mensuel", droit: "bilanRH" }, // BILAN_RH_RAPPEL
     ],
-    affichageSur: ["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais"],
+    affichageSur: ["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"],
   },
   {
     cle: "exports",
@@ -38,7 +39,7 @@ const SECTIONS: { cle: string; titre: string; onglets: Onglet[]; affichageSur: s
       { href: "/admin/export-excel", libelle: "Récapitulatif d’heures", droit: "exporterExcel" },
       { href: "/analyse/facturation", libelle: "Facturation du mois", droit: "indicateurs" },
     ],
-    affichageSur: ["/admin/bilan-rh", "/admin/export-excel"],
+    affichageSur: ["/admin/export-excel"],
   },
 ];
 

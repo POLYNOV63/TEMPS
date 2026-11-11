@@ -13,6 +13,10 @@
      plus de couleur « Devis envoyé ».
    - app/pilotage/prestations/page.tsx (Relevé PE / PI) : l'encadré des
      reports est replié par défaut (REPORTS_REPLIES).
+   - app/ma-semaine/MaSemaineContent.tsx : « Enregistrer le brouillon » et
+     « Envoyer aux RH » au lieu de « Enregistrer » et « Valider ».
+   - app/admin/bilan-rh/page.tsx : « Marquer comme envoyé aux RH », et
+     ouverture sur un mois (?mois=2026-11).
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
@@ -84,6 +88,9 @@ for (const rel of [
   "components/OngletsSection.tsx",
   "supabase/93_suivi_devis_relances_historique.sql",
   "supabase/94_notifications_relances.sql",
+  "supabase/95_bilan_rh_envoye.sql",
+  "lib/clotureMensuelle.ts",
+  "components/rh/BilanRHEnvoi.tsx",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
@@ -188,6 +195,62 @@ if (releve && !erreurs.length) {
       "reports repliés par défaut"
     );
     ecritures.push(releve);
+  }
+}
+
+/* 3 quater. app/ma-semaine/MaSemaineContent.tsx : « Enregistrer le brouillon » et « Envoyer aux RH » (ENVOI_RH_LIBELLES) */
+const semaineF = lire("app/ma-semaine/MaSemaineContent.tsx");
+if (semaineF && !erreurs.length) {
+  if (semaineF.texte.includes("📤 Envoyer aux RH")) {
+    console.log("  = app/ma-semaine/MaSemaineContent.tsx : libellés déjà à jour");
+  } else {
+    const libelles = [
+      [/: "💾 Enregistrer"\}/, ': "💾 Enregistrer le brouillon"}', "bouton « Enregistrer le brouillon »"],
+      [/\? "✓ Semaine validée"(\s*): "✓ Valider ma semaine"/, '? "✓ Envoyée aux RH"$1: "📤 Envoyer aux RH"', "bouton « Envoyer aux RH »"],
+      [/<strong>Enregistrer<\/strong> garde votre saisie en brouillon\./, "<strong>Enregistrer le brouillon</strong> garde votre saisie, que vous pouvez encore modifier.", "explication du brouillon"],
+      [/<strong>Valider ma semaine<\/strong> contrôle chaque journée puis transmet la feuille à POLYNOV\./, "<strong>Envoyer aux RH</strong> contrôle chaque journée puis transmet la feuille aux RH.", "explication de l’envoi"],
+      [/la validation est définitive et verrouille la semaine pour le collaborateur\./, "l’envoi est définitif : la semaine n’est ensuite plus modifiable.", "avertissement"],
+      [/Valider définitivement la semaine \?/, "Envoyer la semaine aux RH ?", "titre de la confirmation"],
+      [/<strong>Attention : cette validation est définitive\.<\/strong>/, "<strong>Attention : l’envoi est définitif.</strong>", "confirmation, avertissement"],
+      [/Après validation, vous ne pourrez plus modifier cette semaine\./, "Après l’envoi, vous ne pourrez plus modifier cette semaine.", "confirmation, texte"],
+      [/🔒 Valider définitivement/, "📤 Envoyer aux RH", "confirmation, bouton"],
+      [/"✓ Semaine validée — transmise"/, '"✓ Envoyée aux RH"', "état de la semaine"],
+      [/"✓ validée, transmise"/, '"✓ envoyée aux RH"', "état de la semaine (téléphone)"],
+      [/validée et transmise à POLYNOV\./, "envoyée aux RH.", "message après l’envoi"],
+      [/<strong>La validation est définitive\.<\/strong>/, "<strong>L’envoi aux RH est définitif.</strong>", "encart d’avertissement"],
+      [/Une fois votre semaine validée, vous ne pourrez plus la modifier\./, "Une fois votre semaine envoyée, vous ne pourrez plus la modifier.", "encart d’avertissement, texte"],
+      [/Cette semaine est <strong>validée<\/strong>\./, "Cette semaine est <strong>envoyée aux RH</strong>.", "message de semaine envoyée"],
+    ];
+    for (const [re, rempl, lib] of libelles) remplacerRe(semaineF, re, rempl, lib);
+    ecritures.push(semaineF);
+  }
+}
+
+/* 3 quinquies. app/admin/bilan-rh/page.tsx : « Marquer comme envoyé aux RH », ouverture sur un mois (?mois=) (BILAN_RH_RAPPEL) */
+const bilanRH = lire("app/admin/bilan-rh/page.tsx");
+if (bilanRH && !erreurs.length) {
+  if (bilanRH.texte.includes("BILAN_RH_RAPPEL")) {
+    console.log("  = app/admin/bilan-rh/page.tsx : déjà à jour");
+  } else {
+    remplacerRe(
+      bilanRH,
+      /(import \{ peut \} from "@\/lib\/droits";\n)/,
+      '$1import { BoutonBilanEnvoye } from "@/components/rh/BilanRHEnvoi"; // BILAN_RH_RAPPEL\n',
+      "import du bouton « envoyé aux RH »"
+    );
+    remplacerRe(
+      bilanRH,
+      /const \[periodeIndex, setPeriodeIndex\] = useState\(0\);/,
+      'const [periodeIndex, setPeriodeIndex] = useState(() => {\n    // BILAN_RH_RAPPEL : ouvert sur un mois précis (?mois=2026-11)\n    const m = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mois") : null;\n    const i = m ? periodes.findIndex((p) => `${p.annee}-${String(p.moisZeroBase + 1).padStart(2, "0")}` === m.slice(0, 7)) : -1;\n    return i >= 0 ? i : 0;\n  });',
+      "ouverture sur le mois demandé"
+    );
+    remplacerRe(
+      bilanRH,
+      /(\{exportation \? "Export en cours…" : "📊 Exporter Excel"\}\n([ \t]*)<\/button>)/,
+      "$1\n$2{periode && <BoutonBilanEnvoye annee={periode.annee} moisZeroBase={periode.moisZeroBase} />}",
+      "bouton « Marquer comme envoyé aux RH »"
+    );
+    ecritures.push(bilanRH);
   }
 }
 

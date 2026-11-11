@@ -9,6 +9,7 @@ import VignetteFacturation from "@/components/dashboard/VignetteFacturation";
 import GraphiquesDisponibilites from "@/components/analyse/GraphiquesDisponibilites";
 import { useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
 import { aISO, lundiDe } from "@/lib/pilotagePlanning";
+import { rappelBilanRH } from "@/lib/clotureMensuelle";
 
 /* ===============================================================
    TABLEAU DE BORD (DASHBOARD_SIMPLIFIE)
@@ -126,6 +127,8 @@ export default function DashboardPage() {
   // Direction), actualisées chaque minute et au retour sur l'onglet
   const [demandesCloche, setDemandesCloche] = useState<DemandeCloche[]>([]);
   const [notifsRelances, setNotifsRelances] = useState<NotifRelance[]>([]);
+  /* BILAN_RH_RAPPEL : bilan RH du mois à envoyer aux services RH (ADMIN) */
+  const [rappelBilan, setRappelBilan] = useState<RappelBilan | null>(null);
 
   useEffect(() => {
     if (!role || role === "DIRECTION") return;
@@ -151,6 +154,22 @@ export default function DashboardPage() {
 
           if (typeof count === "number") setNombreDemandesRH(count);
           setDemandesCloche((data ?? []) as DemandeCloche[]);
+
+          // sans le SQL 95 : pas de rappel
+          const { data: envois, error: eEnv } = await supabase.from("rh_bilans_envoyes").select("mois").order("mois", { ascending: false }).limit(6);
+          if (!actif) return;
+          const r = eEnv ? null : rappelBilanRH(new Set(((envois ?? []) as { mois: string }[]).map((x) => String(x.mois).slice(0, 7))));
+          setRappelBilan(
+            r
+              ? {
+                  texte: `Bilan RH de ${r.periode.libelle.split(" ")[0]} à envoyer aux RH`,
+                  detail: r.enRetard
+                    ? `mois clôturé le ${new Date(`${r.periode.dateCloture}T00:00:00`).toLocaleDateString("fr-FR")}`
+                    : `clôture le vendredi ${new Date(`${r.periode.dateCloture}T00:00:00`).toLocaleDateString("fr-FR")}`,
+                  enRetard: r.enRetard,
+                }
+              : null
+          );
         }
 
         // sans le SQL 94 : pas de notification de relance
@@ -432,6 +451,7 @@ export default function DashboardPage() {
               nombre={nombreDemandesRH}
               demandes={demandesCloche}
               relances={notifsRelances}
+              rappelBilan={rappelBilan}
               onAller={aller}
               onRelanceVue={(n) => void relanceVue(n)}
               onToutVu={() => void toutesRelancesVues()}
@@ -859,7 +879,7 @@ function TuilesDomaines({
     );
   if (peut(role, "bilanRH") || peut(role, "exporterExcel"))
     tuiles.push(
-      <TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url="/admin/bilan-rh" aller={aller} />
+      <TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url="/admin/export-excel" aller={aller} />
     );
   return <div style={stylesV2.grilleTuiles}>{tuiles}</div>;
 }
@@ -937,6 +957,9 @@ const LIBELLES_DEMANDE: Record<string, string> = {
   RTT: "RTT",
 };
 
+/* BILAN_RH_RAPPEL : rappel d'envoi du bilan RH (SQL 95) */
+type RappelBilan = { texte: string; detail: string; enRetard: boolean };
+
 /* NOTIF_RELANCES : notifications de relances de devis (SQL 94) */
 type NotifRelance = {
   relance_id: string;
@@ -956,6 +979,7 @@ function ClocheNotifications({
   nombre,
   demandes,
   relances,
+  rappelBilan,
   onAller,
   onRelanceVue,
   onToutVu,
@@ -964,6 +988,7 @@ function ClocheNotifications({
   nombre: number;
   demandes: DemandeCloche[];
   relances: NotifRelance[];
+  rappelBilan?: RappelBilan | null;
   onAller: (url: string) => void;
   onRelanceVue: (n: NotifRelance) => void;
   onToutVu: () => void;
@@ -992,8 +1017,10 @@ function ClocheNotifications({
 
   const dateFR = (valeur: string | null) => (valeur ? new Date(`${valeur.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "");
   const nombreRH = admin ? nombre : 0;
-  const total = nombreRH + relances.length;
+  const bilan = admin && rappelBilan ? rappelBilan : null;
+  const total = nombreRH + relances.length + (bilan ? 1 : 0);
   const resume = [
+    bilan ? bilan.texte : "",
     nombreRH > 0 ? `${nombreRH} demande${nombreRH > 1 ? "s" : ""} RH à valider` : "",
     relances.length > 0 ? `${relances.length} relance${relances.length > 1 ? "s" : ""} de devis` : "",
   ]
@@ -1016,6 +1043,30 @@ function ClocheNotifications({
 
       {ouverte && (
         <div className="db-cloche-panneau" role="dialog" aria-label="Notifications" style={{ ...stylesV2.clochePanneau, maxHeight: "75vh", overflowY: "auto" }}>
+          {/* ---------- BILAN_RH_RAPPEL : le bilan RH du mois à envoyer ---------- */}
+          {bilan && (
+            <div
+              className="db-cloche-ligne"
+              role="button"
+              tabIndex={0}
+              title="Ouvrir les feuilles d’heures et le bilan RH"
+              onClick={() => {
+                setOuverte(false);
+                onAller("/admin/feuilles");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setOuverte(false);
+                  onAller("/admin/feuilles");
+                }
+              }}
+              style={{ ...stylesV2.clocheLigne, cursor: "pointer", background: bilan.enRetard ? "#fdecec" : "#fff7e6", borderLeft: `4px solid ${bilan.enRetard ? "#b3261e" : "#d99a00"}` }}
+            >
+              <strong style={{ color: bilan.enRetard ? "#b3261e" : "#7a4b00" }}>📊 {bilan.texte}</strong>
+              <span style={{ color: "#666666", fontSize: 12.5 }}>{bilan.detail} · à marquer « envoyé » une fois fait</span>
+            </div>
+          )}
+
           {/* ---------- demandes RH à valider (ADMIN) ---------- */}
           {admin && (
             <>

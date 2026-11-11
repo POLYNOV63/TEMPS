@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import { peut } from "@/lib/droits";
+import { BoutonBilanEnvoye } from "@/components/rh/BilanRHEnvoi"; // BILAN_RH_RAPPEL
 
 export const dynamic = "force-dynamic";
 
@@ -206,7 +207,12 @@ export default function BilanRHPage() {
   const router = useRouter();
   const periodes = useMemo(() => construirePeriodes(), []);
 
-  const [periodeIndex, setPeriodeIndex] = useState(0);
+  const [periodeIndex, setPeriodeIndex] = useState(() => {
+    // BILAN_RH_RAPPEL : ouvert sur un mois précis (?mois=2026-11)
+    const m = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mois") : null;
+    const i = m ? periodes.findIndex((p) => `${p.annee}-${String(p.moisZeroBase + 1).padStart(2, "0")}` === m.slice(0, 7)) : -1;
+    return i >= 0 ? i : 0;
+  });
   const [lignes, setLignes] = useState<LigneBilan[]>([]);
   const [chargement, setChargement] = useState(true);
   const [exportation, setExportation] = useState(false);
@@ -663,6 +669,7 @@ export default function BilanRHPage() {
           >
             {exportation ? "Export en cours…" : "📊 Exporter Excel"}
           </button>
+          {periode && <BoutonBilanEnvoye annee={periode.annee} moisZeroBase={periode.moisZeroBase} />}
         </div>
 
         <section style={styles.periodCard}>
