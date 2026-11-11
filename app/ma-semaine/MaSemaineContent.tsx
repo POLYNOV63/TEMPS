@@ -4486,7 +4486,7 @@ export default function MaSemainePage() {
               cursor: boutonsBloques ? "not-allowed" : "pointer",
             }}
           >
-            {enregistrement ? "Enregistrement..." : "💾 Enregistrer le brouillon"}
+            {enregistrement ? "Enregistrement..." : modeAdmin ? "💾 Enregistrer la correction" : "💾 Enregistrer le brouillon"}
           </button>
 
           <button

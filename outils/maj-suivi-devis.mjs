@@ -224,6 +224,11 @@ if (semaineF && !erreurs.length) {
     for (const [re, rempl, lib] of libelles) remplacerRe(semaineF, re, rempl, lib);
     ecritures.push(semaineF);
   }
+  /* CORRECTION_ADMIN : l'ADMIN qui modifie la feuille d'un autre enregistre une correction (la feuille garde son état) */
+  if (!erreurs.length && !semaineF.texte.includes("💾 Enregistrer la correction")) {
+    remplacerRe(semaineF, /: "💾 Enregistrer le brouillon"\}/, ': modeAdmin ? "💾 Enregistrer la correction" : "💾 Enregistrer le brouillon"}', "bouton « Enregistrer la correction » pour l’ADMIN");
+    if (!ecritures.includes(semaineF)) ecritures.push(semaineF);
+  }
 }
 
 /* 3 quinquies. app/admin/bilan-rh/page.tsx : « Marquer comme envoyé aux RH », ouverture sur un mois (?mois=) (BILAN_RH_RAPPEL) */
