@@ -144,7 +144,7 @@ function SuiviRHContenu() {
           supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques,date_entree").order("nom"),
           supabase.from("rh_droits").select("*").eq("exercice", exercice),
           chargerTout<Demande>((a, b) =>
-            supabase.from("rh_demandes").select("id,collaborateur_id,type_demande,date_debut,date_fin,duree_jours,heures_re,statut,created_at").gte("date_debut", debutEx).lte("date_debut", finEx).order("date_debut").range(a, b)
+            supabase.from("rh_demandes").select("id,collaborateur_id,type_demande,date_debut,date_fin,duree_jours,heures_re,statut,created_at").gte("date_debut", `${exercice - 1}-01-01`).lte("date_debut", `${exercice + 2}-12-31`) /* CP_PERIODE_LEGALE : de quoi couvrir la période CP de chacun */.order("date_debut").range(a, b)
           ),
           chargerTout<Feuille>((a, b) =>
             supabase
@@ -184,12 +184,18 @@ function SuiviRHContenu() {
       .map((c) => {
         const d = droits.find((x) => x.collaborateur_id === c.id);
         const ds = demandes.filter((x) => x.collaborateur_id === c.id);
+        // CP_PERIODE_LEGALE : les CP se comptent sur leur période d'acquisition (1er juin → 31 mai par défaut, réglable dans les droits),
+        // les RTT sur l'exercice (novembre → octobre)
+        const cpDu = d?.cp_periode_debut ?? `${exercice}-06-01`;
+        const cpAu = d?.cp_periode_fin ?? `${exercice + 1}-05-31`;
+        const dansCP = (x: Demande) => x.date_debut >= cpDu && x.date_debut <= cpAu;
+        const dansEx = (x: Demande) => x.date_debut >= debutEx && x.date_debut <= finEx;
         const cpDroits = d ? n(d.cp_reportes) + n(d.cp_acquis) + n(d.cp_anciennete) + n(d.cp_exceptionnels_avec_justificatif) + n(d.cp_exceptionnels_sans_justificatif) : 0;
         const somme = (filtre: (x: Demande) => boolean) => ds.filter(filtre).reduce((t, x) => t + n(x.duree_jours), 0);
-        const cpPris = somme((x) => estCP(x.type_demande) && ACCORDEE.includes(x.statut));
-        const cpAttente = somme((x) => estCP(x.type_demande) && x.statut === "EN_ATTENTE");
-        const rttPris = somme((x) => x.type_demande === "RTT" && ACCORDEE.includes(x.statut));
-        const rttAttente = somme((x) => x.type_demande === "RTT" && x.statut === "EN_ATTENTE");
+        const cpPris = somme((x) => estCP(x.type_demande) && dansCP(x) && ACCORDEE.includes(x.statut));
+        const cpAttente = somme((x) => estCP(x.type_demande) && dansCP(x) && x.statut === "EN_ATTENTE");
+        const rttPris = somme((x) => x.type_demande === "RTT" && dansEx(x) && ACCORDEE.includes(x.statut));
+        const rttAttente = somme((x) => x.type_demande === "RTT" && dansEx(x) && x.statut === "EN_ATTENTE");
 
         const fs = feuilles.filter((f) => f.collaborateur_id === c.id && f.statut === "A_TRAITER");
         const fsEx = fs.filter((f) => f.semaine_debut >= debutEx);
@@ -203,8 +209,7 @@ function SuiviRHContenu() {
         return {
           c,
           d,
-          cpDroits,
-          cpPris,
+          cpDroits, cpDu, cpAu, cpPris,
           cpAttente,
           cpSolde: cpDroits - cpPris - cpAttente,
           rttAcquis: n(d?.rtt_acquis),
@@ -221,13 +226,18 @@ function SuiviRHContenu() {
       })
       // TRI_NOM_FAMILLE : par nom de famille, puis prénom
       .sort((x, y) => (x.c.nom ?? "").localeCompare(y.c.nom ?? "", "fr", { sensitivity: "base" }) || (x.c.prenom ?? "").localeCompare(y.c.prenom ?? "", "fr", { sensitivity: "base" }));
-  }, [collabs, droits, demandes, feuilles, regs, recherche, debutEx, finEx]);
+  }, [collabs, droits, demandes, feuilles, regs, recherche, debutEx, finEx, exercice]);
 
   /* historique d'un collaborateur */
   const mouvementsDe = useCallback(
     (id: string): Mouvement[] => {
       const m: Mouvement[] = [];
-      for (const x of demandes.filter((x) => x.collaborateur_id === id)) {
+      const dr = droits.find((x) => x.collaborateur_id === id);
+      const cpDu = dr?.cp_periode_debut ?? `${exercice}-06-01`;
+      const cpAu = dr?.cp_periode_fin ?? `${exercice + 1}-05-31`;
+      for (const x of demandes.filter(
+        (x) => x.collaborateur_id === id && (estCP(x.type_demande) ? x.date_debut >= cpDu && x.date_debut <= cpAu : x.date_debut >= debutEx && x.date_debut <= finEx)
+      )) {
         const accordee = ACCORDEE.includes(x.statut);
         const statut = accordee ? "accordé" : x.statut === "EN_ATTENTE" ? "en attente" : x.statut === "REFUSEE" ? "refusé" : "annulé";
         const periode = x.date_debut === x.date_fin ? dateFR(x.date_debut) : `${dateFR(x.date_debut)} → ${dateFR(x.date_fin)}`;
@@ -244,7 +254,7 @@ function SuiviRHContenu() {
         const hs = n(f.heures_supplementaires_compteur);
         const re = n(f.total_re);
         if (hs === 0 && re === 0 && !f.cloture_mensuelle) continue;
-        const morceaux = [hs ? `+${fmt(hs)} h sup au compteur` : "", re ? `−${fmt(re)} h de RE` : "", n(f.heures_supplementaires_payees) ? `${fmt(n(f.heures_supplementaires_payees))} h sup payées` : ""].filter(Boolean);
+        const morceaux = [hs ? `RE+ ${fmt(hs)} h (heures sup mises au compteur)` : "", re ? `RE− ${fmt(re)} h` : "", n(f.heures_supplementaires_payees) ? `${fmt(n(f.heures_supplementaires_payees))} h sup payées` : ""].filter(Boolean);
         m.push({
           date: f.semaine_debut,
           type: "COMPTEUR",
@@ -266,7 +276,7 @@ function SuiviRHContenu() {
       }
       return m.sort((x, y) => y.date.localeCompare(x.date));
     },
-    [demandes, feuilles, regs, collabs, debutEx, finEx]
+    [demandes, feuilles, regs, collabs, debutEx, finEx, droits, exercice]
   );
 
   async function ajusterCompteur(id: string) {
@@ -434,6 +444,11 @@ function SuiviRHContenu() {
     [lignes]
   );
 
+  /* CP_PERIODE_LEGALE : la période CP affichée (celle de tous, sinon « période de chacun ») */
+  const moisAn = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  const periodesCP = [...new Set(lignes.map((l) => `${l.cpDu}|${l.cpAu}`))];
+  const libellePeriodeCP =
+    periodesCP.length === 1 ? `${moisAn(periodesCP[0].split("|")[0])} → ${moisAn(periodesCP[0].split("|")[1])}` : periodesCP.length === 0 ? `juin ${exercice} → mai ${exercice + 1}` : "période de chacun";
   const th: CSSProperties = { ...page.th, textAlign: "right", whiteSpace: "nowrap", padding: "8px 6px" };
   const thG: CSSProperties = { ...th, textAlign: "left" };
   const td: CSSProperties = { ...page.td, textAlign: "right", whiteSpace: "nowrap", padding: "8px 6px" };
@@ -448,11 +463,11 @@ function SuiviRHContenu() {
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
           <div>
             <h1 style={page.titre}>Suivi RH</h1>
-            <p style={page.sousTitre}>Congés, RTT et compteur de récupération de chaque collaborateur sur l’exercice : soldes et historique des mouvements.</p>
+            <p style={page.sousTitre}>Congés payés sur leur période légale d’acquisition (1er juin → 31 mai, réglable dans les droits de chacun) ; RTT, compteur de récupération et heures sup sur l’exercice (novembre → octobre).</p>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice((e) => e - 1)} aria-label="Exercice précédent">◀</button>
-            <strong style={{ fontSize: 17 }}>Exercice {exercice}-{exercice + 1}</strong>
+            <strong style={{ fontSize: 17, textAlign: "center" }}>Exercice {exercice}-{exercice + 1}<div style={{ fontSize: 12, fontWeight: 600, color: C.gris }}>CP : {libellePeriodeCP}</div></strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice((e) => e + 1)} aria-label="Exercice suivant">▶</button>
           </div>
         </div>
@@ -549,9 +564,10 @@ function SuiviRHContenu() {
                 <thead>
                   <tr>
                     <th style={thG} rowSpan={2}>Collaborateur</th>
-                    <th style={{ ...th, ...sep, textAlign: "center" }} colSpan={4}>Congés payés (j)</th>
+                    <th style={{ ...th, ...sep, textAlign: "center" }} colSpan={4} title="Sur la période d’acquisition des CP (1er juin → 31 mai par défaut, réglable dans les droits de chacun)">Congés payés (j) · {libellePeriodeCP}</th>
                     <th style={{ ...th, ...sep, textAlign: "center" }} colSpan={3}>RTT (j)</th>
                     <th style={{ ...th, ...sep, textAlign: "center" }} colSpan={5}>Compteur de récupération (h)</th>
+                    <th style={{ ...th, ...sep, textAlign: "center" }} rowSpan={2} title="Heures sup payées sur l’exercice : la part que le collaborateur n’a pas mise au compteur, à la clôture du mois">HS payées (h)</th>
                   </tr>
                   <tr>
                     <th style={{ ...th, ...sep }}>Droits</th>
@@ -562,8 +578,8 @@ function SuiviRHContenu() {
                     <th style={th}>Pris</th>
                     <th style={th}>Solde</th>
                     <th style={{ ...th, ...sep }}>Initial</th>
-                    <th style={th} title="Heures sup mises au compteur sur l’exercice">+ HS</th>
-                    <th style={th} title="Récupérations prises sur l’exercice">− RE</th>
+                    <th style={th} title="RE+ : heures sup mises au compteur sur l’exercice (choix du collaborateur à la clôture du mois)">RE+</th>
+                    <th style={th} title="RE− : récupérations prises sur l’exercice">RE−</th>
                     <th style={th} title="Ajustements manuels sur l’exercice">± Ajust.</th>
                     <th style={th}>Actuel</th>
                   </tr>
@@ -598,11 +614,12 @@ function SuiviRHContenu() {
                           <td style={{ ...td, fontWeight: 800, color: l.compteur > 30 ? "#b3261e" : l.compteur < 0 ? "#7a3e00" : "#1b5e20" }}>
                             {fmt(l.compteur)}
                             {l.compteur > 30 && " ⚠"}
-                          </td>
+</td>
+<td style={{ ...td, ...sep, color: "#5b6168" }}>{l.hsPayees ? fmt(l.hsPayees) : "—"}</td>
                         </tr>
                         {ouverte && (
                           <tr>
-                            <td colSpan={13} style={{ ...tdG, background: "#fafbfc", padding: "12px 16px", whiteSpace: "normal" }}>
+                            <td colSpan={14} style={{ ...tdG, background: "#fafbfc", padding: "12px 16px", whiteSpace: "normal" }}>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
                                 <div style={{ flex: "2 1 520px", minWidth: 0 }}>
                                   <strong>Historique de l’exercice</strong>

@@ -17,6 +17,8 @@
      « Envoyer aux RH » au lieu de « Enregistrer » et « Valider ».
    - app/admin/bilan-rh/page.tsx : « Marquer comme envoyé aux RH », et
      ouverture sur un mois (?mois=2026-11).
+   - app/admin/suivi-rh/page.tsx : colonnes RE+, RE− et HS payées ; les CP
+     comptés sur leur période légale (1er juin → 31 mai) et non sur l'exercice.
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
@@ -67,6 +69,12 @@ function remplacerRe(fichier, re, remplace, libelle) {
   }
   fichier.texte = fichier.texte.replace(re, remplace);
   console.log(`  ✓ ${fichier.rel} : ${libelle}`);
+}
+
+/* passage cherché mot à mot, les espaces et retours à la ligne pouvant varier */
+function remplacerSouple(fichier, cherche, remplace, libelle) {
+  const motif = cherche.trim().split(/\s+/).map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  remplacerRe(fichier, new RegExp(motif), () => remplace, libelle);
 }
 
 /* 0. Bon dossier, ZIP bien décompressé */
@@ -256,6 +264,37 @@ if (bilanRH && !erreurs.length) {
       "bouton « Marquer comme envoyé aux RH »"
     );
     ecritures.push(bilanRH);
+  }
+}
+
+/* 3 sexies. app/admin/suivi-rh/page.tsx : RE+ / RE− / HS payées, CP sur leur période légale (CP_PERIODE_LEGALE) */
+const suiviRH = lire("app/admin/suivi-rh/page.tsx");
+if (suiviRH && !erreurs.length) {
+  if (suiviRH.texte.includes("CP_PERIODE_LEGALE")) {
+    console.log("  = app/admin/suivi-rh/page.tsx : déjà à jour");
+  } else {
+    remplacerSouple(suiviRH, ".gte(\"date_debut\", debutEx).lte(\"date_debut\", finEx)", ".gte(\"date_debut\", `${exercice - 1}-01-01`).lte(\"date_debut\", `${exercice + 2}-12-31`) /* CP_PERIODE_LEGALE : de quoi couvrir la période CP de chacun */", "demandes lues sur une période plus large");
+    remplacerSouple(suiviRH, "const ds = demandes.filter((x) => x.collaborateur_id === c.id);", "const ds = demandes.filter((x) => x.collaborateur_id === c.id);\n        // CP_PERIODE_LEGALE : les CP se comptent sur leur période d'acquisition (1er juin → 31 mai par défaut, réglable dans les droits),\n        // les RTT sur l'exercice (novembre → octobre)\n        const cpDu = d?.cp_periode_debut ?? `${exercice}-06-01`;\n        const cpAu = d?.cp_periode_fin ?? `${exercice + 1}-05-31`;\n        const dansCP = (x: Demande) => x.date_debut >= cpDu && x.date_debut <= cpAu;\n        const dansEx = (x: Demande) => x.date_debut >= debutEx && x.date_debut <= finEx;", "période CP de chacun");
+    remplacerSouple(suiviRH, "const cpPris = somme((x) => estCP(x.type_demande) && ACCORDEE.includes(x.statut));", "const cpPris = somme((x) => estCP(x.type_demande) && dansCP(x) && ACCORDEE.includes(x.statut));", "CP pris sur la période CP");
+    remplacerSouple(suiviRH, "const cpAttente = somme((x) => estCP(x.type_demande) && x.statut === \"EN_ATTENTE\");", "const cpAttente = somme((x) => estCP(x.type_demande) && dansCP(x) && x.statut === \"EN_ATTENTE\");", "CP en attente sur la période CP");
+    remplacerSouple(suiviRH, "const rttPris = somme((x) => x.type_demande === \"RTT\" && ACCORDEE.includes(x.statut));", "const rttPris = somme((x) => x.type_demande === \"RTT\" && dansEx(x) && ACCORDEE.includes(x.statut));", "RTT pris sur l'exercice");
+    remplacerSouple(suiviRH, "const rttAttente = somme((x) => x.type_demande === \"RTT\" && x.statut === \"EN_ATTENTE\");", "const rttAttente = somme((x) => x.type_demande === \"RTT\" && dansEx(x) && x.statut === \"EN_ATTENTE\");", "RTT en attente sur l'exercice");
+    remplacerSouple(suiviRH, "cpDroits, cpPris,", "cpDroits, cpDu, cpAu, cpPris,", "période CP gardée sur la ligne");
+    remplacerSouple(suiviRH, "}, [collabs, droits, demandes, feuilles, regs, recherche, debutEx, finEx]);", "}, [collabs, droits, demandes, feuilles, regs, recherche, debutEx, finEx, exercice]);", "dépendances du calcul");
+    remplacerSouple(suiviRH, "for (const x of demandes.filter((x) => x.collaborateur_id === id)) {", "const dr = droits.find((x) => x.collaborateur_id === id);\n      const cpDu = dr?.cp_periode_debut ?? `${exercice}-06-01`;\n      const cpAu = dr?.cp_periode_fin ?? `${exercice + 1}-05-31`;\n      for (const x of demandes.filter(\n        (x) => x.collaborateur_id === id && (estCP(x.type_demande) ? x.date_debut >= cpDu && x.date_debut <= cpAu : x.date_debut >= debutEx && x.date_debut <= finEx)\n      )) {", "historique : CP sur leur période");
+    remplacerSouple(suiviRH, "[demandes, feuilles, regs, collabs, debutEx, finEx]", "[demandes, feuilles, regs, collabs, debutEx, finEx, droits, exercice]", "dépendances de l'historique");
+    remplacerSouple(suiviRH, "hs ? `+${fmt(hs)} h sup au compteur` : \"\"", "hs ? `RE+ ${fmt(hs)} h (heures sup mises au compteur)` : \"\"", "historique : RE+");
+    remplacerSouple(suiviRH, "re ? `−${fmt(re)} h de RE` : \"\"", "re ? `RE− ${fmt(re)} h` : \"\"", "historique : RE−");
+    remplacerSouple(suiviRH, "Congés, RTT et compteur de récupération de chaque collaborateur sur l’exercice : soldes et historique des mouvements.", "Congés payés sur leur période légale d’acquisition (1er juin → 31 mai, réglable dans les droits de chacun) ; RTT, compteur de récupération et heures sup sur l’exercice (novembre → octobre).", "sous-titre");
+    remplacerSouple(suiviRH, "<strong style={{ fontSize: 17 }}>Exercice {exercice}-{exercice + 1}</strong>", "<strong style={{ fontSize: 17, textAlign: \"center\" }}>Exercice {exercice}-{exercice + 1}<div style={{ fontSize: 12, fontWeight: 600, color: C.gris }}>CP : {libellePeriodeCP}</div></strong>", "période CP sous l'exercice");
+    remplacerSouple(suiviRH, "const th: CSSProperties = { ...page.th, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"8px 6px\" };", "/* CP_PERIODE_LEGALE : la période CP affichée (celle de tous, sinon « période de chacun ») */\n  const moisAn = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(\"fr-FR\", { month: \"long\", year: \"numeric\" });\n  const periodesCP = [...new Set(lignes.map((l) => `${l.cpDu}|${l.cpAu}`))];\n  const libellePeriodeCP =\n    periodesCP.length === 1 ? `${moisAn(periodesCP[0].split(\"|\")[0])} → ${moisAn(periodesCP[0].split(\"|\")[1])}` : periodesCP.length === 0 ? `juin ${exercice} → mai ${exercice + 1}` : \"période de chacun\";\n  const th: CSSProperties = { ...page.th, textAlign: \"right\", whiteSpace: \"nowrap\", padding: \"8px 6px\" };", "libellé de la période CP");
+    remplacerSouple(suiviRH, "<th style={{ ...th, ...sep, textAlign: \"center\" }} colSpan={4}>Congés payés (j)</th>", "<th style={{ ...th, ...sep, textAlign: \"center\" }} colSpan={4} title=\"Sur la période d’acquisition des CP (1er juin → 31 mai par défaut, réglable dans les droits de chacun)\">Congés payés (j) · {libellePeriodeCP}</th>", "en-tête CP");
+    remplacerSouple(suiviRH, "<th style={{ ...th, ...sep, textAlign: \"center\" }} colSpan={5}>Compteur de récupération (h)</th>", "<th style={{ ...th, ...sep, textAlign: \"center\" }} colSpan={5}>Compteur de récupération (h)</th>\n                    <th style={{ ...th, ...sep, textAlign: \"center\" }} rowSpan={2} title=\"Heures sup payées sur l’exercice : la part que le collaborateur n’a pas mise au compteur, à la clôture du mois\">HS payées (h)</th>", "colonne HS payées");
+    remplacerSouple(suiviRH, "<th style={th} title=\"Heures sup mises au compteur sur l’exercice\">+ HS</th>", "<th style={th} title=\"RE+ : heures sup mises au compteur sur l’exercice (choix du collaborateur à la clôture du mois)\">RE+</th>", "colonne RE+");
+    remplacerSouple(suiviRH, "<th style={th} title=\"Récupérations prises sur l’exercice\">− RE</th>", "<th style={th} title=\"RE− : récupérations prises sur l’exercice\">RE−</th>", "colonne RE−");
+    remplacerSouple(suiviRH, "{l.compteur > 30 && \" ⚠\"}\n</td>", "{l.compteur > 30 && \" ⚠\"}\n</td>\n<td style={{ ...td, ...sep, color: \"#5b6168\" }}>{l.hsPayees ? fmt(l.hsPayees) : \"—\"}</td>", "valeur HS payées");
+    remplacerSouple(suiviRH, "<td colSpan={13}", "<td colSpan={14}", "largeur du détail");
+    ecritures.push(suiviRH);
   }
 }
 
