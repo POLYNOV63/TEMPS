@@ -71,6 +71,7 @@ type Ligne = {
   famille?: { numeros: string[]; chiffre: number; detail?: { numero: string; chiffre: number }[] };
   dansFamille?: string; // numéro de la ligne qui porte le réalisé de la famille
   aAffecter: number; // heures de CETTE commande restant à mettre au planning
+  delaiClient?: string | null; // DELAI_ESTIME : délai de la commande (client), pour mémoire
 };
 
 type FiltreStatut = "ACTIVES" | "EN_COURS" | "EN_ATTENTE";
@@ -120,6 +121,8 @@ function PortefeuilleContenu() {
     dbe: new Map(),
   });
   const [recherche, setRecherche] = useState("");
+  /* DELAI_ESTIME : délai estimé et délai client de chaque commande (Suivi d'affaire BE), par n° (« 1604R2 ») */
+  const [delaisSuivi, setDelaisSuivi] = useState<Map<string, { estime: string | null; client: string | null }>>(new Map());
   const [toutesAlertes, setToutesAlertes] = useState(false);
 
   /* PORTEFEUILLE_PERIODE : pointé sur une période (fonction pointage_periode, SQL 73), filtre d'activité */
@@ -252,8 +255,8 @@ function PortefeuilleContenu() {
         // Client (nom abrégé) : vient du Suivi d'affaire BE. Absent si la synchro n'a jamais tourné.
         try {
           const [sl, sc] = await Promise.all([
-            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string }>((de, a) =>
-              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id").order("cle").range(de, a)
+            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string; numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null }>((de, a) =>
+              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id,numero_affaire,delai,date_livraison_estimee").order("cle").range(de, a)
             ),
             chargerTout<{ id: string; nom_abrege: string }>((de, a) =>
               supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(de, a)
@@ -272,6 +275,11 @@ function PortefeuilleContenu() {
             if (l.base_devis && !dbe.has(l.base_devis)) dbe.set(l.base_devis, nom);
           }
           setClientsParAffaire({ cbe, dbe });
+          const delais = new Map<string, { estime: string | null; client: string | null }>();
+          for (const l of sl)
+            if (l.numero_affaire && (l.genre === "BASE" || l.genre === "AVENANT"))
+              delais.set(l.numero_affaire.toUpperCase().replace(/^\s*CBE\s*/, "").replace(/^0+/, ""), { estime: l.date_livraison_estimee?.slice(0, 10) ?? null, client: l.delai?.slice(0, 10) ?? null });
+          setDelaisSuivi(delais);
           setDevisParCbe(devis);
         } catch {
           /* pas de copie du classeur : la colonne Client reste vide */
@@ -301,7 +309,10 @@ function PortefeuilleContenu() {
     const parAffaireRealise = indexParAffaire(realise);
     const aujourdhui = aujourdhuiISO();
 
-    const brut: Ligne[] = affaires.map((affaire) => {
+    const brut: Ligne[] = affaires.map((affaireBrute) => {
+      // DELAI_ESTIME : le délai estimé (Excel) fait foi pour l'état et le tri ; le délai client reste pour mémoire
+      const dsE = affaireBrute.type === "CBE" ? delaisSuivi.get(affaireBrute.numero.toUpperCase().replace(/^0+/, "")) : undefined;
+      const affaire = dsE?.estime ? { ...affaireBrute, echeance: dsE.estime } : affaireBrute;
       // MONTANT_HORS_COMPARAISON : scan / négoce pointés sans chiffré correspondant : hors comparaison au chiffré
       const actChiffrees = new Set((parAffaireCharges.get(affaire.id) ?? []).filter((c) => (Number(c.heures) || 0) > 0).map((c) => c.activite_id));
       const totaux = totauxAffaire(
@@ -352,6 +363,7 @@ function PortefeuilleContenu() {
         planning: p,
         etat: etatAffaire(affaire, totaux, aujourdhui, planning),
         aAffecter: totaux.reste - p.planifie,
+        delaiClient: dsE?.client ?? null,
       } as Ligne;
     });
 
@@ -418,7 +430,7 @@ function PortefeuilleContenu() {
       }
     }
     return brut;
-  }, [affaires, charges, realise, planifies, imputations, clientsParAffaire, nomsActivites]);
+  }, [affaires, charges, realise, planifies, imputations, clientsParAffaire, nomsActivites, delaisSuivi]);
 
   const planningActif = planifies.size > 0;
 
@@ -738,7 +750,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="designation" libelle="Descriptif" />
             <EnTeteTri col="client" libelle="Client" />
             <EnTeteTri col="resp" libelle="Resp." />
-            <EnTeteTri col="echeance" libelle="Délai" />
+            <EnTeteTri col="echeance" libelle="Délai estimé" />
             <EnTeteTri col="realise" libelle="Réalisé / Chiffré" centre />
             <EnTeteTri col="depassement" libelle="Dépassement" num />
             {bornes && <th style={thNum} title="Heures pointées sur la période choisie">Sur la période</th>}
@@ -832,6 +844,11 @@ function PortefeuilleContenu() {
                             : ""
                           : ""}
                     </div>
+                    {l.delaiClient && l.delaiClient !== affaire.echeance && affaire.statut !== "LIVREE" && (
+                      <div style={petit} title="Délai client : celui de la commande (colonne « Délai » du Suivi d’affaire BE)">
+                        client : {formatDate(l.delaiClient)}
+                      </div>
+                    )}
                   </td>
                   {/* PORTEFEUILLE_V2 : réalisé / chiffré, en une colonne, avec la barre */}
                   <td style={{ ...tdNum, minWidth: 190, textAlign: "center" }}>
