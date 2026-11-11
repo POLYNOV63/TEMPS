@@ -1,7 +1,7 @@
 "use client";
 
 /* ===============================================================
-   FINANCES - TRAME CA (TRAME_CA_V8 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6, TRAME_CA_V7)
+   FINANCES - TRAME CA (TRAME_CA_V9 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6, TRAME_CA_V7, TRAME_CA_V8)
 
    Le tableau du classeur « trame_CA.xlsm », rempli par l'application,
    sur les 12 mois de l'exercice (novembre → octobre) :
@@ -26,13 +26,19 @@
    (mois en cours exclu) ; prévisionnel et atterrissage restent sur 12 mois.
    V8 : le tableau reste dans sa carte (défilement horizontal si besoin),
    colonnes plus serrées.
+   V9 (TRAME_BLOCS) : les lignes sont rangées en BLOCS bien séparés, chacun
+   avec sa couleur, son titre et un espace avant le suivant :
+   « Le mois : objectif, réalisé, atterrissage », « Cumuls depuis
+   novembre », « Comparaison avec N-1 », puis le détail (BE / PI / IG,
+   négoce et scan, PE, frais annexes), REPLIÉ par défaut avec son total
+   dans le titre ; « tout déplier » / « tout replier ».
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
    au « Réalisé » du tableau des 12 mois.
 ================================================================ */
 
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { C, Tuile, page } from "@/components/pilotage/ui";
 import { exporterExcelPolynov, type ColonneExcel } from "@/lib/excelPolynov";
 import { supabase } from "@/lib/supabase";
@@ -115,6 +121,9 @@ type Ligne =
       clic?: (i: number) => void; // montant cliquable : son détail
     };
 
+/* TRAME_BLOCS : un bloc de lignes, avec sa couleur ; repliable = détail, replié par défaut */
+type Bloc = { cle: string; titre: string; aide?: string; couleur: string; repliable: boolean; resume?: string; lignes: Ligne[] };
+
 export default function TrameCA(props: {
   exercice: number;
   mois: string[];
@@ -143,6 +152,7 @@ export default function TrameCA(props: {
   const [message, setMessage] = useState("");
   const [ajustements, setAjustements] = useState<Ajustement[]>([]);
   const [erreurFrais, setErreurFrais] = useState("");
+  const [ouverts, setOuverts] = useState<Set<string>>(new Set()); // TRAME_BLOCS : blocs de détail dépliés
 
   async function chargerAjustements() {
     const { data, error } = await supabase.from("finances_ajustements").select("id,mois,montant,motif");
@@ -245,120 +255,175 @@ export default function TrameCA(props: {
     const nonNul = (v: number[]) => v.some((x) => Math.abs(x) >= 0.5);
     const jusquA = (v: number[]) => v.map((x, i) => (ecoule[i] ? x : null));
 
-    const lignes: Ligne[] = [
-      { kind: "titre", libelle: "Totaux — réalisé, attendu, atterrissage, prévisionnel" },
-      { kind: "valeurs", libelle: "Prévisionnel du mois", valeurs: prevu, total: objectif, moyenne: objectif / 12, saisie: true },
+    const blocs: Bloc[] = [
       {
-        kind: "valeurs",
-        libelle: "TOTAL CA MENSUEL (réalisé)",
-        valeurs: total,
-        total: totalAnnuel,
-        moyenne: moyClos(total),
-        style: "total",
-        clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
+        cle: "MOIS",
+        titre: "Le mois : objectif, réalisé, atterrissage",
+        aide: "réalisé + attendu = atterrissage, face au prévisionnel",
+        couleur: C.rouge,
+        repliable: false,
+        lignes: [
+          { kind: "valeurs", libelle: "Prévisionnel du mois", valeurs: prevu, total: objectif, moyenne: objectif / 12, saisie: true },
+          {
+            kind: "valeurs",
+            libelle: "TOTAL CA MENSUEL (réalisé)",
+            valeurs: total,
+            total: totalAnnuel,
+            moyenne: moyClos(total),
+            style: "total",
+            clic: onDetail ? (i) => onDetail(i, "REALISE") : undefined,
+          },
+          {
+            kind: "valeurs",
+            libelle: "Attendu (pas encore livré ou facturé)",
+            valeurs: attendu,
+            total: tot(attendu),
+            style: "attendu",
+            clic: onDetail ? (i) => onDetail(i, "ATTENDU") : undefined,
+          },
+          ...(nonNul(faitPlusTard)
+            ? [
+                {
+                  kind: "valeurs" as const,
+                  libelle: "Fait, facturé plus tard (hors atterrissage)",
+                  valeurs: faitPlusTard,
+                  total: tot(faitPlusTard),
+                  style: "info" as const,
+                  clic: onDetailReport,
+                },
+              ]
+            : []),
+          {
+            kind: "valeurs",
+            libelle: "ATTERRISSAGE (réalisé + attendu)",
+            valeurs: atterrissage,
+            total: tot(atterrissage),
+            moyenne: tot(atterrissage) / 12,
+            style: "total",
+            clic: onDetail ? (i) => onDetail(i, "ATTERRISSAGE") : undefined,
+          },
+          {
+            kind: "valeurs",
+            libelle: "Écart atterrissage − prévisionnel",
+            valeurs: atterrissage.map((v, i) => (prevu[i] > 0 ? v - prevu[i] : null)),
+            total: objectif > 0 ? tot(atterrissage) - objectif : null,
+            style: "ecart",
+          },
+        ],
       },
       {
-        kind: "valeurs",
-        libelle: "Attendu (pas encore livré ou facturé)",
-        valeurs: attendu,
-        total: tot(attendu),
-        style: "attendu",
-        clic: onDetail ? (i) => onDetail(i, "ATTENDU") : undefined,
-      },
-      ...(nonNul(faitPlusTard)
-        ? [
-            {
-              kind: "valeurs" as const,
-              libelle: "Fait, facturé plus tard (hors atterrissage)",
-              valeurs: faitPlusTard,
-              total: tot(faitPlusTard),
-              style: "info" as const,
-              clic: onDetailReport,
-            },
-          ]
-        : []),
-      {
-        kind: "valeurs",
-        libelle: "ATTERRISSAGE (réalisé + attendu)",
-        valeurs: atterrissage,
-        total: tot(atterrissage),
-        moyenne: tot(atterrissage) / 12,
-        style: "total",
-        clic: onDetail ? (i) => onDetail(i, "ATTERRISSAGE") : undefined,
+        cle: "CUMULS",
+        titre: "Cumuls depuis novembre",
+        aide: "où en est-on par rapport à l’objectif annuel",
+        couleur: "#34506b",
+        repliable: false,
+        lignes: [
+          { kind: "valeurs", libelle: "TOTAL CUMULÉ (réalisé)", valeurs: jusquA(cumul), total: cumulADate, style: "sous-total" },
+          { kind: "valeurs", libelle: "PRÉVISIONNEL (cumulé)", valeurs: prevuCumul, total: objectif },
+          {
+            kind: "valeurs",
+            libelle: "ÉCART CA / PRÉVI CUMULÉ",
+            valeurs: jusquA(cumul.map((v, i) => v - prevuCumul[i])),
+            total: objectif > 0 ? totalAnnuel - objectif : null,
+            style: "ecart",
+          },
+          { kind: "valeurs", libelle: "Cumul atterrissage", valeurs: cumulAtter, total: tot(atterrissage) },
+          {
+            kind: "valeurs",
+            libelle: "Écart / objectif (cumul ÷ prévi annuel)",
+            valeurs: jusquA(cumul.map((v) => (objectif > 0 ? v / objectif : NaN))),
+            total: objectif > 0 ? cumulADate / objectif : null,
+            format: "pct",
+          },
+        ],
       },
       {
-        kind: "valeurs",
-        libelle: "Écart atterrissage − prévisionnel",
-        valeurs: atterrissage.map((v, i) => (prevu[i] > 0 ? v - prevu[i] : null)),
-        total: objectif > 0 ? tot(atterrissage) - objectif : null,
-        style: "ecart",
-      },
-      { kind: "valeurs", libelle: "TOTAL CUMULÉ (réalisé)", valeurs: jusquA(cumul), total: cumulADate, style: "sous-total" },
-      { kind: "valeurs", libelle: "PRÉVISIONNEL (cumulé)", valeurs: prevuCumul, total: objectif },
-      {
-        kind: "valeurs",
-        libelle: "ÉCART CA / PRÉVI CUMULÉ",
-        valeurs: jusquA(cumul.map((v, i) => v - prevuCumul[i])),
-        total: objectif > 0 ? totalAnnuel - objectif : null,
-        style: "ecart",
-      },
-      { kind: "valeurs", libelle: "Cumul atterrissage", valeurs: cumulAtter, total: tot(atterrissage) },
-      {
-        kind: "valeurs",
-        libelle: `ÉCART MENSUEL N-1 (${exercice - 1}-${exercice})`,
-        valeurs: jusquA(total.map((v, i) => v - total1[i])),
-        total: tot(total.slice(0, nbEcoules || 12)) - tot(total1.slice(0, nbEcoules || 12)),
-        style: "ecart",
-      },
-      {
-        kind: "valeurs",
-        libelle: "Évolution vs N-1",
-        valeurs: jusquA(total.map((v, i) => (total1[i] > 0 ? v / total1[i] - 1 : NaN))),
-        total: (() => {
-          const a = tot(total1.slice(0, nbEcoules || 12));
-          return a > 0 ? tot(total.slice(0, nbEcoules || 12)) / a - 1 : null;
-        })(),
-        format: "pct",
-        style: "ecart",
+        cle: "N1",
+        titre: `Comparaison avec N-1 (${exercice - 1}-${exercice})`,
+        couleur: "#5b6168",
+        repliable: false,
+        lignes: [
+          {
+            kind: "valeurs",
+            libelle: "ÉCART MENSUEL N-1",
+            valeurs: jusquA(total.map((v, i) => v - total1[i])),
+            total: tot(total.slice(0, nbEcoules || 12)) - tot(total1.slice(0, nbEcoules || 12)),
+            style: "ecart",
+          },
+          {
+            kind: "valeurs",
+            libelle: "Évolution vs N-1",
+            valeurs: jusquA(total.map((v, i) => (total1[i] > 0 ? v / total1[i] - 1 : NaN))),
+            total: (() => {
+              const a = tot(total1.slice(0, nbEcoules || 12));
+              return a > 0 ? tot(total.slice(0, nbEcoules || 12)) / a - 1 : null;
+            })(),
+            format: "pct",
+            style: "ecart",
+          },
+        ],
       },
       {
-        kind: "valeurs",
-        libelle: "Écart / objectif (cumul ÷ prévi annuel)",
-        valeurs: jusquA(cumul.map((v) => (objectif > 0 ? v / objectif : NaN))),
-        total: objectif > 0 ? cumulADate / objectif : null,
-        format: "pct",
+        cle: "BE",
+        titre: "Détail : BE, PI, IG par activité",
+        couleur: "#6b58a8",
+        repliable: true,
+        resume: euros(tot(somme(r.be_meca, r.be_calcul, r.be_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.ig_meca, r.ig_calcul, r.ig_elec))),
+        lignes: [
+          { kind: "titre", libelle: "BE — chiffrage sur CDC" },
+          ca("Méca BE", r.be_meca, undefined, ra.be_meca),
+          ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
+          ca("Elec BE", r.be_elec, undefined, ra.be_elec),
+          { kind: "titre", libelle: "PI — prestation interne" },
+          ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
+          ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
+          ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
+          { kind: "titre", libelle: "IG — intergroupe" },
+          ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
+          ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
+          ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
+        ],
       },
-      { kind: "titre", libelle: "Détail du réalisé — BE, Chiffrage sur CDC" },
-      ca("Méca BE", r.be_meca, undefined, ra.be_meca),
-      ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
-      ca("Elec BE", r.be_elec, undefined, ra.be_elec),
-      { kind: "titre", libelle: "PI — Prestation interne" },
-      ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
-      ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
-      ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
-      { kind: "titre", libelle: "IG — Intergroupe" },
-      ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
-      ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
-      ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
-      { kind: "titre", libelle: "Négoce, scan, achats" },
-      ca("Négoce", r.negoce, undefined, ra.negoce),
-      ca("CA Scan", r.scan, undefined, ra.scan),
-      ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
-      ca("Achats sur affaires", r.achats, "info"),
-      ca("CA BE sans HA", caBE, "sous-total", caBEa),
-      { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: moyClos(caBEnet), style: "sous-total", attendu: caBEa },
-      { kind: "titre", libelle: "PE — Prestation externe" },
-      ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
-      ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
-      ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
-      ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
-      ca("CA PE", caPE, "sous-total", caPEa),
-      { kind: "titre", libelle: "Frais annexes de refacturation (ajustements)" },
-      { ...ca("Positif", r.fa_pos), saisieFrais: "POS" } as Ligne,
-      { ...ca("Négatif", r.fa_neg), saisieFrais: "NEG" } as Ligne,
+      {
+        cle: "NEGOCE",
+        titre: "Détail : négoce, scan, achats et CA BE",
+        couleur: "#8d6e63",
+        repliable: true,
+        resume: `CA BE ${euros(tot(caBE))}`,
+        lignes: [
+          ca("Négoce", r.negoce, undefined, ra.negoce),
+          ca("CA Scan", r.scan, undefined, ra.scan),
+          ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
+          ca("Achats sur affaires", r.achats, "info"),
+          ca("CA BE sans HA", caBE, "sous-total", caBEa),
+          { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: moyClos(caBEnet), style: "sous-total", attendu: caBEa },
+        ],
+      },
+      {
+        cle: "PE",
+        titre: "Détail : PE — prestation externe",
+        couleur: "#e08a1e",
+        repliable: true,
+        resume: `CA PE ${euros(tot(caPE))}`,
+        lignes: [
+          ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
+          ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
+          ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
+          ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
+          ca("CA PE", caPE, "sous-total", caPEa),
+        ],
+      },
+      {
+        cle: "FRAIS",
+        titre: "Frais annexes de refacturation (ajustements)",
+        couleur: "#9aa0a6",
+        repliable: true,
+        resume: euros(tot(r.fa_pos) - tot(r.fa_neg)),
+        lignes: [{ ...ca("Positif", r.fa_pos), saisieFrais: "POS" } as Ligne, { ...ca("Négatif", r.fa_neg), saisieFrais: "NEG" } as Ligne],
+      },
     ];
 
-    return { lignes, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
+    return { blocs, total, total1, cumulADate, objectif, achatsTotal: tot(r.achats), totalAnnuel };
   }, [mouvements, props.attendus, mois, moisN1, prevu, attendu, faitPlusTard, exercice, moisCourant, onDetail, onDetailReport]);
 
   /* ------------------------------ remplir le prévisionnel ------------------------------ */
@@ -415,9 +480,7 @@ export default function TrameCA(props: {
         titre: `Trame CA — exercice ${exercice}-${exercice + 1}`,
         sousTitre: `Du 1er novembre ${exercice} au 31 octobre ${exercice + 1} · en date du ${new Date().toLocaleDateString("fr-FR")} · montants réalisés (facturés), en €`,
         colonnes,
-        lignes: [
-          ...versExcel(trame.lignes),
-        ],
+        lignes: versExcel(trame.blocs.flatMap((b): Ligne[] => [{ kind: "titre", libelle: b.titre.toUpperCase() }, ...b.lignes])),
         alerte: (l) => String(l.poste).startsWith("ÉCART") && Number(l.total ?? 0) < 0,
         notes: [
           "Réalisé = forfaits livrés, échéances / lots livrés, PE / PI des mois clôturés du relevé (et l’historique importé de l’ancien Suivi des prestations).",
@@ -431,24 +494,28 @@ export default function TrameCA(props: {
   /* ------------------------------ rendu ------------------------------ */
 
   const th: CSSProperties = { ...page.th, textAlign: "right", padding: "5px 4px", fontSize: 11, whiteSpace: "nowrap" };
-  const td: CSSProperties = { textAlign: "right", whiteSpace: "nowrap", padding: "3px 4px", fontSize: 12, borderBottom: `1px solid ${C.ligne}` };
+  const td: CSSProperties = { textAlign: "right", whiteSpace: "nowrap", padding: "4px 4px", fontSize: 12, borderBottom: `1px solid ${C.ligne}` };
   const tdPct: CSSProperties = { ...td, color: C.gris, fontSize: 11 };
-  const colPoste: CSSProperties = { position: "sticky", left: 0, background: "#ffffff", zIndex: 1, textAlign: "left", minWidth: 190, maxWidth: 230, whiteSpace: "normal" };
+  const colPoste: CSSProperties = { position: "sticky", left: 0, background: "#ffffff", zIndex: 1, textAlign: "left", minWidth: 200, maxWidth: 240, whiteSpace: "normal" };
   const nbCol = 1 + mois.length + 1 + 1;
 
-  const rendre = (liste: Ligne[], prefixe: string) =>
+  const rendre = (liste: Ligne[], prefixe: string, couleur: string) =>
     liste.map((l, k) => {
+      const bordBloc: CSSProperties = { borderLeft: `5px solid ${couleur}` };
       if (l.kind === "titre")
         return (
           <tr key={`${prefixe}-${k}`}>
-            <td colSpan={nbCol} style={{ ...td, textAlign: "left", fontWeight: 800, background: "#eef0f3", fontSize: 11, textTransform: "uppercase", letterSpacing: ".4px", position: "sticky", left: 0 }}>
+            <td
+              colSpan={nbCol}
+              style={{ ...td, ...bordBloc, textAlign: "left", fontWeight: 800, background: "#f7f8f9", color: "#5b6168", fontSize: 11, textTransform: "uppercase", letterSpacing: ".4px", paddingLeft: 14, position: "sticky", left: 0 }}
+            >
               {l.libelle}
             </td>
           </tr>
         );
       const fond = l.style === "total" ? "#fff4f4" : l.style === "sous-total" ? "#f6f7f9" : undefined;
       const poids = l.style === "total" || l.style === "sous-total" ? 800 : 400;
-      const couleur = (v: number | null) =>
+      const couleurVal = (v: number | null) =>
         l.style === "ecart" && v !== null && Number.isFinite(v) && Math.abs(v) >= (l.format === "pct" ? 0.005 : 0.5) ? (v < 0 ? C.rougeTexte : "#1b5e20") : l.style === "info" ? C.gris : l.style === "attendu" ? ROUGE_ATTENDU : undefined;
       const affiche = (v: number | null) => {
         if (v === null || !Number.isFinite(v)) return "—";
@@ -459,12 +526,23 @@ export default function TrameCA(props: {
       const part = (v: number | null, b: number | undefined) => (l.base && v !== null && b && b > 0 ? pourcent(v / b) : "");
       return (
         <tr key={`${prefixe}-${k}`} style={{ background: fond }}>
-          <td style={{ ...td, ...colPoste, background: fond ?? "#ffffff", fontWeight: poids, fontStyle: l.style === "info" || l.style === "attendu" ? "italic" : undefined, color: l.style === "attendu" ? ROUGE_ATTENDU : undefined }}>
+          <td
+            style={{
+              ...td,
+              ...colPoste,
+              ...bordBloc,
+              background: fond ?? "#ffffff",
+              fontWeight: poids,
+              fontStyle: l.style === "info" || l.style === "attendu" ? "italic" : undefined,
+              color: l.style === "attendu" ? ROUGE_ATTENDU : undefined,
+              paddingLeft: l.style === "total" || l.style === "sous-total" ? 8 : 14,
+            }}
+          >
             {l.libelle}
             {voirAttendu && l.attendu && l.attendu.some((x) => Math.abs(x) >= 0.5) && <div style={{ ...styleAttendu, textAlign: "left" }}>dont attendu</div>}
           </td>
           {l.valeurs.map((v, i) => [
-            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleur(v), background: mois[i] === moisCourant ? "#fffafa" : undefined, padding: (l.saisie || l.saisieFrais) && estAdmin ? 2 : td.padding }}>
+            <td key={`v${i}`} style={{ ...td, fontWeight: poids, color: couleurVal(v), background: mois[i] === moisCourant ? "#fff6f6" : undefined, padding: (l.saisie || l.saisieFrais) && estAdmin ? 2 : td.padding }}>
               {l.saisieFrais && estAdmin && props.onAjustementsModifies ? (
                 <input
                   key={`${mois[i]}-${l.saisieFrais}-${v}`}
@@ -490,26 +568,23 @@ export default function TrameCA(props: {
                   style={{ width: 72, textAlign: "right", border: "1px solid #c9cdd2", borderRadius: 4, padding: 3, fontFamily: "inherit", fontSize: 12 }}
                 />
               ) : l.clic && v !== null && Math.abs(v) >= 0.5 ? (
-                <button
-                  type="button"
-                  title="Voir le détail de ce montant"
-                  onClick={() => l.clic?.(i)}
-                  style={{ all: "unset", cursor: "pointer", textDecoration: "underline dotted" }}
-                >
+                <button type="button" title="Voir le détail de ce montant" onClick={() => l.clic?.(i)} style={{ all: "unset", cursor: "pointer", textDecoration: "underline dotted" }}>
                   {affiche(v)}
                 </button>
               ) : (
                 affiche(v)
               )}
-              {voirAttendu && l.attendu && Math.abs(l.attendu[i]) >= 0.5 && <div style={styleAttendu} title="Attendu : pas encore livré ou facturé">+ {nombre(l.attendu[i])}</div>}
+              {voirAttendu && l.attendu && Math.abs(l.attendu[i]) >= 0.5 && (
+                <div style={styleAttendu} title="Attendu : pas encore livré ou facturé">
+                  + {nombre(l.attendu[i])}
+                </div>
+              )}
               {afficherPct && part(v, l.base?.[i]) && <div style={{ ...tdPct, border: "none", padding: 0 }}>{part(v, l.base?.[i])}</div>}
             </td>,
           ])}
-          <td style={{ ...td, fontWeight: 800, color: couleur(l.total), borderLeft: `2px solid ${C.ligne}` }}>
+          <td style={{ ...td, fontWeight: 800, color: couleurVal(l.total), borderLeft: `2px solid ${C.ligne}` }}>
             {affiche(l.total)}
-            {voirAttendu && l.attendu && Math.abs(l.attendu.reduce((t, x) => t + x, 0)) >= 0.5 && (
-              <div style={styleAttendu}>+ {nombre(l.attendu.reduce((t, x) => t + x, 0))}</div>
-            )}
+            {voirAttendu && l.attendu && Math.abs(l.attendu.reduce((t, x) => t + x, 0)) >= 0.5 && <div style={styleAttendu}>+ {nombre(l.attendu.reduce((t, x) => t + x, 0))}</div>}
             {afficherPct && part(l.total, l.baseTotal) && <div style={{ ...tdPct, border: "none", padding: 0 }}>{part(l.total, l.baseTotal)}</div>}
           </td>
           <td style={{ ...td, color: C.gris }}>{l.moyenne === undefined ? "" : l.moyenne === null ? "—" : affiche(l.moyenne)}</td>
@@ -518,11 +593,23 @@ export default function TrameCA(props: {
     });
 
   const ecartPrevi = trame.objectif > 0 ? trame.cumulADate - trame.objectif : null;
+  const repliables = trame.blocs.filter((b) => b.repliable).map((b) => b.cle);
+  const toutOuvert = repliables.every((c) => ouverts.has(c));
+  const basculer = (cle: string) =>
+    setOuverts((s) => {
+      const n = new Set(s);
+      if (n.has(cle)) n.delete(cle);
+      else n.add(cle);
+      return n;
+    });
 
   return (
     <section style={{ ...page.carte, padding: 16, marginBottom: 14, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", overflow: "hidden" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <span style={{ flex: 1 }} />
+        <button type="button" style={page.btnSecondaire} onClick={() => setOuverts(toutOuvert ? new Set() : new Set(repliables))}>
+          {toutOuvert ? "▴ Tout replier" : "▾ Tout déplier"}
+        </button>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
           <input type="checkbox" checked={afficherPct} onChange={(e) => setAfficherPct(e.target.checked)} /> Afficher les %
         </label>
@@ -561,7 +648,7 @@ export default function TrameCA(props: {
             <tr>
               <th style={{ ...th, ...colPoste, background: "#f1f2f4" }}>En €</th>
               {mois.map((m) => [
-                <th key={m} style={{ ...th, background: m === moisCourant ? "#fff4f4" : undefined }}>
+                <th key={m} style={{ ...th, background: m === moisCourant ? "#ffe9e9" : undefined }}>
                   {nomMois(m)} {m.slice(2, 4)}
                 </th>,
               ])}
@@ -578,7 +665,56 @@ export default function TrameCA(props: {
             </tr>
           </thead>
           <tbody>
-            {rendre(trame.lignes, "ca")}
+            {trame.blocs.map((b, ib) => {
+              const ouvert = !b.repliable || ouverts.has(b.cle);
+              return (
+                <Fragment key={b.cle}>
+                  {/* TRAME_BLOCS : un espace entre deux blocs */}
+                  {ib > 0 && (
+                    <tr aria-hidden="true">
+                      <td colSpan={nbCol} style={{ height: 14, padding: 0, border: "none", background: "#ffffff" }} />
+                    </tr>
+                  )}
+                  <tr>
+                    <td colSpan={nbCol} style={{ padding: 0, border: "none" }}>
+                      <div
+                        role={b.repliable ? "button" : undefined}
+                        tabIndex={b.repliable ? 0 : undefined}
+                        aria-expanded={b.repliable ? ouvert : undefined}
+                        onClick={b.repliable ? () => basculer(b.cle) : undefined}
+                        onKeyDown={
+                          b.repliable
+                            ? (e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  basculer(b.cle);
+                                }
+                              }
+                            : undefined
+                        }
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          flexWrap: "wrap",
+                          gap: 10,
+                          padding: "7px 10px",
+                          background: `${b.couleur}1f`,
+                          borderLeft: `5px solid ${b.couleur}`,
+                          borderRadius: ouvert ? "6px 6px 0 0" : 6,
+                          cursor: b.repliable ? "pointer" : "default",
+                        }}
+                      >
+                        {b.repliable && <span style={{ color: b.couleur, fontWeight: 800 }}>{ouvert ? "▾" : "▸"}</span>}
+                        <strong style={{ fontSize: 13.5, color: b.couleur, textTransform: "uppercase", letterSpacing: ".4px" }}>{b.titre}</strong>
+                        {b.aide && <span style={{ fontSize: 12, color: C.gris }}>{b.aide}</span>}
+                        {b.resume && <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: "#3b4046" }}>{b.resume}</span>}
+                      </div>
+                    </td>
+                  </tr>
+                  {ouvert && rendre(b.lignes, b.cle, b.couleur)}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -601,8 +737,8 @@ export default function TrameCA(props: {
         </div>
       )}
       <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
-        Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Frais annexes = ajustements pour coller à la compta (saisis ici par l’ADMIN, ou depuis la Facturation).
-        Les montants soulignés s’ouvrent sur leur détail. <span style={{ color: ROUGE_ATTENDU, fontStyle: "italic", fontWeight: 600 }}>+ en rouge italique</span> : attendu
+        Mêmes montants que le tableau des 12 mois : le « Total CA mensuel » est le Réalisé. Les blocs de détail s’ouvrent d’un clic sur leur titre (▸). Frais annexes = ajustements pour coller à la compta (saisis ici par
+        l’ADMIN, ou depuis la Facturation). Les montants soulignés s’ouvrent sur leur détail. <span style={{ color: ROUGE_ATTENDU, fontStyle: "italic", fontWeight: 600 }}>+ en rouge italique</span> : attendu
         (forfaits pas encore livrés, au mois de leur délai estimé ; PE / PI prévues), qui s’ajoute au réalisé pour faire l’atterrissage.
       </p>
     </section>
