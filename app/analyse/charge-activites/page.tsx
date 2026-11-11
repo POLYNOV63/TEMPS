@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -184,31 +184,47 @@ function ChargeActivitesContenu() {
           })()}
 
         {/* ---------- tableau récapitulatif ---------- */}
+        {/* RECAP_PAR_ACTIVITE : un bloc par activité, bien séparés (titre de couleur, son propre tableau) */}
         <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-          <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Récapitulatif, en heures</h2>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 980, tableLayout: "fixed" }}>
-              <colgroup>
-                <col style={{ width: 170 }} />
-                {semaines.map((l) => (
-                  <col key={l} />
-                ))}
-                <col style={{ width: 90 }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th style={page.th} />
-                  {semaines.map((l) => (
-                    <th key={l} style={{ ...page.th, textAlign: "center", padding: "6px 2px", background: l === lundiActuel ? "#fff4f4" : undefined }}>
-                      S{numeroSemaine(l)}
-                    </th>
-                  ))}
-                  <th style={{ ...page.th, textAlign: "center" }}>12 sem.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {donnees.map((d) => (
-                  <Fragment key={d.cle}>
+          <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>Récapitulatif, en heures</h2>
+          {donnees.map((d, ia) => (
+            <div
+              key={d.cle}
+              style={{
+                border: `1px solid ${C.ligne}`,
+                borderLeft: `6px solid ${d.couleur}`,
+                borderRadius: 10,
+                marginTop: ia === 0 ? 0 : 22,
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, padding: "8px 12px", background: `${d.couleur}14`, borderBottom: `1px solid ${C.ligne}` }}>
+                <strong style={{ fontSize: 17, color: d.couleur, textTransform: "uppercase", letterSpacing: ".4px" }}>{d.libelle}</strong>
+                <span style={{ fontSize: 13, color: C.gris }}>
+                  {d.personnes.length} personne{d.personnes.length > 1 ? "s" : ""} · {h(somme(d.dispo))} disponibles sur 12 semaines
+                </span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 980, tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: 190 }} />
+                    {semaines.map((l) => (
+                      <col key={l} />
+                    ))}
+                    <col style={{ width: 90 }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th style={{ ...page.th, background: "#f7f8f9" }} />
+                      {semaines.map((l) => (
+                        <th key={l} style={{ ...page.th, textAlign: "center", padding: "6px 2px", background: l === lundiActuel ? "#fff4f4" : "#f7f8f9" }}>
+                          S{numeroSemaine(l)}
+                        </th>
+                      ))}
+                      <th style={{ ...page.th, textAlign: "center", background: "#f7f8f9" }}>12 sem.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {(
                       [
                         ["Capacité", d.capa, null],
@@ -218,7 +234,7 @@ function ChargeActivitesContenu() {
                         ...NIVEAUX.map((nv, i) => [`dont ${nv.libelle.replace("Niveau non renseigné", "non renseigné").toLowerCase()}`, d.parNiveau[i], nv] as [string, number[], (typeof NIVEAUX)[number]])
                           .filter(([, v, nv]) => nv && (nv.n > 0 || v.some((x) => x >= 0.5))),
                       ] as [string, number[], (typeof NIVEAUX)[number] | "PREV" | null][]
-                    ).map(([lib, v, nvOuPrev], k) => {
+                    ).map(([lib, v, nvOuPrev]) => {
                       if (nvOuPrev === "PREV")
                         return (
                           <tr key={lib}>
@@ -234,7 +250,7 @@ function ChargeActivitesContenu() {
                           </tr>
                         );
                       const nv = nvOuPrev;
-                      const dispo = lib === "Disponibles" || lib === "Surcharge";
+                      const dispo = lib === "Disponibles";
                       if (nv)
                         return (
                           <tr key={lib}>
@@ -252,12 +268,8 @@ function ChargeActivitesContenu() {
                         );
                       return (
                         <tr key={lib} style={{ background: dispo ? "#f6fbf7" : undefined }}>
-                          <th
-                            scope="row"
-                            style={{ textAlign: "left", padding: "5px 8px", fontSize: 13, borderTop: k === 0 ? `2px solid ${C.ligne}` : undefined, borderBottom: `1px solid ${C.ligne}` }}
-                          >
-                            {k === 0 && <div style={{ fontWeight: 800, color: d.couleur, textTransform: "uppercase", fontSize: 13 }}>{d.libelle}</div>}
-                            <span style={{ fontWeight: dispo ? 800 : 600, color: dispo ? "#1b5e20" : lib === "Surcharge" ? ROUGE : "#3b4046" }}>{lib}</span>
+                          <th scope="row" style={{ textAlign: "left", padding: "6px 8px", fontSize: 13, borderBottom: `1px solid ${C.ligne}` }}>
+                            <span style={{ fontWeight: dispo ? 800 : 600, color: dispo ? "#1b5e20" : "#3b4046" }}>{lib}</span>
                           </th>
                           {v.map((x, w) => (
                             <td
@@ -265,12 +277,11 @@ function ChargeActivitesContenu() {
                               onClick={() => setDetail(detail?.cle === d.cle && detail.w === w ? null : { cle: d.cle, w })}
                               style={{
                                 textAlign: "center",
-                                padding: "5px 2px",
+                                padding: "6px 2px",
                                 fontSize: 13,
                                 cursor: "pointer",
                                 fontWeight: dispo ? 800 : 500,
                                 color: dispo ? (x < -0.5 ? ROUGE : x >= 0.5 ? "#1b5e20" : C.gris) : "#3b4046",
-                                borderTop: k === 0 ? `2px solid ${C.ligne}` : undefined,
                                 borderBottom: `1px solid ${C.ligne}`,
                                 background: semaines[w] === lundiActuel ? "#fffafa" : undefined,
                               }}
@@ -278,17 +289,17 @@ function ChargeActivitesContenu() {
                               {Math.abs(x) < 0.5 ? "—" : `${dispo && x < 0 ? "▲ " : ""}${Math.round(Math.abs(x)).toLocaleString("fr-FR")}`}
                             </td>
                           ))}
-                          <td style={{ textAlign: "center", fontWeight: 800, fontSize: 13, color: dispo ? (somme(v) < 0 ? ROUGE : "#1b5e20") : "#3b4046", borderTop: k === 0 ? `2px solid ${C.ligne}` : undefined, borderBottom: `1px solid ${C.ligne}` }}>
+                          <td style={{ textAlign: "center", fontWeight: 800, fontSize: 13, color: dispo ? (somme(v) < 0 ? ROUGE : "#1b5e20") : "#3b4046", borderBottom: `1px solid ${C.ligne}` }}>
                             {Math.round(Math.abs(somme(v))).toLocaleString("fr-FR")}
                           </td>
                         </tr>
                       );
                     })}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
         </section>
 
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>
