@@ -19,6 +19,7 @@
      ouverture sur un mois (?mois=2026-11).
    - app/admin/suivi-rh/page.tsx : colonnes RE+, RE− et HS payées ; les CP
      comptés sur leur période légale (1er juin → 31 mai) et non sur l'exercice.
+   - app/admin/collaborateurs/page.tsx : case « Feuille simplifiée ».
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
@@ -99,6 +100,8 @@ for (const rel of [
   "supabase/95_bilan_rh_envoye.sql",
   "lib/clotureMensuelle.ts",
   "components/rh/BilanRHEnvoi.tsx",
+  "supabase/96_feuille_simplifiee.sql",
+  "app/ma-semaine/SemaineSimplifiee.tsx",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
@@ -295,6 +298,22 @@ if (suiviRH && !erreurs.length) {
     remplacerSouple(suiviRH, "{l.compteur > 30 && \" ⚠\"}\n</td>", "{l.compteur > 30 && \" ⚠\"}\n</td>\n<td style={{ ...td, ...sep, color: \"#5b6168\" }}>{l.hsPayees ? fmt(l.hsPayees) : \"—\"}</td>", "valeur HS payées");
     remplacerSouple(suiviRH, "<td colSpan={13}", "<td colSpan={14}", "largeur du détail");
     ecritures.push(suiviRH);
+  }
+}
+
+/* 3 septies. app/admin/collaborateurs/page.tsx : case « Feuille simplifiée » (FEUILLE_SIMPLIFIEE) */
+const fiches = lire("app/admin/collaborateurs/page.tsx");
+if (fiches && !erreurs.length) {
+  if (fiches.texte.includes("FEUILLE_SIMPLIFIEE")) {
+    console.log("  = app/admin/collaborateurs/page.tsx : déjà à jour");
+  } else {
+    remplacerSouple(fiches, "date_sortie?: string | null; // DATE_SORTIE", "date_sortie?: string | null; // DATE_SORTIE\n  saisie_simplifiee?: boolean | null; // FEUILLE_SIMPLIFIEE", "champ « feuille simplifiée »");
+    remplacerSouple(fiches, "inclusStatistiques: true, dateSortie: \"\",", "inclusStatistiques: true,\n    dateSortie: \"\",\n    saisieSimplifiee: false,", "formulaire : valeur par défaut");
+    remplacerSouple(fiches, "dateSortie: c.date_sortie ?? \"\",", "dateSortie: c.date_sortie ?? \"\",\n      saisieSimplifiee: Boolean(c.saisie_simplifiee),", "formulaire : valeur de la fiche");
+    remplacerSouple(fiches, "date_sortie: estDirection(editForm.role) ? null : editForm.dateSortie || null,", "date_sortie: estDirection(editForm.role) ? null : editForm.dateSortie || null,\n        saisie_simplifiee: estDirection(editForm.role) ? false : editForm.saisieSimplifiee,", "enregistrement");
+    remplacerSouple(fiches, "{/* DATE_SORTIE : dernier jour travaillé ; après, plus de capacité au planning */}", "{/* FEUILLE_SIMPLIFIEE : présence, absences et tickets seulement, sans heure sur les affaires */}\n            {!estDirection(editForm.role) && (\n              <label style={{ display: \"flex\", alignItems: \"flex-start\", gap: 10, marginTop: 16, cursor: \"pointer\" }}>\n                <input\n                  type=\"checkbox\"\n                  checked={editForm.saisieSimplifiee}\n                  onChange={(e) => setEditForm((f) => ({ ...f, saisieSimplifiee: e.target.checked }))}\n                  style={{ marginTop: 3 }}\n                />\n                <span>\n                  <strong>Feuille simplifiée</strong>\n                  <br />\n                  <span style={{ fontSize: 13, color: \"#666\" }}>\n                    Pour qui ne pointe jamais sur une affaire ni un devis : sa feuille de la semaine ne demande que la présence, les absences et les tickets\n                    restaurant. Pensez aussi à décocher « Inclus dans les statistiques ».\n                  </span>\n                </span>\n              </label>\n            )}\n\n            {/* DATE_SORTIE : dernier jour travaillé ; après, plus de capacité au planning */}", "case « Feuille simplifiée »");
+    remplacerSouple(fiches, "{c.inclus_statistiques === false && (", "{c.saisie_simplifiee && (\n                          <span title=\"Feuille simplifiée : présence, absences et tickets restaurant\" style={{ background: \"#eef4fb\", color: \"#1f4e79\", border: \"1px solid #c9d9ec\", padding: \"3px 8px\", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>\n                            Feuille simplifiée\n                          </span>\n                        )}\n\n                        {c.inclus_statistiques === false && (", "étiquette dans la liste");
+    ecritures.push(fiches);
   }
 }
 

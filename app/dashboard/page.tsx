@@ -1376,7 +1376,8 @@ function formatHeures(valeur: number | null | undefined) {
 function estFeuilleComplete(feuille: Feuille) {
   const heures = Number(feuille.total_heures ?? 0);
   const theorique = Number(feuille.total_theorique ?? 0);
-  if (theorique <= 0) return heures > 0;
+  // aucune heure attendue (semaine de congés, feuille simplifiée) : rien à compléter
+  if (theorique <= 0) return true;
   return heures >= theorique - 0.01;
 }
 

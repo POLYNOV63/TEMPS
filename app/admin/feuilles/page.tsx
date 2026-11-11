@@ -657,7 +657,9 @@ function CollaborateurRow({
             {!collaborateur.actif && <span style={styles.inactif}>Inactif</span>}
           </div>
 
-          {feuille ? (
+          {feuille && theorique <= 0 && total <= 0 ? (
+            <div style={styles.hoursLine}>Feuille simplifiée : présence, absences et tickets</div>
+          ) : feuille ? (
             <div style={styles.hoursLine}>
               <strong style={styles.totalHours}>{formatHeures(total)}</strong>
               <span>/ {formatHeures(theorique)}</span>

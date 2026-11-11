@@ -34,6 +34,7 @@ type Collaborateur = {
   compteur_recuperation?: number | null;
   inclus_statistiques?: boolean | null;
   date_sortie?: string | null; // DATE_SORTIE
+  saisie_simplifiee?: boolean | null; // FEUILLE_SIMPLIFIEE
 };
 
 type ProfilHoraire = {
@@ -126,6 +127,7 @@ export default function CollaborateursPage() {
     role: "COLLABORATEUR",
     inclusStatistiques: true,
     dateSortie: "",
+    saisieSimplifiee: false,
   });
   const [editEnCours, setEditEnCours] = useState(false);
 
@@ -691,6 +693,7 @@ const { data: profil, error: erreurProfil } = await supabase
       role: normaliserRole(c.role),
       inclusStatistiques: c.inclus_statistiques !== false,
       dateSortie: c.date_sortie ?? "",
+      saisieSimplifiee: Boolean(c.saisie_simplifiee),
     });
 
     setEditPredo(new Set(predominances.get(c.id) ?? []));
@@ -773,6 +776,7 @@ const { data: profil, error: erreurProfil } = await supabase
         // une fiche Direction n'entre jamais dans les statistiques de l'équipe
         inclus_statistiques: estDirection(editForm.role) ? false : editForm.inclusStatistiques,
         date_sortie: estDirection(editForm.role) ? null : editForm.dateSortie || null,
+        saisie_simplifiee: estDirection(editForm.role) ? false : editForm.saisieSimplifiee,
         updated_at: new Date().toISOString(),
       })
       .eq("id", editModal.id);
@@ -1091,6 +1095,12 @@ const { data: profil, error: erreurProfil } = await supabase
                             style={{ background: "#fff4e5", color: "#7a3e00", border: "1px solid #e9b877", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
                           >
                             Plus dispo après le {formatDate(c.date_sortie)}
+                          </span>
+                        )}
+
+                        {c.saisie_simplifiee && (
+                          <span title="Feuille simplifiée : présence, absences et tickets restaurant" style={{ background: "#eef4fb", color: "#1f4e79", border: "1px solid #c9d9ec", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}>
+                            Feuille simplifiée
                           </span>
                         )}
 
@@ -1551,6 +1561,26 @@ const { data: profil, error: erreurProfil } = await supabase
                   qu’ici.
                 </div>
               </div>
+            )}
+
+            {/* FEUILLE_SIMPLIFIEE : présence, absences et tickets seulement, sans heure sur les affaires */}
+            {!estDirection(editForm.role) && (
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 16, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={editForm.saisieSimplifiee}
+                  onChange={(e) => setEditForm((f) => ({ ...f, saisieSimplifiee: e.target.checked }))}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <strong>Feuille simplifiée</strong>
+                  <br />
+                  <span style={{ fontSize: 13, color: "#666" }}>
+                    Pour qui ne pointe jamais sur une affaire ni un devis : sa feuille de la semaine ne demande que la présence, les absences et les tickets
+                    restaurant. Pensez aussi à décocher « Inclus dans les statistiques ».
+                  </span>
+                </span>
+              </label>
             )}
 
             {/* DATE_SORTIE : dernier jour travaillé ; après, plus de capacité au planning */}
