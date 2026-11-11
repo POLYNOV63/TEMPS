@@ -237,10 +237,17 @@ export default function DashboardPage() {
           setNombreDemandesRH(demandesEnAttente ?? 0);
           setCollaborateurs(collaborateursActifs ?? []);
 
-          // APERCU_ROLE : toutes les fiches, même inactives (une personne de la Direction sans feuille d'heures
-          // peut avoir une fiche inactive) ; sans réponse, on se contente des actifs
-          const { data: toutes } = await supabase.from("collaborateurs").select("id, prenom, nom, actif, role, trigramme").order("nom", { ascending: true });
-          setFichesApercu((toutes ?? collaborateursActifs ?? []) as Collaborateur[]);
+          // APERCU_ROLE : toutes les fiches, même inactives ; sans réponse, on se contente des actifs.
+          // ACCES_DIRECTION_INVISIBLE : les fiches Direction sont masquées par la base (SQL 56) ;
+          // comme la page Collaborateurs, on les relit par la fonction réservée aux administrateurs.
+          const [{ data: toutes }, { data: direction }] = await Promise.all([
+            supabase.from("collaborateurs").select("id, prenom, nom, actif, role, trigramme").order("nom", { ascending: true }),
+            supabase.rpc("polynov_acces_direction"),
+          ]);
+          const equipeLue = ((toutes ?? collaborateursActifs ?? []) as Collaborateur[]);
+          const dejaLus = new Set(equipeLue.map((c) => c.id));
+          const directionLue = ((direction ?? []) as Collaborateur[]).filter((c) => !dejaLus.has(c.id));
+          setFichesApercu([...equipeLue, ...directionLue]);
           setFeuilles(feuillesCourantes ?? []);
         } else if (roleUtilisateur !== "DIRECTION") {
           /* Autres rôles (sauf Direction, sans feuille d'heures) : sa propre feuille */
