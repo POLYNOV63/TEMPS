@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { chargerFacturationMois, type LigneFacturationMois } from "@/lib/facturationMois";
+import { supabase } from "@/lib/supabase";
 
 /* ===============================================================
    TABLEAU DE BORD - VIGNETTE « À FACTURER » (DASHBOARD_SIMPLIFIE)
@@ -15,15 +16,17 @@ import { chargerFacturationMois, type LigneFacturationMois } from "@/lib/factura
      - PE / PI du relevé.
    En petit : la part des PE / PI pas encore facturable (affaire ni en
    cours ni livrée). Un clic ouvre la Facturation du mois.
+   VIGNETTE_PREVISIONNEL : face au prévisionnel du mois (finances_previsionnel,
+   saisi dans la page Finances) : montant, part atteinte et écart.
 ================================================================ */
 
-type Synthese = { mois: string; total: number; livre: number; prevu: number; pepi: number; nonFacturable: number };
+type Synthese = { mois: string; total: number; livre: number; prevu: number; pepi: number; nonFacturable: number; previsionnel: number | null };
 
 const NOMS_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 const euros = (n: number) => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).toLocaleString("fr-FR")} k€` : euros(n));
 
-function synthese(mois: string, lignes: LigneFacturationMois[]): Synthese {
+function synthese(mois: string, lignes: LigneFacturationMois[], previsionnel: number | null): Synthese {
   const s = (f: (l: LigneFacturationMois) => boolean) => lignes.filter(f).reduce((t, l) => t + l.montant, 0);
   return {
     mois,
@@ -32,6 +35,7 @@ function synthese(mois: string, lignes: LigneFacturationMois[]): Synthese {
     prevu: s((l) => l.type === "Forfait prévu"),
     pepi: s((l) => l.type === "PE / PI"),
     nonFacturable: s((l) => !l.facturable),
+    previsionnel,
   };
 }
 
@@ -45,8 +49,18 @@ export default function VignetteFacturation({ onOuvrir }: { onOuvrir: () => void
     const courant = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const s = new Date(d.getFullYear(), d.getMonth() + 1, 1);
     const suivant = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, "0")}`;
-    Promise.all([chargerFacturationMois(courant), chargerFacturationMois(suivant)])
-      .then(([a, b]) => actif && setDonnees([synthese(courant, a), synthese(suivant, b)]))
+    Promise.all([
+      chargerFacturationMois(courant),
+      chargerFacturationMois(suivant),
+      // le prévisionnel des deux mois (sans droit de lecture ou sans saisie : pas de prévisionnel affiché)
+      supabase.from("finances_previsionnel").select("mois,montant").gte("mois", `${courant}-01`).lte("mois", `${suivant}-28`),
+    ])
+      .then(([a, b, p]) => {
+        if (!actif) return;
+        const prev = new Map<string, number>();
+        for (const x of ((p.error ? [] : p.data ?? []) as { mois: string; montant: number | string }[])) prev.set(String(x.mois).slice(0, 7), (prev.get(String(x.mois).slice(0, 7)) ?? 0) + (Number(x.montant) || 0));
+        setDonnees([synthese(courant, a, prev.get(courant) ?? null), synthese(suivant, b, prev.get(suivant) ?? null)]);
+      })
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Facturation indisponible."));
     return () => {
       actif = false;
@@ -72,7 +86,6 @@ export default function VignetteFacturation({ onOuvrir }: { onOuvrir: () => void
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
         <strong style={{ fontSize: 16 }}>🧾 À facturer</strong>
         <span style={{ fontSize: 12.5, color: "#6b7076" }}>si tout était facturable : forfaits livrés et prévus, PE / PI du relevé</span>
-        <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 700, color: "#a30000" }}>Facturation du mois →</span>
       </div>
       {erreur && <div style={{ color: "#b3261e", fontSize: 13 }}>{erreur}</div>}
       {!erreur && !donnees && <div style={{ color: "#6b7076", fontSize: 13 }}>Calcul en cours…</div>}
@@ -88,6 +101,21 @@ export default function VignetteFacturation({ onOuvrir }: { onOuvrir: () => void
                 {[d.livre > 0 ? `livré ${keuros(d.livre)}` : "", d.prevu > 0 ? `prévu ${keuros(d.prevu)}` : "", d.pepi > 0 ? `PE / PI ${keuros(d.pepi)}` : ""].filter(Boolean).join(" · ") || "rien de prévu"}
               </div>
               {d.nonFacturable > 0.5 && <div style={{ fontSize: 12.5, color: "#c76500", fontWeight: 700 }}>dont {keuros(d.nonFacturable)} pas encore facturable</div>}
+              {/* VIGNETTE_PREVISIONNEL */}
+              {d.previsionnel !== null && d.previsionnel > 0 && (
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid #dfe3e7", fontSize: 13 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ color: "#5b6168" }}>Prévisionnel {keuros(d.previsionnel)}</span>
+                    <strong style={{ color: d.total >= d.previsionnel ? "#1b5e20" : "#c76500" }}>
+                      {Math.round((d.total / d.previsionnel) * 100)} % · {d.total >= d.previsionnel ? "+" : "−"}
+                      {keuros(Math.abs(d.total - d.previsionnel))}
+                    </strong>
+                  </div>
+                  <div style={{ height: 6, background: "#e6e8eb", borderRadius: 3, marginTop: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${Math.min(100, (d.total / d.previsionnel) * 100)}%`, height: "100%", background: d.total >= d.previsionnel ? "#2e7d32" : "#e08a00" }} />
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
