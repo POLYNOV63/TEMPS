@@ -11,6 +11,8 @@
    - app/pilotage/page.tsx (Suivi des affaires) : le filtre DBE est retiré,
      les devis n'y sont plus en alerte (ils se gèrent dans le Suivi des devis),
      plus de couleur « Devis envoyé ».
+   - app/pilotage/prestations/page.tsx (Relevé PE / PI) : l'encadré des
+     reports est replié par défaut (REPORTS_REPLIES).
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
@@ -169,6 +171,22 @@ if (affaires && !erreurs.length) {
       "couleur « Devis envoyé » retirée (SURLIGNE_SANS_DEVIS)"
     );
     if (!ecritures.includes(affaires)) ecritures.push(affaires);
+  }
+}
+
+/* 3 ter. app/pilotage/prestations/page.tsx : l'encadré des reports est replié par défaut (REPORTS_REPLIES) */
+const releve = lire("app/pilotage/prestations/page.tsx");
+if (releve && !erreurs.length) {
+  if (releve.texte.includes("REPORTS_REPLIES")) {
+    console.log("  = app/pilotage/prestations/page.tsx : reports déjà repliés");
+  } else {
+    remplacerRe(
+      releve,
+      /<details open style=\{\{ \.\.\.page\.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" \}\}>/,
+      '<details style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" }} /* REPORTS_REPLIES : replié par défaut */>',
+      "reports repliés par défaut"
+    );
+    ecritures.push(releve);
   }
 }
 

@@ -1804,7 +1804,7 @@ function PrestationsContenu() {
             const thR: CSSProperties = { ...page.th, padding: "6px 8px", fontSize: 12, whiteSpace: "nowrap" };
             const tdR: CSSProperties = { ...page.td, padding: "6px 8px", fontSize: 13 };
             return (
-              <details open style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" }}>
+              <details style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #7a3e00" }} /* REPORTS_REPLIES : replié par défaut */>
                 <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 15, color: "#7a3e00" }}>
                   ↪{" "}
                   {[
