@@ -91,7 +91,6 @@ function normaliser(texte: string) {
 const SURLIGNE: Record<string, { background: string; borderRadius: number; padding: string }> = {
   "Intention de commande": { background: "#ffe58a", borderRadius: 3, padding: "0 3px" },
   "Livrée": { background: "#c8ecc9", borderRadius: 3, padding: "0 3px" },
-  "Devis envoyé": { background: "#d6e6fb", borderRadius: 3, padding: "0 3px" },
 };
 
 /* MONTANT_HORS_COMPARAISON : activités vendues au montant (scan, négoce) */

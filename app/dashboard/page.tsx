@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
-import { peut } from "@/lib/droits";
+import { normaliserRole, peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
 import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
 import VignetteFacturation from "@/components/dashboard/VignetteFacturation";
@@ -73,6 +73,8 @@ export default function DashboardPage() {
 
   const [chargement, setChargement] = useState(true);
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
+  /* APERCU_ROLE : toutes les fiches (actives ou non), pour le menu « Voir comme… » */
+  const [fichesApercu, setFichesApercu] = useState<Collaborateur[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
   const [nombreDemandesRH, setNombreDemandesRH] = useState(0);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -234,6 +236,11 @@ export default function DashboardPage() {
 
           setNombreDemandesRH(demandesEnAttente ?? 0);
           setCollaborateurs(collaborateursActifs ?? []);
+
+          // APERCU_ROLE : toutes les fiches, même inactives (une personne de la Direction sans feuille d'heures
+          // peut avoir une fiche inactive) ; sans réponse, on se contente des actifs
+          const { data: toutes } = await supabase.from("collaborateurs").select("id, prenom, nom, actif, role, trigramme").order("nom", { ascending: true });
+          setFichesApercu((toutes ?? collaborateursActifs ?? []) as Collaborateur[]);
           setFeuilles(feuillesCourantes ?? []);
         } else if (roleUtilisateur !== "DIRECTION") {
           /* Autres rôles (sauf Direction, sans feuille d'heures) : sa propre feuille */
@@ -268,9 +275,9 @@ export default function DashboardPage() {
   const apercu = useMemo((): { id: string | null; prenom: string | null; nom: string | null; trigramme: string | null; role: string } | null => {
     if (role !== "ADMIN" || !voirId) return null;
     if (voirId.startsWith("role:")) return { id: null, prenom: null, nom: null, trigramme: null, role: voirId.slice(5).toUpperCase() };
-    const c = collaborateurs.find((x) => x.id === voirId && x.id !== monCollaborateurId);
-    return c ? { id: c.id, prenom: c.prenom, nom: c.nom, trigramme: c.trigramme ?? null, role: String(c.role ?? "COLLABORATEUR").toUpperCase() } : null;
-  }, [role, voirId, collaborateurs, monCollaborateurId]);
+    const c = fichesApercu.find((x) => x.id === voirId && x.id !== monCollaborateurId);
+    return c ? { id: c.id, prenom: c.prenom, nom: c.nom, trigramme: c.trigramme ?? null, role: normaliserRole(c.role) } : null;
+  }, [role, voirId, fichesApercu, monCollaborateurId]);
   const roleVu = apercu ? apercu.role : role;
   const idVu = apercu ? apercu.id : monCollaborateurId;
 
@@ -420,17 +427,19 @@ export default function DashboardPage() {
                   <option value="role:RESPONSABLE">Rôle Responsable</option>
                   <option value="role:COLLABORATEUR">Rôle Collaborateur</option>
                 </optgroup>
-                {(["DIRECTION", "ADMIN", "RESPONSABLE", "COLLABORATEUR"] as const).map((r) => {
-                  const gens = collaborateurs
-                    .filter((c) => c.id !== monCollaborateurId && String(c.role ?? "COLLABORATEUR").toUpperCase() === r)
+                {(["DIRECTION", "ADMIN", "RESPONSABLE", "COLLABORATEUR", "INACTIF"] as const).map((r) => {
+                  // le rôle est lu comme partout ailleurs (espaces et majuscules ignorés : lib/droits.ts)
+                  const gens = fichesApercu
+                    .filter((c) => c.id !== monCollaborateurId && (r === "INACTIF" ? c.actif === false : c.actif !== false && normaliserRole(c.role) === r))
                     .sort((a, b) => (a.trigramme ?? a.nom ?? "").localeCompare(b.trigramme ?? b.nom ?? "", "fr"));
                   if (gens.length === 0) return null;
                   return (
-                    <optgroup key={r} label={LIBELLES_ROLE[r]}>
+                    <optgroup key={r} label={r === "INACTIF" ? "Fiches inactives" : LIBELLES_ROLE[r]}>
                       {gens.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.trigramme ? `${c.trigramme} — ` : ""}
                           {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+                          {r === "INACTIF" ? ` (${LIBELLE_ROLE[normaliserRole(c.role)]})` : ""}
                         </option>
                       ))}
                     </optgroup>
@@ -693,6 +702,7 @@ function TuileDomaine({
   url,
   aller,
   badges,
+  raccourcis,
 }: {
   icone: string;
   titre: string;
@@ -700,6 +710,8 @@ function TuileDomaine({
   url: string;
   aller: (url: string) => void;
   badges?: { texte: string; ton: Ton }[];
+  /* PILOTAGE_RACCOURCIS : liens directs sous la tuile (sans passer par sa première page) */
+  raccourcis?: { libelle: string; url: string }[];
 }) {
   const [survol, setSurvol] = useState(false);
   return (
@@ -732,6 +744,24 @@ function TuileDomaine({
           ))}
         </div>
       )}
+      {raccourcis && raccourcis.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: "auto", paddingTop: 6 }}>
+          {raccourcis.map((r) => (
+            <button
+              key={r.url}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                aller(r.url);
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={stylesV2.raccourci}
+            >
+              {r.libelle} →
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -757,6 +787,14 @@ function TuilesDomaines({
       description="Affaires, devis, planning, charge et analyses"
       url="/pilotage"
       aller={aller}
+      raccourcis={
+        peut(role, "administration")
+          ? [
+              { libelle: "Planning des affaires", url: "/pilotage/affaires" },
+              { libelle: "Relevé PE / PI", url: "/pilotage/prestations" },
+            ]
+          : undefined
+      }
     />,
   ];
   if (peut(role, "voirFeuillesEquipe"))
@@ -1225,6 +1263,7 @@ const stylesV2: Record<string, CSSProperties> = {
   grilleTuiles: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14, marginBottom: 16 },
   tuileDomaine: { background: "#ffffff", borderRadius: 14, borderTop: "5px solid #c00000", padding: "16px 18px", minHeight: 150, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", transition: "all 0.15s ease", outline: "none" },
   tuileIcone: { width: 46, height: 46, borderRadius: 12, background: "#c00000", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 2 },
+  raccourci: { border: "1.5px solid #e3b7b7", background: "#fff6f6", color: "#a30000", borderRadius: 999, padding: "4px 10px", fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" },
   apercuChoix: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 18 },
   apercuSelect: { minHeight: 38, border: "1.5px solid #d5d9de", borderRadius: 8, padding: "0 8px", fontFamily: "inherit", fontSize: 14, fontWeight: 700, background: "#ffffff", maxWidth: 300 },
   apercuBandeau: { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#fff4c2", border: "1.5px solid #e5c100", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 14 },

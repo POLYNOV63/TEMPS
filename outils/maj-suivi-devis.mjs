@@ -9,7 +9,8 @@
    - components/pilotage/OngletsPilotage.tsx : « Suivi des devis » juste
      après « Suivi des affaires » ; « Indicateurs » retiré.
    - app/pilotage/page.tsx (Suivi des affaires) : le filtre DBE est retiré,
-     les devis n'y sont plus en alerte (ils se gèrent dans le Suivi des devis).
+     les devis n'y sont plus en alerte (ils se gèrent dans le Suivi des devis),
+     plus de couleur « Devis envoyé ».
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
@@ -153,6 +154,21 @@ if (affaires) {
     );
     remplacerRe(affaires, /Affaires DBE et CBE : heures chiffrées/, "Affaires CBE (forfaits, PE / PI ; les devis se gèrent dans le Suivi des devis) : heures chiffrées", "sous-titre");
     ecritures.push(affaires);
+  }
+}
+
+/* 3 bis. app/pilotage/page.tsx : plus de couleur « Devis envoyé » (les devis sont dans le Suivi des devis) */
+if (affaires && !erreurs.length) {
+  if (!/"Devis envoyé": \{ background: "#d6e6fb"/.test(affaires.texte)) {
+    console.log("  = app/pilotage/page.tsx : couleur « Devis envoyé » déjà retirée");
+  } else {
+    remplacerRe(
+      affaires,
+      /\n[ \t]*"Devis envoyé": \{ background: "#d6e6fb", borderRadius: 3, padding: "0 3px" \},[ \t]*(?=\n)/,
+      "",
+      "couleur « Devis envoyé » retirée (SURLIGNE_SANS_DEVIS)"
+    );
+    if (!ecritures.includes(affaires)) ecritures.push(affaires);
   }
 }
 
