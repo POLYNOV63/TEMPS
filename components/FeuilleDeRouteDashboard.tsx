@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
+import RelanceFaite from "@/components/pilotage/RelanceFaite";
 
 /* ===============================================================
    MA FEUILLE DE ROUTE, SUR LE TABLEAU DE BORD
@@ -13,6 +14,8 @@ import { supabase } from "@/lib/supabase";
    par jour, congés. Même source que la page « Ma feuille de route »
    (fonctions ma_feuille_de_route et ma_feuille_de_route_devis), qui reste
    là pour voir plus loin.
+   RELANCES_FDR, RELANCE_FAITE_FDR : les relances de devis prévues pour la
+   personne (ma_feuille_de_route_relances, SQL 92), avec « ✓ faite ».
 ================================================================ */
 
 type LigneRoute = {
@@ -27,6 +30,7 @@ type LigneRoute = {
   heures: number | string;
 };
 type Devis = { affaire_id: string; numero: string; designation: string | null; echeance: string | null };
+type RelanceFdr = { id: string; numero_devis: string; prevue_le: string; commentaire: string | null; designation: string | null; client: string | null };
 type Conge = { type_demande: string; date_debut: string; date_fin: string; statut: string };
 
 const NB_SEMAINES = 2;
@@ -62,6 +66,7 @@ export default function FeuilleDeRouteDashboard() {
   const [lignes, setLignes] = useState<LigneRoute[]>([]);
   const [conges, setConges] = useState<Conge[]>([]);
   const [devis, setDevis] = useState<Devis[]>([]);
+  const [relances, setRelances] = useState<RelanceFdr[]>([]);
   const [activites, setActivites] = useState<Map<string, string>>(new Map());
   // RESPONSABLE_AFFAIRE : le responsable de chaque affaire de la feuille de route
   const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());
@@ -113,7 +118,7 @@ export default function FeuilleDeRouteDashboard() {
       if (!c || !actif) return;
       const id = (c as { id: string }).id;
       setMoiId(id);
-      const [r, cg, d, act] = await Promise.all([
+      const [r, cg, d, act, rl] = await Promise.all([
         supabase.rpc("ma_feuille_de_route", { p_collaborateur_id: id, p_debut: lundi, p_fin: fin }),
         supabase
           .from("rh_demandes")
@@ -124,12 +129,14 @@ export default function FeuilleDeRouteDashboard() {
           .gte("date_fin", lundi),
         supabase.rpc("ma_feuille_de_route_devis", { p_collaborateur_id: id }),
         supabase.from("activites").select("id,nom"),
+        supabase.rpc("ma_feuille_de_route_relances", { p_collaborateur_id: id }),
       ]);
       if (!actif) return;
       if (r.error) throw new Error(r.error.message);
       setLignes((r.data ?? []) as LigneRoute[]);
       setConges((cg.data ?? []) as Conge[]);
       setDevis(d.error ? [] : ((d.data ?? []) as Devis[]));
+      setRelances(rl.error ? [] : ((rl.data ?? []) as RelanceFdr[]));
       setActivites(new Map(((act.data ?? []) as { id: string; nom: string }[]).map((a) => [a.id, a.nom])));
     })()
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Feuille de route indisponible."))
@@ -161,9 +168,10 @@ export default function FeuilleDeRouteDashboard() {
         const lignesSemaine = [...parAffaire.values()].sort((a, b) => b.total - a.total);
         const totalJour = jours.map((_, i) => lignesSemaine.reduce((t, l) => t + l.parJour[i], 0));
         const aRendre = devis.filter((d) => d.echeance && ((d.echeance >= debut && d.echeance <= plus(debut, 6)) || (k === 0 && d.echeance < debut)));
-        return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0), aRendre };
+        const aRelancer = relances.filter((r) => (r.prevue_le >= debut && r.prevue_le <= plus(debut, 6)) || (k === 0 && r.prevue_le < debut));
+        return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0), aRendre, aRelancer };
       }),
-    [lignes, conges, activites, lundi, devis]
+    [lignes, conges, activites, lundi, devis, relances]
   );
 
   const th: CSSProperties = { ...page.th, padding: "6px 6px", whiteSpace: "nowrap", fontSize: 12 };
@@ -207,6 +215,30 @@ export default function FeuilleDeRouteDashboard() {
             </div>
           )}
 
+          {/* RELANCES_FDR : les devis à relancer, avec « ✓ faite » */}
+          {relances.length > 0 && (
+            <div style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #1f4e8c" }}>
+              <strong>📞 Devis à relancer</strong>
+              <span style={{ marginLeft: 8, fontSize: 12.5, color: C.gris }}>cochez « ✓ faite » une fois le client relancé</span>
+              <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                {relances.map((r) => {
+                  const jours = Math.round((new Date(`${r.prevue_le}T00:00:00`).getTime() - new Date(`${aujourdhui}T00:00:00`).getTime()) / 86400000);
+                  return (
+                    <div key={r.id} style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", alignItems: "center", fontSize: 14 }}>
+                      <strong style={{ color: "#1f4e8c" }}>DBE {r.numero_devis}</strong>
+                      <span>{[r.client, r.designation].filter(Boolean).join(" · ")}</span>
+                      {r.commentaire && <span style={{ fontSize: 12.5, color: C.gris }}>« {r.commentaire} »</span>}
+                      <span style={{ marginLeft: "auto", fontWeight: 800, color: jours < 0 ? "#b3261e" : jours <= 3 ? "#c76500" : "#1b5e20" }}>
+                        {`le ${dateCourte(r.prevue_le)}${jours < 0 ? ` · en retard de ${-jours} j` : jours === 0 ? " · aujourd’hui" : ` · dans ${jours} j`}`}
+                      </span>
+                      <RelanceFaite numero={r.numero_devis} onFait={() => setRelances((l) => l.filter((x) => x.id !== r.id))} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {semaines.map((s, k) => (
             <div key={s.debut} style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: `5px solid ${k === 0 ? C.rouge : "#d5d9de"}` }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
@@ -217,7 +249,7 @@ export default function FeuilleDeRouteDashboard() {
                 <span style={{ flex: 1 }} />
                 <strong style={{ fontSize: 14 }}>{s.total > 0 ? `${h(s.total)} prévues` : ""}</strong>
               </div>
-              {s.lignes.length === 0 && s.congesJour.every((c) => !c) && s.aRendre.length === 0 ? (
+              {s.lignes.length === 0 && s.congesJour.every((c) => !c) && s.aRendre.length === 0 && s.aRelancer.length === 0 ? (
                 <p style={{ margin: 0, color: C.gris, fontSize: 14 }}>Rien de prévu au planning pour l’instant.</p>
               ) : (
                 <div style={{ overflowX: "auto" }}>
@@ -290,6 +322,27 @@ export default function FeuilleDeRouteDashboard() {
                             ))}
                             <td style={{ ...td, textAlign: "right", fontSize: 11, color: retard ? rouge : C.gris, fontWeight: retard ? 800 : 400, whiteSpace: "nowrap" }}>
                               {retard && d.echeance ? `en retard depuis le ${dateCourte(d.echeance)}` : ""}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {s.aRelancer.map((r) => {
+                        const retard = r.prevue_le < aujourdhui;
+                        const bleu = retard ? "#b3261e" : "#1f4e8c";
+                        return (
+                          <tr key={`relance-${r.id}`} style={{ background: retard ? "#fdecec" : undefined }}>
+                            <td style={td}>
+                              <strong style={{ color: bleu }}>📞 Relancer DBE {r.numero_devis}</strong>
+                              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: retard ? bleu : C.gris }}>{retard ? "relance en retard" : "relance client"}</span>
+                              <div style={{ fontSize: 12 }}>{[r.client, r.designation].filter(Boolean).join(" · ")}</div>
+                            </td>
+                            {s.jours.map((j) => (
+                              <td key={j} style={{ ...tdJour, background: r.prevue_le === j ? (retard ? "#f7c6c6" : "#e3eefb") : undefined, color: bleu, fontWeight: 800 }}>
+                                {r.prevue_le === j ? "📞 relance" : retard && j === aujourdhui ? "⚠ à relancer" : ""}
+                              </td>
+                            ))}
+                            <td style={{ ...td, textAlign: "right", fontSize: 11, color: retard ? bleu : C.gris, fontWeight: retard ? 800 : 400, whiteSpace: "nowrap" }}>
+                              {retard ? `prévue le ${dateCourte(r.prevue_le)}` : ""}
                             </td>
                           </tr>
                         );

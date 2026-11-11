@@ -1,15 +1,15 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
+import GraphiquesDisponibilites from "@/components/analyse/GraphiquesDisponibilites";
 import { C, Message, page } from "@/components/pilotage/ui";
-import { supabase } from "@/lib/supabase";
-import { chargerAffectations, chargerAnnuaire, chargerCapacitesAbsences } from "@/lib/pilotageDonnees";
-import { aISO, ajouterJours, chargeParSemaine, construireCapacites, lundiDe, numeroSemaine, type JourAffecte } from "@/lib/pilotagePlanning";
-import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
+import { aISO, ajouterJours, lundiDe, numeroSemaine } from "@/lib/pilotagePlanning";
+import { formatDate, formatHeures, nomCollab } from "@/lib/pilotageCalculs";
+import { NIVEAUX, useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
 
 /* ===============================================================
    ANALYSE - DISPONIBILITÉS PAR ACTIVITÉ (CHARGE_ACTIVITES_V5)
@@ -33,127 +33,22 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
    V3 : une personne peut avoir PLUSIEURS activités principales (ex.
    Mécanique et Calcul) : elle compte alors dans chacune (les lignes ne
    s'additionnent pas entre activités).
+   DISPOS_PARTAGEES : le calcul (lib/disponibilitesActivites.ts) et les
+   graphiques (components/analyse/GraphiquesDisponibilites.tsx) servent
+   aussi au tableau de bord de la Direction.
 ================================================================ */
 
-const ACTIVITES_SUIVIES = [
-  { cle: "meca", libelle: "Méca", couleur: "#c00000" },
-  { cle: "elec", libelle: "Elec", couleur: "#34506b" },
-  { cle: "calcul", libelle: "Calcul", couleur: "#6b58a8" },
-];
-const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-/* niveaux : du plus clair au plus foncé */
-const NIVEAUX = [
-  { n: 1, libelle: "Niveau 1", aide: "exécute sous supervision", couleur: "#c8e6c9" },
-  { n: 2, libelle: "Niveau 2", aide: "autonome sur une affaire courante", couleur: "#66bb6a" },
-  { n: 3, libelle: "Niveau 3", aide: "expert ou référent", couleur: "#2e7d32" },
-  { n: 0, libelle: "Niveau non renseigné", aide: "à saisir dans la fiche collaborateur", couleur: "#e3e7e3" },
-];
 const ROUGE = "#c62828";
 
 function ChargeActivitesContenu() {
   const [lundi, setLundi] = useState(() => lundiDe(aISO(new Date())));
-  const [annuaire, setAnnuaire] = useState<Collab[]>([]);
-  const [predo, setPredo] = useState<Map<string, Set<string>>>(new Map());
-  const [activites, setActivites] = useState<{ id: string; nom: string }[]>([]);
-  const [joursAffectes, setJoursAffectes] = useState<JourAffecte[]>([]);
-  const [joursPrev, setJoursPrev] = useState<JourAffecte[]>([]);
-  const [caps, setCaps] = useState<Awaited<ReturnType<typeof chargerCapacitesAbsences>>>({ caps: [], absences: [] });
-  const [chargement, setChargement] = useState(true);
-  const [erreur, setErreur] = useState("");
   const [detail, setDetail] = useState<{ cle: string; w: number } | null>(null);
   useEffect(() => {
     if (detail) window.setTimeout(() => document.getElementById("detail-semaine")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
   }, [detail]);
-  const [niveaux, setNiveaux] = useState<Map<string, number>>(new Map());
 
-  const fenetreFin = ajouterJours(lundi, 12 * 7 - 1);
+  const { donnees, semaines, fenetreFin, chargement, erreur } = useDisponibilitesActivites(lundi, 12);
   const lundiActuel = lundiDe(aISO(new Date()));
-
-  useEffect(() => {
-    let actif = true;
-    Promise.all([
-      chargerAnnuaire(),
-      supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id").eq("niveau", "PRINCIPALE"),
-      supabase.from("activites").select("id,nom"),
-      supabase.from("collaborateurs_niveaux").select("collaborateur_id,niveau"),
-    ])
-      .then(([an, p, a, nv]) => {
-        if (!actif) return;
-        // sans la table (SQL 86 pas encore passé) : tout le monde « non renseigné »
-        setNiveaux(new Map(((nv.data ?? []) as { collaborateur_id: string; niveau: number }[]).map((x) => [x.collaborateur_id, Number(x.niveau) || 0])));
-        setAnnuaire(an);
-        // une personne peut avoir plusieurs activités principales : on les garde toutes
-        const m = new Map<string, Set<string>>();
-        for (const x of (p.data ?? []) as { collaborateur_id: string; activite_id: string }[]) {
-          const e = m.get(x.collaborateur_id) ?? new Set<string>();
-          e.add(x.activite_id);
-          m.set(x.collaborateur_id, e);
-        }
-        setPredo(m);
-        setActivites((a.data ?? []) as { id: string; nom: string }[]);
-      })
-      .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement impossible."));
-    return () => {
-      actif = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let actif = true;
-    setChargement(true);
-    Promise.all([chargerAffectations(lundi, fenetreFin), chargerCapacitesAbsences(lundi, fenetreFin)])
-      .then(([aff, cap]) => {
-        if (!actif) return;
-        const parId = new Map(aff.affectations.map((a) => [a.id, a]));
-        const tous = aff.jours
-          .map((j) => {
-            const a = parId.get(j.affectation_id);
-            return a ? { collaborateur_id: a.collaborateur_id, jour: j.jour, heures: num(j.heures), prev: Boolean((a as { previsionnel?: boolean | null }).previsionnel) } : null;
-          })
-          .filter((x): x is JourAffecte & { prev: boolean } => x !== null);
-        setJoursAffectes(tous);
-        setJoursPrev(tous.filter((x) => x.prev));
-        setCaps(cap);
-      })
-      .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement impossible."))
-      .finally(() => actif && setChargement(false));
-    return () => {
-      actif = false;
-    };
-  }, [lundi, fenetreFin]);
-
-  const capacites = useMemo(() => construireCapacites(caps.caps, caps.absences), [caps]);
-  const semaines = useMemo(() => Array.from({ length: 12 }, (_, w) => ajouterJours(lundi, w * 7)), [lundi]);
-
-  /* par activité suivie : ses personnes, et pour chaque semaine capacité / occupées / disponibles */
-  const donnees = useMemo(() => {
-    const equipe = annuaire.filter((c) => c.inclus_statistiques);
-    return ACTIVITES_SUIVIES.map((s) => {
-      const ids = new Set(activites.filter((a) => sansAccents(a.nom).startsWith(s.cle)).map((a) => a.id));
-      const personnes = equipe.filter((c) => [...(predo.get(c.id) ?? [])].some((id) => ids.has(id)));
-      const parPersonne = personnes.map((c) => ({
-        c,
-        niveau: niveaux.get(c.id) ?? 0,
-        // ses autres activités principales, pour le signaler dans le détail
-        aussi: [...(predo.get(c.id) ?? [])].filter((id) => !ids.has(id)).map((id) => activites.find((a) => a.id === id)?.nom ?? "").filter(Boolean),
-        semaines: semaines.map((l) => {
-          const x = chargeParSemaine(capacites, joursAffectes, c.id, l);
-          const pv = chargeParSemaine(capacites, joursPrev, c.id, l).affecte;
-          return { capa: x.net, occ: x.affecte, prev: pv };
-        }),
-      }));
-      const capa = semaines.map((_, w) => parPersonne.reduce((t, p) => t + p.semaines[w].capa, 0));
-      const occ = semaines.map((_, w) => parPersonne.reduce((t, p) => t + p.semaines[w].occ, 0));
-      const libre = (p: (typeof parPersonne)[number], w: number) => Math.max(0, p.semaines[w].capa - p.semaines[w].occ);
-      const parNiveau = NIVEAUX.map((nv) => semaines.map((_, w) => parPersonne.filter((p) => p.niveau === nv.n).reduce((t, p) => t + libre(p, w), 0)));
-      const dispo = semaines.map((_, w) => parNiveau.reduce((t, x) => t + x[w], 0));
-      const surcharge = semaines.map((_, w) => parPersonne.reduce((t, p) => t + Math.max(0, p.semaines[w].occ - p.semaines[w].capa), 0));
-      const prev = semaines.map((_, w) => parPersonne.reduce((t, p) => t + p.semaines[w].prev, 0));
-      // part prévisionnelle dans les heures occupées sans surcharge (pour le graphique)
-      const prevUtile = semaines.map((_, w) => parPersonne.reduce((t, p) => t + Math.min(p.semaines[w].prev, Math.min(p.semaines[w].occ, p.semaines[w].capa)), 0));
-      return { ...s, personnes: parPersonne, capa, occ, prev, prevUtile, dispo, parNiveau, surcharge };
-    });
-  }, [annuaire, activites, predo, niveaux, semaines, capacites, joursAffectes, joursPrev]);
 
   const somme = (v: number[]) => v.reduce((t, x) => t + x, 0);
   const h = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} h`;
@@ -190,66 +85,13 @@ function ChargeActivitesContenu() {
         {chargement && <Message genre="info">Chargement…</Message>}
 
         {/* ---------- graphiques : une activité par carte ---------- */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14, marginBottom: 16 }}>
-          {donnees.map((d) => {
-            const max = Math.max(1, ...d.capa, ...d.occ);
-            return (
-              <section key={d.cle} style={{ ...page.carte, padding: 14 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-                  <h2 style={{ margin: 0, fontSize: 18, color: d.couleur }}>{d.libelle}</h2>
-                  <span style={{ fontSize: 12, color: C.gris }}>
-                    {d.personnes.length} personne{d.personnes.length > 1 ? "s" : ""} · {h(somme(d.dispo))} disponibles sur 12 semaines
-                  </span>
-                </div>
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 150, borderBottom: `1px solid ${C.ligne}` }}>
-                  {semaines.map((l, w) => {
-                    const capa = d.capa[w];
-                    const occ = d.occ[w];
-                    // DISPOS_SANS_SURCHARGE : plus de surcharge dans le graphique
-                    const occUtile = Math.max(0, capa - d.dispo[w]);
-                    return (
-                      <div
-                        key={l}
-                        title={`S${numeroSemaine(l)} : capacité ${h(capa)} · occupées ${h(occ)} · disponibles ${h(d.dispo[w])}${
-                          d.dispo[w] >= 0.5 ? ` (${NIVEAUX.map((nv, k) => (d.parNiveau[k][w] >= 0.5 ? `${nv.libelle.replace("Niveau non renseigné", "non renseigné")} ${h(d.parNiveau[k][w])}` : "")).filter(Boolean).join(", ")})` : ""
-                        }${d.prev[w] >= 0.5 ? ` · dont prévisionnel ${h(d.prev[w])}` : ""}`}
-                        onClick={() => setDetail(detail?.cle === d.cle && detail.w === w ? null : { cle: d.cle, w })}
-                        style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column-reverse", cursor: "pointer", outline: detail?.cle === d.cle && detail.w === w ? `2px solid ${C.encre}` : undefined }}
-                      >
-                        <div style={{ height: `${(Math.max(0, occUtile - d.prevUtile[w]) / max) * 100}%`, background: d.couleur, opacity: 0.85 }} />
-                        {d.prevUtile[w] > 0 && (
-                          <div style={{ height: `${(d.prevUtile[w] / max) * 100}%`, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 3px,#c3cad3 3px,#c3cad3 6px)" }} />
-                        )}
-                        {/* disponibles, du niveau 3 (foncé, en bas) au niveau 1 (clair), puis non renseigné */}
-                        {[2, 1, 0, 3].map((k) =>
-                          d.parNiveau[k][w] > 0 ? <div key={k} style={{ height: `${(d.parNiveau[k][w] / max) * 100}%`, background: NIVEAUX[k].couleur }} /> : null
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
-                  {semaines.map((l) => (
-                    <div key={l} style={{ flex: 1, textAlign: "center", fontSize: 10, color: l === lundiActuel ? C.rougeFonce : C.gris, fontWeight: l === lundiActuel ? 800 : 600 }}>
-                      S{numeroSemaine(l)}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, margin: "-6px 0 16px" }}>
-          <span><i style={{ display: "inline-block", width: 12, height: 12, background: "#7b8189", verticalAlign: "middle" }} /> occupées (couleur de l’activité)</span>
-          <span><i style={{ display: "inline-block", width: 12, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 3px,#c3cad3 3px,#c3cad3 6px)", verticalAlign: "middle" }} /> dont prévisionnel (non confirmé)</span>
-          {NIVEAUX.map((nv) => (
-            <span key={nv.n} title={nv.aide}>
-              <i style={{ display: "inline-block", width: 12, height: 12, background: nv.couleur, verticalAlign: "middle", border: "1px solid #c9d1c9" }} /> disponibles · {nv.libelle.toLowerCase()}
-              {nv.n > 0 ? <span style={{ color: C.gris }}> ({nv.aide})</span> : null}
-            </span>
-          ))}
-          <span style={{ color: C.gris }}>La hauteur totale d’une barre est la capacité de la semaine. Cliquez sur une barre ou une case pour voir le détail par personne.</span>
-        </div>
+        <GraphiquesDisponibilites
+          donnees={donnees}
+          semaines={semaines}
+          lundiActuel={lundiActuel}
+          selection={detail}
+          onBarre={(cle, w) => setDetail(detail?.cle === cle && detail.w === w ? null : { cle, w })}
+        />
 
         {/* DETAIL_SOUS_GRAPHIQUES : le détail de la semaine cliquée, juste sous les graphiques */}
         {detail &&
@@ -447,7 +289,6 @@ function ChargeActivitesContenu() {
               </tbody>
             </table>
           </div>
-
         </section>
 
         <p style={{ margin: "4px 4px 0", fontSize: 13, color: C.gris }}>

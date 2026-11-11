@@ -8,6 +8,7 @@ import { C, Message, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
+import RelanceFaite from "@/components/pilotage/RelanceFaite"; // RELANCE_FAITE_FDR
 
 /* ===============================================================
    MA FEUILLE DE ROUTE
@@ -292,6 +293,7 @@ function FeuilleDeRouteContenu() {
                     <span style={{ marginLeft: "auto", fontWeight: 800, color: jours < 0 ? "#b3261e" : jours <= 3 ? "#c76500" : "#1b5e20" }}>
                       {`le ${dateCourte(r.prevue_le)}${jours < 0 ? ` · en retard de ${-jours} j` : jours === 0 ? " · aujourd’hui" : ` · dans ${jours} j`}`}
                     </span>
+                    <RelanceFaite numero={r.numero_devis} onFait={() => setRelancesFdr((l) => l.filter((x) => x.id !== r.id))} />
                   </li>
                 );
               })}

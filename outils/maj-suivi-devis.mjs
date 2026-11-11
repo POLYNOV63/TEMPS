@@ -12,6 +12,7 @@
      les devis n'y sont plus en alerte (ils se gèrent dans le Suivi des devis).
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
+     Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
 
    Tout ou rien : tout est vérifié avant d'écrire quoi que ce soit.
    Relançable sans risque : ce qui est déjà fait est sauté.
@@ -71,6 +72,10 @@ for (const rel of [
   "app/pilotage/devis/page.tsx",
   "supabase/91_suivi_devis_relances.sql",
   "supabase/92_suivi_devis_relances_prevues.sql",
+  "components/pilotage/RelanceFaite.tsx",
+  "components/dashboard/VignetteFacturation.tsx",
+  "components/analyse/GraphiquesDisponibilites.tsx",
+  "lib/disponibilitesActivites.ts",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
@@ -239,6 +244,27 @@ $2)}$1{!chargement &&$3!erreur &&$4semaines.map((s, k) => (`,
       "encart « Devis à relancer »"
     );
     ecritures.push(fdr);
+  }
+}
+
+/* 4 bis. app/ma-feuille-de-route/page.tsx : « ✓ faite » sur chaque relance */
+if (fdr && !erreurs.length) {
+  if (fdr.texte.includes("RELANCE_FAITE_FDR")) {
+    console.log("  = app/ma-feuille-de-route/page.tsx : « ✓ faite » déjà là");
+  } else {
+    remplacerRe(
+      fdr,
+      /(import OngletsPilotage from "@\/components\/pilotage\/OngletsPilotage";\n)/,
+      '$1import RelanceFaite from "@/components/pilotage/RelanceFaite"; // RELANCE_FAITE_FDR\n',
+      "import du bouton « ✓ faite »"
+    );
+    remplacerRe(
+      fdr,
+      /(`le \$\{dateCourte\(r\.prevue_le\)\}[^\n]*\n([ \t]*)<\/span>)/,
+      "$1\n$2<RelanceFaite numero={r.numero_devis} onFait={() => setRelancesFdr((l) => l.filter((x) => x.id !== r.id))} />",
+      "bouton « ✓ faite » sur chaque relance"
+    );
+    if (!ecritures.includes(fdr)) ecritures.push(fdr);
   }
 }
 

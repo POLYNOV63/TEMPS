@@ -5,13 +5,21 @@ import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
 import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
+import VignetteFacturation from "@/components/dashboard/VignetteFacturation";
+import GraphiquesDisponibilites from "@/components/analyse/GraphiquesDisponibilites";
+import { useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
+import { aISO, lundiDe } from "@/lib/pilotagePlanning";
 
 /* ===============================================================
-   TABLEAU DE BORD
+   TABLEAU DE BORD (DASHBOARD_SIMPLIFIE)
 
-   ADMIN : Pilotage BE, Validations RH (dont « Feuilles collaborateurs »
-   avec les feuilles à relancer), Mon espace, Analyse, Paramétrage replié.
-   Autres rôles : Mon espace, Pilotage BE (RESPONSABLE), Suivi des équipes.
+   ADMIN : Mon espace, vignette « À facturer » (mois en cours et suivant),
+   trois tuiles (Pilotage activité, RH, Exports), ma feuille de route
+   (relances de devis comprises), paramétrage replié.
+   DIRECTION : vignette « À facturer », tuile Analyses, les 3 graphiques
+   de disponibilité par activité. Pas de feuille de route.
+   Autres rôles : Mon espace, Pilotage BE (RESPONSABLE), Suivi des
+   équipes, ma feuille de route.
 ================================================================ */
 
 /* ===============================================================
@@ -39,7 +47,7 @@ type Feuille = {
 
 type EtatFeuille = "complete" | "incomplete" | "manquante";
 
-/* FEUILLES_A_RELANCER_V2 : état des feuilles de la semaine dernière */
+/* FEUILLES_A_RELANCER_V2 : état des feuilles de la semaine */
 type BilanRelance = { semaine: string; transmises: number; completes: number; incompletes: number; nonSaisies: number };
 
 type LigneSurveillance = {
@@ -68,7 +76,6 @@ export default function DashboardPage() {
   const [chargement, setChargement] = useState(true);
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
-  const [feuillesPrecedentes, setFeuillesPrecedentes] = useState<Feuille[]>([]);
   const [nombreDemandesRH, setNombreDemandesRH] = useState(0);
   const [erreur, setErreur] = useState<string | null>(null);
   const [semaineCourante, setSemaineCourante] = useState("");
@@ -206,17 +213,6 @@ export default function DashboardPage() {
 
           if (erreurFeuilles) throw erreurFeuilles;
 
-          // Feuilles à relancer : celles de la semaine dernière non envoyées.
-          const [anneeLundi, moisLundi, jourLundi] = lundiString.split("-").map(Number);
-          const precedent = new Date(anneeLundi, moisLundi - 1, jourLundi - 7);
-
-          const { data: feuillesPrecedentesData } = await supabase
-            .from("feuilles_heures")
-            .select(COLONNES_FEUILLE)
-            .eq("semaine_debut", formatDateSQL(precedent));
-
-          setFeuillesPrecedentes(feuillesPrecedentesData ?? []);
-
           const { count: demandesEnAttente } = await supabase
             .from("rh_demandes")
             .select("id", { count: "exact", head: true })
@@ -225,8 +221,8 @@ export default function DashboardPage() {
           setNombreDemandesRH(demandesEnAttente ?? 0);
           setCollaborateurs(collaborateursActifs ?? []);
           setFeuilles(feuillesCourantes ?? []);
-        } else {
-          /* Autres rôles : sa propre feuille */
+        } else if (roleUtilisateur !== "DIRECTION") {
+          /* Autres rôles (sauf Direction, sans feuille d'heures) : sa propre feuille */
           const { data: maFeuille, error: erreurMaFeuille } = await supabase
             .from("feuilles_heures")
             .select(COLONNES_FEUILLE)
@@ -405,16 +401,19 @@ export default function DashboardPage() {
 
         {role === "ADMIN" ? (
           <>
-            {/* TABLEAU_DE_BORD_V3 : moi, puis le métier, les analyses, les RH, les exports, le paramétrage */}
+            {/* DASHBOARD_SIMPLIFIE : moi, ce qu'il y a à facturer, trois tuiles, ma feuille de route, le paramétrage */}
             <BandeauMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} />
 
-            <BlocBureauEtudes aller={aller} admin />
+            <VignetteFacturation onOuvrir={() => aller("/analyse/facturation")} />
 
-            <BlocAnalyses aller={aller} />
+            <TuilePilotageActivite aller={aller} />
 
-            <BlocValidationsRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} bilan={bilanRelance} />
+            <div className="db-deux" style={stylesV2.deuxColonnes}>
+              <TuileRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} bilan={bilanRelance} />
+              <TuileExports aller={aller} />
+            </div>
 
-            <BlocExports aller={aller} />
+            <FeuilleDeRouteDashboard />
 
             <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />
           </>
@@ -432,13 +431,7 @@ export default function DashboardPage() {
 
             {peut(role, "piloterBE") && <BlocPilotage aller={aller} admin={false} />}
 
-            <BlocAnalyse
-              aller={aller}
-              admin={false}
-              accesFeuilles={accesFeuilles}
-              accesBilanRH={accesBilanRH}
-              accesExportExcel={accesExportExcel}
-            />
+            <BlocAnalyse aller={aller} accesFeuilles={accesFeuilles} accesBilanRH={accesBilanRH} accesExportExcel={accesExportExcel} />
 
             <FeuilleDeRouteDashboard />
           </>
@@ -460,6 +453,9 @@ const CSS_TELEPHONE = `
   .db-bandeau > span { width: 100%; }
   .db-cloche-panneau { position: fixed !important; left: 8px !important; right: 8px !important; top: 72px !important; width: auto !important; max-width: none !important; }
   .db-cloche-ligne { min-height: 52px; justify-content: center; }
+}
+@media (max-width: 900px) {
+  .db-deux { grid-template-columns: 1fr !important; }
 }
 `;
 
@@ -487,7 +483,7 @@ function EnTete({ role, cloche }: { role: string; cloche?: ReactNode }) {
 }
 
 /* ===============================================================
-   COMPOSANTS DU TABLEAU DE BORD (cartes compactes, par priorité)
+   COMPOSANTS DU TABLEAU DE BORD
 ================================================================ */
 
 type Ton = "neutre" | "alerte" | "ok";
@@ -608,6 +604,270 @@ function CarteCompacte({
         {extra}
       </div>
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   DASHBOARD_SIMPLIFIE : une tuile = un domaine, ses liens dedans
+--------------------------------------------------------------- */
+
+type Lien = { icone: string; libelle: string; url: string; aide?: string; badge?: string | null; ton?: Ton; extra?: ReactNode };
+
+function LienTuile({ lien, aller }: { lien: Lien; aller: (url: string) => void }) {
+  const [survol, setSurvol] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => aller(lien.url)}
+      title={lien.aide}
+      onMouseEnter={() => setSurvol(true)}
+      onMouseLeave={() => setSurvol(false)}
+      style={{ ...stylesV2.lien, background: survol ? "#f4f5f7" : "transparent" }}
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+        <span aria-hidden="true" style={{ width: 22, textAlign: "center" }}>
+          {lien.icone}
+        </span>
+        <span style={{ flex: 1 }}>{lien.libelle}</span>
+        {lien.badge && <Pastille texte={lien.badge} ton={lien.ton} />}
+      </span>
+      {lien.extra && <span style={{ display: "block", paddingLeft: 30, marginTop: 2 }}>{lien.extra}</span>}
+    </button>
+  );
+}
+
+function TuileLiens({
+  icone,
+  titre,
+  description,
+  sections,
+  aller,
+}: {
+  icone: string;
+  titre: string;
+  description: string;
+  sections: { titre?: string; liens: Lien[] }[];
+  aller: (url: string) => void;
+}) {
+  return (
+    <section aria-label={titre} style={stylesV2.tuile}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
+        <h2 style={stylesV2.groupeTitre}>
+          <span aria-hidden="true">{icone}</span> {titre}
+        </h2>
+        <span style={stylesV2.groupeDescription}>{description}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "6px 16px" }}>
+        {sections.map((s, k) => (
+          <div key={s.titre ?? k}>
+            {s.titre && <div style={stylesV2.sectionTitre}>{s.titre}</div>}
+            {s.liens.map((l) => (
+              <LienTuile key={l.url} lien={l} aller={aller} />
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TuilePilotageActivite({ aller }: { aller: (url: string) => void }) {
+  return (
+    <TuileLiens
+      icone="🏗️"
+      titre="Pilotage activité"
+      description="Les affaires, les devis, le planning et les analyses"
+      aller={aller}
+      sections={[
+        {
+          titre: "Affaires",
+          liens: [
+            { icone: "🗂️", libelle: "Suivi des affaires", url: "/pilotage", aide: "Réalisé / chiffré des affaires, alertes" },
+            { icone: "📋", libelle: "Bilan affaire", url: "/affaires/bilan", aide: "Une affaire en détail" },
+            { icone: "🧾", libelle: "Relevé PE / PI", url: "/pilotage/prestations", aide: "Le relevé du mois des prestations au temps passé" },
+          ],
+        },
+        {
+          titre: "Devis",
+          liens: [
+            { icone: "📝", libelle: "Suivi des devis", url: "/pilotage/devis", aide: "Rédaction, envoi, relances" },
+            { icone: "📈", libelle: "Statistiques des devis", url: "/pilotage/devis?onglet=statistiques", aide: "Consultations, transformation, clients, 3 exercices" },
+          ],
+        },
+        {
+          titre: "Planning",
+          liens: [
+            { icone: "🗓️", libelle: "Planning des affaires", url: "/pilotage/affaires" },
+            { icone: "👥", libelle: "Charge par ressource", url: "/pilotage/ressources" },
+            { icone: "🧭", libelle: "Disponibilités par activité", url: "/analyse/charge-activites" },
+            { icone: "🗺️", libelle: "Feuilles de route", url: "/ma-feuille-de-route", aide: "La mienne, ou celle d’un collègue" },
+          ],
+        },
+        {
+          titre: "Analyse",
+          liens: [
+            { icone: "💶", libelle: "Finances", url: "/analyse/finances", aide: "CA de l’exercice, atterrissage, prévisionnel" },
+            { icone: "💹", libelle: "Rentabilité", url: "/analyse/rentabilite" },
+            { icone: "📊", libelle: "Analyse de capacité", url: "/admin/bilans", aide: "Où part le temps de l’équipe" },
+            { icone: "🧑‍🔧", libelle: "Cartographie de l’équipe", url: "/analyse/effectifs" },
+            { icone: "🧩", libelle: "Bilan activités", url: "/admin/bilan-activites" },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+function TuileRH({
+  aller,
+  nombreDemandesRH,
+  aRelancer,
+  bilan,
+}: {
+  aller: (url: string) => void;
+  nombreDemandesRH: number;
+  aRelancer: LigneSurveillance[];
+  bilan: BilanRelance;
+}) {
+  // à relancer en priorité : non saisies et incomplètes ; les complètes n'ont plus qu'à être validées
+  const prioritaires = aRelancer.filter((l) => l.etat !== "complete");
+  const noms = prioritaires.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
+  const compteur = (valeur: number, texte: string, fond: string, encre: string, aide: string) => (
+    <span title={aide} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: fond, color: encre, borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
+      {valeur} {texte}
+    </span>
+  );
+
+  return (
+    <TuileLiens
+      icone="🧑‍💼"
+      titre="RH"
+      description="Feuilles d’heures, absences, demandes"
+      aller={aller}
+      sections={[
+        {
+          liens: [
+            {
+              icone: "📋",
+              libelle: "Feuilles d’heures",
+              url: "/admin/feuilles",
+              aide: prioritaires.length > 0 ? `${bilan.semaine}, à relancer : ${noms.join(", ")}` : `${bilan.semaine} : rien à relancer`,
+              badge: aRelancer.length === 0 ? "✓ à jour" : `${aRelancer.length} à relancer`,
+              ton: aRelancer.length === 0 ? "ok" : "alerte",
+              extra: (
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {compteur(bilan.transmises, "transmises", "#e9f6eb", "#26712b", "Feuilles validées et transmises")}
+                  {bilan.completes > 0 && compteur(bilan.completes, "à valider", "#e8f0ff", "#2455a4", "Remplies mais pas encore validées")}
+                  {bilan.incompletes > 0 && compteur(bilan.incompletes, "incomplètes", "#fff1df", "#c76500", "Commencées mais il manque des heures")}
+                  {bilan.nonSaisies > 0 && compteur(bilan.nonSaisies, "non saisies", "#fdecec", "#a51d1d", "Aucune feuille pour la semaine")}
+                </span>
+              ),
+            },
+            {
+              icone: "✅",
+              libelle: "Validation RH",
+              url: "/admin/Valid_RH",
+              aide: "Demandes de congés, RTT, récupération à valider",
+              badge: nombreDemandesRH > 0 ? `${nombreDemandesRH} en attente` : null,
+              ton: "alerte",
+            },
+            { icone: "📒", libelle: "Suivi RH : absences et compteurs", url: "/admin/suivi-rh", aide: "CP, RTT, récupération : soldes, historique, ajustements" },
+            { icone: "🧾", libelle: "Notes de frais", url: "/admin/suivi-notes-frais" },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+function TuileExports({ aller }: { aller: (url: string) => void }) {
+  return (
+    <TuileLiens
+      icone="📤"
+      titre="Exports"
+      description="Pour la compta et la paie, en fin de mois"
+      aller={aller}
+      sections={[
+        {
+          liens: [
+            { icone: "🧾", libelle: "Facturation du mois", url: "/analyse/facturation", aide: "Forfaits livrés et PE / PI, n° ARC Louxor : à envoyer à la compta" },
+            { icone: "🧑‍💼", libelle: "Bilan RH mensuel", url: "/admin/bilan-rh", aide: "Tickets restaurant, télétravail, heures sup, compteurs" },
+            { icone: "📤", libelle: "Export récapitulatif d’heures", url: "/admin/export-excel", aide: "Pour l’ancien système : fichier hebdomadaire des heures" },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+/* Direction (Président, adjoint) : consultation seule — ce qu'il y a à facturer, les analyses, les disponibilités */
+function BlocDirection({ aller }: { aller: (url: string) => void }) {
+  return (
+    <>
+      <VignetteFacturation onOuvrir={() => aller("/analyse/facturation")} />
+
+      <TuileLiens
+        icone="📊"
+        titre="Analyses"
+        description="Consultation"
+        aller={aller}
+        sections={[
+          {
+            titre: "Chiffre d’affaires",
+            liens: [
+              { icone: "💶", libelle: "Finances", url: "/analyse/finances", aide: "CA de l’exercice : réalisé, attendu, atterrissage face au prévisionnel" },
+              { icone: "🧾", libelle: "Facturation du mois", url: "/analyse/facturation" },
+              { icone: "💹", libelle: "Rentabilité", url: "/analyse/rentabilite", aide: "Taux vendu, taux obtenu et coût de structure" },
+              { icone: "📈", libelle: "Statistiques des devis", url: "/pilotage/devis?onglet=statistiques", aide: "Consultations, taux de transformation, top clients" },
+            ],
+          },
+          {
+            titre: "Affaires et charge",
+            liens: [
+              { icone: "🗂️", libelle: "Suivi des affaires", url: "/pilotage" },
+              { icone: "🗓️", libelle: "Planning des affaires", url: "/pilotage/affaires" },
+              { icone: "👥", libelle: "Charge par ressource", url: "/pilotage/ressources" },
+              { icone: "🧭", libelle: "Disponibilités par activité", url: "/analyse/charge-activites" },
+              { icone: "🧑‍🔧", libelle: "Cartographie de l’équipe", url: "/analyse/effectifs" },
+            ],
+          },
+        ]}
+      />
+
+      <DisponibilitesDirection aller={aller} />
+    </>
+  );
+}
+
+/* les 3 graphiques de disponibilité par activité, sur 12 semaines (même calcul que la page) */
+function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
+  const lundi = useMemo(() => lundiDe(aISO(new Date())), []);
+  const { donnees, semaines, chargement, erreur } = useDisponibilitesActivites(lundi, 12);
+  return (
+    <section aria-label="Disponibilités par activité" style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
+        <h2 style={stylesV2.groupeTitre}>🧭 Disponibilités par activité</h2>
+        <span style={stylesV2.groupeDescription}>capacité, occupé et disponible sur les 12 semaines à venir</span>
+        <button type="button" onClick={() => aller("/analyse/charge-activites")} style={{ ...stylesV2.lienTexte, marginLeft: "auto" }}>
+          Le détail →
+        </button>
+      </div>
+      {erreur && <p style={{ color: "#b3261e", margin: 0 }}>{erreur}</p>}
+      {chargement && !erreur ? (
+        <p style={{ color: "#777777", margin: 0 }}>Chargement des disponibilités…</p>
+      ) : (
+        !erreur && (
+          <GraphiquesDisponibilites
+            donnees={donnees}
+            semaines={semaines}
+            lundiActuel={lundi}
+            hauteur={120}
+            onBarre={() => aller("/analyse/charge-activites")}
+            aide="Cliquez sur une barre pour le détail par personne."
+          />
+        )
+      )}
+    </section>
   );
 }
 
@@ -758,6 +1018,13 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
           description="Toutes les affaires : chiffré, réalisé, reste, statut"
           onClick={() => aller("/pilotage")}
         />
+        {/* SUIVI_DEVIS : les responsables gèrent les devis et leurs relances */}
+        <CarteCompacte
+          icone="📝"
+          titre="Suivi des devis"
+          description="Devis à rédiger, envoyés, relances à prévoir"
+          onClick={() => aller("/pilotage/devis")}
+        />
         <CarteCompacte
           icone="📊"
           titre="Bilan affaire"
@@ -781,77 +1048,6 @@ function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: b
       </Groupe>
     )}
     </>
-  );
-}
-
-function BlocValidationsRH({
-  aller,
-  nombreDemandesRH,
-  aRelancer,
-  bilan,
-}: {
-  aller: (url: string) => void;
-  nombreDemandesRH: number;
-  aRelancer: LigneSurveillance[];
-  bilan: BilanRelance;
-}) {
-  // à relancer en priorité : non saisies et incomplètes ; les complètes n'ont plus qu'à être validées
-  const prioritaires = aRelancer.filter((l) => l.etat !== "complete");
-  const noms = prioritaires.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
-  const compteur = (valeur: number, texte: string, fond: string, encre: string, aide: string) => (
-    <span title={aide} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: fond, color: encre, borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
-      {valeur} {texte}
-    </span>
-  );
-
-  return (
-    <Groupe titre="RH" description="Demandes, feuilles et compteurs des collaborateurs">
-      <div style={stylesV2.grille}>
-        <CarteCompacte
-          icone="🧑‍💼"
-          titre="Validation RH"
-          description="Valider les demandes nécessitant la double validation PLG / AMA"
-          badge={nombreDemandesRH > 0 ? `${nombreDemandesRH} en attente` : null}
-          ton="alerte"
-          onClick={() => aller("/admin/Valid_RH")}
-        />
-        <CarteCompacte
-          icone="📒"
-          titre="Suivi RH"
-          description="CP, RTT et compteurs de chacun : soldes, historique, ajustements"
-          onClick={() => aller("/admin/suivi-rh")}
-        />
-        {/* SUIVI_NOTES_FRAIS */}
-        <CarteCompacte
-          icone="🧾"
-          titre="Notes de frais"
-          description="Toutes les notes : combien, à qui, pour quoi ; justificatifs et statistiques"
-          onClick={() => aller("/admin/suivi-notes-frais")}
-        />
-        <CarteCompacte
-          icone="📋"
-          titre="Feuilles collaborateurs"
-          description={
-            aRelancer.length === 0
-              ? `${bilan.semaine} : toutes les feuilles sont transmises, rien à relancer`
-              : prioritaires.length === 0
-                ? `${bilan.semaine} : tout est rempli, il ne reste qu'à valider`
-                : `${bilan.semaine}, à relancer : ${noms.slice(0, 4).join(", ")}${noms.length > 4 ? ` +${noms.length - 4}` : ""}`
-          }
-          badge={aRelancer.length === 0 ? "✓ rien à relancer" : `${aRelancer.length} à relancer`}
-          ton={aRelancer.length === 0 ? "ok" : "alerte"}
-          extra={
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
-              {compteur(bilan.transmises, "transmises", "#e9f6eb", "#26712b", "Feuilles validées et transmises")}
-              {bilan.completes > 0 && compteur(bilan.completes, "à valider", "#e8f0ff", "#2455a4", "Remplies mais pas encore validées : il ne reste qu'à cliquer « Valider ma semaine »")}
-              {bilan.incompletes > 0 && compteur(bilan.incompletes, "incomplètes", "#fff1df", "#c76500", "Commencées mais il manque des heures")}
-              {bilan.nonSaisies > 0 && compteur(bilan.nonSaisies, "non saisies", "#fdecec", "#a51d1d", "Aucune feuille pour la semaine")}
-            </div>
-          }
-          onClick={() => aller("/admin/feuilles")}
-        />
-      </div>
-    </Groupe>
   );
 }
 
@@ -931,105 +1127,23 @@ function BlocMonEspace({
   );
 }
 
-/* Direction (Président, adjoint) : consultation seule — TABLEAU_PAR_AXES */
-function BlocDirection({ aller }: { aller: (url: string) => void }) {
-  return (
-    <>
-      <Groupe titre="Charge à venir" description="Consultation">
-        <div style={stylesV2.grille}>
-          {/* CHARGE_ACTIVITES */}
-          <CarteCompacte principale icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, occupé et disponible sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />
-          <CarteCompacte icone="👥" titre="Charge par ressource" description="Charge prévue de chacun, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
-          <CarteCompacte icone="🗓️" titre="Planning des affaires" description="Qui travaille sur quoi, semaine par semaine" onClick={() => aller("/pilotage/affaires")} />
-        </div>
-      </Groupe>
-      <Groupe titre="Avancement des affaires et équipe" description="Consultation">
-        <div style={stylesV2.grille}>
-          <CarteCompacte icone="🗂️" titre="Suivi des affaires" description="Chiffré, réalisé et planifié de chaque affaire, sur une période, par activité" onClick={() => aller("/pilotage")} />
-          <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
-        </div>
-      </Groupe>
-      <Groupe titre="Rentabilité et chiffre d'affaires" description="Consultation">
-        <div style={stylesV2.grille}>
-          {/* RENTABILITE_V1 FIABILITE_CHIFFRAGE */}
-          <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
-          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
-          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
-          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Consultations, taux de transformation, top 10 clients, comparatif sur 3 ans" onClick={() => aller("/pilotage/indicateurs")} />
-        </div>
-      </Groupe>
-    </>
-  );
-}
-
-/* Casquette « chiffre d'affaires » : ADMIN seulement */
-function BlocChiffreAffaires({ aller }: { aller: (url: string) => void }) {
-  return (
-    <Groupe titre="Chiffre d'affaires" description="CA, prévisionnel, rentabilité, commercial et carnet de commandes">
-      <div style={stylesV2.grille}>
-        <CarteCompacte
-          icone="💶"
-          titre="Finances"
-          description="CA de l'exercice face au prévisionnel, activités × imputations, rentabilité"
-          onClick={() => aller("/analyse/finances")}
-        />
-          <CarteCompacte icone="🧾" titre="Facturation du mois" description="Point de fin de mois avec la compta : forfaits livrés et PE / PI, n° ARC Louxor" onClick={() => aller("/analyse/facturation")} />
-        <CarteCompacte
-          icone="📈"
-          titre="Indicateurs commerciaux"
-          description="Devis émis et chiffrés, transformation, CBE vendu, carnet de commandes"
-          onClick={() => aller("/pilotage/indicateurs")}
-        />
-      </div>
-    </Groupe>
-  );
-}
-
+/* RESPONSABLE : suivi des équipes (feuilles, bilan RH, export) */
 function BlocAnalyse({
   aller,
-  admin,
   accesFeuilles,
   accesBilanRH,
   accesExportExcel,
 }: {
   aller: (url: string) => void;
-  admin: boolean;
   accesFeuilles: boolean;
   accesBilanRH: boolean;
   accesExportExcel: boolean;
 }) {
-  if (!admin && !accesFeuilles && !accesBilanRH && !accesExportExcel) return null;
+  if (!accesFeuilles && !accesBilanRH && !accesExportExcel) return null;
 
   return (
-    <Groupe
-      titre={admin ? "Analyse technique" : "Suivi des équipes"}
-      description={admin ? "Charge des équipes, heures par activité, bilan RH mensuel et exports" : "Feuilles de temps, bilan RH mensuel et export Excel"}
-    >
+    <Groupe titre="Suivi des équipes" description="Feuilles de temps, bilan RH mensuel et export Excel">
       <div style={stylesV2.grille}>
-        {admin && (
-          <CarteCompacte
-            icone="🎯"
-            titre="Analyse du chiffré"
-            description="Pointé face au chiffré par affaire et par activité, dépassements, activités pointées non chiffrées"
-            onClick={() => aller("/analyse/pointage")}
-          />
-        )}
-        {admin && (
-          <CarteCompacte
-            icone="📈"
-            titre="Analyse de capacité"
-            description="Heures, activité et taux d'occupation de chaque collaborateur"
-            onClick={() => aller("/admin/bilans")}
-          />
-        )}
-        {admin && (
-          <CarteCompacte
-            icone="🧩"
-            titre="Bilan activités"
-            description="Heures CBE / DBE réparties par activité"
-            onClick={() => aller("/admin/bilan-activites")}
-          />
-        )}
         {accesBilanRH && (
           <CarteCompacte
             icone="🧑‍💼"
@@ -1046,8 +1160,7 @@ function BlocAnalyse({
             onClick={() => aller("/admin/export-excel")}
           />
         )}
-        {/* L'ADMIN y accède par « Validations RH » ; les RESPONSABLE n'ont que ce chemin */}
-        {accesFeuilles && !admin && (
+        {accesFeuilles && (
           <CarteCompacte
             icone="📋"
             titre="Feuilles collaborateurs"
@@ -1079,7 +1192,7 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
   };
   const ok = statut === "complete";
   return (
-    <section className="db-bandeau" aria-label="Mon espace" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "4px 0 18px" }}>
+    <section className="db-bandeau" aria-label="Mon espace" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, margin: "4px 0 14px" }}>
       <span style={{ fontWeight: 800, fontSize: 13, color: "#6b7076", textTransform: "uppercase", letterSpacing: ".4px", marginRight: 4 }}>Mon espace</span>
       <button type="button" title={libelle} onClick={() => aller("/ma-semaine")} style={{ ...bouton, borderColor: ok ? "#9fd4a7" : "#e9b877", background: ok ? "#f2faf3" : "#fff7ea" }}>
         📅 Ma semaine
@@ -1087,70 +1200,10 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
           {ok ? "✓ complète" : statut === "incomplete" ? "⚠ à compléter" : "⚠ non saisie"}
         </span>
       </button>
-      <button type="button" onClick={() => aller("/ma-feuille-de-route")} style={bouton}>🗺️ Ma feuille de route</button>
       <button type="button" onClick={() => aller("/mes-feuilles")} style={bouton}>📄 Mes feuilles</button>
       <button type="button" onClick={() => aller("/RH")} style={bouton}>🧑‍💼 Mes demandes RH</button>
       <button type="button" onClick={() => aller("/guide")} style={bouton}>📘 Guide</button>
     </section>
-  );
-}
-
-/* TABLEAU_PAR_AXES : le métier, en deux questions — où en sont les affaires, a-t-on les bras */
-function BlocBureauEtudes({ aller, admin = false }: { aller: (url: string) => void; admin?: boolean }) {
-  return (
-    <>
-      <Groupe titre="Avancement des affaires" description="Chiffré face aux heures consommées : où en est-on, va-t-on déraper ?">
-        <div style={stylesV2.grille}>
-          <CarteCompacte principale icone="🗂️" titre="Suivi des affaires" description="Toutes les affaires : réalisé / chiffré, sur une période, par activité, alertes" onClick={() => aller("/pilotage")} />
-          <CarteCompacte icone="📋" titre="Bilan affaire" description="Une affaire en détail : par activité, par personne, mois par mois" onClick={() => aller("/affaires/bilan")} />
-          <CarteCompacte icone="🧾" titre="Relevé PE / PI" description="Le relevé du mois des prestations au temps passé" onClick={() => aller("/pilotage/prestations")} />
-        </div>
-      </Groupe>
-      <Groupe titre="Charge à venir" description="Le planifié face à la capacité : a-t-on les bras ?">
-        <div style={stylesV2.grille}>
-          <CarteCompacte principale icone="🗓️" titre="Planning des affaires" description="Affecter les ressources, voir le pointé et le reste à planifier" onClick={() => aller("/pilotage/affaires")} />
-          <CarteCompacte icone="👥" titre="Charge par ressource" description="Qui est chargé, qui est disponible, semaine par semaine" onClick={() => aller("/pilotage/ressources")} />
-          {/* CHARGE_ACTIVITES */}
-          {admin && <CarteCompacte icone="🧭" titre="Disponibilités par activité" description="Méca, Elec, Calcul : capacité, occupé et disponible sur 12 semaines" onClick={() => aller("/analyse/charge-activites")} />}
-        </div>
-      </Groupe>
-    </>
-  );
-}
-
-/* TABLEAU_PAR_AXES : ce qui a été fait, ce que ça a rapporté, le chiffre d'affaires */
-function BlocAnalyses({ aller }: { aller: (url: string) => void }) {
-  return (
-    <>
-      <Groupe titre="Activité réalisée" description="Où est passé le temps, qui compose l'équipe">
-        <div style={stylesV2.grille}>
-          <CarteCompacte principale icone="📊" titre="Analyse de capacité" description="Où part le temps de l'équipe : vendu, devis, NI, formation, non expliqué" onClick={() => aller("/admin/bilans")} />
-          <CarteCompacte icone="🧑‍🔧" titre="Cartographie de l’équipe" description="Activités, niveaux, relève et polyvalence du bureau d’études" onClick={() => aller("/analyse/effectifs")} />
-        </div>
-      </Groupe>
-      {/* TABLEAU_FINITIONS : rentabilité et chiffre d'affaires réunis ; la facturation du mois est dans Exports */}
-      <Groupe titre="Rentabilité et chiffre d'affaires" description="Ce qu'ont rapporté les affaires, le CA de l'exercice, les consultations">
-        <div style={stylesV2.grille}>
-          {/* RENTABILITE_V1 FIABILITE_CHIFFRAGE : la fiabilité du chiffrage est reprise dans la rentabilité */}
-          <CarteCompacte principale icone="💹" titre="Rentabilité" description="Taux vendu, taux obtenu et coût de structure, par activité et par affaire" onClick={() => aller("/analyse/rentabilite")} />
-          <CarteCompacte principale icone="💶" titre="Finances" description="CA de l'exercice : réalisé, attendu, atterrissage face au prévisionnel" onClick={() => aller("/analyse/finances")} />
-          <CarteCompacte icone="📈" titre="Indicateurs commerciaux" description="Consultations, taux de transformation, top 10 clients, comparatif sur 3 ans" onClick={() => aller("/pilotage/indicateurs")} />
-        </div>
-      </Groupe>
-    </>
-  );
-}
-
-/* Ce qui part chez la compta et la paie, chaque fin de mois */
-function BlocExports({ aller }: { aller: (url: string) => void }) {
-  return (
-    <Groupe titre="Exports" description="Pour la comptabilité et la paie, en fin de mois">
-      <div style={stylesV2.grille}>
-        <CarteCompacte icone="🧾" titre="Facturation du mois" description="Forfaits livrés et PE / PI, n° ARC Louxor : à envoyer à la compta" onClick={() => aller("/analyse/facturation")} />
-        <CarteCompacte icone="🧑‍💼" titre="Bilan RH mensuel" description="Tickets restaurant, télétravail, heures sup, compteurs" onClick={() => aller("/admin/bilan-rh")} />
-        <CarteCompacte icone="📤" titre="Export récapitulatif d'heures" description="Pour l'ancien système : fichier hebdomadaire des heures" onClick={() => aller("/admin/export-excel")} />
-      </div>
-    </Groupe>
   );
 }
 
@@ -1169,9 +1222,7 @@ function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: st
     },
     {
       titre: "Données et imports",
-      liens: [
-        ["🔄", "Synchronisation Suivi d'affaire", "/admin/synchro-suivi-affaires"],
-      ],
+      liens: [["🔄", "Synchronisation Suivi d'affaire", "/admin/synchro-suivi-affaires"]],
     },
     {
       titre: "Maintenance",
@@ -1210,41 +1261,6 @@ function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: st
               ))}
             </div>
           ))}
-        </div>
-      )}
-    </Groupe>
-  );
-}
-
-function BlocParametrage({
-  aller,
-  ouvert,
-  onBasculer,
-}: {
-  aller: (url: string) => void;
-  ouvert: boolean;
-  onBasculer: () => void;
-}) {
-  return (
-    <Groupe
-      titre="⚙️ Paramétrage de l'application"
-      description="Codes, activités, collaborateurs, rythmes, imputations, synchronisation, cohérence, export IA, import"
-      surClic={onBasculer}
-      deplie={ouvert}
-      droite={<span style={stylesV2.boutonGroupe}>{ouvert ? "Replier ▴" : "Afficher le paramétrage ▾"}</span>}
-    >
-      {ouvert && (
-        <div style={stylesV2.grille}>
-          <CarteCompacte icone="🏷️" titre="Gestion des codes" description="Codes, contextes d'utilisation et classement dans les bilans" onClick={() => aller("/admin/Gestion-codes")} />
-          <CarteCompacte icone="🧩" titre="Gestion des activités" description="Activités du BE et codes d'imputation associés" onClick={() => aller("/admin/Gestion-activites")} />
-          <CarteCompacte icone="👥" titre="Collaborateurs" description="Créer, modifier et gérer les collaborateurs" onClick={() => aller("/admin/collaborateurs")} />
-          <CarteCompacte icone="⏰" titre="Rythmes horaires" description="Profils, rythmes et bases horaires" onClick={() => aller("/admin/profils-horaires")} />
-          <CarteCompacte icone="🔄" titre="Synchronisation Suivi d'affaire" description="Importer le classeur Excel du BE, aperçu et journal" onClick={() => aller("/admin/synchro-suivi-affaires")} />
-          <CarteCompacte icone="🩺" titre="Cohérence" description="Codes sans activité, rythmes manquants, numéros d'affaire inconnus…" onClick={() => aller("/admin/coherence")} />
-          <CarteCompacte icone="🏷️" titre="Imputations des affaires" description="Liste BE, PE, PI, Scan, Négoce, IG… du Pilotage BE" onClick={() => aller("/admin/imputations-pilotage")} />
-          <CarteCompacte icone="🧠" titre="Export IA" description="Contexte complet du projet : code, base, droits, fonctions SQL" onClick={() => aller("/admin/Export-IA")} />
-          <CarteCompacte icone="💾" titre="Sauvegarde" description="Télécharger toutes les tables dans un fichier ZIP, où vous voulez" onClick={() => aller("/admin/sauvegarde")} />
-          <CarteCompacte icone="🧹" titre="Remise à zéro" description="Effacer toutes les données d'activité, garder collaborateurs et paramétrage" onClick={() => aller("/admin/reinitialisation")} />
         </div>
       )}
     </Groupe>
@@ -1321,7 +1337,7 @@ const styles: Record<string, CSSProperties> = {
 };
 
 /* ===============================================================
-   STYLES DES CARTES COMPACTES
+   STYLES DES CARTES ET DES TUILES
 ================================================================ */
 
 const stylesV2: Record<string, CSSProperties> = {
@@ -1336,6 +1352,11 @@ const stylesV2: Record<string, CSSProperties> = {
   groupeTitre: { margin: 0, fontSize: 18, fontWeight: 800, color: "#222222" },
   groupeDescription: { color: "#777777", fontSize: 13 },
   boutonGroupe: { marginLeft: "auto", background: "#333333", color: "#ffffff", borderRadius: 8, padding: "8px 16px", fontWeight: 800, fontSize: 14, whiteSpace: "nowrap" },
+  tuile: { background: "#ffffff", borderRadius: 12, border: "1px solid #e3e6ea", borderTop: "4px solid #c00000", padding: "12px 16px", marginBottom: 14, boxShadow: "0 1px 5px rgba(0,0,0,0.06)" },
+  deuxColonnes: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14, alignItems: "start" },
+  sectionTitre: { fontSize: 12, fontWeight: 800, color: "#a30000", textTransform: "uppercase", letterSpacing: ".4px", margin: "4px 0 2px 6px" },
+  lien: { display: "block", width: "100%", minHeight: 36, padding: "6px 6px", border: "none", borderRadius: 8, fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, color: "#252525", textAlign: "left", cursor: "pointer" },
+  lienTexte: { border: "none", background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "#a30000", cursor: "pointer", padding: 0 },
   clocheZone: { position: "relative" },
   cloche: { position: "relative", width: 44, height: 44, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.15)", color: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" },
   clocheBadge: { position: "absolute", top: -4, right: -4, minWidth: 22, height: 22, borderRadius: 999, background: "#ffffff", color: "#c00000", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", border: "2px solid #c00000", boxSizing: "border-box" },
