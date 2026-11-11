@@ -16,7 +16,8 @@ import { chargerMoi, type Moi } from "@/lib/pilotageDonnees";
    PILOTAGE BE - SUIVI DES DEVIS (SUIVI_DEVIS)
 
    Pendant commercial du Suivi des affaires. Deux onglets :
-     - Liste des devis  : ADMIN et RESPONSABLE (droit piloterBE)
+     - Gestion des devis : ADMIN et RESPONSABLE (droit piloterBE) : rédaction,
+                          envoi, relances (RELANCES_PLANIFIEES)
      - Statistiques     : ADMIN et DIRECTION (droit indicateurs) ;
                           remplace les anciens « Indicateurs commerciaux »
    /pilotage/devis?onglet=statistiques ouvre directement les statistiques
@@ -64,7 +65,7 @@ function SuiviDevisContenu() {
         <div style={{ marginBottom: 14 }}>
           <h1 style={page.titre}>Suivi des devis</h1>
           <p style={page.sousTitre}>
-            Les devis (DBE) du Suivi d’affaire BE : en rédaction, envoyés, à relancer, et ce qu’ils sont devenus. Le pendant commercial du Suivi des affaires.
+            Manager les devis (DBE) : qui les rédige et pour quand, leur envoi, leurs relances, et ce qu’ils sont devenus. Le pendant commercial du Suivi des affaires.
           </p>
         </div>
 
@@ -75,7 +76,7 @@ function SuiviDevisContenu() {
             {voirListe && voirStats && (
               <nav aria-label="Onglets du suivi des devis" style={{ display: "flex", gap: 4, borderBottom: `1px solid ${C.ligne}`, marginBottom: 16 }}>
                 <Link href="/pilotage/devis" scroll={false} aria-current={onglet === "liste" ? "page" : undefined} style={styleOnglet(onglet === "liste")}>
-                  Liste des devis
+                  Gestion des devis
                 </Link>
                 <Link
                   href="/pilotage/devis?onglet=statistiques"

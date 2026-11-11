@@ -617,7 +617,8 @@ function PortefeuilleContenu() {
   const alertes = useMemo(() => {
     // Une affaire hors planning n'est pas encore pilotée : pas d'alerte de planning pour elle.
     // seulement les affaires actives : une affaire livrée ou abandonnée n'alerte plus
-    const actives = lignes.filter((l) => l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE");
+    // DEVIS_HORS_SUIVI_AFFAIRES : les devis (DBE) se gèrent dans le Suivi des devis
+    const actives = lignes.filter((l) => l.affaire.type === "CBE" && (l.affaire.statut === "EN_COURS" || l.affaire.statut === "EN_ATTENTE"));
 
     return {
       critiques: actives.filter((l) => l.etat.genre === "crit"),
@@ -1141,7 +1142,7 @@ function PortefeuilleContenu() {
           <div>
             <h1 style={page.titre}>Suivi des affaires</h1>
             <p style={page.sousTitre}>
-              Affaires DBE et CBE : heures chiffrées, réalisées et planifiées, pour voir l’avancement et anticiper les dérives. Les responsables et les administrateurs y font aussi les affectations.
+              Affaires CBE (forfaits, PE / PI ; les devis se gèrent dans le Suivi des devis) : heures chiffrées, réalisées et planifiées, pour voir l’avancement et anticiper les dérives. Les responsables et les administrateurs y font aussi les affectations.
             </p>
           </div>
 
@@ -1247,7 +1248,6 @@ function PortefeuilleContenu() {
                   [
                     ["FORFAIT", "Forfait"],
                     ["PEPI", "PE / PI"],
-                    ["DBE", "DBE"],
                   ] as [FiltreType, string][]
                 ).map(([t, libelle]) => (
                   <button key={t} type="button" aria-pressed={filtreType === t} style={bouton(filtreType === t)} onClick={() => setFiltreType(t)}>

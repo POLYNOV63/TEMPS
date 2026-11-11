@@ -42,6 +42,9 @@ type LigneRoute = {
 
 type Devis = { affaire_id: string; numero: string; designation: string | null; date_debut: string | null; echeance: string | null };
 
+/* RELANCES_FDR : relances de devis prévues pour la personne (Suivi des devis, SQL 92) */
+type RelanceFdr = { id: string; numero_devis: string; prevue_le: string; commentaire: string | null; designation: string | null; client: string | null };
+
 type Conge = { type_demande: string; date_debut: string; date_fin: string; statut: string; duree_jours: number | null };
 
 const JOURS = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
@@ -76,6 +79,7 @@ function FeuilleDeRouteContenu() {
   const [conges, setConges] = useState<Conge[]>([]);
   // DEVIS_A_REDIGER : DBE en cours dont la personne est responsable, jusqu'à l'envoi du devis
   const [devis, setDevis] = useState<Devis[]>([]);
+  const [relancesFdr, setRelancesFdr] = useState<RelanceFdr[]>([]); // RELANCES_FDR
   const [activites, setActivites] = useState<Map<string, string>>(new Map());
   // RESPONSABLE_AFFAIRE : le responsable de chaque affaire de la feuille de route
   const [responsables, setResponsables] = useState<Map<string, { tri: string; nom: string }>>(new Map());
@@ -152,13 +156,15 @@ function FeuilleDeRouteContenu() {
         .lte("date_debut", fin)
         .gte("date_fin", lundi),
       supabase.rpc("ma_feuille_de_route_devis", { p_collaborateur_id: cible }),
+      supabase.rpc("ma_feuille_de_route_relances", { p_collaborateur_id: cible }),
     ])
-      .then(([r, c, d]) => {
+      .then(([r, c, d, rl]) => {
         if (!actif) return;
         if (r.error) throw new Error(r.error.message);
         setLignes((r.data ?? []) as LigneRoute[]);
         setConges(((c.data ?? []) as Conge[]) || []);
         setDevis(d.error ? [] : ((d.data ?? []) as Devis[]));
+        setRelancesFdr(rl.error ? [] : ((rl.data ?? []) as RelanceFdr[]));
       })
       .catch((e) => actif && setErreur(e instanceof Error ? e.message : "Chargement impossible."))
       .finally(() => actif && setChargement(false));
@@ -190,9 +196,11 @@ function FeuilleDeRouteContenu() {
       const totalJour = jours.map((_, i) => lignesSemaine.reduce((t, l) => t + l.parJour[i], 0));
       // devis à rendre cette semaine (ou déjà en retard, sur la semaine en cours)
       const aRendre = devis.filter((d) => d.echeance && ((d.echeance >= debut && d.echeance <= plus(debut, 6)) || (k === 0 && d.echeance < debut)));
-      return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0), aRendre };
+      // relances prévues cette semaine (ou déjà en retard, sur la semaine en cours)
+      const aRelancer = relancesFdr.filter((r) => (r.prevue_le >= debut && r.prevue_le <= plus(debut, 6)) || (k === 0 && r.prevue_le < debut));
+      return { debut, jours, lignes: lignesSemaine, congesJour, totalJour, total: totalJour.reduce((t, x) => t + x, 0), aRendre, aRelancer };
     });
-  }, [lignes, conges, activites, lundi, nbSemaines, devis]);
+  }, [lignes, conges, activites, lundi, nbSemaines, devis, relancesFdr]);
 
   const nomCible = cible === moi?.id ? "moi" : (() => {
     const c = equipe.find((x) => x.id === cible);
@@ -268,6 +276,28 @@ function FeuilleDeRouteContenu() {
           </section>
         )}
 
+        {/* RELANCES_FDR : les devis à relancer */}
+        {!chargement && !erreur && relancesFdr.length > 0 && (
+          <section style={{ ...page.carte, padding: 14, marginBottom: 14, borderLeft: "5px solid #1f4e8c" }}>
+            <strong style={{ fontSize: 17 }}>📞 Devis à relancer</strong>
+            <span style={{ marginLeft: 8, fontSize: 13, color: C.gris }}>relances prévues dans le Suivi des devis</span>
+            <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, display: "grid", gap: 6 }}>
+              {relancesFdr.map((r) => {
+                const jours = Math.round((new Date(`${r.prevue_le}T00:00:00`).getTime() - new Date(`${iso(new Date())}T00:00:00`).getTime()) / 86400000);
+                return (
+                  <li key={r.id} style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "baseline" }}>
+                    <strong style={{ color: "#1f4e8c" }}>DBE {r.numero_devis}</strong>
+                    <span>{[r.client, r.designation].filter(Boolean).join(" · ")}</span>
+                    {r.commentaire && <span style={{ fontSize: 13, color: C.gris }}>« {r.commentaire} »</span>}
+                    <span style={{ marginLeft: "auto", fontWeight: 800, color: jours < 0 ? "#b3261e" : jours <= 3 ? "#c76500" : "#1b5e20" }}>
+                      {`le ${dateCourte(r.prevue_le)}${jours < 0 ? ` · en retard de ${-jours} j` : jours === 0 ? " · aujourd’hui" : ` · dans ${jours} j`}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         {!chargement &&
           !erreur &&
           semaines.map((s, k) => (
@@ -290,7 +320,7 @@ function FeuilleDeRouteContenu() {
                 )}
               </div>
 
-              {s.lignes.length === 0 && s.congesJour.every((c) => !c) && s.aRendre.length === 0 ? (
+              {s.lignes.length === 0 && s.congesJour.every((c) => !c) && s.aRendre.length === 0 && s.aRelancer.length === 0 ? (
                 <p style={{ margin: 0, color: C.gris }}>Rien de prévu au planning pour l’instant.</p>
               ) : (
                 <div style={{ overflowX: "auto" }}>
@@ -363,6 +393,29 @@ function FeuilleDeRouteContenu() {
                             ))}
                             <td style={{ ...td, textAlign: "right", fontSize: 12, color: retard ? rouge : C.gris, fontWeight: retard ? 800 : 400, whiteSpace: "nowrap" }}>
                               {retard && d.echeance ? `en retard depuis le ${dateCourte(d.echeance)}` : ""}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {s.aRelancer.map((r) => {
+                        const aujourd = iso(new Date());
+                        const retard = r.prevue_le < aujourd;
+                        const bleu = retard ? "#b3261e" : "#1f4e8c";
+                        return (
+                          <tr key={`relance-${r.id}`} style={{ background: retard ? "#fdecec" : undefined }}>
+                            <td style={td}>
+                              <strong style={{ color: bleu }}>📞 Relancer DBE {r.numero_devis}</strong>
+                              <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 700, color: retard ? bleu : C.gris }}>{retard ? "relance en retard" : "relance client"}</span>
+                              <div style={{ fontSize: 13 }}>{[r.client, r.designation].filter(Boolean).join(" · ")}</div>
+                              {r.commentaire && <div style={{ fontSize: 12, color: C.gris }}>{r.commentaire}</div>}
+                            </td>
+                            {s.jours.map((j) => (
+                              <td key={j} style={{ ...tdJour, background: r.prevue_le === j ? (retard ? "#f7c6c6" : "#e3eefb") : undefined, color: bleu, fontWeight: 800 }}>
+                                {r.prevue_le === j ? "📞 relance" : retard && j === aujourd ? "⚠ à relancer" : ""}
+                              </td>
+                            ))}
+                            <td style={{ ...td, textAlign: "right", fontSize: 12, color: retard ? bleu : C.gris, fontWeight: retard ? 800 : 400, whiteSpace: "nowrap" }}>
+                              {retard ? `prévue le ${dateCourte(r.prevue_le)}` : ""}
                             </td>
                           </tr>
                         );

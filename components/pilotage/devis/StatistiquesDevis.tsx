@@ -54,7 +54,7 @@ type Consultation = {
   numero: string;
   l: LigneInd;
   ouverture: string;
-  issue: Issue | "FERME"; // DEVIS_FERMES : « Devis perdu » sans montant ni heures = fermé sans devis
+  issue: Issue | "FERME"; // DEVIS_FERMES, DEVIS_ANNULES : « Devis perdu » sans date d'envoi = annulé (jamais envoyé)
   principale: Discipline;
   parts: Record<Discipline, number>; // part de chaque activité (somme = 1)
   source: "MONTANT" | "HEURES" | "IMPUTATION" | "AUCUNE"; // DETAIL_AUTRE : d'où vient l'activité
@@ -204,9 +204,10 @@ export default function StatistiquesDevis() {
       const parts = Object.fromEntries(DISCIPLINES.map((d) => [d, base[d] / tot])) as Record<Discipline, number>;
       const principale: Discipline = DISCIPLINES.reduce((a, d) => (base[d] > base[a] ? d : a), DISCIPLINES[0]);
       // AVENANT_COMME_DEVIS : même règle que l'onglet Liste (le statut du classeur), avenants compris
-      const cat = categorieDevis(l.statut, l.genre, l.montant, l.heures_total);
+      const envoye = ls.some((x) => Boolean(x.date_envoi)); // DEVIS_ANNULES : perdu sans date d'envoi = annulé
+      const cat = categorieDevis(l.statut, l.genre, envoye);
       const issue: Consultation["issue"] =
-        cat === "REMPORTE" ? "GAGNE" : cat === "PERDU" ? "PERDU" : cat === "FERME" ? "FERME" : cat === "INTENTION" ? "INTENTION" : "ATTENTE";
+        cat === "REMPORTE" ? "GAGNE" : cat === "PERDU" ? "PERDU" : cat === "ANNULE" ? "FERME" : cat === "INTENTION" ? "INTENTION" : "ATTENTE";
       res.push({ numero, l, ouverture, issue, principale, parts, source });
     }
     return res;
@@ -291,7 +292,7 @@ export default function StatistiquesDevis() {
 
   function exporter() {
     const wb = XLSX.utils.book_new();
-    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse", FERME: "Fermé sans devis" } as const;
+    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse", FERME: "Annulé (jamais envoyé)" } as const;
     XLSX.utils.book_append_sheet(
       wb,
       XLSX.utils.json_to_sheet(
@@ -333,7 +334,7 @@ export default function StatistiquesDevis() {
         <th style={thD}>Remportées</th>
         <th style={thD}>Perdues</th>
         <th style={thD}>Sans réponse</th>
-        <th style={thD} title="Classées « Devis perdu » sans montant ni heures : jamais chiffrées ni envoyées">Fermées</th>
+        <th style={thD} title="Classées « Devis perdu » sans date d’envoi : jamais envoyées">Annulées</th>
         <th style={thD} title="Taux de transformation en nombre : remportées ÷ (remportées + perdues). Les consultations sans réponse ne comptent pas.">Transformées</th>
         <th style={thD}>{montantsVisibles ? "Chiffré" : "Heures chiffrées"}</th>
         <th style={thD}>{montantsVisibles ? "Remporté" : "Heures remportées"}</th>
@@ -431,7 +432,7 @@ export default function StatistiquesDevis() {
         <>
           {/* ---------- vignettes ---------- */}
           <div style={rangee}>
-            <Tuile libelle="Consultations" valeur={String(t.n)} sous={`devis ouverts${t.f ? ` · dont ${t.f} fermées sans devis` : ""} · ${evol(t.n, tN1.n)}`} />
+            <Tuile libelle="Consultations" valeur={String(t.n)} sous={`devis ouverts${t.f ? ` · dont ${t.f} annulées` : ""} · ${evol(t.n, tN1.n)}`} />
             <Tuile libelle={montantsVisibles ? "Montant chiffré" : "Heures chiffrées"} valeur={fmt(t.v)} sous={evol(t.v, tN1.v)} />
             <Tuile libelle={montantsVisibles ? "Montant remporté" : "Heures remportées"} valeur={fmt(t.vg)} sous={`${t.g} consultation${t.g > 1 ? "s" : ""} devenue${t.g > 1 ? "s" : ""} commande · ${evol(t.vg, tN1.vg)}`} />
             <Tuile
@@ -459,7 +460,7 @@ export default function StatistiquesDevis() {
                         <div key={d} title={`${m.label} · ${ACTIVITES[d].nom} : ${m.parAct[d]}`} style={{ flex: m.parAct[d], background: ACTIVITES[d].couleur }} />
                       ) : null
                     )}
-                    {m.fermes > 0 && <div title={`${m.label} · fermées sans devis : ${m.fermes}`} style={{ flex: m.fermes, background: "#dfe2e6" }} />}
+                    {m.fermes > 0 && <div title={`${m.label} · annulées : ${m.fermes}`} style={{ flex: m.fermes, background: "#dfe2e6" }} />}
                   </div>
                 </div>
               ))}
@@ -481,7 +482,7 @@ export default function StatistiquesDevis() {
               {vue.mois.some((m) => m.fermes > 0) && (
                 <span>
                   {pastille("#dfe2e6")}
-                  fermées sans devis
+                  annulées (jamais envoyées)
                 </span>
               )}
             </div>
@@ -658,13 +659,13 @@ export default function StatistiquesDevis() {
                 les comptes.
               </li>
               <li>
-                <strong>Remportée</strong> : statut « Commande reçue », « Livrée » ou « Commande annulée ». <strong>Perdue</strong> : « Devis perdu ».{" "}
+                <strong>Remportée</strong> : statut « Commande reçue », « Livrée » ou « Commande annulée ». <strong>Perdue</strong> : « Devis perdu » après envoi.{" "}
                 <strong>Sans réponse</strong> : tout le reste (en rédaction, envoyé, intention de commande). Un devis d’<strong>avenant</strong> est compté
                 comme un devis à part entière, avec son propre statut.
               </li>
               <li>
-                <strong>Fermée sans devis</strong> : classée « Devis perdu » sans montant ni heures chiffrées ; elle compte dans les consultations, mais pas dans
-                le taux de transformation.
+                <strong>Annulée</strong> : classée « Devis perdu » sans date d’envoi (le devis n’a jamais été envoyé) ; elle compte dans les consultations,
+                mais pas dans le taux de transformation.
               </li>
               <li>
                 <strong>Taux de transformation</strong> = remportées ÷ (remportées + perdues), en nombre (« 3/4 » = 3 remportées sur 4 dont l’issue est

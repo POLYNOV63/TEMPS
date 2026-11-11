@@ -1,5 +1,5 @@
 /* ===============================================================
-   POLYNOV - SUIVI DES DEVIS (SUIVI_DEVIS)
+   POLYNOV - SUIVI DES DEVIS (SUIVI_DEVIS, RELANCES_PLANIFIEES)
 
    Calculs purs de la page Suivi des devis (aucune requête ici), à
    partir de la copie du classeur « Suivi d'affaire BE ».
@@ -7,34 +7,26 @@
    - Un DEVIS = un n° de devis (DBE…) : ses lignes DEVIS, BASE ou AVENANT
      sont réunies (lots et échéances exclus). La ligne qui dit le mieux ce
      qu'il est devenu : la commande (base, puis avenant), sinon le devis.
+     Un devis d'AVENANT est un devis comme un autre ; on indique seulement
+     l'affaire mère (« avenant de CBE1604 »).
    - Sa catégorie vient du statut du classeur :
        Devis ouvert            -> OUVERT (en rédaction)
        Devis envoyé            -> ENVOYE (en attente de réponse)
-       Intention de commande   -> INTENTION
+       Intention de commande   -> INTENTION (hors de cette page)
        Commande reçue, Livrée,
        Commande annulée        -> REMPORTE
-       Devis perdu             -> PERDU, ou FERME (« fermé sans devis »)
-                                  s'il n'a ni montant ni heures chiffrées
-   - Un devis d'AVENANT est un devis comme un autre (même statuts, mêmes
-     règles) ; on indique seulement l'affaire mère (« avenant de CBE1604 »).
-   - À RELANCER : envoyé, sans réponse, et plus de 30 jours depuis l'envoi
-     ET depuis la dernière relance notée. Noter une relance le sort de la
-     liste pour 30 jours ; il y revient s'il n'a toujours pas de réponse.
+       Devis perdu             -> PERDU s'il a été envoyé,
+                                  ANNULE sans date d'envoi (jamais envoyé)
+   - RELANCES d'un devis envoyé : une relance se PRÉVOIT (qui, quand :
+     elle apparaît dans sa feuille de route) puis se NOTE comme faite.
+     Un devis envoyé est « à relancer » quand il a une relance prévue, ou
+     quand plus de 30 jours ont passé depuis l'envoi ET depuis la dernière
+     relance faite (il faut alors en prévoir une).
 ================================================================ */
 
 export const DELAI_RELANCE = 30; // jours
 
-export type CategorieDevis = "OUVERT" | "ENVOYE" | "INTENTION" | "REMPORTE" | "PERDU" | "FERME" | "AUTRE";
-
-export const LIBELLE_CATEGORIE: Record<CategorieDevis, string> = {
-  OUVERT: "Ouvert",
-  ENVOYE: "Envoyé",
-  INTENTION: "Intention de commande",
-  REMPORTE: "Remporté",
-  PERDU: "Perdu",
-  FERME: "Fermé sans devis",
-  AUTRE: "Statut à vérifier",
-};
+export type CategorieDevis = "OUVERT" | "ENVOYE" | "INTENTION" | "REMPORTE" | "PERDU" | "ANNULE" | "AUTRE";
 
 export type LigneSuiviDevis = {
   id: string;
@@ -56,14 +48,21 @@ export type LigneSuiviDevis = {
   disparue: boolean;
 };
 
+/* une relance : PRÉVUE (relance_le vide) ou FAITE (relance_le rempli) */
 export type Relance = {
   id: string;
   numero_devis: string;
-  relance_le: string;
+  prevue_le: string | null;
+  responsable_id: string | null;
+  relance_le: string | null;
   commentaire: string | null;
   saisi_par: string | null;
   cree_le: string;
 };
+
+/* AUCUNE : rien à faire pour l'instant ; A_PLANIFIER : 30 jours passés, personne n'est désigné ;
+   PREVUE : quelqu'un relance à une date ; EN_RETARD : la date prévue est passée */
+export type EtatRelance = "AUCUNE" | "A_PLANIFIER" | "PREVUE" | "EN_RETARD";
 
 export type Devis = {
   numero: string; // « 2715 » pour DBE2715
@@ -72,13 +71,15 @@ export type Devis = {
   statut: string | null;
   ouverture: string | null;
   envoi: string | null;
-  commande: string | null; // n° de commande une fois remporté (ou en intention) : « CBE1604 », « CBE1604R1 »
+  commande: string | null; // n° de commande une fois remporté : « CBE1604 », « CBE1604R1 »
   avenantDe: string | null; // devis d'avenant : l'affaire mère, « CBE1604 »
   montant: number; // 0 si les montants ne sont pas visibles
   heures: number;
-  relances: Relance[]; // la plus récente d'abord
-  prochaineRelance: string | null; // date à laquelle il devient (ou est devenu) « à relancer »
-  aRelancer: boolean;
+  faites: Relance[]; // relances faites, la plus récente d'abord
+  prevue: Relance | null; // relance prévue, pas encore faite
+  prochaineRelance: string | null; // devis envoyé : date à partir de laquelle il faut le relancer
+  etatRelance: EtatRelance;
+  aRelancer: boolean; // dans la liste « À relancer » (relance prévue, ou à prévoir)
 };
 
 /* « DBE02715 » -> « 2715 » */
@@ -104,7 +105,7 @@ export function debutExercice(jour: string): number {
   return Number(jour.slice(5, 7)) >= 11 ? a : a - 1;
 }
 
-export function categorieDevis(statut: string | null, genre: string, montant: number, heures: number): CategorieDevis {
+export function categorieDevis(statut: string | null, genre: string, envoye: boolean): CategorieDevis {
   switch (statut) {
     case "Devis ouvert":
       return "OUVERT";
@@ -113,7 +114,7 @@ export function categorieDevis(statut: string | null, genre: string, montant: nu
     case "Intention de commande":
       return "INTENTION";
     case "Devis perdu":
-      return montant > 0 || heures > 0 ? "PERDU" : "FERME";
+      return envoye ? "PERDU" : "ANNULE";
     case "Commande reçue":
     case "Livrée":
     case "Commande annulée":
@@ -150,23 +151,29 @@ export function construireDevis(
   for (const [numero, ls] of parNumero) {
     const commande = (g: string) => ls.find((x) => x.genre === g && x.statut !== "Devis perdu");
     const l = commande("BASE") ?? commande("AVENANT") ?? ls.find((x) => x.genre === "DEVIS") ?? ls[0];
-    const montant = montants.get(l.id) ?? 0;
-    const heures = Number(l.heures_total) || 0;
-    const categorie = categorieDevis(l.statut, l.genre, montant, heures);
     const ouvertures = ls.map((x) => x.date_ouverture).filter((d): d is string => Boolean(d)).sort();
     const envois = ls.map((x) => x.date_envoi).filter((d): d is string => Boolean(d)).sort();
     const ouverture = ouvertures[0]?.slice(0, 10) ?? null;
     const envoi = (l.date_envoi ?? envois[0] ?? null)?.slice(0, 10) ?? null;
-    const rel = [...(relancesPar.get(numero) ?? [])].sort((a, b) => b.relance_le.localeCompare(a.relance_le) || b.cree_le.localeCompare(a.cree_le));
+    const categorie = categorieDevis(l.statut, l.genre, Boolean(envoi));
+
+    const toutes = relancesPar.get(numero) ?? [];
+    const faites = toutes
+      .filter((r) => Boolean(r.relance_le))
+      .sort((a, b) => (b.relance_le ?? "").localeCompare(a.relance_le ?? "") || b.cree_le.localeCompare(a.cree_le));
+    const prevue = toutes.find((r) => !r.relance_le) ?? null;
 
     let prochaineRelance: string | null = null;
+    let etatRelance: EtatRelance = "AUCUNE";
     if (categorie === "ENVOYE") {
       // sans date d'envoi, on part de l'ouverture
-      const depart = [envoi ?? ouverture, rel[0]?.relance_le ?? null].filter((d): d is string => Boolean(d)).sort().pop();
+      const depart = [envoi ?? ouverture, faites[0]?.relance_le ?? null].filter((d): d is string => Boolean(d)).sort().pop();
       prochaineRelance = depart ? ajouterJours(depart, DELAI_RELANCE + 1) : aujourdhui;
+      if (prevue) etatRelance = prevue.prevue_le && prevue.prevue_le < aujourdhui ? "EN_RETARD" : "PREVUE";
+      else if (prochaineRelance <= aujourdhui) etatRelance = "A_PLANIFIER";
     }
 
-    const numAffaire = (categorie === "REMPORTE" || categorie === "INTENTION") && (l.genre === "BASE" || l.genre === "AVENANT") ? l.numero_affaire : null;
+    const numAffaire = categorie === "REMPORTE" && (l.genre === "BASE" || l.genre === "AVENANT") ? l.numero_affaire : null;
     resultat.push({
       numero,
       ligne: l,
@@ -176,11 +183,13 @@ export function construireDevis(
       envoi,
       commande: numAffaire ? (/^cbe/i.test(numAffaire) ? numAffaire.toUpperCase() : `CBE${numAffaire}`) : null,
       avenantDe: l.genre === "AVENANT" && l.base_affaire ? `CBE${l.base_affaire}` : null,
-      montant,
-      heures,
-      relances: rel,
+      montant: montants.get(l.id) ?? 0,
+      heures: Number(l.heures_total) || 0,
+      faites,
+      prevue,
       prochaineRelance,
-      aRelancer: prochaineRelance !== null && prochaineRelance <= aujourdhui,
+      etatRelance,
+      aRelancer: etatRelance !== "AUCUNE",
     });
   }
   return resultat;
