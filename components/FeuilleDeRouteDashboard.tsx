@@ -61,7 +61,8 @@ function lienAffaire(type: string, numero: string): string {
   return `/affaires/bilan?affaire=${type}${base}&commande=${encodeURIComponent(numero)}`;
 }
 
-export default function FeuilleDeRouteDashboard() {
+/* APERCU_ROLE : collaborateurId = la feuille de route d'un autre (aperçu de l'ADMIN) ; sinon la mienne */
+export default function FeuilleDeRouteDashboard({ collaborateurId }: { collaborateurId?: string | null } = {}) {
   const [moiId, setMoiId] = useState<string | null>(null);
   const [lignes, setLignes] = useState<LigneRoute[]>([]);
   const [conges, setConges] = useState<Conge[]>([]);
@@ -114,9 +115,13 @@ export default function FeuilleDeRouteDashboard() {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: c } = await supabase.from("collaborateurs").select("id").eq("auth_user_id", user.id).maybeSingle();
-      if (!c || !actif) return;
-      const id = (c as { id: string }).id;
+      let id = collaborateurId ?? null;
+      if (!id) {
+        const { data: c } = await supabase.from("collaborateurs").select("id").eq("auth_user_id", user.id).maybeSingle();
+        if (!c || !actif) return;
+        id = (c as { id: string }).id;
+      }
+      if (!actif) return;
       setMoiId(id);
       const [r, cg, d, act, rl] = await Promise.all([
         supabase.rpc("ma_feuille_de_route", { p_collaborateur_id: id, p_debut: lundi, p_fin: fin }),
@@ -144,7 +149,7 @@ export default function FeuilleDeRouteDashboard() {
     return () => {
       actif = false;
     };
-  }, [lundi, fin]);
+  }, [lundi, fin, collaborateurId]);
 
   const semaines = useMemo(
     () =>

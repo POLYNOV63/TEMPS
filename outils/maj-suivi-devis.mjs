@@ -13,6 +13,8 @@
    - app/ma-feuille-de-route/page.tsx : les relances de devis prévues pour
      la personne (encart « Devis à relancer » et jour de la relance).
      Bouton « ✓ faite » sur chaque relance (RELANCE_FAITE_FDR).
+   - components/EnTetePage.tsx : bandeau RH ou Exports dans l'en-tête des
+     pages RH et Exports (ONGLETS_SECTION).
 
    Tout ou rien : tout est vérifié avant d'écrire quoi que ce soit.
    Relançable sans risque : ce qui est déjà fait est sauté.
@@ -76,6 +78,7 @@ for (const rel of [
   "components/dashboard/VignetteFacturation.tsx",
   "components/analyse/GraphiquesDisponibilites.tsx",
   "lib/disponibilitesActivites.ts",
+  "components/OngletsSection.tsx",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
@@ -265,6 +268,23 @@ if (fdr && !erreurs.length) {
       "bouton « ✓ faite » sur chaque relance"
     );
     if (!ecritures.includes(fdr)) ecritures.push(fdr);
+  }
+}
+
+/* 4 ter. components/EnTetePage.tsx : bandeaux RH et Exports */
+const entete = lire("components/EnTetePage.tsx");
+if (entete) {
+  if (entete.texte.includes("ONGLETS_SECTION")) {
+    console.log("  = components/EnTetePage.tsx : déjà à jour");
+  } else {
+    remplacerRe(
+      entete,
+      /(import \{ useRouter \} from "next\/navigation";\n)/,
+      '$1import OngletsSection from "@/components/OngletsSection"; // ONGLETS_SECTION\n',
+      "import du bandeau RH / Exports"
+    );
+    remplacerRe(entete, /\n([ \t]*)<\/header>/, "\n$1  <OngletsSection />\n$1</header>", "bandeau RH / Exports dans l'en-tête");
+    ecritures.push(entete);
   }
 }
 

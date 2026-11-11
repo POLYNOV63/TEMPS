@@ -2,6 +2,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import OngletsSection from "@/components/OngletsSection"; // ONGLETS_SECTION
 
 /* ===============================================================
    EN-TETE COMMUN DES PAGES POLYNOV-TEMPS
@@ -98,6 +99,7 @@ export default function EnTetePage({
           {children && <div style={styles.actionsPage}>{children}</div>}
         </div>
       )}
+      <OngletsSection />
     </header>
   );
 }

@@ -14,12 +14,15 @@ import { aISO, lundiDe } from "@/lib/pilotagePlanning";
    TABLEAU DE BORD (DASHBOARD_SIMPLIFIE)
 
    ADMIN : Mon espace, vignette « À facturer » (mois en cours et suivant),
-   trois tuiles (Pilotage activité, RH, Exports), ma feuille de route
-   (relances de devis comprises), paramétrage replié.
-   DIRECTION : vignette « À facturer », tuile Analyses, les 3 graphiques
-   de disponibilité par activité. Pas de feuille de route.
-   Autres rôles : Mon espace, Pilotage BE (RESPONSABLE), Suivi des
-   équipes, ma feuille de route.
+   quatre tuiles (Pilotage, RH, Finance, Exports : un clic ouvre la
+   première page, le bandeau de la page donne le reste), ma feuille de
+   route (relances de devis comprises), paramétrage replié.
+   DIRECTION : vignette « À facturer », tuiles Pilotage et Finance, les
+   3 graphiques de disponibilité par activité. Pas de feuille de route.
+   RESPONSABLE : Mon espace, tuiles Pilotage (et RH, Exports selon ses
+   droits), sa feuille de route. COLLABORATEUR : Mon espace, sa feuille
+   de route.
+   APERCU_ROLE : l'ADMIN peut voir le tableau de bord de n'importe qui.
 ================================================================ */
 
 /* ===============================================================
@@ -68,11 +71,6 @@ export default function DashboardPage() {
   const [prenom, setPrenom] = useState("");
   const [role, setRole] = useState("");
 
-  // Droits liés au rôle (ADMIN / RESPONSABLE) : voir lib/droits.ts
-  const accesFeuilles = peut(role, "voirFeuillesEquipe");
-  const accesBilanRH = peut(role, "bilanRH");
-  const accesExportExcel = peut(role, "exporterExcel");
-
   const [chargement, setChargement] = useState(true);
   const [collaborateurs, setCollaborateurs] = useState<Collaborateur[]>([]);
   const [feuilles, setFeuilles] = useState<Feuille[]>([]);
@@ -80,6 +78,22 @@ export default function DashboardPage() {
   const [erreur, setErreur] = useState<string | null>(null);
   const [semaineCourante, setSemaineCourante] = useState("");
   const [monCollaborateurId, setMonCollaborateurId] = useState<string | null>(null);
+
+  /* APERCU_ROLE : l'ADMIN voit le tableau de bord d'un collaborateur (« 👁 Voir comme… »),
+     choix gardé dans l'adresse (/dashboard?voir=<id>). Seul le tableau de bord change :
+     les liens s'ouvrent toujours avec les droits de l'ADMIN. */
+  const [voirId, setVoirId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setVoirId(new URLSearchParams(window.location.search).get("voir"));
+    } catch {
+      /* sans adresse lisible : pas d'aperçu */
+    }
+  }, []);
+  function choisirApercu(id: string) {
+    setVoirId(id || null);
+    router.replace(id ? `/dashboard?voir=${encodeURIComponent(id)}` : "/dashboard");
+  }
 
   // Groupe « Paramétrage de l'application » : replié par défaut, choix mémorisé dans le navigateur
   const [parametrageOuvert, setParametrageOuvert] = useState(false);
@@ -200,7 +214,7 @@ export default function DashboardPage() {
           /* ADMIN : feuilles de toute l'équipe */
           const { data: collaborateursActifs, error: erreurCollaborateurs } = await supabase
             .from("collaborateurs")
-            .select("id, prenom, nom, actif, role")
+            .select("id, prenom, nom, actif, role, trigramme")
             .eq("actif", true)
             .order("nom", { ascending: true });
 
@@ -249,9 +263,17 @@ export default function DashboardPage() {
      FEUILLE PERSONNELLE
   ============================================================= */
 
+  /* APERCU_ROLE : la personne dont on affiche le tableau de bord (soi-même, hors aperçu) */
+  const apercu = useMemo(
+    () => (role === "ADMIN" && voirId ? collaborateurs.find((c) => c.id === voirId && c.id !== monCollaborateurId) ?? null : null),
+    [role, voirId, collaborateurs, monCollaborateurId]
+  );
+  const roleVu = apercu ? String(apercu.role ?? "COLLABORATEUR").toUpperCase() : role;
+  const idVu = apercu?.id ?? monCollaborateurId;
+
   const maFeuille = useMemo(
-    () => feuilles.find((f) => f.semaine_debut === semaineCourante && f.collaborateur_id === monCollaborateurId) ?? null,
-    [feuilles, semaineCourante, monCollaborateurId]
+    () => feuilles.find((f) => f.semaine_debut === semaineCourante && f.collaborateur_id === idVu) ?? null,
+    [feuilles, semaineCourante, idVu]
   );
 
   /* =============================================================
@@ -375,7 +397,7 @@ export default function DashboardPage() {
         <div style={stylesV2.accueil}>
           <div>
             <h1 style={stylesV2.bonjour}>
-              Bonjour {prenom || ""}
+              Bonjour {(apercu ? apercu.prenom : prenom) || ""}
               {" 👋"}
             </h1>
 
@@ -384,7 +406,33 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* APERCU_ROLE : le choix de la personne */}
           {role === "ADMIN" && (
+            <label style={stylesV2.apercuChoix}>
+              <span aria-hidden="true">👁</span>
+              <select value={apercu?.id ?? ""} onChange={(e) => choisirApercu(e.target.value)} aria-label="Voir le tableau de bord de" style={stylesV2.apercuSelect}>
+                <option value="">Voir comme… (mon tableau de bord)</option>
+                {(["DIRECTION", "ADMIN", "RESPONSABLE", "COLLABORATEUR"] as const).map((r) => {
+                  const gens = collaborateurs
+                    .filter((c) => c.id !== monCollaborateurId && String(c.role ?? "COLLABORATEUR").toUpperCase() === r)
+                    .sort((a, b) => (a.trigramme ?? a.nom ?? "").localeCompare(b.trigramme ?? b.nom ?? "", "fr"));
+                  if (gens.length === 0) return null;
+                  return (
+                    <optgroup key={r} label={LIBELLES_ROLE[r]}>
+                      {gens.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.trigramme ? `${c.trigramme} — ` : ""}
+                          {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+            </label>
+          )}
+
+          {role === "ADMIN" && !apercu && (
             <div className="db-chips" style={stylesV2.chips} title={`Feuilles de la semaine du ${formaterDateLongue(semaineCourante)}`}>
               <ChipSuivi icone="👥" valeur={String(statistiques.collaborateurs)} label="actifs" />
               <ChipSuivi
@@ -399,41 +447,52 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {role === "ADMIN" ? (
+        {/* APERCU_ROLE : rappel bien visible que l'on regarde le tableau de bord de quelqu'un d'autre */}
+        {apercu && (
+          <div role="status" style={stylesV2.apercuBandeau}>
+            <span>
+              👁 <strong>Aperçu</strong> : le tableau de bord de{" "}
+              <strong>
+                {`${apercu.prenom ?? ""} ${apercu.nom ?? ""}`.trim()}
+                {apercu.trigramme ? ` (${apercu.trigramme})` : ""}
+              </strong>
+              , {LIBELLES_ROLE[roleVu] ?? roleVu}. Les liens s’ouvrent avec vos droits d’administrateur.
+            </span>
+            <button type="button" onClick={() => choisirApercu("")} style={stylesV2.apercuQuitter}>
+              Quitter l’aperçu
+            </button>
+          </div>
+        )}
+
+        {roleVu === "ADMIN" ? (
           <>
-            {/* DASHBOARD_SIMPLIFIE : moi, ce qu'il y a à facturer, trois tuiles, ma feuille de route, le paramétrage */}
+            {/* DASHBOARD_4_TUILES : moi, ce qu'il y a à facturer, quatre tuiles, ma feuille de route, le paramétrage */}
             <BandeauMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} />
 
             <VignetteFacturation onOuvrir={() => aller("/analyse/facturation")} />
 
-            <TuilePilotageActivite aller={aller} />
+            <TuilesDomaines aller={aller} role="ADMIN" rh={apercu ? undefined : { demandes: nombreDemandesRH, aRelancer: surveillance.length }} />
 
-            <div className="db-deux" style={stylesV2.deuxColonnes}>
-              <TuileRH aller={aller} nombreDemandesRH={nombreDemandesRH} aRelancer={surveillance} bilan={bilanRelance} />
-              <TuileExports aller={aller} />
-            </div>
+            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
 
-            <FeuilleDeRouteDashboard />
-
-            <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />
+            {!apercu && <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />}
           </>
-        ) : role === "DIRECTION" ? (
+        ) : roleVu === "DIRECTION" ? (
           <BlocDirection aller={aller} />
+        ) : peut(roleVu, "piloterBE") ? (
+          <>
+            {/* RESPONSABLE : mon espace, ses tuiles (Pilotage, RH et Exports selon ses droits), sa feuille de route */}
+            <BandeauMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} />
+
+            <TuilesDomaines aller={aller} role={roleVu} />
+
+            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
+          </>
         ) : (
           <>
-            <BlocMonEspace
-              aller={aller}
-              statut={statutMaFeuille}
-              libelle={libelleMaFeuille}
-              avecBilanAffaire={!peut(role, "piloterBE")}
-              avecPlanning={!peut(role, "piloterBE")}
-            />
+            <BlocMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} avecBilanAffaire avecPlanning />
 
-            {peut(role, "piloterBE") && <BlocPilotage aller={aller} admin={false} />}
-
-            <BlocAnalyse aller={aller} accesFeuilles={accesFeuilles} accesBilanRH={accesBilanRH} accesExportExcel={accesExportExcel} />
-
-            <FeuilleDeRouteDashboard />
+            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
           </>
         )}
       </div>
@@ -453,9 +512,6 @@ const CSS_TELEPHONE = `
   .db-bandeau > span { width: 100%; }
   .db-cloche-panneau { position: fixed !important; left: 8px !important; right: 8px !important; top: 72px !important; width: auto !important; max-width: none !important; }
   .db-cloche-ligne { min-height: 52px; justify-content: center; }
-}
-@media (max-width: 900px) {
-  .db-deux { grid-template-columns: 1fr !important; }
 }
 `;
 
@@ -608,232 +664,119 @@ function CarteCompacte({
 }
 
 /* ---------------------------------------------------------------
-   DASHBOARD_SIMPLIFIE : une tuile = un domaine, ses liens dedans
+   DASHBOARD_4_TUILES : une tuile = un domaine ; un clic ouvre sa première
+   page, et le bandeau de navigation de cette page donne accès au reste
 --------------------------------------------------------------- */
 
-type Lien = { icone: string; libelle: string; url: string; aide?: string; badge?: string | null; ton?: Ton; extra?: ReactNode };
-
-function LienTuile({ lien, aller }: { lien: Lien; aller: (url: string) => void }) {
-  const [survol, setSurvol] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={() => aller(lien.url)}
-      title={lien.aide}
-      onMouseEnter={() => setSurvol(true)}
-      onMouseLeave={() => setSurvol(false)}
-      style={{ ...stylesV2.lien, background: survol ? "#f4f5f7" : "transparent" }}
-    >
-      <span style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
-        <span aria-hidden="true" style={{ width: 22, textAlign: "center" }}>
-          {lien.icone}
-        </span>
-        <span style={{ flex: 1 }}>{lien.libelle}</span>
-        {lien.badge && <Pastille texte={lien.badge} ton={lien.ton} />}
-      </span>
-      {lien.extra && <span style={{ display: "block", paddingLeft: 30, marginTop: 2 }}>{lien.extra}</span>}
-    </button>
-  );
-}
-
-function TuileLiens({
+function TuileDomaine({
   icone,
   titre,
   description,
-  sections,
+  url,
   aller,
+  badges,
 }: {
   icone: string;
   titre: string;
   description: string;
-  sections: { titre?: string; liens: Lien[] }[];
+  url: string;
   aller: (url: string) => void;
+  badges?: { texte: string; ton: Ton }[];
 }) {
+  const [survol, setSurvol] = useState(false);
   return (
-    <section aria-label={titre} style={stylesV2.tuile}>
-      <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
-        <h2 style={stylesV2.groupeTitre}>
-          <span aria-hidden="true">{icone}</span> {titre}
-        </h2>
-        <span style={stylesV2.groupeDescription}>{description}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "6px 16px" }}>
-        {sections.map((s, k) => (
-          <div key={s.titre ?? k}>
-            {s.titre && <div style={stylesV2.sectionTitre}>{s.titre}</div>}
-            {s.liens.map((l) => (
-              <LienTuile key={l.url} lien={l} aller={aller} />
-            ))}
-          </div>
-        ))}
-      </div>
-    </section>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={titre}
+      onClick={() => aller(url)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          aller(url);
+        }
+      }}
+      onMouseEnter={() => setSurvol(true)}
+      onMouseLeave={() => setSurvol(false)}
+      style={{
+        ...stylesV2.tuileDomaine,
+        boxShadow: survol ? "0 8px 20px rgba(0,0,0,0.14)" : "0 1px 5px rgba(0,0,0,0.08)",
+        transform: survol ? "translateY(-2px)" : "translateY(0)",
+      }}
+    >
+      <div style={stylesV2.tuileIcone}>{icone}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: "#222222" }}>{titre}</div>
+      <div style={{ fontSize: 13, color: "#666666", lineHeight: 1.35 }}>{description}</div>
+      {badges && badges.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+          {badges.map((b) => (
+            <Pastille key={b.texte} texte={b.texte} ton={b.ton} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-function TuilePilotageActivite({ aller }: { aller: (url: string) => void }) {
-  return (
-    <TuileLiens
-      icone="🏗️"
-      titre="Pilotage activité"
-      description="Les affaires, les devis, le planning et les analyses"
-      aller={aller}
-      sections={[
-        {
-          titre: "Affaires",
-          liens: [
-            { icone: "🗂️", libelle: "Suivi des affaires", url: "/pilotage", aide: "Réalisé / chiffré des affaires, alertes" },
-            { icone: "📋", libelle: "Bilan affaire", url: "/affaires/bilan", aide: "Une affaire en détail" },
-            { icone: "🧾", libelle: "Relevé PE / PI", url: "/pilotage/prestations", aide: "Le relevé du mois des prestations au temps passé" },
-          ],
-        },
-        {
-          titre: "Devis",
-          liens: [
-            { icone: "📝", libelle: "Suivi des devis", url: "/pilotage/devis", aide: "Rédaction, envoi, relances" },
-            { icone: "📈", libelle: "Statistiques des devis", url: "/pilotage/devis?onglet=statistiques", aide: "Consultations, transformation, clients, 3 exercices" },
-          ],
-        },
-        {
-          titre: "Planning",
-          liens: [
-            { icone: "🗓️", libelle: "Planning des affaires", url: "/pilotage/affaires" },
-            { icone: "👥", libelle: "Charge par ressource", url: "/pilotage/ressources" },
-            { icone: "🧭", libelle: "Disponibilités par activité", url: "/analyse/charge-activites" },
-            { icone: "🗺️", libelle: "Feuilles de route", url: "/ma-feuille-de-route", aide: "La mienne, ou celle d’un collègue" },
-          ],
-        },
-        {
-          titre: "Analyse",
-          liens: [
-            { icone: "💶", libelle: "Finances", url: "/analyse/finances", aide: "CA de l’exercice, atterrissage, prévisionnel" },
-            { icone: "💹", libelle: "Rentabilité", url: "/analyse/rentabilite" },
-            { icone: "📊", libelle: "Analyse de capacité", url: "/admin/bilans", aide: "Où part le temps de l’équipe" },
-            { icone: "🧑‍🔧", libelle: "Cartographie de l’équipe", url: "/analyse/effectifs" },
-            { icone: "🧩", libelle: "Bilan activités", url: "/admin/bilan-activites" },
-          ],
-        },
-      ]}
-    />
-  );
-}
-
-function TuileRH({
+/* Les tuiles de chaque rôle (DASHBOARD_4_TUILES) :
+   ADMIN : Pilotage, RH, Finance, Exports ; DIRECTION : Pilotage, Finance ;
+   RESPONSABLE : Pilotage, et RH / Exports selon ses droits */
+function TuilesDomaines({
   aller,
-  nombreDemandesRH,
-  aRelancer,
-  bilan,
+  role,
+  rh,
 }: {
   aller: (url: string) => void;
-  nombreDemandesRH: number;
-  aRelancer: LigneSurveillance[];
-  bilan: BilanRelance;
+  role: string;
+  /* compteurs RH, pour l'ADMIN seulement */
+  rh?: { demandes: number; aRelancer: number };
 }) {
-  // à relancer en priorité : non saisies et incomplètes ; les complètes n'ont plus qu'à être validées
-  const prioritaires = aRelancer.filter((l) => l.etat !== "complete");
-  const noms = prioritaires.map((ligne) => ligne.collaborateur.prenom || ligne.collaborateur.nom || "—");
-  const compteur = (valeur: number, texte: string, fond: string, encre: string, aide: string) => (
-    <span title={aide} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: fond, color: encre, borderRadius: 999, padding: "1px 8px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>
-      {valeur} {texte}
-    </span>
-  );
-
-  return (
-    <TuileLiens
-      icone="🧑‍💼"
-      titre="RH"
-      description="Feuilles d’heures, absences, demandes"
+  const tuiles: ReactNode[] = [
+    <TuileDomaine
+      key="pilotage"
+      icone="🏗️"
+      titre="Pilotage"
+      description="Affaires, devis, planning, charge et analyses"
+      url="/pilotage"
       aller={aller}
-      sections={[
-        {
-          liens: [
-            {
-              icone: "📋",
-              libelle: "Feuilles d’heures",
-              url: "/admin/feuilles",
-              aide: prioritaires.length > 0 ? `${bilan.semaine}, à relancer : ${noms.join(", ")}` : `${bilan.semaine} : rien à relancer`,
-              badge: aRelancer.length === 0 ? "✓ à jour" : `${aRelancer.length} à relancer`,
-              ton: aRelancer.length === 0 ? "ok" : "alerte",
-              extra: (
-                <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  {compteur(bilan.transmises, "transmises", "#e9f6eb", "#26712b", "Feuilles validées et transmises")}
-                  {bilan.completes > 0 && compteur(bilan.completes, "à valider", "#e8f0ff", "#2455a4", "Remplies mais pas encore validées")}
-                  {bilan.incompletes > 0 && compteur(bilan.incompletes, "incomplètes", "#fff1df", "#c76500", "Commencées mais il manque des heures")}
-                  {bilan.nonSaisies > 0 && compteur(bilan.nonSaisies, "non saisies", "#fdecec", "#a51d1d", "Aucune feuille pour la semaine")}
-                </span>
-              ),
-            },
-            {
-              icone: "✅",
-              libelle: "Validation RH",
-              url: "/admin/Valid_RH",
-              aide: "Demandes de congés, RTT, récupération à valider",
-              badge: nombreDemandesRH > 0 ? `${nombreDemandesRH} en attente` : null,
-              ton: "alerte",
-            },
-            { icone: "📒", libelle: "Suivi RH : absences et compteurs", url: "/admin/suivi-rh", aide: "CP, RTT, récupération : soldes, historique, ajustements" },
-            { icone: "🧾", libelle: "Notes de frais", url: "/admin/suivi-notes-frais" },
-          ],
-        },
-      ]}
-    />
-  );
+    />,
+  ];
+  if (peut(role, "voirFeuillesEquipe"))
+    tuiles.push(
+      <TuileDomaine
+        key="rh"
+        icone="🧑‍💼"
+        titre="RH"
+        description={peut(role, "administration") ? "Feuilles d’heures, validations, absences et compteurs, notes de frais" : "Feuilles d’heures des collaborateurs"}
+        url="/admin/feuilles"
+        aller={aller}
+        badges={
+          rh
+            ? [
+                ...(rh.aRelancer > 0 ? [{ texte: `${rh.aRelancer} feuille${rh.aRelancer > 1 ? "s" : ""} à relancer`, ton: "alerte" as Ton }] : [{ texte: "✓ feuilles à jour", ton: "ok" as Ton }]),
+                ...(rh.demandes > 0 ? [{ texte: `${rh.demandes} demande${rh.demandes > 1 ? "s" : ""} à valider`, ton: "alerte" as Ton }] : []),
+              ]
+            : undefined
+        }
+      />
+    );
+  if (peut(role, "indicateurs"))
+    tuiles.push(
+      <TuileDomaine key="finance" icone="💶" titre="Finance" description="CA de l’exercice, attendu, atterrissage face au prévisionnel" url="/analyse/finances" aller={aller} />
+    );
+  if (peut(role, "bilanRH") || peut(role, "exporterExcel"))
+    tuiles.push(
+      <TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url="/admin/bilan-rh" aller={aller} />
+    );
+  return <div style={stylesV2.grilleTuiles}>{tuiles}</div>;
 }
 
-function TuileExports({ aller }: { aller: (url: string) => void }) {
-  return (
-    <TuileLiens
-      icone="📤"
-      titre="Exports"
-      description="Pour la compta et la paie, en fin de mois"
-      aller={aller}
-      sections={[
-        {
-          liens: [
-            { icone: "🧾", libelle: "Facturation du mois", url: "/analyse/facturation", aide: "Forfaits livrés et PE / PI, n° ARC Louxor : à envoyer à la compta" },
-            { icone: "🧑‍💼", libelle: "Bilan RH mensuel", url: "/admin/bilan-rh", aide: "Tickets restaurant, télétravail, heures sup, compteurs" },
-            { icone: "📤", libelle: "Export récapitulatif d’heures", url: "/admin/export-excel", aide: "Pour l’ancien système : fichier hebdomadaire des heures" },
-          ],
-        },
-      ]}
-    />
-  );
-}
-
-/* Direction (Président, adjoint) : consultation seule — ce qu'il y a à facturer, les analyses, les disponibilités */
+/* Direction (Président, adjoint) : consultation seule — ce qu'il y a à facturer, Pilotage et Finance, les disponibilités */
 function BlocDirection({ aller }: { aller: (url: string) => void }) {
   return (
     <>
       <VignetteFacturation onOuvrir={() => aller("/analyse/facturation")} />
-
-      <TuileLiens
-        icone="📊"
-        titre="Analyses"
-        description="Consultation"
-        aller={aller}
-        sections={[
-          {
-            titre: "Chiffre d’affaires",
-            liens: [
-              { icone: "💶", libelle: "Finances", url: "/analyse/finances", aide: "CA de l’exercice : réalisé, attendu, atterrissage face au prévisionnel" },
-              { icone: "🧾", libelle: "Facturation du mois", url: "/analyse/facturation" },
-              { icone: "💹", libelle: "Rentabilité", url: "/analyse/rentabilite", aide: "Taux vendu, taux obtenu et coût de structure" },
-              { icone: "📈", libelle: "Statistiques des devis", url: "/pilotage/devis?onglet=statistiques", aide: "Consultations, taux de transformation, top clients" },
-            ],
-          },
-          {
-            titre: "Affaires et charge",
-            liens: [
-              { icone: "🗂️", libelle: "Suivi des affaires", url: "/pilotage" },
-              { icone: "🗓️", libelle: "Planning des affaires", url: "/pilotage/affaires" },
-              { icone: "👥", libelle: "Charge par ressource", url: "/pilotage/ressources" },
-              { icone: "🧭", libelle: "Disponibilités par activité", url: "/analyse/charge-activites" },
-              { icone: "🧑‍🔧", libelle: "Cartographie de l’équipe", url: "/analyse/effectifs" },
-            ],
-          },
-        ]}
-      />
-
+      <TuilesDomaines aller={aller} role="DIRECTION" />
       <DisponibilitesDirection aller={aller} />
     </>
   );
@@ -870,6 +813,13 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
     </section>
   );
 }
+
+const LIBELLES_ROLE: Record<string, string> = {
+  DIRECTION: "Direction",
+  ADMIN: "Administrateurs",
+  RESPONSABLE: "Responsables",
+  COLLABORATEUR: "Collaborateurs",
+};
 
 type DemandeCloche = {
   id: string;
@@ -992,65 +942,6 @@ function ClocheDemandesRH({
   );
 }
 
-function BlocPilotage({ aller, admin }: { aller: (url: string) => void; admin: boolean }) {
-  return (
-    <>
-    <Groupe titre="Planning BE" description="Les affaires, qui travaille dessus et quand">
-      <div style={stylesV2.grille}>
-        <CarteCompacte
-          principale
-          icone="📅"
-          titre="Planning des affaires"
-          description="Affecter les ressources en glissant et en étirant, comparer au chiffré"
-          onClick={() => aller("/pilotage/affaires")}
-        />
-        {admin && (
-          <CarteCompacte
-            icone="👥"
-            titre="Charge par ressource"
-            description="Charge prévue de chacun, semaine par semaine"
-            onClick={() => aller("/pilotage/ressources")}
-          />
-        )}
-        <CarteCompacte
-          icone="🗂️"
-          titre="Suivi des affaires"
-          description="Toutes les affaires : chiffré, réalisé, reste, statut"
-          onClick={() => aller("/pilotage")}
-        />
-        {/* SUIVI_DEVIS : les responsables gèrent les devis et leurs relances */}
-        <CarteCompacte
-          icone="📝"
-          titre="Suivi des devis"
-          description="Devis à rédiger, envoyés, relances à prévoir"
-          onClick={() => aller("/pilotage/devis")}
-        />
-        <CarteCompacte
-          icone="📊"
-          titre="Bilan affaire"
-          description="Heures imputées par affaire et bilans d'affaires"
-          onClick={() => aller("/affaires/bilan")}
-        />
-      </div>
-    </Groupe>
-
-    {admin && (
-      <Groupe titre="Prestations PE / PI" description="Le relevé mensuel facturable ; il remplit le planning des PE / PI">
-        <div style={stylesV2.grille}>
-          <CarteCompacte
-            principale
-            icone="🧾"
-            titre="Relevé du mois"
-            description="Staffer, saisir les heures facturées, valider le mois, exporter au gabarit"
-            onClick={() => aller("/pilotage/prestations")}
-          />
-        </div>
-      </Groupe>
-    )}
-    </>
-  );
-}
-
 function BlocMonEspace({
   aller,
   statut,
@@ -1120,52 +1011,6 @@ function BlocMonEspace({
             titre="Guide"
             description="Comment fonctionne l’Espace POLYNOV, pour les responsables"
             onClick={() => aller("/guide")}
-          />
-        )}
-      </div>
-    </Groupe>
-  );
-}
-
-/* RESPONSABLE : suivi des équipes (feuilles, bilan RH, export) */
-function BlocAnalyse({
-  aller,
-  accesFeuilles,
-  accesBilanRH,
-  accesExportExcel,
-}: {
-  aller: (url: string) => void;
-  accesFeuilles: boolean;
-  accesBilanRH: boolean;
-  accesExportExcel: boolean;
-}) {
-  if (!accesFeuilles && !accesBilanRH && !accesExportExcel) return null;
-
-  return (
-    <Groupe titre="Suivi des équipes" description="Feuilles de temps, bilan RH mensuel et export Excel">
-      <div style={stylesV2.grille}>
-        {accesBilanRH && (
-          <CarteCompacte
-            icone="🧑‍💼"
-            titre="Bilan RH mensuel"
-            description="TR, télétravail, heures supplémentaires et compteur"
-            onClick={() => aller("/admin/bilan-rh")}
-          />
-        )}
-        {accesExportExcel && (
-          <CarteCompacte
-            icone="📊"
-            titre="Export récapitulatif d'heures"
-            description="Pour l'ancien système : fichier hebdomadaire des heures"
-            onClick={() => aller("/admin/export-excel")}
-          />
-        )}
-        {accesFeuilles && (
-          <CarteCompacte
-            icone="📋"
-            titre="Feuilles collaborateurs"
-            description="Consulter les feuilles de temps de tous les collaborateurs"
-            onClick={() => aller("/admin/feuilles")}
           />
         )}
       </div>
@@ -1352,10 +1197,13 @@ const stylesV2: Record<string, CSSProperties> = {
   groupeTitre: { margin: 0, fontSize: 18, fontWeight: 800, color: "#222222" },
   groupeDescription: { color: "#777777", fontSize: 13 },
   boutonGroupe: { marginLeft: "auto", background: "#333333", color: "#ffffff", borderRadius: 8, padding: "8px 16px", fontWeight: 800, fontSize: 14, whiteSpace: "nowrap" },
-  tuile: { background: "#ffffff", borderRadius: 12, border: "1px solid #e3e6ea", borderTop: "4px solid #c00000", padding: "12px 16px", marginBottom: 14, boxShadow: "0 1px 5px rgba(0,0,0,0.06)" },
-  deuxColonnes: { display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr)", gap: 14, alignItems: "start" },
-  sectionTitre: { fontSize: 12, fontWeight: 800, color: "#a30000", textTransform: "uppercase", letterSpacing: ".4px", margin: "4px 0 2px 6px" },
-  lien: { display: "block", width: "100%", minHeight: 36, padding: "6px 6px", border: "none", borderRadius: 8, fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, color: "#252525", textAlign: "left", cursor: "pointer" },
+  grilleTuiles: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14, marginBottom: 16 },
+  tuileDomaine: { background: "#ffffff", borderRadius: 14, borderTop: "5px solid #c00000", padding: "16px 18px", minHeight: 150, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", transition: "all 0.15s ease", outline: "none" },
+  tuileIcone: { width: 46, height: 46, borderRadius: 12, background: "#c00000", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 2 },
+  apercuChoix: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 18 },
+  apercuSelect: { minHeight: 38, border: "1.5px solid #d5d9de", borderRadius: 8, padding: "0 8px", fontFamily: "inherit", fontSize: 14, fontWeight: 700, background: "#ffffff", maxWidth: 300 },
+  apercuBandeau: { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#fff4c2", border: "1.5px solid #e5c100", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 14 },
+  apercuQuitter: { border: "none", background: "#333333", color: "#ffffff", borderRadius: 8, minHeight: 36, padding: "0 14px", fontWeight: 800, fontSize: 14, fontFamily: "inherit", cursor: "pointer" },
   lienTexte: { border: "none", background: "transparent", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "#a30000", cursor: "pointer", padding: 0 },
   clocheZone: { position: "relative" },
   cloche: { position: "relative", width: 44, height: 44, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.4)", background: "rgba(255,255,255,0.15)", color: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" },
