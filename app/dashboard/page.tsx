@@ -264,12 +264,15 @@ export default function DashboardPage() {
   ============================================================= */
 
   /* APERCU_ROLE : la personne dont on affiche le tableau de bord (soi-même, hors aperçu) */
-  const apercu = useMemo(
-    () => (role === "ADMIN" && voirId ? collaborateurs.find((c) => c.id === voirId && c.id !== monCollaborateurId) ?? null : null),
-    [role, voirId, collaborateurs, monCollaborateurId]
-  );
-  const roleVu = apercu ? String(apercu.role ?? "COLLABORATEUR").toUpperCase() : role;
-  const idVu = apercu?.id ?? monCollaborateurId;
+  /* « role:DIRECTION » : le tableau de bord type d'un rôle, sans personne (pas de feuille de route) */
+  const apercu = useMemo((): { id: string | null; prenom: string | null; nom: string | null; trigramme: string | null; role: string } | null => {
+    if (role !== "ADMIN" || !voirId) return null;
+    if (voirId.startsWith("role:")) return { id: null, prenom: null, nom: null, trigramme: null, role: voirId.slice(5).toUpperCase() };
+    const c = collaborateurs.find((x) => x.id === voirId && x.id !== monCollaborateurId);
+    return c ? { id: c.id, prenom: c.prenom, nom: c.nom, trigramme: c.trigramme ?? null, role: String(c.role ?? "COLLABORATEUR").toUpperCase() } : null;
+  }, [role, voirId, collaborateurs, monCollaborateurId]);
+  const roleVu = apercu ? apercu.role : role;
+  const idVu = apercu ? apercu.id : monCollaborateurId;
 
   const maFeuille = useMemo(
     () => feuilles.find((f) => f.semaine_debut === semaineCourante && f.collaborateur_id === idVu) ?? null,
@@ -397,7 +400,7 @@ export default function DashboardPage() {
         <div style={stylesV2.accueil}>
           <div>
             <h1 style={stylesV2.bonjour}>
-              Bonjour {(apercu ? apercu.prenom : prenom) || ""}
+              Bonjour {(apercu ? apercu.prenom ?? LIBELLE_ROLE[apercu.role] ?? "" : prenom) || ""}
               {" 👋"}
             </h1>
 
@@ -410,8 +413,13 @@ export default function DashboardPage() {
           {role === "ADMIN" && (
             <label style={stylesV2.apercuChoix}>
               <span aria-hidden="true">👁</span>
-              <select value={apercu?.id ?? ""} onChange={(e) => choisirApercu(e.target.value)} aria-label="Voir le tableau de bord de" style={stylesV2.apercuSelect}>
+              <select value={apercu ? voirId ?? "" : ""} onChange={(e) => choisirApercu(e.target.value)} aria-label="Voir le tableau de bord de" style={stylesV2.apercuSelect}>
                 <option value="">Voir comme… (mon tableau de bord)</option>
+                <optgroup label="Un rôle (tableau de bord type)">
+                  <option value="role:DIRECTION">Rôle Direction</option>
+                  <option value="role:RESPONSABLE">Rôle Responsable</option>
+                  <option value="role:COLLABORATEUR">Rôle Collaborateur</option>
+                </optgroup>
                 {(["DIRECTION", "ADMIN", "RESPONSABLE", "COLLABORATEUR"] as const).map((r) => {
                   const gens = collaborateurs
                     .filter((c) => c.id !== monCollaborateurId && String(c.role ?? "COLLABORATEUR").toUpperCase() === r)
@@ -451,12 +459,22 @@ export default function DashboardPage() {
         {apercu && (
           <div role="status" style={stylesV2.apercuBandeau}>
             <span>
-              👁 <strong>Aperçu</strong> : le tableau de bord de{" "}
-              <strong>
-                {`${apercu.prenom ?? ""} ${apercu.nom ?? ""}`.trim()}
-                {apercu.trigramme ? ` (${apercu.trigramme})` : ""}
-              </strong>
-              , {LIBELLES_ROLE[roleVu] ?? roleVu}. Les liens s’ouvrent avec vos droits d’administrateur.
+              👁 <strong>Aperçu</strong> :{" "}
+              {apercu.id ? (
+                <>
+                  le tableau de bord de{" "}
+                  <strong>
+                    {`${apercu.prenom ?? ""} ${apercu.nom ?? ""}`.trim()}
+                    {apercu.trigramme ? ` (${apercu.trigramme})` : ""}
+                  </strong>
+                  , {(LIBELLE_ROLE[roleVu] ?? roleVu).toLowerCase()}.
+                </>
+              ) : (
+                <>
+                  le tableau de bord type du rôle <strong>{LIBELLE_ROLE[roleVu] ?? roleVu}</strong> (sans feuille de route : choisissez une personne pour la voir).
+                </>
+              )}{" "}
+              Les liens s’ouvrent avec vos droits d’administrateur.
             </span>
             <button type="button" onClick={() => choisirApercu("")} style={stylesV2.apercuQuitter}>
               Quitter l’aperçu
@@ -473,7 +491,7 @@ export default function DashboardPage() {
 
             <TuilesDomaines aller={aller} role="ADMIN" rh={apercu ? undefined : { demandes: nombreDemandesRH, aRelancer: surveillance.length }} />
 
-            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
+            {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
 
             {!apercu && <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />}
           </>
@@ -486,13 +504,13 @@ export default function DashboardPage() {
 
             <TuilesDomaines aller={aller} role={roleVu} />
 
-            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
+            {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
           </>
         ) : (
           <>
             <BlocMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} avecBilanAffaire avecPlanning />
 
-            <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />
+            {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
           </>
         )}
       </div>
@@ -819,6 +837,13 @@ const LIBELLES_ROLE: Record<string, string> = {
   ADMIN: "Administrateurs",
   RESPONSABLE: "Responsables",
   COLLABORATEUR: "Collaborateurs",
+};
+
+const LIBELLE_ROLE: Record<string, string> = {
+  DIRECTION: "Direction",
+  ADMIN: "Administrateur",
+  RESPONSABLE: "Responsable",
+  COLLABORATEUR: "Collaborateur",
 };
 
 type DemandeCloche = {

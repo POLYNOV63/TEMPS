@@ -232,11 +232,11 @@ export default function FeuilleDeRouteDashboard({ collaborateurId }: { collabora
                     <div key={r.id} style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px", alignItems: "center", fontSize: 14 }}>
                       <strong style={{ color: "#1f4e8c" }}>DBE {r.numero_devis}</strong>
                       <span>{[r.client, r.designation].filter(Boolean).join(" · ")}</span>
-                      {r.commentaire && <span style={{ fontSize: 12.5, color: C.gris }}>« {r.commentaire} »</span>}
+                      {r.commentaire && <span style={{ fontSize: 12.5, color: C.gris }}>consigne : « {r.commentaire} »</span>}
                       <span style={{ marginLeft: "auto", fontWeight: 800, color: jours < 0 ? "#b3261e" : jours <= 3 ? "#c76500" : "#1b5e20" }}>
                         {`le ${dateCourte(r.prevue_le)}${jours < 0 ? ` · en retard de ${-jours} j` : jours === 0 ? " · aujourd’hui" : ` · dans ${jours} j`}`}
                       </span>
-                      <RelanceFaite numero={r.numero_devis} onFait={() => setRelances((l) => l.filter((x) => x.id !== r.id))} />
+                      <RelanceFaite numero={r.numero_devis} relanceId={r.id} onFait={() => setRelances((l) => l.filter((x) => x.id !== r.id))} />
                     </div>
                   );
                 })}

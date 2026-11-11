@@ -96,13 +96,13 @@ export default function ListeDevis() {
   const chargerRelances = useCallback(async () => {
     const { data, error } = await supabase
       .from("suivi_devis_relances")
-      .select("id,numero_devis,prevue_le,responsable_id,relance_le,commentaire,saisi_par,cree_le")
+      .select("id,numero_devis,prevue_le,responsable_id,relance_le,commentaire,saisi_par,cree_le,faite_par,reponse")
       .order("cree_le", { ascending: false })
       .limit(10000);
     if (error) {
       setErreurRelances(
         /does not exist|schema cache|column/i.test(error.message)
-          ? "Les relances ne sont pas encore installées : lancez les scripts supabase/91_suivi_devis_relances.sql puis 92_suivi_devis_relances_prevues.sql dans Supabase."
+          ? "Les relances ne sont pas encore installées : lancez dans Supabase les scripts supabase/91, 92 et 93 (suivi_devis_relances…), dans cet ordre."
           : `Relances illisibles : ${error.message}`
       );
       return;
@@ -335,7 +335,13 @@ export default function ListeDevis() {
       });
       if (error) message = `Relance non prévue : ${error.message}`;
     } else if (ed.mode === "FAITE") {
-      const { error } = await supabase.rpc("suivi_devis_noter_relance", { p_numero: d.numero, p_date: ed.date, p_commentaire: ed.commentaire.trim() || null });
+      // RELANCES_HISTORIQUE : on clôt la relance prévue précise (déjà faite ailleurs : la fonction le dit)
+      const { error } = await supabase.rpc("suivi_devis_noter_relance", {
+        p_numero: d.numero,
+        p_date: ed.date,
+        p_reponse: ed.commentaire.trim() || null,
+        p_relance_id: d.prevue?.id ?? null,
+      });
       if (error) message = `Relance non enregistrée : ${error.message}`;
     }
     setEnregistrement(false);
@@ -422,8 +428,10 @@ export default function ListeDevis() {
             "Jours depuis l'envoi": d.joursEnvoye ?? "",
             "Relance prévue le": d.prevue?.prevue_le ?? "",
             "Relance par": d.prevue ? nomDe(d.prevue.responsable_id) : "",
+            "Consigne de la relance prévue": d.prevue?.commentaire ?? "",
             "Dernière relance faite": d.faites[0]?.relance_le ?? "",
-            Commentaire: d.prevue?.commentaire ?? d.faites[0]?.commentaire ?? "",
+            "Faite par": d.faites[0] ? nomDe(d.faites[0].faite_par ?? d.faites[0].responsable_id ?? null) : "",
+            "Réponse du client": d.faites[0]?.reponse ?? "",
             Commande: d.commande ?? "",
             "Heures chiffrées": d.heures,
             ...(montantsVisibles ? { "Montant (€)": d.montant } : {}),
@@ -722,6 +730,27 @@ export default function ListeDevis() {
                               </span>
                             ))}
                           {/* devis envoyé : relances */}
+                          {/* RELANCES_HISTORIQUE : qui est désigné pour la relance, et quand */}
+                          {d.categorie === "ENVOYE" && d.prevue && (
+                            <div
+                              title={`Relance prévue par ${nomDe(d.prevue.saisi_par)}${d.prevue.commentaire ? ` · consigne : ${d.prevue.commentaire}` : ""}`}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                marginBottom: 4,
+                                padding: "2px 10px",
+                                borderRadius: 999,
+                                fontSize: 13,
+                                fontWeight: 800,
+                                whiteSpace: "nowrap",
+                                background: d.etatRelance === "EN_RETARD" ? "#fdecec" : "#e3eefb",
+                                color: d.etatRelance === "EN_RETARD" ? "#b3261e" : "#1f4e8c",
+                              }}
+                            >
+                              📞 {nomDe(d.prevue.responsable_id)} · le {formatDate(d.prevue.prevue_le)}
+                            </div>
+                          )}
                           {d.categorie === "ENVOYE" && peutGerer && !erreurRelances && !edIci && (
                             <>
                               <button type="button" onClick={() => ouvrir(d, "PREVOIR")} style={{ ...lien, marginTop: 0 }}>
@@ -732,15 +761,15 @@ export default function ListeDevis() {
                               </button>
                             </>
                           )}
-                          {d.faites.length > 0 && (
+                          {(d.faites.length > 0 || d.prevue) && (
                             <button
                               type="button"
                               onClick={() => basculerHistorique(d.numero)}
                               aria-expanded={ouvert}
-                              title="Voir les relances de ce devis"
+                              title="Voir l’historique des relances de ce devis"
                               style={{ all: "unset", cursor: "pointer", display: "block", fontSize: 12, color: C.gris, marginTop: 6 }}
                             >
-                              {ouvert ? "▾" : "▸"} {pluriel(d.faites.length, "relance")} faite{d.faites.length > 1 ? "s" : ""}
+                              {ouvert ? "▾" : "▸"} historique{d.faites.length > 0 ? ` · ${pluriel(d.faites.length, "relance")} faite${d.faites.length > 1 ? "s" : ""}` : ""}
                             </button>
                           )}
                           {d.categorie !== "OUVERT" && d.categorie !== "ENVOYE" && d.faites.length === 0 && gris("—")}
@@ -780,12 +809,12 @@ export default function ListeDevis() {
                               </label>
                               {edIci.mode !== "AFFECTER" && (
                                 <label style={{ ...etiquette, flex: "1 1 260px" }}>
-                                  Commentaire (facultatif)
+                                  {edIci.mode === "PREVOIR" ? "Consigne (facultatif)" : "Réponse du client (facultatif)"}
                                   <input
                                     type="text"
                                     value={edIci.commentaire}
-                                    maxLength={500}
-                                    placeholder={edIci.mode === "PREVOIR" ? "ex. appeler M. X, demander la décision du comité" : "ex. réponse attendue fin du mois"}
+                                    maxLength={edIci.mode === "PREVOIR" ? 500 : 1000}
+                                    placeholder={edIci.mode === "PREVOIR" ? "ex. appeler M. X, demander la décision du comité" : "ex. budget validé en janvier, rappeler le 15/01"}
                                     onChange={(e) => setEd({ ...edIci, commentaire: e.target.value })}
                                     style={{ ...page.entrees, minHeight: 38 }}
                                   />
@@ -827,24 +856,51 @@ export default function ListeDevis() {
                         </tr>
                       )}
 
-                      {/* historique des relances faites */}
-                      {ouvert && d.faites.length > 0 && (
+                      {/* RELANCES_HISTORIQUE : toutes les relances du devis, prévues et faites, la plus récente d'abord */}
+                      {ouvert && (d.faites.length > 0 || d.prevue) && (
                         <tr>
                           <td colSpan={nbColonnes} style={{ ...page.td, background: "#fafbfc", padding: "8px 16px 12px 24px" }}>
-                            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris, marginBottom: 4 }}>Relances faites · DBE{d.numero}</div>
-                            <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 4 }}>
-                              {d.faites.map((r) => (
-                                <li key={r.id} style={{ fontSize: 14, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
-                                  <strong>{formatDate(r.relance_le)}</strong>
-                                  <span style={{ color: C.gris }}>par {nomDe(r.responsable_id ?? r.saisi_par)}</span>
-                                  {r.commentaire && <span>— {r.commentaire}</span>}
-                                  {peutSupprimer(r) && (
-                                    <button type="button" onClick={() => void supprimer(r)} style={{ all: "unset", cursor: "pointer", fontSize: 12, color: C.rougeTexte, fontWeight: 700 }}>
-                                      supprimer
-                                    </button>
-                                  )}
-                                </li>
-                              ))}
+                            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris, marginBottom: 6 }}>Historique des relances · DBE{d.numero}</div>
+                            <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
+                              {(d.prevue ? [d.prevue, ...d.faites] : d.faites).map((r) => {
+                                const faite = Boolean(r.relance_le);
+                                return (
+                                  <li key={r.id} style={{ fontSize: 14, borderLeft: `3px solid ${faite ? "#1b5e20" : "#1f4e8c"}`, paddingLeft: 10 }}>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline" }}>
+                                      {faite ? (
+                                        <strong style={{ color: "#1b5e20" }}>
+                                          ✓ Relancé le {formatDate(r.relance_le)} par {nomDe(r.faite_par ?? r.responsable_id ?? r.saisi_par)}
+                                        </strong>
+                                      ) : (
+                                        <strong style={{ color: r.prevue_le && r.prevue_le < aujourdhui ? "#b3261e" : "#1f4e8c" }}>
+                                          📅 À faire le {formatDate(r.prevue_le)} par {nomDe(r.responsable_id)}
+                                          {r.prevue_le && r.prevue_le < aujourdhui ? " · en retard" : ""}
+                                        </strong>
+                                      )}
+                                      {r.prevue_le && (
+                                        <span style={{ color: C.gris, fontSize: 12.5 }}>
+                                          {faite ? `prévue le ${formatDate(r.prevue_le)} pour ${nomDe(r.responsable_id)}, ` : ""}demandée par {nomDe(r.saisi_par)} le {formatDate(r.cree_le.slice(0, 10))}
+                                        </span>
+                                      )}
+                                      {peutSupprimer(r) && (
+                                        <button type="button" onClick={() => void supprimer(r)} style={{ all: "unset", cursor: "pointer", fontSize: 12, color: C.rougeTexte, fontWeight: 700 }}>
+                                          supprimer
+                                        </button>
+                                      )}
+                                    </div>
+                                    {r.commentaire && (
+                                      <div style={{ fontSize: 13, color: "#3b4046" }}>
+                                        <span style={{ color: C.gris }}>{r.prevue_le ? "Consigne" : "Note"} :</span> {r.commentaire}
+                                      </div>
+                                    )}
+                                    {r.reponse && (
+                                      <div style={{ fontSize: 13.5, color: "#1f2328", fontWeight: 600 }}>
+                                        <span style={{ color: C.gris, fontWeight: 400 }}>Réponse du client :</span> {r.reponse}
+                                      </div>
+                                    )}
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </td>
                         </tr>

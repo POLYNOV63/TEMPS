@@ -79,6 +79,7 @@ for (const rel of [
   "components/analyse/GraphiquesDisponibilites.tsx",
   "lib/disponibilitesActivites.ts",
   "components/OngletsSection.tsx",
+  "supabase/93_suivi_devis_relances_historique.sql",
 ]) {
   if (!fs.existsSync(path.join(racine, rel))) echec(`Fichier du ZIP absent : ${rel} (le ZIP a-t-il bien été décompressé à la racine du projet ?)`);
 }
@@ -264,9 +265,14 @@ if (fdr && !erreurs.length) {
     remplacerRe(
       fdr,
       /(`le \$\{dateCourte\(r\.prevue_le\)\}[^\n]*\n([ \t]*)<\/span>)/,
-      "$1\n$2<RelanceFaite numero={r.numero_devis} onFait={() => setRelancesFdr((l) => l.filter((x) => x.id !== r.id))} />",
+      "$1\n$2<RelanceFaite numero={r.numero_devis} relanceId={r.id} onFait={() => setRelancesFdr((l) => l.filter((x) => x.id !== r.id))} />",
       "bouton « ✓ faite » sur chaque relance"
     );
+    if (!ecritures.includes(fdr)) ecritures.push(fdr);
+  }
+  /* RELANCES_HISTORIQUE : « ✓ faite » vise la relance précise (pas de doublon) */
+  if (!fdr.texte.includes("relanceId={r.id}")) {
+    remplacerRe(fdr, /<RelanceFaite numero=\{r\.numero_devis\} onFait=/, "<RelanceFaite numero={r.numero_devis} relanceId={r.id} onFait=", "« ✓ faite » sur la relance précise");
     if (!ecritures.includes(fdr)) ecritures.push(fdr);
   }
 }

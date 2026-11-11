@@ -15,11 +15,13 @@ import { supabase } from "@/lib/supabase";
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-export default function RelanceFaite({ numero, onFait }: { numero: string; onFait: () => void }) {
+/* relanceId : la relance prévue que l'on clôt (RELANCES_HISTORIQUE) ; si elle a déjà été notée faite
+   ailleurs, la fonction le dit au lieu de créer un doublon */
+export default function RelanceFaite({ numero, relanceId, onFait }: { numero: string; relanceId?: string; onFait: () => void }) {
   const aujourdhui = iso(new Date());
   const [ouvert, setOuvert] = useState(false);
   const [date, setDate] = useState(aujourdhui);
-  const [commentaire, setCommentaire] = useState("");
+  const [reponse, setReponse] = useState("");
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState("");
 
@@ -32,7 +34,7 @@ export default function RelanceFaite({ numero, onFait }: { numero: string; onFai
     }
     setEnvoi(true);
     setErreur("");
-    const { error } = await supabase.rpc("suivi_devis_noter_relance", { p_numero: numero, p_date: date, p_commentaire: commentaire.trim() || null });
+    const { error } = await supabase.rpc("suivi_devis_noter_relance", { p_numero: numero, p_date: date, p_reponse: reponse.trim() || null, p_relance_id: relanceId ?? null });
     setEnvoi(false);
     if (error) {
       setErreur(error.message);
@@ -62,10 +64,10 @@ export default function RelanceFaite({ numero, onFait }: { numero: string; onFai
       </label>
       <input
         type="text"
-        value={commentaire}
-        maxLength={500}
-        placeholder="commentaire (facultatif)"
-        onChange={(e) => setCommentaire(e.target.value)}
+        value={reponse}
+        maxLength={1000}
+        placeholder="réponse du client (facultatif)"
+        onChange={(e) => setReponse(e.target.value)}
         style={{ ...champ, flex: "1 1 180px", minWidth: 140 }}
       />
       <button

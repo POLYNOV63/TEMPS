@@ -48,7 +48,9 @@ export type LigneSuiviDevis = {
   disparue: boolean;
 };
 
-/* une relance : PRÉVUE (relance_le vide) ou FAITE (relance_le rempli) */
+/* une relance : PRÉVUE (relance_le vide) ou FAITE (relance_le rempli) — RELANCES_HISTORIQUE (SQL 93) :
+   prévue le (prevue_le) pour (responsable_id) par (saisi_par), consigne (commentaire) ;
+   faite le (relance_le) par (faite_par), réponse du client (reponse) */
 export type Relance = {
   id: string;
   numero_devis: string;
@@ -58,6 +60,8 @@ export type Relance = {
   commentaire: string | null;
   saisi_par: string | null;
   cree_le: string;
+  faite_par?: string | null;
+  reponse?: string | null;
 };
 
 /* AUCUNE : rien à faire pour l'instant ; A_PLANIFIER : 30 jours passés, personne n'est désigné ;
