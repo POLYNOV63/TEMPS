@@ -80,6 +80,7 @@ function CartographieContenu() {
   const [erreur, setErreur] = useState("");
   /* EQUIPE_PEPI : qui est en PE, en PI (heures saisies au relevé ce mois-ci), le reste au bureau d'études */
   const [prestataires, setPrestataires] = useState<Map<string, "PE" | "PI">>(new Map());
+  const [groupeOuvert, setGroupeOuvert] = useState<string | null>(null); // EQUIPE_PEPI_NOMS
   useEffect(() => {
     let actif = true;
     const d = new Date();
@@ -281,8 +282,17 @@ function CartographieContenu() {
                       <Fragment key={g.cle}>
                         <span style={{ fontWeight: 800, fontSize: 14 }}>{g.lib}</span>
                         <span
-                          title={estAdmin && g.gens.length > 0 ? g.gens.map((m) => nomPersonne(m)).sort((a, b) => a.localeCompare(b, "fr")).join(", ") : undefined}
-                          style={{ display: "block", width: `${Math.max(10, (g.gens.length / plus) * 100)}%` }}
+                          {...(estAdmin && g.gens.length > 0
+                            ? {
+                                role: "button",
+                                tabIndex: 0,
+                                "aria-expanded": groupeOuvert === g.cle,
+                                title: groupeOuvert === g.cle ? "Masquer les personnes" : "Voir les personnes",
+                                onClick: () => setGroupeOuvert((x) => (x === g.cle ? null : g.cle)),
+                                onKeyDown: (e: { key: string }) => (e.key === "Enter" || e.key === " ") && setGroupeOuvert((x) => (x === g.cle ? null : g.cle)),
+                              }
+                            : {})}
+                          style={{ display: "block", width: `${Math.max(10, (g.gens.length / plus) * 100)}%`, cursor: estAdmin && g.gens.length > 0 ? "pointer" : "default", outline: groupeOuvert === g.cle ? `2px solid ${C.rouge}` : undefined, borderRadius: 6 }}
                         >
                           {g.gens.length > 0 ? (
                             <BarreNiveaux nb={NIVEAUX.map((nv) => g.gens.filter((m) => niveauDe(m.id) === nv.n).length)} largeur="100%" />
@@ -297,6 +307,41 @@ function CartographieContenu() {
                       </Fragment>
                     ))}
                   </div>
+                  {/* EQUIPE_PEPI_NOMS : les personnes du groupe cliqué (administration seulement) */}
+                  {estAdmin &&
+                    groupeOuvert &&
+                    (() => {
+                      const g = groupes.find((x) => x.cle === groupeOuvert);
+                      if (!g) return null;
+                      return (
+                        <div style={{ marginTop: 12, padding: 10, borderRadius: 8, background: "#fafbfc", border: `1px solid ${C.ligne}` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <strong style={{ fontSize: 14 }}>{g.lib}</strong>
+                            <span style={{ fontSize: 12, color: C.gris }}>{g.gens.length} personne{g.gens.length > 1 ? "s" : ""} · visible de l’administration seulement</span>
+                            <span style={{ flex: 1 }} />
+                            <button type="button" onClick={() => setGroupeOuvert(null)} aria-label="Fermer" style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer" }}>
+                              ×
+                            </button>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {[...g.gens]
+                              .sort((a, b) => niveauDe(b.id) - niveauDe(a.id) || nomPersonne(a).localeCompare(nomPersonne(b), "fr"))
+                              .map((m) => {
+                                const nv = NIVEAUX.find((x) => x.n === niveauDe(m.id)) ?? NIVEAUX[NIVEAUX.length - 1];
+                                return (
+                                  <span
+                                    key={m.id}
+                                    title={`${`${m.prenom ?? ""} ${m.nom ?? ""}`.trim()} · ${nv.n === 0 ? "niveau non renseigné" : `N${nv.n}`}`}
+                                    style={{ background: nv.couleur, color: nv.n === 3 ? "#ffffff" : "#13361a", borderRadius: 999, padding: "2px 10px", fontSize: 13, fontWeight: 800 }}
+                                  >
+                                    {nomPersonne(m)}
+                                  </span>
+                                );
+                              })}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12.5, color: C.gris, marginTop: 12 }}>
                     {NIVEAUX.map((nv) => (
                       <span key={nv.n} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
