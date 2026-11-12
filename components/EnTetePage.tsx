@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import OngletsSection from "@/components/OngletsSection"; // ONGLETS_SECTION
+import { page } from "@/components/pilotage/ui";
 
 /* ===============================================================
    EN-TETE COMMUN DES PAGES POLYNOV-TEMPS
@@ -11,14 +12,17 @@ import OngletsSection from "@/components/OngletsSection"; // ONGLETS_SECTION
      - marque POLYNOV + nom de la section
      - bouton "Précédent" (retour à la page d'où l'on vient)
      - bouton "Tableau de bord"
-     - titre / description optionnels
      - zone d'actions propre à chaque page (children)
+     - titre / description optionnels
 
-   forme :
-     "pleine"  barre pleine largeur (page sans marge)
-     "encadre" carte arrondie (page avec marges)
-     "joint"   arrondie en haut seulement, collée à une carte
-               blanche placée juste en dessous
+   ENTETES_HARMONISES : toutes les pages ont le MÊME en-tête que le
+   Pilotage et les Finances : une barre rouge pleine largeur, collée en
+   haut de l'écran, sans arrondi, quelle que soit la « forme » demandée
+   (« pleine », « encadre » ou « joint », gardées pour compatibilité :
+   une page posée dans un cadre avec marges voit sa barre étendue d'un
+   bord à l'autre). Le titre et la description, quand la page en donne,
+   s'affichent SOUS la barre (et sous le bandeau d'onglets RH / Exports),
+   en noir, comme le titre des pages du Pilotage.
 ================================================================ */
 
 type Forme = "pleine" | "encadre" | "joint";
@@ -34,15 +38,38 @@ type Props = {
   children?: ReactNode;
 };
 
-export default function EnTetePage({
-  section,
-  titre,
-  description,
-  forme = "pleine",
-  avantNavigation,
-  children,
-}: Props) {
+export default function EnTetePage({ section, titre, description, avantNavigation, children }: Props) {
   const router = useRouter();
+  const ref = useRef<HTMLElement | null>(null);
+
+  // la barre va d'un bord à l'autre de l'écran et touche le haut, même posée dans un cadre avec marges
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const caler = () => {
+      el.style.marginLeft = "";
+      el.style.width = "";
+      el.style.marginTop = "";
+      const r = el.getBoundingClientRect();
+      const largeur = document.documentElement.clientWidth;
+      const gauche = r.left + window.scrollX;
+      if (gauche > 0.5 || r.width < largeur - 1) {
+        el.style.marginLeft = `${-gauche}px`;
+        el.style.width = `${largeur}px`;
+      }
+      const haut = r.top + window.scrollY;
+      if (haut > 0.5 && haut < 120) el.style.marginTop = `${-haut}px`;
+      // le bandeau d'onglets RH / Exports, juste dessous, suit la même largeur
+      const suivant = el.nextElementSibling as HTMLElement | null;
+      if (suivant?.hasAttribute("data-onglets-section")) {
+        suivant.style.marginLeft = el.style.marginLeft;
+        suivant.style.width = el.style.width;
+      }
+    };
+    caler();
+    window.addEventListener("resize", caler);
+    return () => window.removeEventListener("resize", caler);
+  }, []);
 
   function precedent() {
     if (avantNavigation && !avantNavigation()) return;
@@ -55,62 +82,45 @@ export default function EnTetePage({
     }
   }
 
-  const conteneur: CSSProperties = {
-    ...styles.header,
-    ...(forme === "encadre" ? styles.encadre : {}),
-    ...(forme === "joint" ? styles.joint : {}),
-  };
-
   return (
-    <header style={conteneur}>
-      <div style={styles.ligneHaute}>
-        <div style={styles.marque}>
-          <span style={styles.logo}>POLYNOV</span>
-          <span style={styles.separateur}>/</span>
-          <span style={styles.section}>{section}</span>
+    <>
+      <header ref={ref} data-entete-page="" style={styles.header}>
+        <div style={styles.ligneHaute}>
+          <div style={styles.marque}>
+            <span style={styles.logo}>POLYNOV</span>
+            <span style={styles.separateur}>/</span>
+            <span style={styles.section}>{section}</span>
+          </div>
+
+          <div style={styles.actions}>
+            {children}
+
+            <BoutonNavigation onClick={precedent}>← Précédent</BoutonNavigation>
+
+            <BoutonNavigation
+              onClick={() => {
+                if (avantNavigation && !avantNavigation()) return;
+                router.push("/dashboard");
+              }}
+            >
+              ⌂ Tableau de bord
+            </BoutonNavigation>
+          </div>
         </div>
-
-        <div style={styles.actions}>
-          {!titre && children}
-
-          <BoutonNavigation onClick={precedent}>← Précédent</BoutonNavigation>
-
-          <BoutonNavigation
-            onClick={() => {
-              if (avantNavigation && !avantNavigation()) return;
-              router.push("/dashboard");
-            }}
-          >
-            ⌂ Tableau de bord
-          </BoutonNavigation>
-        </div>
-      </div>
+        <OngletsSection />
+      </header>
 
       {titre && (
         <div style={styles.ligneTitre}>
-          <div>
-            <div style={styles.titre}>{titre}</div>
-
-            {description && (
-              <div style={styles.description}>{description}</div>
-            )}
-          </div>
-
-          {children && <div style={styles.actionsPage}>{children}</div>}
+          <h1 style={page.titre}>{titre}</h1>
+          {description && <p style={page.sousTitre}>{description}</p>}
         </div>
       )}
-      <OngletsSection />
-    </header>
+    </>
   );
 }
 
-function BoutonNavigation({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: ReactNode;
-}) {
+function BoutonNavigation({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   const [survol, setSurvol] = useState(false);
 
   return (
@@ -121,9 +131,7 @@ function BoutonNavigation({
       onMouseLeave={() => setSurvol(false)}
       style={{
         ...styles.bouton,
-        background: survol
-          ? "rgba(255,255,255,0.28)"
-          : "rgba(255,255,255,0.14)",
+        background: survol ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.14)",
       }}
     >
       {children}
@@ -139,16 +147,7 @@ const styles: Record<string, CSSProperties> = {
     boxShadow: "0 3px 12px rgba(0,0,0,0.12)",
     fontFamily: "Calibri, Arial, sans-serif",
     boxSizing: "border-box",
-  },
-
-  encadre: {
-    borderRadius: 14,
-    marginBottom: 22,
-  },
-
-  joint: {
-    borderRadius: "12px 12px 0 0",
-    boxShadow: "none",
+    borderRadius: 0,
   },
 
   ligneHaute: {
@@ -204,31 +203,9 @@ const styles: Record<string, CSSProperties> = {
     transition: "background 0.15s ease",
   },
 
+  // le titre de la page, sous la barre, comme sur les pages du Pilotage
   ligneTitre: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 20,
-    flexWrap: "wrap",
-    marginTop: 18,
-  },
-
-  titre: {
-    fontSize: 28,
-    fontWeight: 800,
-    letterSpacing: "-0.4px",
-  },
-
-  description: {
-    marginTop: 4,
-    opacity: 0.9,
-    fontSize: 15,
-  },
-
-  actionsPage: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
+    margin: "22px 0 18px",
+    fontFamily: "Calibri, Arial, sans-serif",
   },
 };

@@ -72,8 +72,16 @@ export default function OngletsSection() {
     const div = document.createElement("div");
     div.setAttribute("data-onglets-section", "");
     entete.insertAdjacentElement("afterend", div);
+    // ENTETES_HARMONISES : même largeur que l'en-tête (étendu d'un bord à l'autre de l'écran)
+    const aligner = () => {
+      div.style.marginLeft = (entete as HTMLElement).style.marginLeft;
+      div.style.width = (entete as HTMLElement).style.width;
+    };
+    aligner();
+    window.addEventListener("resize", aligner);
     setCible(div);
     return () => {
+      window.removeEventListener("resize", aligner);
       div.remove();
       setCible(null);
     };
