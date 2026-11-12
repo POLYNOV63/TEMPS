@@ -32,6 +32,9 @@
    novembre », « Comparaison avec N-1 », puis le détail (BE / PI / IG,
    négoce et scan, PE, frais annexes), REPLIÉ par défaut avec son total
    dans le titre ; « tout déplier » / « tout replier ».
+   V10 : détail en « BE, IG, PI », « Scan », « Négoce » (CA BE sans et avec
+   achats dans le titre), « PE », « Par activité » (toutes imputations) ;
+   liseré de couleur en ombre intérieure, aligné sur toute la hauteur.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -365,35 +368,44 @@ export default function TrameCA(props: {
       },
       {
         cle: "BE",
-        titre: "Détail : BE, PI, IG par activité",
+        titre: "BE, IG, PI",
+        aide: "par activité",
         couleur: "#6b58a8",
         repliable: true,
-        resume: euros(tot(somme(r.be_meca, r.be_calcul, r.be_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.ig_meca, r.ig_calcul, r.ig_elec))),
+        resume: euros(tot(somme(r.be_meca, r.be_calcul, r.be_elec, r.ig_meca, r.ig_calcul, r.ig_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.autre))),
         lignes: [
           { kind: "titre", libelle: "BE — chiffrage sur CDC" },
           ca("Méca BE", r.be_meca, undefined, ra.be_meca),
           ca("Calcul BE", r.be_calcul, undefined, ra.be_calcul),
           ca("Elec BE", r.be_elec, undefined, ra.be_elec),
-          { kind: "titre", libelle: "PI — prestation interne" },
-          ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
-          ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
-          ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
           { kind: "titre", libelle: "IG — intergroupe" },
           ca("Méca IG", r.ig_meca, undefined, ra.ig_meca),
           ca("Calcul IG", r.ig_calcul, undefined, ra.ig_calcul),
           ca("Elec IG", r.ig_elec, undefined, ra.ig_elec),
+          { kind: "titre", libelle: "PI — prestation interne" },
+          ca("Méca PI", r.pi_meca, undefined, ra.pi_meca),
+          ca("Calcul PI", r.pi_calcul, undefined, ra.pi_calcul),
+          ca("Elec PI", r.pi_elec, undefined, ra.pi_elec),
+          ...(nonNul(r.autre) || nonNul(ra.autre) ? [{ kind: "titre" as const, libelle: "Autre" }, ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
         ],
       },
       {
+        cle: "SCAN",
+        titre: "Scan",
+        couleur: "#e08a1e",
+        repliable: true,
+        resume: euros(tot(r.scan)),
+        lignes: [ca("CA Scan", r.scan, undefined, ra.scan)],
+      },
+      {
         cle: "NEGOCE",
-        titre: "Détail : négoce, scan, achats et CA BE",
+        titre: "Négoce",
+        aide: "et CA BE sans / avec achats",
         couleur: "#8d6e63",
         repliable: true,
-        resume: `CA BE ${euros(tot(caBE))}`,
+        resume: `CA BE sans HA ${euros(tot(caBE))} · avec HA ${euros(tot(caBEnet))}`,
         lignes: [
           ca("Négoce", r.negoce, undefined, ra.negoce),
-          ca("CA Scan", r.scan, undefined, ra.scan),
-          ...(nonNul(r.autre) || nonNul(ra.autre) ? [ca("Autre / non ventilé (hors PE)", r.autre, undefined, ra.autre)] : []),
           ca("Achats sur affaires", r.achats, "info"),
           ca("CA BE sans HA", caBE, "sous-total", caBEa),
           { kind: "valeurs", libelle: "CA BE avec HA (achats déduits)", valeurs: caBEnet, total: tot(caBEnet), moyenne: moyClos(caBEnet), style: "sous-total", attendu: caBEa },
@@ -401,8 +413,8 @@ export default function TrameCA(props: {
       },
       {
         cle: "PE",
-        titre: "Détail : PE — prestation externe",
-        couleur: "#e08a1e",
+        titre: "PE — prestation externe",
+        couleur: "#2e7d6b",
         repliable: true,
         resume: `CA PE ${euros(tot(caPE))}`,
         lignes: [
@@ -410,7 +422,22 @@ export default function TrameCA(props: {
           ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
           ca("Elec PE", r.pe_elec, undefined, ra.pe_elec),
           ...(nonNul(r.pe_autre) || nonNul(ra.pe_autre) ? [ca("Autre / non ventilé PE", r.pe_autre, undefined, ra.pe_autre)] : []),
-          ca("CA PE", caPE, "sous-total", caPEa),
+        ],
+      },
+      {
+        cle: "ACTIVITES",
+        titre: "Par activité",
+        aide: "toutes imputations confondues (BE, IG, PI, PE)",
+        couleur: "#c00000",
+        repliable: true,
+        resume: euros(tot(somme(caBE, caPE))),
+        lignes: [
+          ca("Méca", somme(r.be_meca, r.ig_meca, r.pi_meca, r.pe_meca), undefined, somme(ra.be_meca, ra.ig_meca, ra.pi_meca, ra.pe_meca)),
+          ca("Calcul", somme(r.be_calcul, r.ig_calcul, r.pi_calcul, r.pe_calcul), undefined, somme(ra.be_calcul, ra.ig_calcul, ra.pi_calcul, ra.pe_calcul)),
+          ca("Elec", somme(r.be_elec, r.ig_elec, r.pi_elec, r.pe_elec), undefined, somme(ra.be_elec, ra.ig_elec, ra.pi_elec, ra.pe_elec)),
+          ca("Scan", r.scan, undefined, ra.scan),
+          ca("Négoce", r.negoce, undefined, ra.negoce),
+          ...(nonNul(somme(r.autre, r.pe_autre)) || nonNul(somme(ra.autre, ra.pe_autre)) ? [ca("Autre / non ventilé", somme(r.autre, r.pe_autre), undefined, somme(ra.autre, ra.pe_autre))] : []),
         ],
       },
       {
@@ -501,13 +528,13 @@ export default function TrameCA(props: {
 
   const rendre = (liste: Ligne[], prefixe: string, couleur: string) =>
     liste.map((l, k) => {
-      const bordBloc: CSSProperties = { borderLeft: `5px solid ${couleur}` };
+      const bordBloc: CSSProperties = { boxShadow: `inset 5px 0 0 ${couleur}` }; // LISERE_ALIGNE
       if (l.kind === "titre")
         return (
           <tr key={`${prefixe}-${k}`}>
             <td
               colSpan={nbCol}
-              style={{ ...td, ...bordBloc, textAlign: "left", fontWeight: 800, background: "#f7f8f9", color: "#5b6168", fontSize: 11, textTransform: "uppercase", letterSpacing: ".4px", paddingLeft: 14, position: "sticky", left: 0 }}
+              style={{ ...td, ...bordBloc, textAlign: "left", fontWeight: 800, background: "#f7f8f9", color: "#5b6168", fontSize: 11, textTransform: "uppercase", letterSpacing: ".4px", paddingLeft: 18, position: "sticky", left: 0 }}
             >
               {l.libelle}
             </td>
@@ -535,7 +562,7 @@ export default function TrameCA(props: {
               fontWeight: poids,
               fontStyle: l.style === "info" || l.style === "attendu" ? "italic" : undefined,
               color: l.style === "attendu" ? ROUGE_ATTENDU : undefined,
-              paddingLeft: l.style === "total" || l.style === "sous-total" ? 8 : 14,
+              paddingLeft: l.style === "total" || l.style === "sous-total" ? 11 : 18,
             }}
           >
             {l.libelle}
@@ -697,9 +724,9 @@ export default function TrameCA(props: {
                           alignItems: "baseline",
                           flexWrap: "wrap",
                           gap: 10,
-                          padding: "7px 10px",
+                          padding: "7px 10px 7px 14px",
                           background: `${b.couleur}1f`,
-                          borderLeft: `5px solid ${b.couleur}`,
+                          boxShadow: `inset 5px 0 0 ${b.couleur}`,
                           borderRadius: ouvert ? "6px 6px 0 0" : 6,
                           cursor: b.repliable ? "pointer" : "default",
                         }}
