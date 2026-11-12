@@ -781,6 +781,7 @@ function BilanContenu() {
                 numero={affaire.numero}
                 realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}
                 correspondance={correspondance}
+                heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}
               />
             )}
 

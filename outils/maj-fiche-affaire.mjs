@@ -58,10 +58,14 @@ function remplacerSouple(fichier, cherche, remplace, libelle) {
 
 
 const bilan = lire("app/affaires/bilan/page.tsx");
-if (bilan && bilan.texte.includes("MONTANTS_FICHE_AFFAIRE")) {
+if (bilan && bilan.texte.includes("heuresNegoce")) {
   console.log("  = app/affaires/bilan/page.tsx : déjà à jour");
+} else if (bilan && bilan.texte.includes("MONTANTS_FICHE_AFFAIRE")) {
+  // version précédente déjà installée : on ajoute les heures pointées sur le négoce
+  remplacerSouple(bilan, "correspondance={correspondance}\n />", "correspondance={correspondance}\n                heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}\n              />", "bloc des montants : heures passées sur le négoce");
+  ecritures.push(bilan);
 } else if (bilan) {
-  remplacerSouple(bilan, "{affaire.type === \"CBE\" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}", "{/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}\n            {affaire.type === \"CBE\" && (\n              <BilanFinancierAffaire\n                type={affaire.type}\n                numero={affaire.numero}\n                realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}\n                correspondance={correspondance}\n              />\n            )}", "bloc des montants : heures pointées par activité");
+  remplacerSouple(bilan, "{affaire.type === \"CBE\" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}", "{/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}\n            {affaire.type === \"CBE\" && (\n              <BilanFinancierAffaire\n                type={affaire.type}\n                numero={affaire.numero}\n                realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}\n                correspondance={correspondance}\n                heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}\n              />\n            )}", "bloc des montants : heures pointées par activité");
   remplacerSouple(bilan, "<h1 style={page.titre}>Bilan affaire</h1>", "<h1 style={page.titre}>Fiche affaire</h1>", "titre « Fiche affaire »");
   remplacerSouple(bilan, "<EnTetePage section=\"Bilan affaire\" />", "<EnTetePage section=\"Pilotage BE\" />", "en-tête");
   ecritures.push(bilan);

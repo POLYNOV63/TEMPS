@@ -14,7 +14,10 @@ import { chargerDroitsRoles } from "@/lib/droitsRoles";
      négoce, achats, facturé, reste à facturer ;
    - par activité : montant commandé, heures commandées, prix vendu
      (€ / h), heures pointées, € / h obtenu ;
-   - le négoce : vendu, acheté, marge.
+   - le négoce : vendu, acheté, marge brute, temps passé (heures pointées
+     × coût de structure) et marge résiduelle (NEGOCE_RECAP) ;
+   - la facturation ligne par ligne : commande, avenants, échéances et
+     lots, mois du relevé ; facturé le… ou à facturer (ECHEANCIER_FICHE).
 
    Visible seulement des rôles qui ont la fonction « Montants des
    affaires » (Paramétrage › Droits d'accès ; à l'origine l'ADMIN).
@@ -31,6 +34,8 @@ type Ligne = {
   statut: string | null;
   disparue: boolean;
   date_livraison: string | null;
+  delai: string | null;
+  date_livraison_estimee: string | null;
   heures_meca: number | string | null;
   heures_calcul: number | string | null;
   heures_elec: number | string | null;
@@ -51,6 +56,8 @@ type Montant = {
   montant_negoce: number;
 };
 type Commande = { numero: string; statut: string; montant: number; etudes: number; negoce: number; achats: number; facture: number; parReleve: boolean };
+/* ECHEANCIER_FICHE : chaque ligne facturable de la famille (commande, avenant, échéance, lot, mois du relevé) */
+type LigneFacture = { cle: string; niveau: 0 | 1; numero: string; nature: string; statut: string; montant: number; facturee: string | null; prevue: string | null; releve?: boolean; parent?: string };
 type Discipline = { cle: string; libelle: string; montant: number; heures: number | null; colonnes: string[] };
 
 const n = (v: unknown) => Number(v) || 0;
@@ -63,17 +70,23 @@ export default function BilanFinancierAffaire({
   numero,
   realiseParActivite,
   correspondance,
+  heuresNegoce = 0,
 }: {
   type: string;
   numero: string;
   /* heures pointées par activité (id d'activité), et colonne du Suivi d'affaire -> activité */
   realiseParActivite?: Map<string, number>;
   correspondance?: Map<string, string>;
+  /* heures pointées sur le négoce (activité Négoce), pour la marge résiduelle */
+  heuresNegoce?: number;
 }) {
   const [autorise, setAutorise] = useState(false);
   const [message, setMessage] = useState("");
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [disciplines, setDisciplines] = useState<Discipline[]>([]);
+  const [echeancier, setEcheancier] = useState<LigneFacture[]>([]);
+  const [coutHoraire, setCoutHoraire] = useState<number | null>(null);
+  const [achatsRecus, setAchatsRecus] = useState<number | null>(null);
 
   useEffect(() => {
     let actif = true;
@@ -95,33 +108,54 @@ export default function BilanFinancierAffaire({
 
       const { data: lignes, error: el } = await supabase
         .from("suivi_lignes")
-        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre")
+        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue,date_livraison,delai,date_livraison_estimee,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre")
         .eq("base_affaire", base);
       if (el) return actif && setMessage(`Lecture du Suivi d’affaire impossible : ${el.message}`);
       const ls = ((lignes ?? []) as Ligne[]).filter((l) => !l.disparue && !INACTIF.test(l.statut ?? ""));
       if (ls.length === 0) return actif && setMessage(`CBE${base} n’est pas (ou plus) dans le Suivi d’affaire BE : pas de montant à afficher.`);
 
-      const [{ data: mts, error: em }, { data: afs }] = await Promise.all([
+      const [{ data: mts, error: em }, { data: afs }, { data: couts }] = await Promise.all([
         supabase.from("suivi_lignes_montants").select("*").in("ligne_id", ls.map((l) => l.id)),
-        supabase.from("pilotage_affaires").select("id,numero").eq("type", "CBE"),
+        supabase.from("pilotage_affaires").select("id,numero,achats_recus").eq("type", "CBE"),
+        supabase.from("indicateurs_couts").select("annee,cout_horaire"),
       ]);
+      // coût horaire de structure de l'exercice en cours (sinon le plus récent saisi)
+      {
+        const d = new Date();
+        const ex = d.getMonth() >= 10 ? d.getFullYear() : d.getFullYear() - 1;
+        const liste = ((couts ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => ({ annee: Number(c.annee), cout: Number(c.cout_horaire) || 0 })).filter((c) => c.cout > 0);
+        const c = liste.find((x) => x.annee === ex) ?? liste.sort((a, b) => b.annee - a.annee)[0];
+        if (actif) setCoutHoraire(c ? c.cout : null);
+      }
       if (em) return actif && setMessage(`Lecture des montants impossible : ${em.message}`);
       const montants = new Map(((mts ?? []) as Montant[]).map((m) => [m.ligne_id, m]));
       if (montants.size === 0) return actif && setMessage(`Aucun montant lisible pour CBE${base} (droits de la base, ou synchronisation du Suivi d’affaire à refaire).`);
 
       // PE / PI : facturé au relevé (mois clôturés), par commande
-      const famille = ((afs ?? []) as { id: string; numero: string }[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base);
+      const famille = ((afs ?? []) as { id: string; numero: string; achats_recus?: number | string | null }[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base);
+      {
+        const b = famille.find((a) => a.numero.replace(/^0+/, "") === base);
+        if (actif) setAchatsRecus(b && b.achats_recus !== null && b.achats_recus !== undefined ? Number(b.achats_recus) || 0 : null);
+      }
       const releve = new Map<string, number>();
+      const releveMois = new Map<string, { mois: string; montant: number }[]>();
       if (famille.length > 0) {
         const { data: pl } = await supabase.from("prestation_lignes").select("id,affaire_id").in("affaire_id", famille.map((a) => a.id));
         const lignesP = (pl ?? []) as { id: string; affaire_id: string }[];
         if (lignesP.length > 0) {
-          const { data: pm } = await supabase.from("prestation_mois").select("ligne_id,montant_fige").eq("valide", true).in("ligne_id", lignesP.map((l) => l.id));
+          const { data: pm } = await supabase.from("prestation_mois").select("ligne_id,mois,montant_fige").eq("valide", true).in("ligne_id", lignesP.map((l) => l.id));
           const numeroDe = new Map(famille.map((a) => [a.id, a.numero.toUpperCase().replace(/^0+/, "")]));
           const affaireDe = new Map(lignesP.map((l) => [l.id, l.affaire_id]));
-          for (const x of (pm ?? []) as { ligne_id: string; montant_fige: number | string | null }[]) {
+          for (const x of (pm ?? []) as { ligne_id: string; mois: string; montant_fige: number | string | null }[]) {
             const k = numeroDe.get(affaireDe.get(x.ligne_id) ?? "") ?? "";
-            if (k) releve.set(k, (releve.get(k) ?? 0) + n(x.montant_fige));
+            if (!k) continue;
+            releve.set(k, (releve.get(k) ?? 0) + n(x.montant_fige));
+            const liste = releveMois.get(k) ?? [];
+            const m = String(x.mois).slice(0, 7);
+            const e = liste.find((y) => y.mois === m);
+            if (e) e.montant += n(x.montant_fige);
+            else liste.push({ mois: m, montant: n(x.montant_fige) });
+            releveMois.set(k, liste);
           }
         }
       }
@@ -188,7 +222,22 @@ export default function BilanFinancierAffaire({
         })
         .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
 
+      // ECHEANCIER_FICHE : chaque commande ou avenant, puis ses échéances / lots (ou ses mois de relevé)
+      const ech: LigneFacture[] = [];
+      const nature = (g: string) => (g === "BASE" ? "Commande" : g === "AVENANT" ? "Avenant" : g === "ECHEANCE" ? "Échéance" : g === "LOT" ? "Lot" : g);
+      for (const l of ls.filter((x) => x.genre === "BASE" || x.genre === "AVENANT").sort((a, b) => String(a.numero_affaire ?? a.cle).localeCompare(String(b.numero_affaire ?? b.cle), "fr", { numeric: true }))) {
+        const num = String(l.numero_affaire ?? l.cle).toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "");
+        ech.push({ cle: l.cle, niveau: 0, numero: l.numero_affaire ?? l.cle, nature: nature(l.genre), statut: l.statut ?? "", montant: n(montants.get(l.id)?.montant), facturee: l.date_livraison, prevue: l.delai ?? l.date_livraison_estimee });
+        for (const d of enfants(l.cle).sort((a, b) => a.cle.localeCompare(b.cle, "fr", { numeric: true }))) {
+          const md = montants.get(d.id);
+          ech.push({ parent: l.cle, cle: d.cle, niveau: 1, numero: d.numero_affaire ?? d.cle, nature: nature(d.genre), statut: d.statut ?? "", montant: md ? n(md.montant_echeances) || n(md.montant) : 0, facturee: d.date_livraison, prevue: d.delai ?? d.date_livraison_estimee });
+        }
+        for (const m of (releveMois.get(num) ?? []).sort((a, b) => a.mois.localeCompare(b.mois)))
+          ech.push({ parent: l.cle, cle: `${l.cle}|${m.mois}`, niveau: 1, numero: `Relevé ${m.mois.slice(5, 7)}/${m.mois.slice(0, 4)}`, nature: "Mois clôturé (PE / PI)", statut: "Clôturé", montant: m.montant, facturee: `${m.mois}-01`, prevue: null, releve: true });
+      }
+
       if (!actif) return;
+      setEcheancier(ech);
       setCommandes(res);
       setDisciplines([
         { cle: "meca", libelle: "Méca", montant: totalD.meca, heures: totalD.hMeca, colonnes: ["Méca"] },
@@ -287,10 +336,56 @@ export default function BilanFinancierAffaire({
         </table>
       </div>
 
+      {/* ECHEANCIER_FICHE : ce qui est facturé, et quand ; ce qui reste à facturer */}
+      {echeancier.length > 0 && (
+        <div style={{ overflowX: "auto", marginTop: 16 }}>
+          <strong style={{ fontSize: 15 }}>Facturation, ligne par ligne</strong>
+          <span style={{ fontSize: 13, color: gris }}> · commande, avenants, et leurs échéances ou lots ; pour une PE / PI, les mois clôturés du relevé</span>
+          <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
+            <thead>
+              <tr>
+                <th style={th}>N°</th>
+                <th style={th}>Nature</th>
+                <th style={th}>Statut</th>
+                <th style={thN}>Montant</th>
+                <th style={th}>Facturé le</th>
+              </tr>
+            </thead>
+            <tbody>
+              {echeancier.map((e) => {
+                const enfantsE = echeancier.filter((x) => x.parent === e.cle);
+                const aDesEnfants = e.niveau === 0 && enfantsE.length > 0;
+                const date = (d: string | null) => (d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR", e.releve ? { month: "long", year: "numeric" } : undefined) : "");
+                return (
+                  <tr key={e.cle} style={{ background: e.niveau === 0 ? "#fafbfc" : undefined }}>
+                    <td style={{ ...td, paddingLeft: e.niveau === 1 ? 26 : 8, fontWeight: e.niveau === 0 ? 800 : 600, color: e.niveau === 0 ? "#a30000" : "#3b4046", whiteSpace: "nowrap" }}>
+                      {e.niveau === 1 ? "↳ " : ""}
+                      {e.numero}
+                    </td>
+                    <td style={{ ...td, color: gris, fontSize: 13 }}>{e.nature}</td>
+                    <td style={td}>{e.statut || "—"}</td>
+                    <td style={{ ...tdN, fontWeight: e.niveau === 0 ? 800 : 600 }}>{e.montant > 0.5 ? euros(e.montant) : "—"}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      {e.facturee ? (
+                        <span style={{ color: "#1b5e20", fontWeight: 700 }}>✓ {date(e.facturee)}</span>
+                      ) : aDesEnfants ? (
+                        <span style={{ color: gris, fontSize: 13 }}>{enfantsE.some((x) => x.releve) ? "au relevé, mois par mois" : "par ses échéances"}</span>
+                      ) : (
+                        <span style={{ color: "#8a6500" }}>à facturer{e.prevue ? ` · prévu le ${date(e.prevue)}` : ""}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* par activité : montant et heures commandés, prix vendu, heures pointées, € / h obtenu */}
       {disciplines.some((d) => d.montant > 0.5) && (
         <div style={{ overflowX: "auto", marginTop: 16 }}>
-          <strong style={{ fontSize: 15 }}>Par activité</strong>
+          <strong style={{ fontSize: 15 }}>Chiffré par activité, et taux de vente</strong>
           <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
             <thead>
               <tr>
@@ -322,6 +417,25 @@ export default function BilanFinancierAffaire({
                     </tr>
                   );
                 })}
+              {(() => {
+                // total des études (hors négoce) : montant, heures, taux moyen
+                const etudes = disciplines.filter((d) => d.cle !== "negoce");
+                const m = etudes.reduce((t, d) => t + d.montant, 0);
+                const h = etudes.reduce((t, d) => t + (d.heures ?? 0), 0);
+                const ps = etudes.map(pointeDe);
+                const p = ps.every((x) => x === null) ? null : ps.reduce<number>((t, x) => t + (x ?? 0), 0);
+                const bord = { borderTop: "2px solid #d5d9de" };
+                return (
+                  <tr>
+                    <td style={{ ...td, ...bord, fontWeight: 800 }}>Total des études</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(m)}</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{h > 0.05 ? heures(h) : "—"}</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{h > 0.05 ? `${euros(m / h)} / h` : "—"}</td>
+                    <td style={{ ...tdN, ...bord }}>{p !== null && p > 0.05 ? heures(p) : "—"}</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{p !== null && p > 0.05 ? `${euros(m / p)} / h` : "—"}</td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
           <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
@@ -330,22 +444,41 @@ export default function BilanFinancierAffaire({
         </div>
       )}
 
-      {/* le négoce */}
-      {(vendu > 0.5 || achete > 0.5) && (
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 28px", marginTop: 14, paddingTop: 10, borderTop: "1px solid #eceef1", fontSize: 15 }}>
-          <strong>Négoce</strong>
-          <span>
-            Vendu : <strong>{euros(vendu)}</strong>
-          </span>
-          <span>
-            Acheté : <strong style={{ color: "#7a3e00" }}>{euros(achete)}</strong>
-          </span>
-          <span>
-            Marge : <strong style={{ color: vendu - achete < 0 ? "#b3261e" : "#1b5e20" }}>{euros(vendu - achete)}</strong>
-            {vendu > 0 && <span style={{ color: gris, fontSize: 13 }}> ({Math.round(((vendu - achete) / vendu) * 100)} %)</span>}
-          </span>
-        </div>
-      )}
+      {/* NEGOCE_RECAP : vendu, acheté, marge brute, temps passé et marge résiduelle */}
+      {(vendu > 0.5 || achete > 0.5) &&
+        (() => {
+          const brute = vendu - achete;
+          const coutTemps = coutHoraire !== null && heuresNegoce > 0.05 ? heuresNegoce * coutHoraire : null;
+          const residuelle = coutTemps !== null ? brute - coutTemps : null;
+          const pc = (x: number) => (vendu > 0 ? ` (${Math.round((x / vendu) * 100)} %)` : "");
+          const ligne = (lib: string, valeur: string, couleur?: string, aide?: string, gras?: boolean) => (
+            <tr title={aide}>
+              <td style={{ ...td, fontWeight: gras ? 800 : 400 }}>{lib}</td>
+              <td style={{ ...tdN, fontWeight: gras ? 800 : 600, color: couleur }}>{valeur}</td>
+            </tr>
+          );
+          return (
+            <div style={{ marginTop: 16, maxWidth: 560 }}>
+              <strong style={{ fontSize: 15 }}>Négoce</strong>
+              <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
+                <tbody>
+                  {ligne("Vendu", euros(vendu), undefined, undefined, true)}
+                  {ligne("Acheté (prévu au Suivi d’affaire)", `− ${euros(achete)}`, "#7a3e00")}
+                  {achatsRecus !== null && ligne("dont déjà reçu (saisi)", euros(achatsRecus), gris, "Achats reçus saisis dans l’analyse du chiffré")}
+                  {ligne("Marge brute", `${euros(brute)}${pc(brute)}`, brute < 0 ? "#b3261e" : "#1b5e20", "Vendu − acheté", true)}
+                  {heuresNegoce > 0.05 &&
+                    ligne(
+                      `Temps passé sur le négoce : ${heures(heuresNegoce)}${coutHoraire !== null ? ` × ${euros(coutHoraire)} / h` : ""}`,
+                      coutTemps !== null ? `− ${euros(coutTemps)}` : "coût horaire non saisi",
+                      "#7a3e00",
+                      "Heures pointées sur l’activité Négoce × coût de structure de l’exercice"
+                    )}
+                  {residuelle !== null && ligne("Marge résiduelle", `${euros(residuelle)}${pc(residuelle)}`, residuelle < 0 ? "#b3261e" : "#1b5e20", "Marge brute − coût du temps passé", true)}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
     </section>
   );
 }
