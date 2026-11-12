@@ -35,6 +35,8 @@
    V10 : détail en « BE, IG, PI », « Scan », « Négoce » (CA BE sans et avec
    achats dans le titre), « PE », « Par activité » (toutes imputations) ;
    liseré de couleur en ombre intérieure, aligné sur toute la hauteur.
+   V11 (TOTAUX_DANS_BANDEAU) : la ligne d'en-tête d'un bloc de détail porte
+   son total mois par mois (et l'attendu), son total et sa moyenne.
 
    Les montants viennent des mêmes calculs que le reste de la page
    (mouvements de lib/finances.ts) : le « Total CA mensuel » est égal
@@ -125,7 +127,19 @@ type Ligne =
     };
 
 /* TRAME_BLOCS : un bloc de lignes, avec sa couleur ; repliable = détail, replié par défaut */
-type Bloc = { cle: string; titre: string; aide?: string; couleur: string; repliable: boolean; resume?: string; lignes: Ligne[] };
+type Bloc = {
+  cle: string;
+  titre: string;
+  aide?: string;
+  couleur: string;
+  repliable: boolean;
+  resume?: string;
+  lignes: Ligne[];
+  /* TOTAUX_DANS_BANDEAU : total du bloc mois par mois, dans sa ligne d'en-tête */
+  serie?: number[];
+  serie2?: number[]; // une seconde valeur, en petit (ex. CA BE avec achats déduits)
+  serieAttendu?: number[];
+};
 
 export default function TrameCA(props: {
   exercice: number;
@@ -372,7 +386,8 @@ export default function TrameCA(props: {
         aide: "par activité",
         couleur: "#6b58a8",
         repliable: true,
-        resume: euros(tot(somme(r.be_meca, r.be_calcul, r.be_elec, r.ig_meca, r.ig_calcul, r.ig_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.autre))),
+        serie: somme(r.be_meca, r.be_calcul, r.be_elec, r.ig_meca, r.ig_calcul, r.ig_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.autre),
+        serieAttendu: somme(ra.be_meca, ra.be_calcul, ra.be_elec, ra.ig_meca, ra.ig_calcul, ra.ig_elec, ra.pi_meca, ra.pi_calcul, ra.pi_elec, ra.autre),
         lignes: [
           { kind: "titre", libelle: "BE — chiffrage sur CDC" },
           ca("Méca BE", r.be_meca, undefined, ra.be_meca),
@@ -394,16 +409,19 @@ export default function TrameCA(props: {
         titre: "Scan",
         couleur: "#e08a1e",
         repliable: true,
-        resume: euros(tot(r.scan)),
+        serie: r.scan,
+        serieAttendu: ra.scan,
         lignes: [ca("CA Scan", r.scan, undefined, ra.scan)],
       },
       {
         cle: "NEGOCE",
         titre: "Négoce",
-        aide: "et CA BE sans / avec achats",
+        aide: "CA BE sans achats, et en dessous avec achats déduits",
         couleur: "#8d6e63",
         repliable: true,
-        resume: `CA BE sans HA ${euros(tot(caBE))} · avec HA ${euros(tot(caBEnet))}`,
+        serie: caBE,
+        serie2: caBEnet,
+        serieAttendu: caBEa,
         lignes: [
           ca("Négoce", r.negoce, undefined, ra.negoce),
           ca("Achats sur affaires", r.achats, "info"),
@@ -416,7 +434,8 @@ export default function TrameCA(props: {
         titre: "PE — prestation externe",
         couleur: "#2e7d6b",
         repliable: true,
-        resume: `CA PE ${euros(tot(caPE))}`,
+        serie: caPE,
+        serieAttendu: caPEa,
         lignes: [
           ca("Méca PE", r.pe_meca, undefined, ra.pe_meca),
           ca("Calcul PE", r.pe_calcul, undefined, ra.pe_calcul),
@@ -430,7 +449,8 @@ export default function TrameCA(props: {
         aide: "toutes imputations confondues (BE, IG, PI, PE)",
         couleur: "#c00000",
         repliable: true,
-        resume: euros(tot(somme(caBE, caPE))),
+        serie: somme(caBE, caPE),
+        serieAttendu: somme(caBEa, caPEa),
         lignes: [
           ca("Méca", somme(r.be_meca, r.ig_meca, r.pi_meca, r.pe_meca), undefined, somme(ra.be_meca, ra.ig_meca, ra.pi_meca, ra.pe_meca)),
           ca("Calcul", somme(r.be_calcul, r.ig_calcul, r.pi_calcul, r.pe_calcul), undefined, somme(ra.be_calcul, ra.ig_calcul, ra.pi_calcul, ra.pe_calcul)),
@@ -445,7 +465,7 @@ export default function TrameCA(props: {
         titre: "Frais annexes de refacturation (ajustements)",
         couleur: "#9aa0a6",
         repliable: true,
-        resume: euros(tot(r.fa_pos) - tot(r.fa_neg)),
+        serie: n.map((_, i) => r.fa_pos[i] - r.fa_neg[i]),
         lignes: [{ ...ca("Positif", r.fa_pos), saisieFrais: "POS" } as Ligne, { ...ca("Négatif", r.fa_neg), saisieFrais: "NEG" } as Ligne],
       },
     ];
@@ -702,6 +722,71 @@ export default function TrameCA(props: {
                       <td colSpan={nbCol} style={{ height: 14, padding: 0, border: "none", background: "#ffffff" }} />
                     </tr>
                   )}
+                  {b.serie ? (
+                    (() => {
+                      const teinte = `${b.couleur}1f`;
+                      const fondBandeau = `linear-gradient(${teinte}, ${teinte}), #ffffff`;
+                      const serie = b.serie;
+                      const somme1 = serie.reduce((t, x) => t + x, 0);
+                      const somme2 = b.serie2?.reduce((t, x) => t + x, 0);
+                      const sommeAtt = b.serieAttendu?.reduce((t, x) => t + x, 0) ?? 0;
+                      const cellule = (v: number, v2: number | undefined, att: number | undefined, extra?: CSSProperties) => (
+                        <>
+                          <span>{Math.abs(v) >= 0.5 ? nombre(v) : "—"}</span>
+                          {v2 !== undefined && Math.abs(v2) >= 0.5 && <div style={{ fontSize: 11, fontWeight: 600, color: "#5b6168", ...extra }}>{nombre(v2)}</div>}
+                          {att !== undefined && Math.abs(att) >= 0.5 && <div style={styleAttendu}>+ {nombre(att)}</div>}
+                        </>
+                      );
+                      return (
+                        <tr
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={ouvert}
+                          title={ouvert ? "Replier" : "Déplier le détail"}
+                          onClick={() => basculer(b.cle)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              basculer(b.cle);
+                            }
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td
+                            style={{
+                              ...td,
+                              ...colPoste,
+                              background: fondBandeau,
+                              boxShadow: `inset 5px 0 0 ${b.couleur}`,
+                              padding: "7px 8px 7px 14px",
+                              borderBottom: ouvert ? `1px solid ${C.ligne}` : "none",
+                            }}
+                          >
+                            <span style={{ color: b.couleur, fontWeight: 800, marginRight: 6 }}>{ouvert ? "▾" : "▸"}</span>
+                            <strong style={{ fontSize: 13, color: b.couleur, textTransform: "uppercase", letterSpacing: ".4px" }}>{b.titre}</strong>
+                            {b.aide && <div style={{ fontSize: 11, color: C.gris, fontWeight: 400 }}>{b.aide}</div>}
+                          </td>
+                          {serie.map((v, i) => (
+                            <td
+                              key={i}
+                              style={{ ...td, background: mois[i] === moisCourant ? `linear-gradient(${teinte}, ${teinte}), #fff6f6` : teinte, fontWeight: 800, color: "#3b4046", borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}
+                            >
+                              {cellule(v, b.serie2?.[i], b.serieAttendu?.[i])}
+                            </td>
+                          ))}
+                          <td style={{ ...td, background: teinte, fontWeight: 800, color: b.couleur, borderLeft: `2px solid ${C.ligne}`, borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}>
+                            {cellule(somme1, somme2, sommeAtt)}
+                          </td>
+                          <td style={{ ...td, background: teinte, color: C.gris, borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}>
+                            {(() => {
+                              const m = moyClos(serie);
+                              return m === null ? "—" : Math.abs(m) >= 0.5 ? nombre(m) : "—";
+                            })()}
+                          </td>
+                        </tr>
+                      );
+                    })()
+                  ) : (
                   <tr>
                     <td colSpan={nbCol} style={{ padding: 0, border: "none" }}>
                       <div
@@ -738,6 +823,7 @@ export default function TrameCA(props: {
                       </div>
                     </td>
                   </tr>
+                  )}
                   {ouvert && rendre(b.lignes, b.cle, b.couleur)}
                 </Fragment>
               );
