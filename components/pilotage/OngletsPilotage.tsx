@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { C } from "@/components/pilotage/ui";
-import { peut, type Droit } from "@/lib/droits";
+import { pageAutorisee, type Droit } from "@/lib/droits";
+import { useDroitsRoles } from "@/lib/droitsRoles";
 import { chargerMoi } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
@@ -45,6 +46,7 @@ export type OngletActif = (typeof ONGLETS)[number]["cle"];
 
 export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
   const [role, setRole] = useState<string | null | undefined>(undefined);
+  useDroitsRoles(); // se redessine quand les réglages de droits arrivent
   const refNav = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
   }, []);
 
   // tant que le rôle n'est pas connu, seul l'onglet courant est affiché
-  const visibles = ONGLETS.filter((o) => (role === undefined ? o.cle === actif : peut(role, o.droit)));
+  const visibles = ONGLETS.filter((o) => (role === undefined ? o.cle === actif : pageAutorisee(role, o.href))); // DROITS_ROLES
 
   return (
     <nav

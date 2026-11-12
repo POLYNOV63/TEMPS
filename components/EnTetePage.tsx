@@ -1,7 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { pageAutorisee } from "@/lib/droits";
+import { chargerDroitsRoles } from "@/lib/droitsRoles";
 import OngletsSection from "@/components/OngletsSection"; // ONGLETS_SECTION
 import { page } from "@/components/pilotage/ui";
 
@@ -23,6 +26,8 @@ import { page } from "@/components/pilotage/ui";
    bord à l'autre). Le titre et la description, quand la page en donne,
    s'affichent SOUS la barre (et sous le bandeau d'onglets RH / Exports),
    en noir, comme le titre des pages du Pilotage.
+   DROITS_ROLES : une page fermée au rôle de la personne (Paramétrage ›
+   Droits d'accès) renvoie au tableau de bord.
 ================================================================ */
 
 type Forme = "pleine" | "encadre" | "joint";
@@ -41,6 +46,24 @@ type Props = {
 export default function EnTetePage({ section, titre, description, avantNavigation, children }: Props) {
   const router = useRouter();
   const ref = useRef<HTMLElement | null>(null);
+  const chemin = usePathname() ?? "";
+
+  /* DROITS_ROLES : une page fermée à ce rôle (Paramétrage › Droits d'accès) renvoie au tableau de bord,
+     y compris pour les pages qui n'ont pas de garde d'accès */
+  useEffect(() => {
+    let actif = true;
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || !actif) return;
+      const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
+      if (actif && !pageAutorisee(moi?.role ?? null, chemin)) router.replace(`/dashboard?refus=${encodeURIComponent(chemin)}`);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [chemin, router]);
 
   // la barre va d'un bord à l'autre de l'écran et touche le haut, même posée dans un cadre avec marges
   useLayoutEffect(() => {

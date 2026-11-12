@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
-import { normaliserRole, peut } from "@/lib/droits";
+import { normaliserRole, pageAutorisee, peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
 import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
 import VignetteFacturation from "@/components/dashboard/VignetteFacturation";
@@ -10,6 +10,7 @@ import GraphiquesDisponibilites from "@/components/analyse/GraphiquesDisponibili
 import { useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
 import { aISO, lundiDe } from "@/lib/pilotagePlanning";
 import { rappelBilanRH } from "@/lib/clotureMensuelle";
+import { useDroitsRoles } from "@/lib/droitsRoles";
 
 /* ===============================================================
    TABLEAU DE BORD (DASHBOARD_SIMPLIFIE)
@@ -97,6 +98,13 @@ export default function DashboardPage() {
     setVoirId(id || null);
     router.replace(id ? `/dashboard?voir=${encodeURIComponent(id)}` : "/dashboard");
   }
+
+  // DROITS_ROLES : page refusée (?refus=/pilotage)
+  const [refus, setRefus] = useState<string | null>(null);
+  useEffect(() => {
+    const r = new URLSearchParams(window.location.search).get("refus");
+    if (r) setRefus(r);
+  }, []);
 
   // Groupe « Paramétrage de l'application » : replié par défaut, choix mémorisé dans le navigateur
   const [parametrageOuvert, setParametrageOuvert] = useState(false);
@@ -521,6 +529,18 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* DROITS_ROLES : arrivée ici après une page fermée à ce rôle */}
+        {refus && (
+          <div role="alert" style={{ ...stylesV2.apercuBandeau, background: "#fdecec", borderColor: "#e5a3a3", color: "#7a1d1d" }}>
+            <span>
+              🔒 La page <strong>{refus}</strong> n’est pas ouverte à votre rôle. Voyez avec un administrateur (Paramétrage › Droits d’accès).
+            </span>
+            <button type="button" onClick={() => setRefus(null)} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer" }} aria-label="Fermer">
+              ×
+            </button>
+          </div>
+        )}
+
         {/* APERCU_ROLE : rappel bien visible que l'on regarde le tableau de bord de quelqu'un d'autre */}
         {apercu && (
           <div role="status" style={stylesV2.apercuBandeau}>
@@ -836,32 +856,41 @@ function TuilesDomaines({
   /* compteurs RH, pour l'ADMIN seulement */
   rh?: { demandes: number; aRelancer: number };
 }) {
-  const tuiles: ReactNode[] = [
-    <TuileDomaine
-      key="pilotage"
-      icone="🏗️"
-      titre="Pilotage"
-      description="Affaires, devis, planning, charge et analyses"
-      url="/pilotage"
-      aller={aller}
-      raccourcis={
-        peut(role, "administration")
-          ? [
-              { libelle: "Planning des affaires", url: "/pilotage/affaires" },
-              { libelle: "Relevé PE / PI", url: "/pilotage/prestations" },
-            ]
-          : undefined
-      }
-    />,
-  ];
-  if (peut(role, "voirFeuillesEquipe"))
+  // DROITS_ROLES : chaque tuile ouvre la première page de son domaine ouverte à ce rôle ; sans page ouverte, pas de tuile
+  useDroitsRoles();
+  const premiere = (liste: string[]) => liste.find((u) => pageAutorisee(role, u)) ?? null;
+  const uPilotage = premiere(["/pilotage", "/pilotage/devis", "/pilotage/affaires", "/pilotage/prestations", "/pilotage/planning-ressources", "/pilotage/ressources", "/analyse/charge-activites"]);
+  const uRH = premiere(["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"]);
+  const uFinance = premiere(["/analyse/finances", "/analyse/facturation", "/analyse/rentabilite"]);
+  const uExports = premiere(["/admin/export-excel", "/admin/bilan-rh"]);
+  const tuiles: ReactNode[] = [];
+  if (uPilotage)
+    tuiles.push(
+      <TuileDomaine
+        key="pilotage"
+        icone="🏗️"
+        titre="Pilotage"
+        description="Affaires, devis, planning, charge et analyses"
+        url={uPilotage}
+        aller={aller}
+        raccourcis={
+          peut(role, "administration")
+            ? [
+                { libelle: "Planning des affaires", url: "/pilotage/affaires" },
+                { libelle: "Relevé PE / PI", url: "/pilotage/prestations" },
+              ]
+            : undefined
+        }
+      />
+    );
+  if (uRH)
     tuiles.push(
       <TuileDomaine
         key="rh"
         icone="🧑‍💼"
         titre="RH"
         description={peut(role, "administration") ? "Feuilles d’heures, validations, absences et compteurs, notes de frais" : "Feuilles d’heures des collaborateurs"}
-        url="/admin/feuilles"
+        url={uRH}
         aller={aller}
         badges={
           rh
@@ -873,14 +902,10 @@ function TuilesDomaines({
         }
       />
     );
-  if (peut(role, "indicateurs"))
-    tuiles.push(
-      <TuileDomaine key="finance" icone="💶" titre="Finance" description="CA de l’exercice, attendu, atterrissage face au prévisionnel" url="/analyse/finances" aller={aller} />
-    );
-  if (peut(role, "bilanRH") || peut(role, "exporterExcel"))
-    tuiles.push(
-      <TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url="/admin/export-excel" aller={aller} />
-    );
+  if (uFinance)
+    tuiles.push(<TuileDomaine key="finance" icone="💶" titre="Finance" description="CA de l’exercice, attendu, atterrissage face au prévisionnel" url={uFinance} aller={aller} />);
+  if (uExports)
+    tuiles.push(<TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url={uExports} aller={aller} />);
   return <div style={stylesV2.grilleTuiles}>{tuiles}</div>;
 }
 
@@ -1279,6 +1304,7 @@ function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: st
       titre: "Référentiels",
       liens: [
         ["👥", "Collaborateurs", "/admin/collaborateurs"],
+        ["🔐", "Droits d’accès", "/admin/droits"], // DROITS_ROLES
         ["🏷️", "Codes d'imputation", "/admin/Gestion-codes"],
         ["🧩", "Activités", "/admin/Gestion-activites"],
         ["🏷️", "Imputations des affaires", "/admin/imputations-pilotage"],

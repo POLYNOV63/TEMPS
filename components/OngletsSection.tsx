@@ -5,7 +5,8 @@ import { createPortal } from "react-dom";
 import { C } from "@/components/pilotage/ui";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { peut, type Droit } from "@/lib/droits";
+import { pageAutorisee, type Droit } from "@/lib/droits";
+import { useDroitsRoles } from "@/lib/droitsRoles";
 import { chargerMoi } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
@@ -53,6 +54,7 @@ export default function OngletsSection() {
   const chemin = usePathname() ?? "";
   const section = SECTIONS.find((s) => s.affichageSur.some((p) => p.toLowerCase() === chemin.replace(/\/$/, "").toLowerCase()));
   const [role, setRole] = useState<string | null | undefined>(undefined);
+  useDroitsRoles(); // se redessine quand les réglages de droits arrivent
   const repere = useRef<HTMLSpanElement | null>(null);
   const refNav = useRef<HTMLElement | null>(null);
   const [cible, setCible] = useState<HTMLElement | null>(null);
@@ -99,7 +101,7 @@ export default function OngletsSection() {
   }, [cible, role]);
 
   if (!section) return null;
-  const visibles = role === undefined ? [] : section.onglets.filter((o) => peut(role, o.droit));
+  const visibles = role === undefined ? [] : section.onglets.filter((o) => pageAutorisee(role, o.href)); // DROITS_ROLES
 
   const barre =
     visibles.length < 2 ? null : (

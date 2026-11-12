@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { peut, type Droit } from "@/lib/droits";
+import { pageAutorisee, pageReglee, peut, type Droit } from "@/lib/droits";
+import { chargerDroitsRoles } from "@/lib/droitsRoles";
 
 /* ===============================================================
    GARDE D'ACCES
@@ -12,6 +13,9 @@ import { peut, type Droit } from "@/lib/droits";
      - utilisateur connecté (sinon redirection vers /login)
      - droit suffisant selon son rôle (sinon redirection vers
        /dashboard). Avec droit={null}, seule la connexion est exigée.
+   DROITS_ROLES : la page doit aussi être ouverte à ce rôle dans
+   Paramétrage › Droits d'accès ; une page explicitement ouverte à un
+   rôle l'emporte sur le droit d'origine de la page.
 
    Le contenu n'est monté qu'une fois l'accès validé : ses
    chargements de données ne démarrent donc pas avant le contrôle.
@@ -28,6 +32,7 @@ export default function GardeAcces({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const chemin = usePathname() ?? "";
   const [autorise, setAutorise] = useState(false);
 
   useEffect(() => {
@@ -43,19 +48,20 @@ export default function GardeAcces({
         return;
       }
 
-      if (droit) {
-        const { data: moi } = await supabase
-          .from("collaborateurs")
-          .select("role")
-          .eq("auth_user_id", user.id)
-          .maybeSingle();
+      const [{ data: moi }] = await Promise.all([
+        supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(),
+        chargerDroitsRoles(),
+      ]);
 
-        if (!actif) return;
+      if (!actif) return;
 
-        if (!peut(moi?.role, droit)) {
-          router.replace("/dashboard");
-          return;
-        }
+      const role = moi?.role ?? null;
+      const ouverteExpres = pageReglee(role, chemin) === true;
+      const ok = ouverteExpres || (pageAutorisee(role, chemin) && (!droit || peut(role, droit)));
+
+      if (!ok) {
+        router.replace(`/dashboard?refus=${encodeURIComponent(chemin)}`);
+        return;
       }
 
       if (actif) setAutorise(true);
@@ -66,7 +72,7 @@ export default function GardeAcces({
     return () => {
       actif = false;
     };
-  }, [droit, router]);
+  }, [droit, router, chemin]);
 
   if (!autorise) {
     return (

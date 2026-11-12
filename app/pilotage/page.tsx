@@ -40,6 +40,8 @@ import {
 } from "@/lib/pilotageCalculs";
 import { chargerDormantes, libelleDormance, type Dormance } from "@/lib/dormantes";
 import * as XLSX from "xlsx";
+import { peut } from "@/lib/droits";
+import { chargerDroitsRoles } from "@/lib/droitsRoles";
 
 /* ===============================================================
    PILOTAGE BE - PORTEFEUILLE DES AFFAIRES
@@ -131,6 +133,74 @@ function PortefeuilleContenu() {
   const [delaisSuivi, setDelaisSuivi] = useState<Map<string, { estime: string | null; client: string | null; statut?: string | null }>>(new Map());
   const [statutsDevis, setStatutsDevis] = useState<Map<string, string>>(new Map()); // STATUT_SURLIGNE
   const [toutesAlertes, setToutesAlertes] = useState(false);
+
+  /* MONTANTS_AFFAIRES : droit « Suivi des affaires avec les montants » (Paramétrage › Droits d'accès) :
+     montant, facturé et reste à facturer de chaque famille (base + avenants) */
+  const [voitMontants, setVoitMontants] = useState(false);
+  const [montantsFamille, setMontantsFamille] = useState<Map<string, { montant: number; facture: number; releve: boolean }>>(new Map());
+  useEffect(() => {
+    let actif = true;
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const [{ data: moiR }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
+      if (!actif || !peut(moiR?.role ?? null, "montantsAffaires")) return;
+      setVoitMontants(true);
+      const n = (v: unknown) => Number(v) || 0;
+      const sansZ = (v: string | null | undefined) => String(v ?? "").replace(/^0+/, "");
+      const [sl, mt, pl, pm, pa] = await Promise.all([
+        chargerTout<{ id: string; cle: string; parent_cle: string | null; base_affaire: string | null; genre: string; date_livraison: string | null; disparue: boolean; statut: string | null }>((a, b) =>
+          supabase.from("suivi_lignes").select("id,cle,parent_cle,base_affaire,genre,date_livraison,disparue,statut").order("cle").range(a, b)
+        ),
+        chargerTout<{ ligne_id: string; montant: number | string | null; montant_echeances: number | string | null }>((a, b) =>
+          supabase.from("suivi_lignes_montants").select("ligne_id,montant,montant_echeances").order("ligne_id").range(a, b)
+        ),
+        chargerTout<{ id: string; affaire_id: string }>((a, b) => supabase.from("prestation_lignes").select("id,affaire_id").order("id").range(a, b)),
+        chargerTout<{ ligne_id: string; montant_fige: number | string | null }>((a, b) => supabase.from("prestation_mois").select("ligne_id,montant_fige").eq("valide", true).order("ligne_id").range(a, b)),
+        chargerTout<{ id: string; numero: string }>((a, b) => supabase.from("pilotage_affaires").select("id,numero").eq("type", "CBE").order("id").range(a, b)),
+      ]);
+      if (!actif) return;
+      const montantDe = new Map(mt.map((m) => [m.ligne_id, { montant: n(m.montant), echeances: n(m.montant_echeances) }]));
+      const m = new Map<string, { montant: number; facture: number; releve: boolean }>();
+      const prendre = (b: string) => {
+        const v = m.get(b) ?? { montant: 0, facture: 0, releve: false };
+        m.set(b, v);
+        return v;
+      };
+      const valides = sl.filter((l) => !l.disparue && l.base_affaire && !["Devis perdu", "Commande annulée"].includes(l.statut ?? ""));
+      // facturé au relevé (PE / PI) : mois clôturés, par famille
+      const baseAffaire = new Map(pa.map((a) => [a.id, sansZ(a.numero.match(/^\d+/)?.[0] ?? a.numero)]));
+      const baseLigne = new Map(pl.map((l) => [l.id, baseAffaire.get(l.affaire_id) ?? ""]));
+      for (const x of pm) {
+        const b = baseLigne.get(x.ligne_id);
+        if (!b) continue;
+        const v = prendre(b);
+        v.facture += n(x.montant_fige);
+        v.releve = true;
+      }
+      for (const l of valides.filter((x) => x.genre === "BASE" || x.genre === "AVENANT")) {
+        const b = sansZ(l.base_affaire);
+        const v = prendre(b);
+        const mo = montantDe.get(l.id)?.montant ?? 0;
+        v.montant += mo;
+        if (v.releve) continue; // PE / PI : le facturé est celui du relevé
+        if (l.date_livraison) v.facture += mo;
+        else
+          for (const e of valides.filter((x) => (x.genre === "ECHEANCE" || x.genre === "LOT") && x.parent_cle === l.cle && x.date_livraison)) {
+            const me = montantDe.get(e.id);
+            v.facture += me ? me.echeances || me.montant : 0;
+          }
+      }
+      setMontantsFamille(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, []);
+  const eurosA = (x: number) => x.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+  const montantsDe = (a: AffaireP) => montantsFamille.get((a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""));
 
   /* PORTEFEUILLE_PERIODE : pointé sur une période (fonction pointage_periode, SQL 73), filtre d'activité */
   const [periode, setPeriode] = useState<{ mode: "CUMUL" | "EXERCICE" | "MOIS" | "LIBRE"; exercice: number; mois: string; du: string; au: string }>(() => {
@@ -740,6 +810,17 @@ function PortefeuilleContenu() {
         "Consommé (%)": v.chiffre > 0 ? Math.round((v.realise / v.chiffre) * 100) : "",
         "Dépassement (h)": v.chiffre > 0 && !(l.affaire.imputation === "PE" || l.affaire.imputation === "PI") && v.realise - v.chiffre > toleranceAffectation(v.chiffre) ? arrondi(v.realise - v.chiffre) : "",
         "À affecter (h)": arrondi(l.aAffecter),
+        ...(voitMontants
+          ? (() => {
+              const mf = l.dansFamille ? undefined : montantsDe(l.affaire);
+              return {
+                "Montant (€)": mf ? Math.round(mf.montant) : "",
+                "Facturé (€)": mf ? Math.round(mf.facture) : "",
+                "Reste à facturer (€)": mf ? Math.round(mf.montant - mf.facture) : "",
+                "€ / h réalisée": mf && l.totaux.realise > 0.5 && !(l.affaire.imputation === "PE" || l.affaire.imputation === "PI") ? Math.round(mf.montant / l.totaux.realise) : "",
+              };
+            })()
+          : {}),
         État: l.etat.texte,
       };
     });
@@ -761,7 +842,7 @@ function PortefeuilleContenu() {
   const petit: CSSProperties = { fontSize: 12, color: C.gris, marginTop: 2 };
 
   function rendreTableau(liste: Ligne[]) {
-    const nbColonnes = bornes ? 10 : 9;
+    const nbColonnes = (bornes ? 10 : 9) + (voitMontants ? 1 : 0);
     return (
       <table className="portefeuille-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
         <thead className="portefeuille-entete">
@@ -773,6 +854,7 @@ function PortefeuilleContenu() {
             <EnTeteTri col="echeance" libelle="Délai estimé" />
             <EnTeteTri col="realise" libelle="Réalisé / Chiffré" centre />
             <EnTeteTri col="depassement" libelle="Dépassement" num />
+            {voitMontants && <th style={thNum} title="Montant de la famille (commande et avenants), facturé, reste à facturer">Montant · facturé</th>}
             {bornes && <th style={thNum} title="Heures pointées sur la période choisie">Sur la période</th>}
             <th style={thNum} title="Reste à faire non encore affecté dans le planning">À affecter</th>
             <th style={thCourt}>État / planning</th>
@@ -934,6 +1016,34 @@ function PortefeuilleContenu() {
                       );
                     })()}
                   </td>
+                  {/* MONTANTS_AFFAIRES : montant de la famille, facturé, reste à facturer, € / h réalisé */}
+                  {voitMontants && (
+                    <td style={tdNum}>
+                      {l.dansFamille ? (
+                        gris(`dans ${l.dansFamille}`)
+                      ) : (
+                        (() => {
+                          const mf = montantsDe(affaire);
+                          if (!mf || mf.montant <= 0.5) return gris("—");
+                          const part = Math.min(1, mf.facture / mf.montant);
+                          const prest = affaire.imputation === "PE" || affaire.imputation === "PI";
+                          return (
+                            <div title={`Montant ${eurosA(mf.montant)} · facturé ${eurosA(mf.facture)} · reste à facturer ${eurosA(mf.montant - mf.facture)}${mf.releve ? " (facturé au relevé PE / PI, mois clôturés)" : ""}`} style={{ minWidth: 120 }}>
+                              <strong>{eurosA(mf.montant)}</strong>
+                              <div style={{ height: 5, background: "#eceef1", borderRadius: 3, margin: "4px 0 2px", overflow: "hidden" }}>
+                                <div style={{ width: `${part * 100}%`, height: "100%", background: "#2e7d32" }} />
+                              </div>
+                              <div style={petit}>
+                                facturé {eurosA(mf.facture)}
+                                {mf.montant - mf.facture > 0.5 ? ` · reste ${eurosA(mf.montant - mf.facture)}` : " ✓"}
+                              </div>
+                              {!prest && totaux.realise > 0.5 && <div style={petit}>{eurosA(mf.montant / totaux.realise)} / h réalisée</div>}
+                            </div>
+                          );
+                        })()
+                      )}
+                    </td>
+                  )}
                   {bornes && (
                     <td style={tdNum}>{l.dansFamille ? gris("—") : vl.periode > 0.01 ? <strong style={{ color: C.rougeFonce }}>{formatHeures(vl.periode)}</strong> : gris("—")}</td>
                   )}
