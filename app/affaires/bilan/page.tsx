@@ -1,35 +1,42 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
 import SousDossiersAffaire from "@/components/SousDossiersAffaire";
 import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
-import { BadgeType, C, Message, Pastille, Tuile, page } from "@/components/pilotage/ui";
+import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import { chargerPlanifie } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
-   BILAN AFFAIRE
+   FICHE AFFAIRE (FICHE_AFFAIRE_V2) - ancien « Bilan affaire »
+   (reprend et remplace ORDRE_FICHE et MONTANTS_FICHE_AFFAIRE)
 
-   Pour une affaire (CBE ou DBE) :
-   - CHIFFRÉ : heures du Suivi d'affaire BE (Excel), commande de base +
-     avenants retenus, réparties par activité (correspondance Méca → …).
-     À défaut de ligne Excel : les besoins saisis dans le Pilotage BE.
-   - RÉALISÉ : feuilles d'heures saisies dans l'application + historique
-     importé (fonction SQL bilan_affaire_imputations, sans double compte).
-   - Comparaison par activité, ligne par ligne (base, avenants, lots,
-     échéances), par personne et mois par mois.
-   - NÉGOCE (composant BilanFinancierAffaire) : montant vendu et montant
-     acheté, d'après le Suivi d'affaire ; visible seulement de
-     l'administration, des responsables et de la Direction.
+   Pour une affaire (CBE ou DBE), de haut en bas :
+   - EN TÊTE : l'affaire et le PILOTAGE D'UN COUP D'ŒIL : chiffré,
+     pointé, planifié à venir, reste à planifier, une jauge, la
+     projection (fin au rythme planifié, dépassement prévu), l'avancement
+     estimé s'il est saisi, et les points d'attention ; puis le panneau
+     de pilotage (responsable, délai et son historique, affectations).
+   - ① LA COMMANDE (repliée) : commande, avenants, échéances et lots,
+     dates, statuts, heures commandées par activité.
+   - ② PRÉVU, CONSOMMÉ, PLANIFIÉ : un seul tableau, par activité ou par
+     commande ; puis le planifié à venir (qui, quand).
+   - ③ LE DÉTAIL DES HEURES, à onglets : par personne, par mois (avec la
+     courbe du cumul face au chiffré), par code, par sous-dossier,
+     semaine par semaine.
+   - ④ L'ARGENT (BilanFinancierAffaire) : seulement pour la fonction
+     « Montants des affaires » ; caché en entier pour les autres.
 
-   Le détail nominatif n'est donné qu'aux ADMIN / RESPONSABLE (chacun voit
-   ses propres heures).
+   CHIFFRÉ : Suivi d'affaire BE (commande de base + avenants retenus),
+   par activité (correspondance Méca → …) ; à défaut, les besoins du
+   Pilotage. POINTÉ : feuilles d'heures + historique importé (fonction
+   SQL bilan_affaire_imputations). PLANIFIÉ : planning des affaires, à
+   partir d'aujourd'hui.
 ================================================================ */
 
 type TypeAffaire = "CBE" | "DBE";
@@ -79,7 +86,11 @@ type AffairePilotage = {
   echeance: string | null;
   responsable_id: string;
   au_planning: boolean | null;
+  avancement_pct?: number | string | null;
+  avancement_le?: string | null;
 };
+
+type AVenir = { id: string; personne: string; activiteId: string | null; activite: string; numero: string; du: string; au: string; heures: number };
 
 const COLONNES_EXCEL: { colonne: string; champ: keyof LigneExcel }[] = [
   { colonne: "Méca", champ: "heures_meca" },
@@ -93,6 +104,10 @@ const COLONNES_EXCEL: { colonne: string; champ: keyof LigneExcel }[] = [
 const INACTIFS = ["Devis perdu", "Commande annulée"];
 const MOIS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 const SANS_ACTIVITE = "__sans__";
+const auj = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 /* Lundi de la semaine ISO (année ISO, n° de semaine) */
 function lundiIso(annee: number, semaine: number): string {
@@ -122,21 +137,31 @@ function lireAffaireDansUrl(): { type: TypeAffaire; numero: string } | null {
   return { type: (m[1] as TypeAffaire) || "CBE", numero: m[2] };
 }
 
-function Barre({ part, depasse }: { part: number; depasse: boolean }) {
+/* jauge : pointé (foncé) + planifié (clair), trait noir au chiffré quand on le dépasse */
+function Jauge({ chiffre, pointe, prevu, large = 120 }: { chiffre: number; pointe: number; prevu: number; large?: number }) {
+  const total = pointe + prevu;
+  const echelle = Math.max(chiffre, total, 0.01);
+  const au = chiffre > 0 && total > chiffre + 0.01;
   return (
-    <span style={{ display: "inline-block", width: 120, height: 10, background: "#eef0f3", borderRadius: 5, position: "relative", verticalAlign: "middle" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
       <span
-        style={{
-          position: "absolute",
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: `${Math.min(100, Math.max(0, part * 100))}%`,
-          background: depasse ? "#b3261e" : part >= 0.85 ? "#c76500" : "#2e7d32",
-          borderRadius: 5,
-        }}
-      />
+        title={`Pointé ${formatHeures(pointe)} + planifié ${formatHeures(prevu)}${chiffre > 0 ? ` sur ${formatHeures(chiffre)} chiffrées` : ""}`}
+        style={{ display: "inline-flex", width: large, height: 10, background: "#eef0f3", borderRadius: 5, overflow: "hidden", position: "relative" }}
+      >
+        <span style={{ width: `${(pointe / echelle) * 100}%`, background: au ? "#b3261e" : "#2e7d32" }} />
+        <span style={{ width: `${(prevu / echelle) * 100}%`, background: au ? "#f0a8a2" : "#a8d5ae" }} />
+        {au && <span style={{ position: "absolute", left: `${(chiffre / echelle) * 100}%`, top: -2, bottom: -2, borderLeft: "2px solid #1f2328" }} />}
+      </span>
+      {chiffre > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: au ? C.rougeTexte : C.gris }}>{Math.round((total / chiffre) * 100)} %</span>}
     </span>
+  );
+}
+
+function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
+  return (
+    <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
+      {numero} {titre} {aide && <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>{aide}</span>}
+    </h2>
   );
 }
 
@@ -156,10 +181,14 @@ function BilanContenu() {
   const [correspondance, setCorrespondance] = useState<Map<string, string>>(new Map());
   const [noms, setNoms] = useState<Map<string, string>>(new Map());
   const [suggestions, setSuggestions] = useState<{ cle: string; libelle: string }[]>([]);
-  const [voirDetail, setVoirDetail] = useState(false);
   const [filtrePersonne, setFiltrePersonne] = useState("");
-  /* PAR_CODE : libellé de chaque code d'imputation (EM, MP, DT…) */
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
+  const [aVenir, setAVenir] = useState<AVenir[]>([]);
+  // présentation
+  const [commandeOuverte, setCommandeOuverte] = useState(false);
+  const [vue, setVue] = useState<"ACTIVITE" | "COMMANDE">("ACTIVITE");
+  const [onglet, setOnglet] = useState<"PERSONNE" | "MOIS" | "CODE" | "SOUS_DOSSIER" | "SEMAINE">("PERSONNE");
+
   useEffect(() => {
     void supabase
       .from("codes_imputation")
@@ -174,25 +203,17 @@ function BilanContenu() {
         supabase.from("activites").select("id,nom,ordre_affichage"),
         supabase.from("suivi_correspondance_activites").select("colonne_excel,activite_id"),
         supabase.from("suivi_lignes").select("numero_affaire,designation").eq("genre", "BASE").order("numero_affaire", { ascending: false }).limit(1000),
-        supabase.from("collaborateurs").select("id,prenom,nom"),
+        supabase.from("collaborateurs").select("id,prenom,nom,trigramme"),
       ]);
-      setActivites(
-        new Map(((act.data ?? []) as { id: string; nom: string; ordre_affichage: number }[]).map((a) => [a.id, { nom: a.nom, ordre: a.ordre_affichage }]))
-      );
+      setActivites(new Map(((act.data ?? []) as { id: string; nom: string; ordre_affichage: number }[]).map((a) => [a.id, { nom: a.nom, ordre: a.ordre_affichage }])));
       setCorrespondance(
-        new Map(
-          ((cor.data ?? []) as { colonne_excel: string; activite_id: string | null }[])
-            .filter((c) => c.activite_id)
-            .map((c) => [c.colonne_excel, c.activite_id as string])
-        )
+        new Map(((cor.data ?? []) as { colonne_excel: string; activite_id: string | null }[]).filter((c) => c.activite_id).map((c) => [c.colonne_excel, c.activite_id as string]))
       );
       setSuggestions(
-        ((sug.data ?? []) as { numero_affaire: string | null; designation: string | null }[])
-          .filter((s) => s.numero_affaire)
-          .map((s) => ({ cle: s.numero_affaire as string, libelle: s.designation ?? "" }))
+        ((sug.data ?? []) as { numero_affaire: string | null; designation: string | null }[]).filter((s) => s.numero_affaire).map((s) => ({ cle: s.numero_affaire as string, libelle: s.designation ?? "" }))
       );
       setNoms(
-        new Map(((col.data ?? []) as { id: string; prenom: string | null; nom: string | null }[]).map((c) => [c.id, `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()]))
+        new Map(((col.data ?? []) as { id: string; prenom: string | null; nom: string | null; trigramme: string | null }[]).map((c) => [c.id, c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()]))
       );
     })();
 
@@ -221,14 +242,12 @@ function BilanContenu() {
             "cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
           )
           .eq(cible.type === "CBE" ? "base_affaire" : "base_devis", num),
-        supabase.from("pilotage_affaires").select("id,statut,echeance,responsable_id,au_planning,numero").eq("type", cible.type),
+        supabase.from("pilotage_affaires").select("*").eq("type", cible.type),
       ]);
 
       if (imp.error) throw new Error(imp.error.message);
 
-      setImputations(
-        ((imp.data ?? []) as Imputation[]).map((r) => ({ ...r, heures: Number(r.heures) || 0 }))
-      );
+      setImputations(((imp.data ?? []) as Imputation[]).map((r) => ({ ...r, heures: Number(r.heures) || 0 })));
 
       const lignes = ((excel.data ?? []) as LigneExcel[])
         .filter((l) => (cible.type === "CBE" ? true : l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT"))
@@ -246,27 +265,21 @@ function BilanContenu() {
       lignes.sort((a, b) => ordre[a.genre] - ordre[b.genre] || a.cle.localeCompare(b.cle, "fr", { numeric: true }));
       setLignesExcel(lignes);
 
-      // Client (nom abrégé)
       const base = lignes.find((l) => l.genre === "BASE") ?? lignes[0];
       if (base?.client_id) {
         const { data } = await supabase.from("suivi_clients").select("nom_abrege").eq("id", base.client_id).maybeSingle();
         setClient((data as { nom_abrege: string } | null)?.nom_abrege ?? null);
-      } else {
-        setClient(null);
-      }
+      } else setClient(null);
 
-      // Affaire du Pilotage (visible des ADMIN / RESPONSABLE seulement)
       const p = ((pil.data ?? []) as (AffairePilotage & { numero: string })[]).find((a) => a.numero.replace(/^0+/, "") === num) ?? null;
       setPilotage(p);
 
       if (p) {
         const { data } = await supabase.from("pilotage_charges").select("activite_id,heures").eq("affaire_id", p.id);
         setChiffrePilotage(((data ?? []) as { activite_id: string; heures: number }[]).map((c) => ({ ...c, heures: Number(c.heures) || 0 })));
-      } else {
-        setChiffrePilotage([]);
-      }
+      } else setChiffrePilotage([]);
     } catch (e) {
-      setErreur(e instanceof Error ? e.message : "Impossible de charger le bilan.");
+      setErreur(e instanceof Error ? e.message : "Impossible de charger la fiche.");
       setImputations([]);
       setLignesExcel([]);
     } finally {
@@ -278,36 +291,33 @@ function BilanContenu() {
     if (affaire) void charger(affaire);
   }, [affaire, charger]);
 
-  /* PLANIFIE_BILAN : heures planifiées à venir sur chaque commande de la famille (« 1741 », « 1741R1 »…) */
-  const [planifie, setPlanifie] = useState<Map<string, number>>(new Map());
-  /* ORDRE_FICHE : planifié à venir, affectation par affectation (qui, quelle activité, du… au…) */
-  const [aVenir, setAVenir] = useState<{ id: string; personne: string; activite: string; numero: string; du: string; au: string; heures: number }[]>([]);
+  /* Planifié à venir de la famille, affectation par affectation (qui, quelle activité, quelle commande, du… au…) */
   useEffect(() => {
     if (!affaire) return;
     let actif = true;
     void (async () => {
-      const d = new Date();
-      const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const a0 = auj();
       const base = affaire.numero.replace(/^0+/, "");
       const { data: afs } = await supabase.from("pilotage_affaires").select("id,numero").eq("type", affaire.type);
       const famille = new Map(
-        ((afs ?? []) as { id: string; numero: string }[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base).map((a) => [a.id, a.numero])
+        ((afs ?? []) as { id: string; numero: string }[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base).map((a) => [a.id, a.numero.toUpperCase().replace(/^0+/, "")])
       );
       if (famille.size === 0) {
         if (actif) setAVenir([]);
         return;
       }
-      const pl = await chargerPlanifie(auj);
-      const res: { id: string; personne: string; activite: string; numero: string; du: string; au: string; heures: number }[] = [];
+      const pl = await chargerPlanifie(a0);
+      const res: AVenir[] = [];
       for (const a of pl.affectations) {
         if (!a.affaire_id || !famille.has(a.affaire_id)) continue;
-        const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour >= auj && (Number(j.heures) || 0) > 0);
+        const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour >= a0 && (Number(j.heures) || 0) > 0);
         if (js.length === 0) continue;
         const dates = js.map((j) => j.jour).sort();
         const x = a as unknown as { collaborateur_id?: string | null; activite_id?: string | null };
         res.push({
           id: a.id,
           personne: (x.collaborateur_id && noms.get(x.collaborateur_id)) || "—",
+          activiteId: x.activite_id ?? null,
           activite: (x.activite_id && activites.get(x.activite_id)?.nom) || "—",
           numero: famille.get(a.affaire_id) ?? "",
           du: dates[0],
@@ -322,38 +332,6 @@ function BilanContenu() {
       actif = false;
     };
   }, [affaire, noms, activites]);
-  useEffect(() => {
-    if (!affaire) return;
-    let actif = true;
-    void (async () => {
-      const d = new Date();
-      const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      const base = affaire.numero.replace(/^0+/, "");
-      const { data: afs } = await supabase.from("pilotage_affaires").select("id,numero").eq("type", affaire.type);
-      const famille = new Map(
-        ((afs ?? []) as { id: string; numero: string }[])
-          .filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base)
-          .map((a) => [a.id, a.numero.toUpperCase().replace(/^0+/, "")])
-      );
-      if (famille.size === 0) {
-        if (actif) setPlanifie(new Map());
-        return;
-      }
-      const pl = await chargerPlanifie(auj);
-      const numeroAffectation = new Map<string, string>();
-      for (const a of pl.affectations) if (a.affaire_id && famille.has(a.affaire_id)) numeroAffectation.set(a.id, famille.get(a.affaire_id) ?? "");
-      const m = new Map<string, number>();
-      for (const j of pl.jours) {
-        const n = numeroAffectation.get(j.affectation_id);
-        if (!n || j.jour < auj) continue;
-        m.set(n, (m.get(n) ?? 0) + (Number(j.heures) || 0));
-      }
-      if (actif) setPlanifie(m);
-    })().catch(() => undefined);
-    return () => {
-      actif = false;
-    };
-  }, [affaire]);
 
   function rechercher(e: FormEvent) {
     e.preventDefault();
@@ -370,18 +348,11 @@ function BilanContenu() {
 
   /* ------------------------------ calculs ------------------------------ */
 
-  const nomActivite = useCallback(
-    (id: string) => (id === SANS_ACTIVITE ? "Sans activité (code non rattaché)" : activites.get(id)?.nom ?? "Activité"),
-    [activites]
-  );
+  const nomActivite = useCallback((id: string) => (id === SANS_ACTIVITE ? "Sans activité (code non rattaché)" : activites.get(id)?.nom ?? "Activité"), [activites]);
 
-  const comptees = useMemo(
-    () => lignesExcel.filter((l) => !l.disparue && (l.genre === "BASE" || l.genre === "AVENANT") && !INACTIFS.includes(l.statut ?? "")),
-    [lignesExcel]
-  );
+  const comptees = useMemo(() => lignesExcel.filter((l) => !l.disparue && (l.genre === "BASE" || l.genre === "AVENANT") && !INACTIFS.includes(l.statut ?? "")), [lignesExcel]);
 
   const bilan = useMemo(() => {
-    // Chiffré par activité : Excel en priorité, sinon les besoins du Pilotage
     const chiffre = new Map<string, number>();
     let chiffreNonRattache = 0;
     const sourceChiffre: "EXCEL" | "PILOTAGE" | "AUCUN" = comptees.length > 0 ? "EXCEL" : chiffrePilotage.length > 0 ? "PILOTAGE" : "AUCUN";
@@ -395,7 +366,6 @@ function BilanContenu() {
           if (act) chiffre.set(act, (chiffre.get(act) ?? 0) + h);
           else chiffreNonRattache += h;
         }
-        // heures sans ventilation par discipline
         const detail = COLONNES_EXCEL.reduce((t, { champ }) => t + (Number(l[champ]) || 0), 0);
         if (l.heures_total > detail + 0.01) chiffreNonRattache += l.heures_total - detail;
       }
@@ -403,14 +373,13 @@ function BilanContenu() {
       for (const c of chiffrePilotage) chiffre.set(c.activite_id, (chiffre.get(c.activite_id) ?? 0) + c.heures);
     }
 
-    // Réalisé par activité
     const realise = new Map<string, number>();
     for (const i of imputations) {
       const k = i.activite_id ?? SANS_ACTIVITE;
       realise.set(k, (realise.get(k) ?? 0) + i.heures);
     }
 
-    // MONTANT_HORS_COMPARAISON : négoce et scan sont vendus au montant
+    // négoce et scan sont vendus au montant
     const auMontantNom = (nom?: string) => /^(negoce|scan)/.test((nom ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim());
     const imputationBase = (lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0])?.imputation ?? undefined;
     const toutAuMontant = auMontantNom(imputationBase);
@@ -423,22 +392,13 @@ function BilanContenu() {
 
     const totalChiffre = [...chiffre.values()].reduce((t, v) => t + v, 0) + chiffreNonRattache;
     const totalRealise = imputations.reduce((t, i) => t + i.heures, 0);
-
-    // Codes non rattachés à une activité
     const codesSans = [...new Set(imputations.filter((i) => !i.activite_id).map((i) => i.code))].sort();
 
-    // Par personne
     const parPersonne = new Map<string, { nom: string; heures: number; premiere: string; derniere: string; parActivite: Map<string, number> }>();
     for (const i of imputations) {
       const cle = i.collaborateur_id ?? "__autres__";
       const date = i.jour ?? lundiIso(i.annee, i.semaine);
-      const p = parPersonne.get(cle) ?? {
-        nom: i.collaborateur_id ? i.trigramme ?? noms.get(i.collaborateur_id) ?? "?" : "Autres collaborateurs",
-        heures: 0,
-        premiere: date,
-        derniere: date,
-        parActivite: new Map(),
-      };
+      const p = parPersonne.get(cle) ?? { nom: i.collaborateur_id ? i.trigramme ?? noms.get(i.collaborateur_id) ?? "?" : "Autres collaborateurs", heures: 0, premiere: date, derniere: date, parActivite: new Map() };
       p.heures += i.heures;
       if (date < p.premiere) p.premiere = date;
       if (date > p.derniere) p.derniere = date;
@@ -447,21 +407,17 @@ function BilanContenu() {
       parPersonne.set(cle, p);
     }
 
-    // Par mois
     const parMois = new Map<string, number>();
     for (const i of imputations) {
-      const date = i.jour ?? lundiIso(i.annee, i.semaine);
-      const m = date.slice(0, 7);
+      const m = (i.jour ?? lundiIso(i.annee, i.semaine)).slice(0, 7);
       parMois.set(m, (parMois.get(m) ?? 0) + i.heures);
     }
-    const mois = [...parMois.entries()].sort(([a], [b]) => a.localeCompare(b));
     let cumul = 0;
-    const evolution = mois.map(([m, h]) => {
+    const evolution = [...parMois.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([m, h]) => {
       cumul += h;
       return { mois: m, heures: h, cumul };
     });
 
-    // Réalisé imputé directement sur une ligne (base = sans suffixe, R1, LOT1…)
     const parSuffixe = new Map<string, number>();
     for (const i of imputations) {
       const s = suffixe(i.numero_complet);
@@ -490,7 +446,6 @@ function BilanContenu() {
   }, [comptees, chiffrePilotage, correspondance, imputations, activites, nomActivite, noms, lignesExcel]);
 
   const detail = useMemo(() => {
-    // Détail semaine par semaine, regroupé par personne / semaine / code
     const m = new Map<string, { semaine: string; personne: string; cle: string; numero: string; code: string; activite: string; heures: number; source: string }>();
     for (const i of imputations) {
       const personne = i.collaborateur_id ? i.trigramme ?? "?" : "Autres";
@@ -498,16 +453,7 @@ function BilanContenu() {
       const lundi = i.jour ? i.jour : lundiIso(i.annee, i.semaine);
       const semaine = `${i.annee}-S${String(i.semaine).padStart(2, "0")}`;
       const k = `${semaine}|${personne}|${i.numero_complet}|${i.code}`;
-      const e = m.get(k) ?? {
-        semaine,
-        personne,
-        cle: lundi,
-        numero: i.numero_complet,
-        code: i.code,
-        activite: nomActivite(i.activite_id ?? SANS_ACTIVITE),
-        heures: 0,
-        source: i.source === "FEUILLE" ? "Feuille" : "Historique",
-      };
+      const e = m.get(k) ?? { semaine, personne, cle: lundi, numero: i.numero_complet, code: i.code, activite: nomActivite(i.activite_id ?? SANS_ACTIVITE), heures: 0, source: i.source === "FEUILLE" ? "Feuille" : "Historique" };
       e.heures += i.heures;
       m.set(k, e);
     }
@@ -517,10 +463,7 @@ function BilanContenu() {
   /* ------------------------------ rendu ------------------------------ */
 
   const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
-  // n° du devis d'origine (pour un CBE) : celui de la commande de base dans le Suivi d'affaire
   const devis = affaire?.type === "CBE" ? numeroDevis(base?.base_devis ?? base?.numero_devis) : null;
-  const ecart = bilan.totalChiffre - bilan.realiseCompare;
-  const part = bilan.totalChiffre > 0 ? bilan.realiseCompare / bilan.totalChiffre : 0;
   const echeance = (() => {
     const dates = comptees.map((l) => l.delai ?? l.date_livraison_estimee).filter((d): d is string => Boolean(d)).sort();
     return pilotage?.echeance ?? dates[dates.length - 1] ?? null;
@@ -529,48 +472,83 @@ function BilanContenu() {
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
 
+  // planifié à venir
+  const planifieTotal = aVenir.reduce((s, x) => s + x.heures, 0);
+  const planifieParNumero = new Map<string, number>();
+  const planifieParActivite = new Map<string, number>();
+  for (const x of aVenir) {
+    planifieParNumero.set(x.numero, (planifieParNumero.get(x.numero) ?? 0) + x.heures);
+    const k = x.activiteId ?? SANS_ACTIVITE;
+    planifieParActivite.set(k, (planifieParActivite.get(k) ?? 0) + x.heures);
+  }
+  const finPlanifiee = aVenir.length > 0 ? aVenir.map((x) => x.au).sort().slice(-1)[0] : null;
+  const pointe = bilan.toutAuMontant ? bilan.totalRealise : bilan.realiseCompare;
+  const resteAPlanifier = bilan.totalChiffre - pointe - planifieTotal;
+  const depassementPrevu = !bilan.toutAuMontant && bilan.totalChiffre > 0 ? Math.max(0, pointe + planifieTotal - bilan.totalChiffre) : 0;
+  const avancement = pilotage?.avancement_pct !== null && pilotage?.avancement_pct !== undefined ? Number(pilotage.avancement_pct) : null;
+  const consommePct = bilan.totalChiffre > 0 ? (pointe / bilan.totalChiffre) * 100 : null;
+
+  // points d'attention
+  const attention: { texte: string; grave: boolean }[] = [];
+  if (affaire?.type === "CBE" && !livree) {
+    if (lignesExcel.some((l) => l.statut === "Intention de commande") && bilan.totalRealise > 0.5)
+      attention.push({ texte: `Intention de commande, mais ${formatHeures(bilan.totalRealise)} déjà pointées : travail à risque tant que la commande n’est pas reçue.`, grave: true });
+    if (echeance && echeance < auj()) attention.push({ texte: `Délai dépassé (${formatDate(echeance)}) et pas encore livrée.`, grave: true });
+    if (finPlanifiee && echeance && finPlanifiee > echeance) attention.push({ texte: `Le planifié court jusqu’au ${formatDate(finPlanifiee)}, après le délai du ${formatDate(echeance)}.`, grave: true });
+    if (depassementPrevu > 0.5) attention.push({ texte: `Dépassement prévu : pointé + planifié dépassent le chiffré de ${formatHeures(depassementPrevu)}.`, grave: true });
+    if (resteAPlanifier > 0.5 && aVenir.length === 0 && !bilan.toutAuMontant && bilan.totalChiffre > 0)
+      attention.push({ texte: `${formatHeures(resteAPlanifier)} chiffrées restent à faire, et rien n’est planifié.`, grave: false });
+    if (avancement !== null && consommePct !== null && consommePct - avancement > 15)
+      attention.push({ texte: `${Math.round(consommePct)} % des heures consommées pour ${Math.round(avancement)} % d’avancement estimé : dérive à surveiller.`, grave: true });
+  }
+  if (bilan.codesSans.length > 0) attention.push({ texte: `Codes pointés sans activité : ${bilan.codesSans.join(", ")} (à rattacher dans Gestion des activités).`, grave: false });
+
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "10px 8px" };
   const thN: CSSProperties = { ...th, textAlign: "right" };
   const td: CSSProperties = { ...page.td, padding: "9px 8px" };
   const tdN: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+  const bascule = (actif: boolean): CSSProperties => ({
+    minHeight: 34,
+    padding: "0 14px",
+    borderRadius: 999,
+    border: `1.5px solid ${actif ? C.rouge : "#c9cdd2"}`,
+    background: actif ? C.rouge : "#ffffff",
+    color: actif ? "#ffffff" : "#3b4046",
+    fontWeight: 800,
+    fontSize: 13,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  });
+  const reste = (h: number): ReactNode => (bilan.toutAuMontant ? "—" : h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h));
+  const nature = (l: LigneExcel) => (l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot" : l.genre === "ECHEANCE" ? "Échéance" : "Devis");
+  const cleNumero = (l: LigneExcel) => String(l.numero_affaire ?? "").toUpperCase().replace(/^(CBE|DBE)/, "").replace(/^0+/, "");
 
-  const libelleGenre = (l: LigneExcel) =>
-    l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot (découpage)" : l.genre === "ECHEANCE" ? "Échéance (découpage)" : "Devis";
+  // répartition du pointé de la famille : la commande, puis chaque avenant dans l'ordre
+  const reparti = new Map<string, number>();
+  {
+    let restant = pointe;
+    comptees.forEach((l, i) => {
+      const p = i === comptees.length - 1 ? restant : Math.min(l.heures_total, restant);
+      reparti.set(l.cle, Math.max(0, p));
+      restant -= p;
+    });
+  }
 
   return (
     <main style={page.fond} className="bilan-page">
       <style>{CSS_MOBILE_BILAN}</style>
       <EnTetePage section="Pilotage BE" />
-      {/* NAVIGATION_AXES */}<OngletsPilotage actif="bilan" />
+      <OngletsPilotage actif="bilan" />
 
       <div className="bilan-contenu" style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ marginBottom: 16 }}>
           <h1 style={page.titre}>Fiche affaire</h1>
-          <p style={page.sousTitre}>
-            Heures chiffrées (Suivi d’affaire BE, commande et avenants) comparées aux heures réalisées (feuilles d’heures et
-            historique), par activité, par ligne de commande, par personne et mois par mois.
-          </p>
+          <p style={page.sousTitre}>Où en est l’affaire : la commande, les heures chiffrées, pointées et planifiées, et, pour qui y a droit, l’argent.</p>
         </div>
 
         <form onSubmit={rechercher} style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
           {(["CBE", "DBE"] as TypeAffaire[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              aria-pressed={type === t}
-              onClick={() => setType(t)}
-              style={{
-                minHeight: 44,
-                padding: "0 16px",
-                borderRadius: 8,
-                border: `1.5px solid ${type === t ? C.rouge : "#c9cdd2"}`,
-                background: type === t ? C.rouge : "#ffffff",
-                color: type === t ? "#ffffff" : "#3b4046",
-                fontWeight: 800,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
+            <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(t)} style={{ ...bascule(type === t), minHeight: 44, borderRadius: 8, fontSize: 15 }}>
               {t}
             </button>
           ))}
@@ -582,7 +560,6 @@ function BilanContenu() {
             onChange={(e) => {
               const v = e.target.value;
               setSaisie(v);
-              // numéro choisi dans la liste proposée : on l'ouvre sans passer par le bouton
               if (suggestions.some((s) => s.cle === v)) {
                 const m = v.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
                 if (m) {
@@ -603,7 +580,7 @@ function BilanContenu() {
             ))}
           </datalist>
           <button type="submit" style={page.btnPrimaire} disabled={chargement}>
-            {/* BILAN_RECHERCHE */}{chargement ? "Chargement…" : affaire ? "Ouvrir une autre affaire" : "Ouvrir"}
+            {chargement ? "Chargement…" : affaire ? "Ouvrir une autre affaire" : "Ouvrir"}
           </button>
         </form>
 
@@ -611,53 +588,88 @@ function BilanContenu() {
 
         {affaire && !chargement && !erreur && (
           <>
-            {/* ORDRE_FICHE */}
-            <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
-              1 · La commande <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>numéros, dates, statuts, heures commandées</span>
-            </h2>
-
-            {/* ---------- en-tête de l'affaire ---------- */}
+            {/* ================= EN TÊTE : l'affaire et le pilotage d'un coup d'œil ================= */}
             <section style={{ ...page.carte, padding: 18, marginBottom: 16 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                 <BadgeType type={affaire.type} />
                 <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
-                {devis && (
-                  <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 16, fontWeight: 800, color: C.gris }}>
-                    {devis}
-                  </span>
-                )}
+                {devis && <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 16, fontWeight: 800, color: C.gris }}>{devis}</span>}
                 <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
                 {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 10, fontSize: 14, color: "#3b4046" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 8, fontSize: 14, color: "#3b4046" }}>
                 {client && <span>Client : <strong>{client}</strong></span>}
-                {devis && <span>Devis : <strong>{devis}</strong></span>}
                 {base?.imputation && <span>Imputation : <strong>{base.imputation}</strong></span>}
                 {base?.redacteur && <span>Devis rédigé par : <strong>{base.redacteur}</strong></span>}
                 {base?.date_reception_commande && <span>Commande reçue le <strong>{formatDate(base.date_reception_commande)}</strong></span>}
-                {echeance && !pilotage && <span>Délai : <strong>{formatDate(echeance)}</strong></span>}
+                {echeance && <span>Délai : <strong style={{ color: !livree && echeance < auj() ? C.rougeTexte : undefined }}>{formatDate(echeance)}</strong></span>}
               </div>
+
+              {/* PILOTAGE_COUP_D_OEIL */}
+              {affaire.type === "CBE" && (
+                <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.ligne}` }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 30px", alignItems: "flex-end" }}>
+                    {[
+                      ["Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—", bilan.sourceChiffre === "PILOTAGE" ? "besoins du Pilotage" : `${comptees.length} commande${comptees.length > 1 ? "s" : ""}`],
+                      ["Pointé", formatHeures(bilan.totalRealise), bilan.horsComparaison > 0.01 ? `dont ${formatHeures(bilan.horsComparaison)} scan / négoce` : `${formatHeures(bilan.sources.historique)} d’historique`],
+                      ["Planifié à venir", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—", finPlanifiee ? `jusqu’au ${formatDate(finPlanifiee)}` : "rien au planning"],
+                      [bilan.toutAuMontant ? "Vendu au montant" : resteAPlanifier < -0.01 ? "Dépassement prévu" : "Reste à planifier", bilan.toutAuMontant ? "—" : bilan.totalChiffre > 0 ? formatHeures(Math.abs(resteAPlanifier)) : "—", bilan.toutAuMontant ? "temps passé, sans comparaison" : "chiffré − pointé − planifié"],
+                    ].map(([l, v, s], i) => (
+                      <div key={l} style={{ minWidth: 130 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>{l}</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: i === 3 && resteAPlanifier < -0.01 && !bilan.toutAuMontant ? C.rougeTexte : "#1f2328" }}>{v}</div>
+                        <div style={{ fontSize: 12, color: C.gris }}>{s}</div>
+                      </div>
+                    ))}
+                    {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
+                      <div style={{ flex: "1 1 220px" }}>
+                        <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} large={240} />
+                        <div style={{ fontSize: 12, color: C.gris, marginTop: 2 }}>pointé (foncé) + planifié (clair)</div>
+                      </div>
+                    )}
+                    {avancement !== null && (
+                      <div title={pilotage?.avancement_le ? `Avancement estimé saisi le ${formatDate(pilotage.avancement_le)}` : "Avancement estimé"} style={{ minWidth: 130 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Avancement estimé</div>
+                        <div style={{ fontSize: 24, fontWeight: 800 }}>{Math.round(avancement)} %</div>
+                        <div style={{ fontSize: 12, color: C.gris }}>{consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : ""}</div>
+                      </div>
+                    )}
+                  </div>
+                  {attention.length > 0 ? (
+                    <ul style={{ margin: "12px 0 0", paddingLeft: 0, listStyle: "none", display: "grid", gap: 4 }}>
+                      {attention.map((a) => (
+                        <li key={a.texte} style={{ fontSize: 14, color: a.grave ? "#8d1d16" : "#7a3e00" }}>
+                          {a.grave ? "⚠" : "•"} {a.texte}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    !livree && bilan.totalChiffre > 0 && <div style={{ marginTop: 10, fontSize: 14, color: "#1b5e20", fontWeight: 700 }}>✓ Rien à signaler.</div>
+                  )}
+                </div>
+              )}
             </section>
 
+            {/* responsable, délai et son historique, affectations */}
+            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
+
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
-              <Message genre="info">
-                Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures
-                chiffrées, seul le réalisé est affiché.
-              </Message>
+              <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
             )}
             {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
-            {affaire.type === "DBE" && (
-              <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>
-            )}
+            {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
 
-            {/* ORDRE_FICHE : les commandes (mère, filles, échéances), leurs dates, statuts et heures commandées par activité */}
+            {/* ================= ① LA COMMANDE (repliée) ================= */}
             {lignesExcel.length > 0 &&
               (() => {
                 const cols = COLONNES_EXCEL.filter(({ champ }) => lignesExcel.some((l) => (Number(l[champ]) || 0) > 0));
-                const nature = (l: LigneExcel) => (l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot" : l.genre === "ECHEANCE" ? "Échéance" : "Devis");
                 const ordreL = [...lignesExcel].sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
                 const meres = ordreL.filter((l) => l.genre !== "LOT" && l.genre !== "ECHEANCE");
-                const filles = (l: LigneExcel) => ordreL.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && (d.numero_affaire ?? d.cle).toUpperCase().startsWith(String(l.numero_affaire ?? l.cle).toUpperCase()) && !meres.some((m) => m !== l && String(m.numero_affaire ?? m.cle).length > String(l.numero_affaire ?? l.cle).length && (d.numero_affaire ?? d.cle).toUpperCase().startsWith(String(m.numero_affaire ?? m.cle).toUpperCase())));
+                const num = (l: LigneExcel) => String(l.numero_affaire ?? l.cle).toUpperCase();
+                const filles = (l: LigneExcel) =>
+                  ordreL.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && num(d).startsWith(num(l)) && !meres.some((m) => m !== l && num(m).length > num(l).length && num(d).startsWith(num(m))));
+                const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
+                const nbDecoupes = ordreL.length - meres.length;
                 const ligne = (l: LigneExcel, fille: boolean) => {
                   const compte = comptees.includes(l);
                   const intention = l.statut === "Intention de commande";
@@ -668,335 +680,223 @@ function BilanContenu() {
                         <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce, ...(intention ? { background: "#ffe58a", borderRadius: 3, padding: "0 4px" } : {}) }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</span>
                         <div style={{ fontSize: 12, color: C.gris }}>{nature(l)}</div>
                       </td>
-                      <td style={td}>{l.statut ?? "—"}</td>
+                      <td style={td}>
+                        {l.statut ?? "—"}
+                        {!fille && !compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
+                      </td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
                       <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
                       {cols.map(({ colonne, champ }) => (
-                        <td key={colonne} style={tdN}>{fille ? "" : (Number(l[champ]) || 0) > 0 ? formatHeures(Number(l[champ])) : "—"}</td>
+                        <td key={colonne} style={tdN}>
+                          {fille ? "" : (Number(l[champ]) || 0) > 0 ? formatHeures(Number(l[champ])) : "—"}
+                        </td>
                       ))}
                       <td style={{ ...tdN, fontWeight: 800 }}>{fille || l.genre === "DEVIS" ? "" : formatHeures(l.heures_total)}</td>
                     </tr>
                   );
                 };
                 return (
-                  <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
-                    <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Les commandes et leurs heures</h2>
-                    <p style={{ fontSize: 13, color: C.gris, margin: "0 0 10px" }}>Commande, avenants, échéances et lots : statut, dates, et heures commandées par activité (Suivi d’affaire BE).</p>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                      <thead>
-                        <tr>
-                          <th style={th}>N°</th>
-                          <th style={th}>Statut</th>
-                          <th style={th}>Reçue le</th>
-                          <th style={th}>Délai</th>
-                          <th style={th}>Livrée le</th>
-                          {cols.map(({ colonne }) => (
-                            <th key={colonne} style={thN}>{colonne}</th>
-                          ))}
-                          <th style={thN}>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {meres.flatMap((l) => [ligne(l, false), ...filles(l).map((d) => ligne(d, true))])}
-                        {comptees.length > 1 && (
-                          <tr>
-                            <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Toute la famille (commandes retenues)</td>
-                            {cols.map(({ colonne, champ }) => (
-                              <td key={colonne} style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(comptees.reduce((s, l) => s + (Number(l[champ]) || 0), 0))}</td>
-                            ))}
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))}</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </section>
+                  <>
+                    <TitrePartie numero="①" titre="La commande" />
+                    <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
+                      <button type="button" aria-expanded={commandeOuverte} onClick={() => setCommandeOuverte((v) => !v)} style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10, width: "100%" }}>
+                        <span style={{ fontWeight: 800, color: C.rougeFonce }}>{commandeOuverte ? "▾" : "▸"}</span>
+                        <strong style={{ fontSize: 16 }}>
+                          {meres.filter((l) => l.genre !== "DEVIS").length} commande{meres.filter((l) => l.genre !== "DEVIS").length > 1 ? "s" : ""}
+                          {nbAvenants > 0 ? ` (dont ${nbAvenants} avenant${nbAvenants > 1 ? "s" : ""})` : ""}
+                          {nbDecoupes > 0 ? ` · ${nbDecoupes} échéance${nbDecoupes > 1 ? "s" : ""} ou lot${nbDecoupes > 1 ? "s" : ""}` : ""}
+                        </strong>
+                        <span style={{ fontSize: 14, color: C.gris }}>
+                          {base?.date_reception_commande ? `reçue le ${formatDate(base.date_reception_commande)}` : ""}
+                          {echeance ? ` · délai ${formatDate(echeance)}` : ""}
+                          {comptees.length > 0 ? ` · ${formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))} commandées` : ""}
+                        </span>
+                      </button>
+                      {commandeOuverte && (
+                        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 12 }}>
+                          <thead>
+                            <tr>
+                              <th style={th}>N°</th>
+                              <th style={th}>Statut</th>
+                              <th style={th}>Reçue le</th>
+                              <th style={th}>Délai</th>
+                              <th style={th}>Livrée le</th>
+                              {cols.map(({ colonne }) => (
+                                <th key={colonne} style={thN}>
+                                  {colonne}
+                                </th>
+                              ))}
+                              <th style={thN}>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {meres.flatMap((l) => [ligne(l, false), ...filles(l).map((d) => ligne(d, true))])}
+                            {comptees.length > 1 && (
+                              <tr>
+                                <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                                  Toute la famille (commandes retenues)
+                                </td>
+                                {cols.map(({ colonne, champ }) => (
+                                  <td key={colonne} style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                                    {formatHeures(comptees.reduce((s, l) => s + (Number(l[champ]) || 0), 0))}
+                                  </td>
+                                ))}
+                                <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))}</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      )}
+                    </section>
+                  </>
                 );
               })()}
 
-            {/* ORDRE_FICHE */}
-            <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
-              2 · Les heures <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>consommées, planifiées : quand, qui</span>
-            </h2>
-
-            {/* ---------- tuiles ---------- */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 16 }}>
-              <Tuile
-                libelle="Chiffré"
-                valeur={bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}
-                sous={bilan.sourceChiffre === "EXCEL" ? `${comptees.length} ligne${comptees.length > 1 ? "s" : ""} (commande + avenants retenus)` : bilan.sourceChiffre === "PILOTAGE" ? "besoins du Pilotage" : "aucun chiffré"}
-              />
-              <Tuile
-                libelle="Réalisé"
-                valeur={formatHeures(bilan.totalRealise)}
-                sous={`${formatHeures(bilan.sources.feuilles)} saisies · ${formatHeures(bilan.sources.historique)} historique`}
-              />
-              {bilan.toutAuMontant ? (
-                <Tuile libelle="Temps passé" valeur={formatHeures(bilan.totalRealise)} sous="vendu au montant : pas de comparaison au chiffré" />
-              ) : (
-                <Tuile
-                  libelle={ecart >= 0 ? "Reste" : "Dépassement"}
-                  valeur={bilan.totalChiffre > 0 ? formatHeures(Math.abs(ecart)) : "—"}
-                  sous={bilan.totalChiffre > 0 ? `${Math.round(part * 100)} % du chiffré consommé${bilan.horsComparaison > 0.01 ? ` · hors ${formatHeures(bilan.horsComparaison)} scan / négoce` : ""}` : ""}
-                  accent={ecart < 0 && bilan.totalChiffre > 0}
-                />
-              )}
-              <Tuile libelle="Personnes" valeur={String(bilan.parPersonne.filter((p) => p.cle !== "__autres__").length || bilan.parPersonne.length)} sous="ont imputé sur l’affaire" />
-            </div>
-
-            {/* ---------- par activité ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par activité</h2>
-              {bilan.parActivite.length === 0 && bilan.chiffreNonRattache === 0 ? (
-                <p style={{ color: C.gris, margin: 0 }}>Aucune heure chiffrée ni réalisée.</p>
-              ) : (
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                  <thead>
+            {/* ================= ② PRÉVU, CONSOMMÉ, PLANIFIÉ ================= */}
+            <TitrePartie numero="②" titre="Prévu, consommé, planifié" />
+            <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <button type="button" aria-pressed={vue === "ACTIVITE"} onClick={() => setVue("ACTIVITE")} style={bascule(vue === "ACTIVITE")}>
+                  Par activité
+                </button>
+                {comptees.length > 0 && (
+                  <button type="button" aria-pressed={vue === "COMMANDE"} onClick={() => setVue("COMMANDE")} style={bascule(vue === "COMMANDE")}>
+                    Par commande
+                  </button>
+                )}
+                <span style={{ fontSize: 13, color: C.gris }}>planifié : planning des affaires, à partir d’aujourd’hui</span>
+              </div>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>{vue === "ACTIVITE" ? "Activité" : "Commande"}</th>
+                    <th style={thN}>Chiffré</th>
+                    <th style={thN}>Pointé</th>
+                    <th style={thN}>Planifié</th>
+                    <th style={thN}>Pointé + planifié</th>
+                    <th style={thN}>Écart prévu</th>
+                    <th style={th} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {vue === "ACTIVITE"
+                    ? bilan.parActivite.map((a) => {
+                        const pl = planifieParActivite.get(a.id) ?? 0;
+                        const info = bilan.toutAuMontant || (bilan.auMontant.has(a.id) && a.chiffre <= 0);
+                        const ecart = a.chiffre - a.realise - pl;
+                        return (
+                          <tr key={a.id}>
+                            <td style={{ ...td, fontWeight: 800 }}>{a.nom}</td>
+                            <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
+                            <td style={tdN}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
+                            <td style={tdN}>{pl > 0.01 ? formatHeures(pl) : "—"}</td>
+                            <td style={{ ...tdN, fontWeight: 700 }}>{a.realise + pl > 0.01 ? formatHeures(a.realise + pl) : "—"}</td>
+                            <td style={{ ...tdN, color: info ? C.gris : undefined }}>{info ? "vendu au montant" : a.chiffre > 0 ? reste(ecart) : a.realise > 0 ? "non chiffré" : "—"}</td>
+                            <td style={td}>{a.chiffre > 0 && !info ? <Jauge chiffre={a.chiffre} pointe={a.realise} prevu={pl} /> : null}</td>
+                          </tr>
+                        );
+                      })
+                    : comptees.map((l) => {
+                        const p = reparti.get(l.cle) ?? 0;
+                        const pl = planifieParNumero.get(cleNumero(l)) ?? 0;
+                        return (
+                          <tr key={l.cle}>
+                            <td style={{ ...td, whiteSpace: "nowrap" }}>
+                              <span style={{ fontWeight: 800, color: C.rougeFonce, ...(l.statut === "Intention de commande" ? { background: "#ffe58a", borderRadius: 3, padding: "0 4px" } : {}) }}>{l.numero_affaire ?? l.cle}</span>
+                              <span style={{ fontSize: 12, color: C.gris }}> · {l.statut ?? nature(l)}</span>
+                            </td>
+                            <td style={tdN}>{formatHeures(l.heures_total)}</td>
+                            <td style={tdN}>{formatHeures(p)}</td>
+                            <td style={tdN}>{pl > 0.01 ? formatHeures(pl) : "—"}</td>
+                            <td style={{ ...tdN, fontWeight: 700 }}>{formatHeures(p + pl)}</td>
+                            <td style={tdN}>{reste(l.heures_total - p - pl)}</td>
+                            <td style={td}>{l.heures_total > 0 && !bilan.toutAuMontant ? <Jauge chiffre={l.heures_total} pointe={p} prevu={pl} /> : null}</td>
+                          </tr>
+                        );
+                      })}
+                  {vue === "ACTIVITE" && bilan.chiffreNonRattache > 0.01 && (
                     <tr>
-                      <th style={th}>Activité</th>
-                      <th style={thN}>Chiffré</th>
-                      <th style={thN}>Réalisé</th>
-                      <th style={thN}>Écart</th>
-                      <th style={th}>Consommé</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bilan.parActivite.map((a) => {
-                      const e = a.chiffre - a.realise;
-                      const p = a.chiffre > 0 ? a.realise / a.chiffre : 0;
-                      const info = bilan.toutAuMontant || (bilan.auMontant.has(a.id) && a.chiffre <= 0);
-                      return (
-                        <tr key={a.id}>
-                          <td style={td}>
-                            <strong>{a.nom}</strong>
-                          </td>
-                          <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
-                          <td style={tdN}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
-                          <td style={{ ...tdN, color: info ? C.gris : e < -0.01 ? C.rougeTexte : undefined, fontWeight: !info && e < -0.01 ? 800 : 400 }}>
-                            {info ? (a.realise > 0 ? "temps passé · vendu au montant" : "—") : a.chiffre > 0 ? (e < 0 ? `+${formatHeures(-e)} dépassé` : `${formatHeures(e)} restant`) : a.realise > 0 ? "non chiffré" : "—"}
-                          </td>
-                          <td style={td}>
-                            {a.chiffre > 0 && !info ? (
-                              <>
-                                <Barre part={p} depasse={e < -0.01} /> <span style={{ fontSize: 12, color: C.gris }}>{Math.round(p * 100)} %</span>
-                              </>
-                            ) : null}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {bilan.chiffreNonRattache > 0.01 && (
-                      <tr>
-                        <td style={td}>
-                          <strong>Chiffré non rattaché</strong>
-                          <div style={{ fontSize: 12, color: C.gris }}>colonne Excel sans activité (ex. « Autre ») ou heures non ventilées</div>
-                        </td>
-                        <td style={tdN}>{formatHeures(bilan.chiffreNonRattache)}</td>
-                        <td style={tdN}>—</td>
-                        <td style={tdN}>—</td>
-                        <td style={td} />
-                      </tr>
-                    )}
-                    <tr>
-                      <td style={{ ...td, fontWeight: 800 }}>Total</td>
-                      <td style={{ ...tdN, fontWeight: 800 }}>{bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}</td>
-                      <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(bilan.totalRealise)}</td>
-                      <td style={{ ...tdN, fontWeight: 800, color: ecart < -0.01 && bilan.totalChiffre > 0 && !bilan.toutAuMontant ? C.rougeTexte : undefined }}>
-                        {bilan.totalChiffre > 0 && !bilan.toutAuMontant ? (ecart < 0 ? `+${formatHeures(-ecart)} dépassé` : `${formatHeures(ecart)} restant`) : "—"}
+                      <td style={td}>
+                        <strong>Chiffré non rattaché</strong>
+                        <div style={{ fontSize: 12, color: C.gris }}>colonne Excel sans activité (ex. « Autre ») ou heures non ventilées</div>
                       </td>
-                      <td style={td}>{bilan.totalChiffre > 0 && !bilan.toutAuMontant && <Barre part={part} depasse={ecart < -0.01} />}</td>
+                      <td style={tdN}>{formatHeures(bilan.chiffreNonRattache)}</td>
+                      <td colSpan={5} style={td} />
                     </tr>
-                  </tbody>
-                </table>
+                  )}
+                  <tr>
+                    <td style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Total</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—"}</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise + planifieTotal)}</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 ? reste(resteAPlanifier) : "—"}</td>
+                    <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 && !bilan.toutAuMontant ? <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} /> : null}</td>
+                  </tr>
+                </tbody>
+              </table>
+              {vue === "COMMANDE" && <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Les heures sont pointées sur la commande de base : elles remplissent d’abord la commande, puis chaque avenant dans l’ordre ; le dernier porte le dépassement éventuel.</p>}
+              {bilan.horsComparaison > 0.01 && !bilan.toutAuMontant && (
+                <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Dont {formatHeures(bilan.horsComparaison)} de scan / négoce non chiffrées (vendues au montant) : comptées dans le pointé, hors comparaison au chiffré.</p>
               )}
-              {(bilan.toutAuMontant || bilan.horsComparaison > 0.01) && (
-                <p style={{ fontSize: 13, color: C.gris, margin: "10px 0 0" }}>
-                  {bilan.toutAuMontant
-                    ? "Affaire de négoce ou de scan, vendue au montant : on suit le temps passé, sans le comparer au chiffré."
-                    : `Dont ${formatHeures(bilan.horsComparaison)} de scan / négoce non chiffrées (vendues au montant) : comptées dans le réalisé, mais hors comparaison au chiffré.`}
-                </p>
-              )}
-              {bilan.codesSans.length > 0 && (
-                <p style={{ fontSize: 13, color: C.orangeTexte, margin: "10px 0 0" }}>
-                  Codes saisis sans activité : <strong>{bilan.codesSans.join(", ")}</strong>. Rattachez-les à une activité dans « Gestion des
-                  activités » pour qu’ils se comparent au chiffré.
-                </p>
-              )}
+
+              {/* qui, quand */}
+              <div style={{ marginTop: 16 }}>
+                <strong style={{ fontSize: 15 }}>Planifié à venir : qui, quand</strong>
+                {aVenir.length === 0 ? (
+                  <p style={{ margin: "6px 0 0", color: C.gris }}>Rien n’est planifié à partir d’aujourd’hui.</p>
+                ) : (
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 6 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Personne</th>
+                        <th style={th}>Activité</th>
+                        <th style={th}>Commande</th>
+                        <th style={th}>Du</th>
+                        <th style={th}>Au</th>
+                        <th style={thN}>Heures</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aVenir.map((x) => (
+                        <tr key={x.id}>
+                          <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
+                          <td style={td}>{x.activite}</td>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{x.numero}</td>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.du)}</td>
+                          <td style={{ ...td, whiteSpace: "nowrap", color: echeance && x.au > echeance && !livree ? C.rougeTexte : undefined }}>{formatDate(x.au)}</td>
+                          <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(x.heures)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </section>
 
-            {/* ---------- commande et avenants ---------- */}
-            {/* REPARTITION_FAMILLE : le pointé de la famille remplit la commande, puis chaque avenant dans l'ordre ;
-                le dernier porte le dépassement éventuel. Intention de commande : n° surligné en jaune. */}
-            {lignesExcel.length > 0 &&
-              (() => {
-                const reparti = new Map<string, number>();
-                let restant = bilan.toutAuMontant ? bilan.totalRealise : bilan.realiseCompare;
-                comptees.forEach((l, i) => {
-                  const p = i === comptees.length - 1 ? restant : Math.min(l.heures_total, restant);
-                  reparti.set(l.cle, Math.max(0, p));
-                  restant -= p;
-                });
-                const commandes = lignesExcel.filter((l) => l.genre === "BASE" || l.genre === "AVENANT" || l.genre === "DEVIS");
-                const decoupages = lignesExcel.filter((l) => l.genre === "LOT" || l.genre === "ECHEANCE");
-                const chiffreFamille = comptees.reduce((t, l) => t + l.heures_total, 0);
-                const resteFamille = chiffreFamille - bilan.realiseCompare;
-                const surligne: CSSProperties = { background: "#ffe58a", borderRadius: 3, padding: "0 4px" };
-                const thC: CSSProperties = { ...th, textAlign: "center" };
-                const tdC: CSSProperties = { ...td, textAlign: "center", whiteSpace: "nowrap" };
-                const reste = (h: number) =>
-                  bilan.toutAuMontant ? "—" : h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h);
-                // PLANIFIE_BILAN : heures planifiées à venir, commande par commande (planning des affaires)
-                const cleNumero = (l: LigneExcel) => String(l.numero_affaire ?? "").toUpperCase().replace(/^(CBE|DBE)/, "").replace(/^0+/, "");
-                const planifieDe = (l: LigneExcel) => planifie.get(cleNumero(l)) ?? 0;
-                const planifieFamille = comptees.reduce((t, l) => t + planifieDe(l), 0);
-                const jauge = (chiffre: number, pointe: number, prevu: number) => {
-                  if (bilan.toutAuMontant) return null;
-                  const total = pointe + prevu;
-                  const echelle = Math.max(chiffre, total, 0.01);
-                  const au = total > chiffre + 0.01;
-                  return (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span title={`Pointé ${formatHeures(pointe)} + planifié ${formatHeures(prevu)} sur ${formatHeures(chiffre)} chiffrées`} style={{ display: "inline-flex", width: 120, height: 10, background: "#eef0f3", borderRadius: 5, overflow: "hidden", position: "relative" }}>
-                        <span style={{ width: `${(pointe / echelle) * 100}%`, background: au ? "#b3261e" : "#2e7d32" }} />
-                        <span style={{ width: `${(prevu / echelle) * 100}%`, background: au ? "#f0a8a2" : "#a8d5ae" }} />
-                        {total > chiffre && chiffre > 0 && <span style={{ position: "absolute", left: `${(chiffre / echelle) * 100}%`, top: -2, bottom: -2, borderLeft: "2px solid #1f2328" }} />}
-                      </span>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: au ? C.rougeTexte : C.gris }}>{chiffre > 0 ? `${Math.round((total / chiffre) * 100)} %` : ""}</span>
-                    </span>
-                  );
-                };
-                return (
-                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-                    <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Commande et avenants</h2>
-                    <p style={{ fontSize: 13, color: C.gris, margin: "0 0 12px" }}>
-                      Les heures sont pointées sur la commande de base. Elles remplissent d’abord la commande, puis chaque avenant dans l’ordre ; le dernier
-                      porte le dépassement éventuel. Le planifié, lui, est celui du planning des affaires, à partir d’aujourd’hui. La barre : pointé en
-                      foncé, planifié en clair ; le trait noir marque le chiffré quand on le dépasse.
-                    </p>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 15 }}>
-                      <thead>
-                        <tr>
-                          <th style={th}>N°</th>
-                          <th style={th}>Statut</th>
-                          <th style={th}>Reçue le</th>
-                          <th style={th}>Délai</th>
-                          <th style={thN}>Chiffré</th>
-                          <th style={thN}>Pointé</th>
-                          <th style={thN}>Planifié</th>
-                          <th style={thN}>Reste à planifier</th>
-                          <th style={thC}>Pointé + planifié</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {commandes.map((l) => {
-                          const compte = comptees.includes(l);
-                          const intention = l.statut === "Intention de commande";
-                          const pointe = reparti.get(l.cle) ?? 0;
-                          const part = l.heures_total > 0 ? pointe / l.heures_total : 0;
-                          const livreeLigne = l.statut === "Livrée";
-                          return (
-                            <tr key={l.cle} style={{ opacity: l.disparue || (!compte && l.genre !== "DEVIS") ? 0.55 : 1 }}>
-                              <td style={{ ...td, whiteSpace: "nowrap", padding: "12px 8px" }}>
-                                <span title={intention ? "Intention de commande : pas encore commandée" : undefined} style={{ fontWeight: 800, color: C.rougeFonce, ...(intention ? surligne : {}) }}>
-                                  {l.numero_affaire ?? l.numero_devis ?? l.cle}
-                                </span>
-                                <div style={{ fontSize: 12, color: C.gris }}>{libelleGenre(l)}</div>
-                              </td>
-                              <td style={td}>
-                                {l.statut ?? "—"}
-                                {!compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
-                                {l.disparue && <div style={{ fontSize: 12, color: C.gris }}>retirée du classeur</div>}
-                              </td>
-                              <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
-                              <td style={{ ...td, whiteSpace: "nowrap" }}>
-                                {formatDate(livreeLigne && l.date_livraison ? l.date_livraison : l.delai ?? l.date_livraison_estimee)}
-                                {livreeLigne && l.date_livraison && <div style={{ fontSize: 12, color: C.gris }}>livrée</div>}
-                              </td>
-                              <td style={tdN}>{l.genre === "DEVIS" ? "—" : formatHeures(l.heures_total)}</td>
-                              <td style={{ ...tdN, fontWeight: 800 }}>{compte ? formatHeures(pointe) : "—"}</td>
-                              <td style={tdN}>{compte && planifieDe(l) > 0.01 ? formatHeures(planifieDe(l)) : compte ? "—" : ""}</td>
-                              <td style={tdN}>{compte ? reste(l.heures_total - pointe - planifieDe(l)) : "—"}</td>
-                              <td style={tdC}>{compte && l.heures_total > 0 ? jauge(l.heures_total, pointe, planifieDe(l)) : null}</td>
-                            </tr>
-                          );
-                        })}
-                        {(comptees.length > 1 || planifieFamille > 0.01) && (
-                          <tr>
-                            <td colSpan={4} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
-                              Toute la famille
-                            </td>
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(chiffreFamille)}</td>
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{planifieFamille > 0.01 ? formatHeures(planifieFamille) : "—"}</td>
-                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{reste(resteFamille - planifieFamille)}</td>
-                            <td style={{ ...tdC, borderTop: `2px solid ${C.ligne}` }}>{chiffreFamille > 0 && jauge(chiffreFamille, bilan.realiseCompare, planifieFamille)}</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                    {decoupages.length > 0 && (
-                      <div style={{ marginTop: 14 }}>
-                        <strong style={{ fontSize: 14 }}>Découpages de la facturation</strong>
-                        <span style={{ fontSize: 13, color: C.gris }}> · échéances et lots, sans heures propres</span>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-                          {decoupages.map((l) => (
-                            <span key={l.cle} style={{ fontSize: 13, border: `1px solid ${C.ligne}`, borderRadius: 8, padding: "4px 10px", background: "#fafbfc" }}>
-                              <strong>{l.numero_affaire ?? l.cle}</strong> · {l.statut ?? "—"}
-                              {l.statut === "Livrée" && l.date_livraison ? ` le ${formatDate(l.date_livraison)}` : (l.delai ?? l.date_livraison_estimee) ? ` · délai ${formatDate(l.delai ?? l.date_livraison_estimee)}` : ""}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </section>
-                );
-              })()}
+            {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}
+            <TitrePartie numero="③" titre="Le détail des heures" />
+            <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
+              <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                {(
+                  [
+                    ["PERSONNE", "Par personne"],
+                    ["MOIS", "Par mois"],
+                    ["CODE", "Par code"],
+                    ["SOUS_DOSSIER", "Par sous-dossier"],
+                    ["SEMAINE", "Semaine par semaine"],
+                  ] as const
+                ).map(([cle, libelle]) => (
+                  <button key={cle} type="button" role="tab" aria-selected={onglet === cle} onClick={() => setOnglet(cle)} style={bascule(onglet === cle)}>
+                    {libelle}
+                  </button>
+                ))}
+              </div>
 
-            {/* FICHE_FUSIONNEE : responsable, délai et historique, affectations (ancienne fiche du Pilotage) */}
-            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
-
-            {/* ORDRE_FICHE : ce qui est planifié à venir : qui, quand */}
-            {aVenir.length > 0 && (
-              <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
-                <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Planifié à venir : qui, quand</h2>
-                <p style={{ fontSize: 13, color: C.gris, margin: "0 0 10px" }}>Planning des affaires, à partir d’aujourd’hui.</p>
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Personne</th>
-                      <th style={th}>Activité</th>
-                      <th style={th}>Commande</th>
-                      <th style={th}>Du</th>
-                      <th style={th}>Au</th>
-                      <th style={thN}>Heures</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {aVenir.map((x) => (
-                      <tr key={x.id}>
-                        <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
-                        <td style={td}>{x.activite}</td>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{x.numero}</td>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.du)}</td>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.au)}</td>
-                        <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(x.heures)}</td>
-                      </tr>
-                    ))}
-                    <tr>
-                      <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Total planifié à venir</td>
-                      <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(aVenir.reduce((s, x) => s + x.heures, 0))}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </section>
-            )}
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
-              {/* ---------- par personne ---------- */}
-              <section style={{ ...page.carte, padding: 16, flex: "1 1 420px", minWidth: 0 }}>
-                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par personne</h2>
-                {bilan.parPersonne.length === 0 ? (
-                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure réalisée.</p>
+              {onglet === "PERSONNE" &&
+                (bilan.parPersonne.length === 0 ? (
+                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure pointée.</p>
                 ) : (
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                     <thead>
@@ -1025,52 +925,73 @@ function BilanContenu() {
                       ))}
                     </tbody>
                   </table>
-                )}
-              </section>
+                ))}
 
-              {/* ---------- mois par mois ---------- */}
-              <section style={{ ...page.carte, padding: 16, flex: "1 1 420px", minWidth: 0 }}>
-                <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Mois par mois</h2>
-                {bilan.evolution.length === 0 ? (
-                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure réalisée.</p>
+              {onglet === "MOIS" &&
+                (bilan.evolution.length === 0 ? (
+                  <p style={{ color: C.gris, margin: 0 }}>Aucune heure pointée.</p>
                 ) : (
-                  <div style={{ display: "grid", gap: 5 }}>
-                    {bilan.evolution.map((m) => (
-                      <div key={m.mois} style={{ display: "grid", gridTemplateColumns: "72px 1fr 64px 120px", alignItems: "center", gap: 8, fontSize: 13 }}>
-                        <span>{`${MOIS[Number(m.mois.slice(5, 7)) - 1]} ${m.mois.slice(2, 4)}`}</span>
-                        <span style={{ background: "#f1f2f4", height: 12, borderRadius: 4, position: "relative" }}>
-                          <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(m.heures / maxMois) * 100}%`, background: C.rouge, borderRadius: 4 }} />
-                        </span>
-                        <strong style={{ textAlign: "right" }}>{formatHeures(m.heures)}</strong>
-                        <span style={{ color: !bilan.toutAuMontant && m.cumul > bilan.totalChiffre && bilan.totalChiffre > 0 ? C.rougeTexte : C.gris, fontSize: 12 }}>
-                          cumul {formatHeures(m.cumul)}
-                          {bilan.totalChiffre > 0 && !bilan.toutAuMontant ? ` (${Math.round((m.cumul / bilan.totalChiffre) * 100)} %)` : ""}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </div>
+                  <>
+                    {/* COURBE_CUMUL : le cumul du pointé face au chiffré */}
+                    {bilan.totalChiffre > 0 &&
+                      !bilan.toutAuMontant &&
+                      (() => {
+                        const W = 640;
+                        const H = 150;
+                        const n = bilan.evolution.length;
+                        const max = Math.max(bilan.totalChiffre, ...bilan.evolution.map((m) => m.cumul)) * 1.08;
+                        const x = (i: number) => (n === 1 ? W / 2 : 20 + (i * (W - 40)) / (n - 1));
+                        const y = (v: number) => H - 14 - (v / max) * (H - 28);
+                        const points = bilan.evolution.map((m, i) => `${x(i)},${y(m.cumul)}`).join(" ");
+                        return (
+                          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 760, height: "auto", marginBottom: 10 }} role="img" aria-label="Cumul des heures pointées face au chiffré">
+                            <line x1={10} x2={W - 10} y1={y(bilan.totalChiffre)} y2={y(bilan.totalChiffre)} stroke="#1f2328" strokeWidth={1.5} strokeDasharray="6 4" />
+                            <text x={W - 12} y={y(bilan.totalChiffre) - 5} textAnchor="end" fontSize={12} fill="#1f2328">
+                              chiffré {formatHeures(bilan.totalChiffre)}
+                            </text>
+                            <polyline points={points} fill="none" stroke={C.rouge} strokeWidth={2.5} />
+                            {bilan.evolution.map((m, i) => (
+                              <circle key={m.mois} cx={x(i)} cy={y(m.cumul)} r={3.5} fill={m.cumul > bilan.totalChiffre ? "#b3261e" : C.rouge}>
+                                <title>{`${MOIS[Number(m.mois.slice(5, 7)) - 1]} ${m.mois.slice(2, 4)} : cumul ${formatHeures(m.cumul)}`}</title>
+                              </circle>
+                            ))}
+                          </svg>
+                        );
+                      })()}
+                    <div style={{ display: "grid", gap: 5 }}>
+                      {bilan.evolution.map((m) => (
+                        <div key={m.mois} style={{ display: "grid", gridTemplateColumns: "72px 1fr 64px 140px", alignItems: "center", gap: 8, fontSize: 13 }}>
+                          <span>{`${MOIS[Number(m.mois.slice(5, 7)) - 1]} ${m.mois.slice(2, 4)}`}</span>
+                          <span style={{ background: "#f1f2f4", height: 12, borderRadius: 4, position: "relative" }}>
+                            <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(m.heures / maxMois) * 100}%`, background: C.rouge, borderRadius: 4 }} />
+                          </span>
+                          <strong style={{ textAlign: "right" }}>{formatHeures(m.heures)}</strong>
+                          <span style={{ color: !bilan.toutAuMontant && m.cumul > bilan.totalChiffre && bilan.totalChiffre > 0 ? C.rougeTexte : C.gris, fontSize: 12 }}>
+                            cumul {formatHeures(m.cumul)}
+                            {bilan.totalChiffre > 0 && !bilan.toutAuMontant ? ` (${Math.round((m.cumul / bilan.totalChiffre) * 100)} %)` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ))}
 
-            {/* ---------- par code d'imputation ---------- */}
-            {imputations.length > 0 &&
-              (() => {
-                const parCode = new Map<string, { heures: number; activites: Map<string, number>; personnes: Set<string> }>();
-                for (const i of imputations) {
-                  const code = (i.code || "—").toUpperCase();
-                  const e = parCode.get(code) ?? { heures: 0, activites: new Map<string, number>(), personnes: new Set<string>() };
-                  e.heures += i.heures;
-                  const act = i.activite_id ?? SANS_ACTIVITE;
-                  e.activites.set(act, (e.activites.get(act) ?? 0) + i.heures);
-                  e.personnes.add(i.collaborateur_id ?? i.trigramme ?? "?");
-                  parCode.set(code, e);
-                }
-                const liste = [...parCode.entries()].sort((a, b) => b[1].heures - a[1].heures);
-                const total = liste.reduce((t, [, e]) => t + e.heures, 0);
-                return (
-                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-                    <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par code</h2>
+              {onglet === "CODE" &&
+                (() => {
+                  const parCode = new Map<string, { heures: number; activites: Map<string, number>; personnes: Set<string> }>();
+                  for (const i of imputations) {
+                    const code = (i.code || "—").toUpperCase();
+                    const e = parCode.get(code) ?? { heures: 0, activites: new Map<string, number>(), personnes: new Set<string>() };
+                    e.heures += i.heures;
+                    const act = i.activite_id ?? SANS_ACTIVITE;
+                    e.activites.set(act, (e.activites.get(act) ?? 0) + i.heures);
+                    e.personnes.add(i.collaborateur_id ?? i.trigramme ?? "?");
+                    parCode.set(code, e);
+                  }
+                  const liste = [...parCode.entries()].sort((a, b) => b[1].heures - a[1].heures);
+                  const total = liste.reduce((t, [, e]) => t + e.heures, 0);
+                  if (liste.length === 0) return <p style={{ color: C.gris, margin: 0 }}>Aucune heure pointée.</p>;
+                  return (
                     <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                       <thead>
                         <tr>
@@ -1078,7 +999,7 @@ function BilanContenu() {
                           <th style={th}>Libellé</th>
                           <th style={th}>Activité</th>
                           <th style={thN}>Heures</th>
-                          <th style={thN}>Part du réalisé</th>
+                          <th style={thN}>Part</th>
                           <th style={thN}>Personnes</th>
                         </tr>
                       </thead>
@@ -1098,79 +1019,63 @@ function BilanContenu() {
                             <td style={tdN}>{e.personnes.size}</td>
                           </tr>
                         ))}
-                        <tr>
-                          <td colSpan={3} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
-                            Total
-                          </td>
-                          <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(total)}</td>
-                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }}>100 %</td>
-                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }} />
-                        </tr>
                       </tbody>
                     </table>
-                  </section>
-                );
-              })()}
+                  );
+                })()}
 
-            {/* ---------- heures par sous-dossier (saisi dans les feuilles d'heures) ---------- */}
-            <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
+              {onglet === "SOUS_DOSSIER" && (
+                <>
+                  <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
+                  <p style={{ fontSize: 13, color: C.gris, margin: 0 }}>Sous-dossiers précisés dans les feuilles d’heures (champ libre). Rien au-dessus : aucun sous-dossier n’a été précisé sur cette affaire.</p>
+                </>
+              )}
 
-            {/* ---------- détail ---------- */}
-            <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-                <button
-                  type="button"
-                  aria-expanded={voirDetail}
-                  onClick={() => setVoirDetail((v) => !v)}
-                  style={{ all: "unset", cursor: "pointer", fontSize: 18, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40 }}
-                >
-                  <span aria-hidden="true">{voirDetail ? "▾" : "▸"}</span> Détail semaine par semaine
-                </button>
-                {voirDetail && bilan.parPersonne.length > 1 && (
-                  <select aria-label="Filtrer par personne" value={filtrePersonne} onChange={(e) => setFiltrePersonne(e.target.value)} style={{ ...page.entrees, width: "auto" }}>
-                    <option value="">Toutes les personnes</option>
-                    {bilan.parPersonne.map((p) => (
-                      <option key={p.cle} value={p.cle}>
-                        {p.nom}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              {voirDetail && (
-                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 8 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Semaine</th>
-                      <th style={th}>Personne</th>
-                      <th style={th}>N° saisi</th>
-                      <th style={th}>Code</th>
-                      <th style={th}>Activité</th>
-                      <th style={thN}>Heures</th>
-                      <th style={th}>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.map((d, k) => (
-                      <tr key={k}>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>
-                          {d.semaine} <span style={{ color: C.gris, fontSize: 12 }}>· {formatDate(d.cle)}</span>
-                        </td>
-                        <td style={{ ...td, fontWeight: 700 }}>{d.personne}</td>
-                        <td style={{ ...td, whiteSpace: "nowrap" }}>{d.numero}</td>
-                        <td style={td}>{d.code}</td>
-                        <td style={td}>{d.activite}</td>
-                        <td style={tdN}>{formatHeures(d.heures)}</td>
-                        <td style={{ ...td, color: C.gris }}>{d.source}</td>
+              {onglet === "SEMAINE" && (
+                <>
+                  {bilan.parPersonne.length > 1 && (
+                    <select aria-label="Filtrer par personne" value={filtrePersonne} onChange={(e) => setFiltrePersonne(e.target.value)} style={{ ...page.entrees, width: "auto", marginBottom: 8 }}>
+                      <option value="">Toutes les personnes</option>
+                      {bilan.parPersonne.map((p) => (
+                        <option key={p.cle} value={p.cle}>
+                          {p.nom}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                    <thead>
+                      <tr>
+                        <th style={th}>Semaine</th>
+                        <th style={th}>Personne</th>
+                        <th style={th}>N° saisi</th>
+                        <th style={th}>Code</th>
+                        <th style={th}>Activité</th>
+                        <th style={thN}>Heures</th>
+                        <th style={th}>Source</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {detail.map((d, k) => (
+                        <tr key={k}>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>
+                            {d.semaine} <span style={{ color: C.gris, fontSize: 12 }}>· {formatDate(d.cle)}</span>
+                          </td>
+                          <td style={{ ...td, fontWeight: 700 }}>{d.personne}</td>
+                          <td style={{ ...td, whiteSpace: "nowrap" }}>{d.numero}</td>
+                          <td style={td}>{d.code}</td>
+                          <td style={td}>{d.activite}</td>
+                          <td style={tdN}>{formatHeures(d.heures)}</td>
+                          <td style={{ ...td, color: C.gris }}>{d.source}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
               )}
             </section>
 
-            {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
-            {/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}
+            {/* ================= ④ L'ARGENT (fonction « Montants des affaires ») ================= */}
             {affaire.type === "CBE" && (
               <BilanFinancierAffaire
                 type={affaire.type}
@@ -1178,6 +1083,7 @@ function BilanContenu() {
                 realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}
                 correspondance={correspondance}
                 heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}
+                depassementPrevu={depassementPrevu}
               />
             )}
           </>
@@ -1187,8 +1093,7 @@ function BilanContenu() {
   );
 }
 
-/* BILAN_MOBILE : affichage téléphone (< 760 px) — marges réduites, tuiles sur deux colonnes,
-   tableaux qui défilent dans leur cadre, champs et boutons plus grands. Rien ne change sur ordinateur. */
+/* BILAN_MOBILE : affichage téléphone (< 760 px) */
 const CSS_MOBILE_BILAN = `
 @media (max-width: 760px) {
   .bilan-contenu { padding: 10px 10px 40px !important; }
@@ -1197,7 +1102,6 @@ const CSS_MOBILE_BILAN = `
   .bilan-page table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
   .bilan-page input, .bilan-page select { font-size: 16px !important; min-height: 44px; max-width: none !important; flex: 1 1 100%; }
   .bilan-page form button[type="submit"] { flex: 1 1 100%; min-height: 48px; }
-  .bilan-page [role="status"], .bilan-page .tuile { min-width: 0; }
   .bilan-page div[style*="grid-template-columns: 72px"] { grid-template-columns: 56px 1fr 52px !important; }
   .bilan-page div[style*="grid-template-columns: 72px"] > span:last-child { grid-column: 2 / 4; font-size: 11px !important; }
 }
