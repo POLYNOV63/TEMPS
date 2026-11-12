@@ -579,10 +579,13 @@ export default function DashboardPage() {
 
             {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
 
-            {!apercu && <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} />}
+            {!apercu && <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} role="ADMIN" />}
           </>
         ) : roleVu === "DIRECTION" ? (
-          <BlocDirection aller={aller} />
+          <>
+            <BlocDirection aller={aller} />
+            <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} role={roleVu} />
+          </>
         ) : peut(roleVu, "piloterBE") ? (
           <>
             {/* RESPONSABLE : mon espace, ses tuiles (Pilotage, RH et Exports selon ses droits), sa feuille de route */}
@@ -591,12 +594,17 @@ export default function DashboardPage() {
             <TuilesDomaines aller={aller} role={roleVu} />
 
             {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
+
+            {/* DROITS_ROLES : les pages de paramétrage ouvertes à ce rôle */}
+            <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} role={roleVu} />
           </>
         ) : (
           <>
             <BlocMonEspace aller={aller} statut={statutMaFeuille} libelle={libelleMaFeuille} avecBilanAffaire avecPlanning />
 
             {(!apercu || apercu.id) && <FeuilleDeRouteDashboard key={idVu ?? "moi"} collaborateurId={apercu?.id} />}
+
+            <BlocParametrageCompact aller={aller} ouvert={parametrageOuvert} onBasculer={basculerParametrage} role={roleVu} />
           </>
         )}
       </div>
@@ -1298,7 +1306,8 @@ function BandeauMonEspace({ aller, statut, libelle }: { aller: (url: string) => 
 }
 
 /* Paramétrage replié, en liste compacte rangée en trois colonnes */
-function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: string) => void; ouvert: boolean; onBasculer: () => void }) {
+function BlocParametrageCompact({ aller, ouvert, onBasculer, role = "ADMIN" }: { aller: (url: string) => void; ouvert: boolean; onBasculer: () => void; role?: string | null }) {
+  useDroitsRoles(); // DROITS_ROLES : seuls les liens des pages ouvertes à ce rôle
   const colonnes: { titre: string; liens: [string, string, string][] }[] = [
     {
       titre: "Référentiels",
@@ -1325,6 +1334,9 @@ function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: st
       ],
     },
   ];
+  // DROITS_ROLES : seulement les pages ouvertes à ce rôle ; aucune : pas de bloc
+  const visibles = colonnes.map((c) => ({ ...c, liens: c.liens.filter(([, , url]) => role === "ADMIN" || pageAutorisee(role, url)) })).filter((c) => c.liens.length > 0);
+  if (visibles.length === 0) return null;
   return (
     <Groupe
       titre="⚙️ Paramétrage"
@@ -1335,7 +1347,7 @@ function BlocParametrageCompact({ aller, ouvert, onBasculer }: { aller: (url: st
     >
       {ouvert && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-          {colonnes.map((c) => (
+          {visibles.map((c) => (
             <div key={c.titre} style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: "10px 12px" }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: "#6b7076", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>{c.titre}</div>
               {c.liens.map(([icone, libelle, url]) => (
