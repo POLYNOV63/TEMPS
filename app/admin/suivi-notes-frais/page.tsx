@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
+import { page } from "@/components/pilotage/ui";
 
 /* ===============================================================
    SUIVI DES NOTES DE FRAIS (administrateurs)
@@ -14,6 +15,8 @@ import EnTetePage from "@/components/EnTetePage";
    transmise), en tapant SUPPRIMER.
    Les montants comptés sont ceux des notes TRANSMISES (les brouillons
    sont listés à part).
+   ENTETE_STANDARD : l'en-tête rouge pleine largeur en haut de la page
+   (comme le Pilotage et les Finances), le titre dessous, dans la page.
 ================================================================ */
 
 type Note = {
@@ -283,9 +286,13 @@ export default function SuiviNotesFrais() {
   };
 
   return (
-    <main style={{ minHeight: "100vh", background: "#f5f6f8", fontFamily: "Calibri, Arial, sans-serif", padding: "24px 4vw 60px", color: "#252525" }}>
-      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <EnTetePage forme="encadre" section="Administration RH" titre="Notes de frais" description="Combien, à qui, pour quoi : toutes les notes de l’exercice" />
+    <main style={{ minHeight: "100vh", background: "#f5f6f8", fontFamily: "Calibri, Arial, sans-serif", color: "#252525" }}>
+      {/* ENTETE_STANDARD : l'en-tête pleine largeur, en haut de la page */}
+      <EnTetePage section="RH" />
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 4vw 60px" }}>
+        <h1 style={page.titre}>Notes de frais</h1>
+        <p style={{ ...page.sousTitre, margin: "4px 0 18px" }}>Combien, à qui, pour quoi : toutes les notes de l’exercice.</p>
 
         {!chargement && !admin && <div style={carte}>Cette page est réservée aux administrateurs.</div>}
         {erreur && <div style={{ background: "#fdecec", color: "#a51d1d", padding: 12, borderRadius: 10, marginBottom: 14 }}>{erreur}</div>}
