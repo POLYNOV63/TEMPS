@@ -266,7 +266,7 @@ export default function BilanFinancierAffaire({
   if (message || !commandes) {
     return message ? (
       <section aria-label="Montants de l'affaire" style={carte}>
-        <h2 style={{ margin: "0 0 6px", fontSize: 18 }}>💶 Montants de l’affaire</h2>
+        <h2 style={{ margin: "0 0 6px", fontSize: 22, color: "#a30000" }}>3 · L’argent</h2>
         <p style={{ margin: 0, color: gris }}>{message}</p>
       </section>
     ) : null;
@@ -284,7 +284,7 @@ export default function BilanFinancierAffaire({
 
   return (
     <section aria-label="Montants de l'affaire" style={carte}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>💶 Montants de l’affaire</h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 22, color: "#a30000" }}>3 · L’argent <span style={{ fontSize: 14, fontWeight: 400, color: gris }}>montants, facturation, négoce</span></h2>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
         D’après le Suivi d’affaire BE (commande et avenants) et, pour les PE / PI, les mois clôturés du relevé. Visible selon la fonction « Montants des affaires » (Droits d’accès).
       </p>

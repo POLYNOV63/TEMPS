@@ -280,6 +280,48 @@ function BilanContenu() {
 
   /* PLANIFIE_BILAN : heures planifiées à venir sur chaque commande de la famille (« 1741 », « 1741R1 »…) */
   const [planifie, setPlanifie] = useState<Map<string, number>>(new Map());
+  /* ORDRE_FICHE : planifié à venir, affectation par affectation (qui, quelle activité, du… au…) */
+  const [aVenir, setAVenir] = useState<{ id: string; personne: string; activite: string; numero: string; du: string; au: string; heures: number }[]>([]);
+  useEffect(() => {
+    if (!affaire) return;
+    let actif = true;
+    void (async () => {
+      const d = new Date();
+      const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const base = affaire.numero.replace(/^0+/, "");
+      const { data: afs } = await supabase.from("pilotage_affaires").select("id,numero").eq("type", affaire.type);
+      const famille = new Map(
+        ((afs ?? []) as { id: string; numero: string }[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === base).map((a) => [a.id, a.numero])
+      );
+      if (famille.size === 0) {
+        if (actif) setAVenir([]);
+        return;
+      }
+      const pl = await chargerPlanifie(auj);
+      const res: { id: string; personne: string; activite: string; numero: string; du: string; au: string; heures: number }[] = [];
+      for (const a of pl.affectations) {
+        if (!a.affaire_id || !famille.has(a.affaire_id)) continue;
+        const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour >= auj && (Number(j.heures) || 0) > 0);
+        if (js.length === 0) continue;
+        const dates = js.map((j) => j.jour).sort();
+        const x = a as unknown as { collaborateur_id?: string | null; activite_id?: string | null };
+        res.push({
+          id: a.id,
+          personne: (x.collaborateur_id && noms.get(x.collaborateur_id)) || "—",
+          activite: (x.activite_id && activites.get(x.activite_id)?.nom) || "—",
+          numero: famille.get(a.affaire_id) ?? "",
+          du: dates[0],
+          au: dates[dates.length - 1],
+          heures: js.reduce((s, j) => s + (Number(j.heures) || 0), 0),
+        });
+      }
+      res.sort((p, q) => p.du.localeCompare(q.du) || p.personne.localeCompare(q.personne, "fr"));
+      if (actif) setAVenir(res);
+    })().catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, [affaire, noms, activites]);
   useEffect(() => {
     if (!affaire) return;
     let actif = true;
@@ -569,6 +611,11 @@ function BilanContenu() {
 
         {affaire && !chargement && !erreur && (
           <>
+            {/* ORDRE_FICHE */}
+            <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
+              1 · La commande <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>numéros, dates, statuts, heures commandées</span>
+            </h2>
+
             {/* ---------- en-tête de l'affaire ---------- */}
             <section style={{ ...page.carte, padding: 18, marginBottom: 16 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
@@ -592,9 +639,6 @@ function BilanContenu() {
               </div>
             </section>
 
-            {/* FICHE_FUSIONNEE : responsable, délai et historique, affectations (ancienne fiche du Pilotage) */}
-            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
-
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
               <Message genre="info">
                 Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures
@@ -605,6 +649,75 @@ function BilanContenu() {
             {affaire.type === "DBE" && (
               <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>
             )}
+
+            {/* ORDRE_FICHE : les commandes (mère, filles, échéances), leurs dates, statuts et heures commandées par activité */}
+            {lignesExcel.length > 0 &&
+              (() => {
+                const cols = COLONNES_EXCEL.filter(({ champ }) => lignesExcel.some((l) => (Number(l[champ]) || 0) > 0));
+                const nature = (l: LigneExcel) => (l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot" : l.genre === "ECHEANCE" ? "Échéance" : "Devis");
+                const ordreL = [...lignesExcel].sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
+                const meres = ordreL.filter((l) => l.genre !== "LOT" && l.genre !== "ECHEANCE");
+                const filles = (l: LigneExcel) => ordreL.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && (d.numero_affaire ?? d.cle).toUpperCase().startsWith(String(l.numero_affaire ?? l.cle).toUpperCase()) && !meres.some((m) => m !== l && String(m.numero_affaire ?? m.cle).length > String(l.numero_affaire ?? l.cle).length && (d.numero_affaire ?? d.cle).toUpperCase().startsWith(String(m.numero_affaire ?? m.cle).toUpperCase())));
+                const ligne = (l: LigneExcel, fille: boolean) => {
+                  const compte = comptees.includes(l);
+                  const intention = l.statut === "Intention de commande";
+                  return (
+                    <tr key={l.cle} style={{ opacity: l.disparue || (!fille && !compte && l.genre !== "DEVIS") ? 0.55 : 1, background: fille ? undefined : "#fafbfc" }}>
+                      <td style={{ ...td, whiteSpace: "nowrap", paddingLeft: fille ? 26 : 8 }}>
+                        {fille ? "↳ " : ""}
+                        <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce, ...(intention ? { background: "#ffe58a", borderRadius: 3, padding: "0 4px" } : {}) }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</span>
+                        <div style={{ fontSize: 12, color: C.gris }}>{nature(l)}</div>
+                      </td>
+                      <td style={td}>{l.statut ?? "—"}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
+                      {cols.map(({ colonne, champ }) => (
+                        <td key={colonne} style={tdN}>{fille ? "" : (Number(l[champ]) || 0) > 0 ? formatHeures(Number(l[champ])) : "—"}</td>
+                      ))}
+                      <td style={{ ...tdN, fontWeight: 800 }}>{fille || l.genre === "DEVIS" ? "" : formatHeures(l.heures_total)}</td>
+                    </tr>
+                  );
+                };
+                return (
+                  <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
+                    <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Les commandes et leurs heures</h2>
+                    <p style={{ fontSize: 13, color: C.gris, margin: "0 0 10px" }}>Commande, avenants, échéances et lots : statut, dates, et heures commandées par activité (Suivi d’affaire BE).</p>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>N°</th>
+                          <th style={th}>Statut</th>
+                          <th style={th}>Reçue le</th>
+                          <th style={th}>Délai</th>
+                          <th style={th}>Livrée le</th>
+                          {cols.map(({ colonne }) => (
+                            <th key={colonne} style={thN}>{colonne}</th>
+                          ))}
+                          <th style={thN}>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {meres.flatMap((l) => [ligne(l, false), ...filles(l).map((d) => ligne(d, true))])}
+                        {comptees.length > 1 && (
+                          <tr>
+                            <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Toute la famille (commandes retenues)</td>
+                            {cols.map(({ colonne, champ }) => (
+                              <td key={colonne} style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(comptees.reduce((s, l) => s + (Number(l[champ]) || 0), 0))}</td>
+                            ))}
+                            <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </section>
+                );
+              })()}
+
+            {/* ORDRE_FICHE */}
+            <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
+              2 · Les heures <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>consommées, planifiées : quand, qui</span>
+            </h2>
 
             {/* ---------- tuiles ---------- */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginBottom: 16 }}>
@@ -710,80 +823,6 @@ function BilanContenu() {
                 </p>
               )}
             </section>
-
-            {/* ---------- par code d'imputation ---------- */}
-            {imputations.length > 0 &&
-              (() => {
-                const parCode = new Map<string, { heures: number; activites: Map<string, number>; personnes: Set<string> }>();
-                for (const i of imputations) {
-                  const code = (i.code || "—").toUpperCase();
-                  const e = parCode.get(code) ?? { heures: 0, activites: new Map<string, number>(), personnes: new Set<string>() };
-                  e.heures += i.heures;
-                  const act = i.activite_id ?? SANS_ACTIVITE;
-                  e.activites.set(act, (e.activites.get(act) ?? 0) + i.heures);
-                  e.personnes.add(i.collaborateur_id ?? i.trigramme ?? "?");
-                  parCode.set(code, e);
-                }
-                const liste = [...parCode.entries()].sort((a, b) => b[1].heures - a[1].heures);
-                const total = liste.reduce((t, [, e]) => t + e.heures, 0);
-                return (
-                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
-                    <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par code</h2>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                      <thead>
-                        <tr>
-                          <th style={th}>Code</th>
-                          <th style={th}>Libellé</th>
-                          <th style={th}>Activité</th>
-                          <th style={thN}>Heures</th>
-                          <th style={thN}>Part du réalisé</th>
-                          <th style={thN}>Personnes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {liste.map(([code, e]) => (
-                          <tr key={code}>
-                            <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{code}</td>
-                            <td style={td}>{libellesCodes.get(code) || "—"}</td>
-                            <td style={{ ...td, fontSize: 12.5 }}>
-                              {[...e.activites.entries()]
-                                .sort((a, b) => b[1] - a[1])
-                                .map(([a, h]) => (e.activites.size > 1 ? `${nomActivite(a).replace(" (code non rattaché)", "")} ${formatHeures(h)}` : nomActivite(a).replace(" (code non rattaché)", "")))
-                                .join(" · ")}
-                            </td>
-                            <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(e.heures)}</td>
-                            <td style={tdN}>{total > 0 ? `${Math.round((e.heures / total) * 100)} %` : "—"}</td>
-                            <td style={tdN}>{e.personnes.size}</td>
-                          </tr>
-                        ))}
-                        <tr>
-                          <td colSpan={3} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
-                            Total
-                          </td>
-                          <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(total)}</td>
-                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }}>100 %</td>
-                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }} />
-                        </tr>
-                      </tbody>
-                    </table>
-                  </section>
-                );
-              })()}
-
-            {/* ---------- heures par sous-dossier (saisi dans les feuilles d'heures) ---------- */}
-            <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
-
-            {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
-            {/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}
-            {affaire.type === "CBE" && (
-              <BilanFinancierAffaire
-                type={affaire.type}
-                numero={affaire.numero}
-                realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}
-                correspondance={correspondance}
-                heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}
-              />
-            )}
 
             {/* ---------- commande et avenants ---------- */}
             {/* REPARTITION_FAMILLE : le pointé de la famille remplit la commande, puis chaque avenant dans l'ordre ;
@@ -913,6 +952,45 @@ function BilanContenu() {
                 );
               })()}
 
+            {/* FICHE_FUSIONNEE : responsable, délai et historique, affectations (ancienne fiche du Pilotage) */}
+            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
+
+            {/* ORDRE_FICHE : ce qui est planifié à venir : qui, quand */}
+            {aVenir.length > 0 && (
+              <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
+                <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Planifié à venir : qui, quand</h2>
+                <p style={{ fontSize: 13, color: C.gris, margin: "0 0 10px" }}>Planning des affaires, à partir d’aujourd’hui.</p>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Personne</th>
+                      <th style={th}>Activité</th>
+                      <th style={th}>Commande</th>
+                      <th style={th}>Du</th>
+                      <th style={th}>Au</th>
+                      <th style={thN}>Heures</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aVenir.map((x) => (
+                      <tr key={x.id}>
+                        <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
+                        <td style={td}>{x.activite}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>{x.numero}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.du)}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.au)}</td>
+                        <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(x.heures)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Total planifié à venir</td>
+                      <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(aVenir.reduce((s, x) => s + x.heures, 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+            )}
+
             <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
               {/* ---------- par personne ---------- */}
               <section style={{ ...page.carte, padding: 16, flex: "1 1 420px", minWidth: 0 }}>
@@ -975,6 +1053,68 @@ function BilanContenu() {
               </section>
             </div>
 
+            {/* ---------- par code d'imputation ---------- */}
+            {imputations.length > 0 &&
+              (() => {
+                const parCode = new Map<string, { heures: number; activites: Map<string, number>; personnes: Set<string> }>();
+                for (const i of imputations) {
+                  const code = (i.code || "—").toUpperCase();
+                  const e = parCode.get(code) ?? { heures: 0, activites: new Map<string, number>(), personnes: new Set<string>() };
+                  e.heures += i.heures;
+                  const act = i.activite_id ?? SANS_ACTIVITE;
+                  e.activites.set(act, (e.activites.get(act) ?? 0) + i.heures);
+                  e.personnes.add(i.collaborateur_id ?? i.trigramme ?? "?");
+                  parCode.set(code, e);
+                }
+                const liste = [...parCode.entries()].sort((a, b) => b[1].heures - a[1].heures);
+                const total = liste.reduce((t, [, e]) => t + e.heures, 0);
+                return (
+                  <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+                    <h2 style={{ margin: "0 0 10px", fontSize: 18 }}>Par code</h2>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>Code</th>
+                          <th style={th}>Libellé</th>
+                          <th style={th}>Activité</th>
+                          <th style={thN}>Heures</th>
+                          <th style={thN}>Part du réalisé</th>
+                          <th style={thN}>Personnes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {liste.map(([code, e]) => (
+                          <tr key={code}>
+                            <td style={{ ...td, fontWeight: 800, color: C.rougeFonce }}>{code}</td>
+                            <td style={td}>{libellesCodes.get(code) || "—"}</td>
+                            <td style={{ ...td, fontSize: 12.5 }}>
+                              {[...e.activites.entries()]
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([a, h]) => (e.activites.size > 1 ? `${nomActivite(a).replace(" (code non rattaché)", "")} ${formatHeures(h)}` : nomActivite(a).replace(" (code non rattaché)", "")))
+                                .join(" · ")}
+                            </td>
+                            <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(e.heures)}</td>
+                            <td style={tdN}>{total > 0 ? `${Math.round((e.heures / total) * 100)} %` : "—"}</td>
+                            <td style={tdN}>{e.personnes.size}</td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td colSpan={3} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                            Total
+                          </td>
+                          <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(total)}</td>
+                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }}>100 %</td>
+                          <td style={{ ...tdN, borderTop: `2px solid ${C.ligne}` }} />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </section>
+                );
+              })()}
+
+            {/* ---------- heures par sous-dossier (saisi dans les feuilles d'heures) ---------- */}
+            <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
+
             {/* ---------- détail ---------- */}
             <section style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
@@ -1028,6 +1168,18 @@ function BilanContenu() {
                 </table>
               )}
             </section>
+
+            {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
+            {/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}
+            {affaire.type === "CBE" && (
+              <BilanFinancierAffaire
+                type={affaire.type}
+                numero={affaire.numero}
+                realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}
+                correspondance={correspondance}
+                heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}
+              />
+            )}
           </>
         )}
       </div>
