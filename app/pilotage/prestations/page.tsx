@@ -753,6 +753,9 @@ function PrestationsContenu() {
   );
 
   const blocs = useMemo(() => {
+    // RELEVE_ORDRE_ORIGINE : dans une commande, la personne qui a le plus d'heures (celle d'origine) en tête, les ajouts dessous
+    const poidsLigne = (l: Ligne) =>
+      (consoLigneAvant.get(l.id) ?? 0) + (planif.futur.get(l.id)?.heures ?? 0) + saisies.filter((s) => s.ligne_id === l.id).reduce((t, s) => t + (s.heures ?? 0), 0);
     const titres = { PE: "Prestations externes (PE)", PI: "Prestations internes au BE (PI)", IG: "Prestations en intergroupe" } as const;
     const res: { cle: string; titre: string; categorie: "PE" | "PI" | "IG"; unite: "JOUR" | "HEURE"; lignes: Ligne[] }[] = [];
     for (const cat of ["PE", "PI", "IG"] as const)
@@ -763,12 +766,12 @@ function PrestationsContenu() {
             (x, y) =>
               // TRI_RECENT : les commandes les plus récentes (n° le plus grand) en haut
               (affairesParId.get(y.affaire_id)?.numero ?? "").localeCompare(affairesParId.get(x.affaire_id)?.numero ?? "", "fr", { numeric: true }) ||
-              nomCollab(collabs.get(x.collaborateur_id)).localeCompare(nomCollab(collabs.get(y.collaborateur_id)))
+              poidsLigne(y) - poidsLigne(x) || nomCollab(collabs.get(x.collaborateur_id)).localeCompare(nomCollab(collabs.get(y.collaborateur_id)))
           );
         if (ls.length) res.push({ cle: `${cat}-${unite}`, titre: `${titres[cat]} — tarif ${unite === "JOUR" ? "journalier" : "horaire"}`, categorie: cat, unite, lignes: ls });
       }
     return res;
-  }, [lignes, categorie, affairesParId, collabs, dort]);
+  }, [lignes, categorie, affairesParId, collabs, dort, consoLigneAvant, planif, saisies]);
 
   const ordreLignes = useMemo(() => blocs.flatMap((b) => b.lignes.map((l) => l.id)), [blocs]);
 
@@ -1079,6 +1082,23 @@ function PrestationsContenu() {
       if (ea) setErreur(`Ligne modifiée, mais planning non mis à jour : ${traduireErreur(ea.message)}`);
     }
     setInfo(`${ancien} remplacé par ${nouveau}.`);
+    setRechargement((n) => n + 1);
+  }
+
+  /* RELEVE_RETIRER_PERSONNE : une ligne sans aucune heure saisie quitte la commande (elle est désactivée) */
+  async function retirerLigne(l: Ligne) {
+    const qui = nomCollab(collabs.get(l.collaborateur_id));
+    const cmd = affairesParId.get(l.affaire_id)?.numero ?? "la commande";
+    if (!window.confirm(`Retirer ${qui} de ${cmd} ?`)) return;
+    setErreur("");
+    const { error } = await supabase.from("prestation_lignes").update({ actif: false }).eq("id", l.id);
+    if (error) return setErreur(traduireErreur(error.message));
+    setDetails((d) => {
+      const n = new Set(d);
+      n.delete(l.id);
+      return n;
+    });
+    setInfo(`${qui} retiré(e) de ${cmd}.`);
     setRechargement((n) => n + 1);
   }
 
@@ -2531,6 +2551,23 @@ function PrestationsContenu() {
                                         ))}
                                       </select>
                                     </label>
+                                    {/* RELEVE_RETIRER_PERSONNE : retirer la personne de la commande, tant qu'elle n'a aucune heure saisie */}
+                                    {peutAgir &&
+                                      (() => {
+                                        const h = (consoLigneAvant.get(l.id) ?? 0) + c.heures + (planif.futur.get(l.id)?.heures ?? 0);
+                                        const occupe = h > 0.001;
+                                        return (
+                                          <button
+                                            type="button"
+                                            disabled={occupe}
+                                            onClick={() => void retirerLigne(l)}
+                                            title={occupe ? `${formatHeures(h)} saisies sur cette ligne : videz d’abord ses jours (✕), pour pouvoir la retirer` : "Retirer cette personne de la commande : sa ligne disparaît du relevé"}
+                                            style={{ ...outil, alignSelf: "flex-end", height: 38, fontSize: 13, color: occupe ? C.gris : "#b3261e", borderColor: occupe ? "#d5d9de" : "#e5a3a3", cursor: occupe ? "not-allowed" : "pointer" }}
+                                          >
+                                            Retirer de la commande
+                                          </button>
+                                        );
+                                      })()}
                                     {/* RELEVE_AJOUT_PERSONNE : une personne de plus sur la même commande (nouvelle ligne, avec la vente de la commande) */}
                                     {peutAgir && (
                                       <label style={{ ...etiquette, width: 190 }} title="Ajoute une ligne pour cette personne sur la même commande, avec l’unité, la base et le taux de la commande">
@@ -2544,7 +2581,7 @@ function PrestationsContenu() {
                                         >
                                           <option value="">+ sur cette commande…</option>
                                           {annuaire
-                                            .filter((p) => !lignes.some((x) => x.affaire_id === l.affaire_id && x.collaborateur_id === p.id))
+                                            .filter((p) => !lignes.some((x) => x.actif && x.affaire_id === l.affaire_id && x.collaborateur_id === p.id))
                                             .map((p) => (
                                               <option key={p.id} value={p.id}>
                                                 {nomCollab(p)}
