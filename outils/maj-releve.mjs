@@ -120,6 +120,43 @@ if (!erreurs.length) {
   }
 }
 
+
+/* 4. Les deux fiches du relevé, nommées : « Fiche de paramétrage PI / PE » (⚙) et « Fiche d'information PI / PE »
+      (lecture seule : on n'y ajoute plus de personne et on n'y règle plus la vente) (RELEVE_FICHES_NOMMEES) */
+if (!erreurs.length) {
+  const f4 = ecritures.find((x) => x.rel === "app/pilotage/prestations/page.tsx") ?? lire("app/pilotage/prestations/page.tsx");
+  if (f4 && f4.texte.includes("RELEVE_FICHES_NOMMEES")) {
+    console.log("  = app/pilotage/prestations/page.tsx : fiches déjà nommées");
+  } else if (f4) {
+    remplacerSouple(f4, "aria-label=\"Fiche commande\"", "aria-label=\"Fiche d’information PI / PE\"", "fiche d’information : nom de la fenêtre");
+    remplacerSouple(f4, "<div style={{ ...page.carte, padding: 20, width: 540, maxWidth: \"94vw\", maxHeight: \"90vh\", overflowY: \"auto\" }} onClick={(e) => e.stopPropagation()}>", "<div style={{ ...page.carte, padding: 20, width: 540, maxWidth: \"94vw\", maxHeight: \"90vh\", overflowY: \"auto\" }} onClick={(e) => e.stopPropagation()}>\n                {/* RELEVE_FICHES_NOMMEES */}\n                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: C.gris, marginBottom: 4 }}>Fiche d’information PI / PE</div>", "fiche d’information : titre");
+    remplacerRe(
+      f4,
+      /\{titreSection\("La vente"\)\}[\s\S]*?(\{info\("Quantité commandée")/,
+      (_m, suite) =>
+        `{titreSection("La vente")}\n                {info("Vendue", f.unite === "JOUR" ? \`au jour (journée de \${deux(f.base)} h)\` : "à l’heure", "Se règle dans la fiche de paramétrage (⚙) des lignes")}\n                ${suite}`,
+      "fiche d’information : la vente en lecture seule"
+    );
+    remplacerRe(
+      f4,
+      /Personne n’est encore staffé\.\s*\{peutAgir && \([\s\S]*?\n\s*\)\}\s*(\{f\.taux !== null)/,
+      (_m, suite) => `Personne n’est encore staffé : utilisez « ⚙ Paramétrer » dans le relevé.\n                    ${suite}`,
+      "fiche d’information : plus de staffage depuis la fiche"
+    );
+    remplacerRe(
+      f4,
+      /\{\/\* AJOUT_DANS_FICHE[\s\S]*?\n\s*\)\}\n(\s*\{\(f\.montant <= 0)/,
+      (_m, suite) => `\n${suite}`,
+      "fiche d’information : plus d’ajout de personne (il se fait dans ⚙)"
+    );
+    remplacerSouple(f4, "title=\"Fiche commande : commandé, taux, consommé, reste\" aria-label={`Fiche commande ${a.numero}`}", "title=\"Fiche d’information PI / PE : commandé, consommé, reste, commandes de la famille\" aria-label={`Fiche d’information ${a.numero}`}", "bouton de la fiche d’information");
+    remplacerSouple(f4, "{/* BOUTON_FICHE : un mot plutôt qu'un petit i */}\n fiche", "{/* BOUTON_FICHE : un mot plutôt qu'un petit i */}\n infos", "bouton « infos »");
+    remplacerSouple(f4, "<div style={{ position: \"sticky\", left: 0, display: \"flex\", flexWrap: \"wrap\", alignItems: \"flex-end\", gap: 12, padding: \"10px 12px\", maxWidth: \"min(100vw - 80px, 1300px)\", boxSizing: \"border-box\" }}>", "<div style={{ position: \"sticky\", left: 0, display: \"flex\", flexWrap: \"wrap\", alignItems: \"flex-end\", gap: 12, padding: \"10px 12px\", maxWidth: \"min(100vw - 80px, 1300px)\", boxSizing: \"border-box\" }}>\n                                    <div style={{ flexBasis: \"100%\", fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: C.gris }}>\n                                      ⚙ Fiche de paramétrage PI / PE · {nomCollab(collabs.get(l.collaborateur_id))} sur {a?.numero}\n                                    </div>", "fiche de paramétrage : titre");
+    remplacerSouple(f4, "title=\"Réglages de la ligne : personne, activité, unité, taux, base, intergroupe, report, heures sup\"", "title=\"Fiche de paramétrage PI / PE : personne, ajout d’une personne, activité, unité, taux, base, intergroupe, report, heures sup\"", "bouton ⚙ : info-bulle");
+    if (!ecritures.includes(f4)) ecritures.push(f4);
+  }
+}
+
 /* 6. Tout ou rien */
 if (erreurs.length > 0) {
   console.error("\n✗ RIEN N'A ÉTÉ MODIFIÉ. Problème(s) :");

@@ -2314,9 +2314,9 @@ function PrestationsContenu() {
                                           ↪ report {NOMS_MOIS[(Number(mois.slice(5, 7)) + 10) % 12].slice(0, 4)}.
                                         </span>
                                       )}
-                                      <button type="button" onClick={() => setFiche(a.id)} title="Fiche commande : commandé, taux, consommé, reste" aria-label={`Fiche commande ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 11, color: "#1f4e99", fontWeight: 800, border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>
+                                      <button type="button" onClick={() => setFiche(a.id)} title="Fiche d’information PI / PE : commandé, consommé, reste, commandes de la famille" aria-label={`Fiche d’information ${a.numero}`} style={{ all: "unset", cursor: "pointer", fontSize: 11, color: "#1f4e99", fontWeight: 800, border: "1px solid #9fb6cf", borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>
                                         {/* BOUTON_FICHE : un mot plutôt qu'un petit i */}
-                                        fiche
+ infos
                                       </button>
                                     </span>
                                     <div style={{ fontSize: 12, color: C.gris, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${a.designation}${nf?.client ? ` · ${nf.client}` : ""}`}>
@@ -2431,7 +2431,7 @@ function PrestationsContenu() {
                                         return n;
                                       })
                                     }
-                                    title="Réglages de la ligne : personne, activité, unité, taux, base, intergroupe, report, heures sup"
+                                    title="Fiche de paramétrage PI / PE : personne, ajout d’une personne, activité, unité, taux, base, intergroupe, report, heures sup"
                                     style={{ ...petitOutil, ...(l.taux === null ? { borderColor: "#e9b877", background: "#fff7ea" } : {}), ...(ouvert ? { borderColor: C.rouge } : {}) }}
                                   >
                                     ⚙
@@ -2541,6 +2541,9 @@ function PrestationsContenu() {
                               <tr>
                                 <td colSpan={nbCol} style={{ ...cellule, background: "#fafbfc", padding: 0 }}>
                                   <div style={{ position: "sticky", left: 0, display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 12, padding: "10px 12px", maxWidth: "min(100vw - 80px, 1300px)", boxSizing: "border-box" }}>
+                                    <div style={{ flexBasis: "100%", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
+                                      ⚙ Fiche de paramétrage PI / PE · {nomCollab(collabs.get(l.collaborateur_id))} sur {a?.numero}
+                                    </div>
                                     <label style={{ ...etiquette, width: 110 }}>
                                       Personne
                                       <select disabled={verrou} value={l.collaborateur_id} onChange={(e) => void changerPersonne(l, e.target.value)} style={champ}>
@@ -2809,8 +2812,10 @@ function PrestationsContenu() {
           const tousPropres = f.personnes.length > 0 && f.personnes.every((p) => p.propre);
           const sansLigne = f.personnes.length === 0;
           return (
-            <div role="dialog" aria-modal="true" aria-label="Fiche commande" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setFiche(null)}>
+            <div role="dialog" aria-modal="true" aria-label="Fiche d’information PI / PE" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setFiche(null)}>
               <div style={{ ...page.carte, padding: 20, width: 540, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                {/* RELEVE_FICHES_NOMMEES */}
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris, marginBottom: 4 }}>Fiche d’information PI / PE</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <BadgeType type={a.type} />
                   <strong style={{ fontSize: 20, color: C.rougeFonce }}>{nf.numero}</strong>
@@ -2832,25 +2837,7 @@ function PrestationsContenu() {
                 {info("Total d’heures", f.heuresCmd > 0 ? formatHeures(f.heuresCmd) : <span style={{ color: "#b3261e" }}>absent</span>)}
 
                 {titreSection("La vente")}
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, alignItems: "flex-end" }}>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
-                    Vendue
-                    <select disabled={!peutAgir} value={f.unite} onChange={(e) => void reglerCommande(a, { unite: e.target.value as "JOUR" | "HEURE" })} style={{ ...champ, width: 130 }}>
-                      <option value="JOUR">au jour</option>
-                      <option value="HEURE">à l’heure</option>
-                    </select>
-                  </label>
-                  {f.unite === "JOUR" && (
-                    <label title="Base d’une journée vendue : convertit le total d’heures du Suivi d’affaire en jours" style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
-                      Journée de
-                      <select disabled={!peutAgir} value={String(f.base)} onChange={(e) => void reglerCommande(a, { base: Number(e.target.value) })} style={{ ...champ, width: 100 }}>
-                        <option value="7">7 h</option>
-                        <option value="7.5">7,5 h</option>
-                        {![7, 7.5].includes(f.base) && <option value={String(f.base)}>{deux(f.base)} h</option>}
-                      </select>
-                    </label>
-                  )}
-                </div>
+                {info("Vendue", f.unite === "JOUR" ? `au jour (journée de ${deux(f.base)} h)` : "à l’heure", "Se règle dans la fiche de paramétrage (⚙) des lignes")}
                 {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, "Montant de la commande ÷ taux des lignes")}
                 {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Taux des lignes du relevé (celui de la première, s’il y en a plusieurs)")}
 
@@ -3065,26 +3052,7 @@ function PrestationsContenu() {
                 {titreSection("Personnes")}
                 {sansLigne ? (
                   <div style={{ padding: "6px 0", fontSize: 14 }}>
-                    Personne n’est encore staffé.
-                    {peutAgir && (
-                      <select
-                        defaultValue=""
-                        onChange={(e) => {
-                          if (!e.target.value) return;
-                          setFiche(null);
-                          void ouvrirStaffage(a, e.target.value);
-                        }}
-                        style={{ ...champ, width: 160, marginLeft: 8 }}
-                        aria-label={`Staffer ${a.numero}`}
-                      >
-                        <option value="">Staffer…</option>
-                        {annuaire.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {nomCollab(p)}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                    Personne n’est encore staffé : utilisez « ⚙ Paramétrer » dans le relevé.
                     {f.taux !== null && <div style={{ fontSize: 12, color: C.gris, marginTop: 4 }}>La ligne prendra le taux de la commande ({deux(f.taux)} € / {u}), modifiable ensuite dans ⚙.</div>}
                   </div>
                 ) : (
@@ -3103,30 +3071,7 @@ function PrestationsContenu() {
                     </div>
                   ))
                 )}
-                {/* AJOUT_DANS_FICHE : une personne de plus sur la commande (remplace « Ajouter une ligne » en bas de page) */}
-                {peutAgir && !sansLigne && (
-                  <div style={{ padding: "8px 0" }}>
-                    <select
-                      defaultValue=""
-                      onChange={(e) => {
-                        if (!e.target.value) return;
-                        void staffer(a.id, e.target.value);
-                        setFiche(null);
-                      }}
-                      style={{ ...champ, width: 240 }}
-                      aria-label={`Ajouter une personne sur ${a.numero}`}
-                    >
-                      <option value="">+ Ajouter une personne…</option>
-                      {annuaire
-                        .filter((p) => !f.personnes.some((x) => x.ligne.collaborateur_id === p.id))
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {nomCollab(p)}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                )}
+                
 
                 {(f.montant <= 0 || f.heuresCmd <= 0) && (
                   <div style={{ marginTop: 12 }}>

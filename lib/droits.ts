@@ -69,7 +69,7 @@ export type Droit = keyof typeof DROITS;
 
 /* Libellé et rôle de chaque fonction, pour la page des droits */
 export const DESCRIPTIONS_DROITS: Record<Droit, { libelle: string; aide: string; groupe: string }> = {
-  voirPlanning: { libelle: "Voir le planning", aide: "Planning des affaires, planning par ressource, fiche et bilan d’affaire (lecture)", groupe: "Pilotage" },
+  voirPlanning: { libelle: "Voir le planning", aide: "Planning des affaires, planning par ressource, fiche affaire (lecture)", groupe: "Pilotage" },
   piloterBE: { libelle: "Piloter le BE", aide: "Modifier les affaires, affecter au planning, feuilles de route de l’équipe", groupe: "Pilotage" },
   suiviAffaires: { libelle: "Suivi des affaires", aide: "L’onglet et la page « Suivi des affaires » (heures chiffrées, réalisées, planifiées)", groupe: "Pilotage" },
   montantsAffaires: { libelle: "Suivi des affaires avec les montants", aide: "Montant, facturé, reste à facturer et € / h réalisé, dans la page et son export", groupe: "Pilotage" },
@@ -99,10 +99,9 @@ export const PAGES: PageApp[] = [
   { href: "/pilotage", libelle: "Suivi des affaires", groupe: "Pilotage", droit: "suiviAffaires" },
   { href: "/pilotage/devis", libelle: "Suivi des devis", groupe: "Pilotage", droit: "suiviDevis" },
   { href: "/pilotage/affaires", libelle: "Planning des affaires", groupe: "Pilotage", droit: "voirPlanning" },
-  { href: "/pilotage/affaire/", libelle: "Fiche d’une affaire", groupe: "Pilotage", droit: "voirPlanning", prefixe: true },
   { href: "/pilotage/prestations", libelle: "Relevé PE / PI", groupe: "Pilotage", droit: "relevePrestations" },
   { href: "/pilotage/planning-ressources", libelle: "Planning par ressource", groupe: "Pilotage", droit: "voirPlanning" },
-  { href: "/affaires/bilan", libelle: "Bilan d’une affaire", groupe: "Pilotage", droit: "voirPlanning" },
+  { href: "/affaires/bilan", libelle: "Fiche affaire (bilan d’affaire)", groupe: "Pilotage", droit: "voirPlanning" },
 
   { href: "/analyse/facturation", libelle: "Facturation du mois", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/finances", libelle: "Finances", groupe: "Analyse", droit: "indicateurs" },
