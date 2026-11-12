@@ -2531,6 +2531,28 @@ function PrestationsContenu() {
                                         ))}
                                       </select>
                                     </label>
+                                    {/* RELEVE_AJOUT_PERSONNE : une personne de plus sur la même commande (nouvelle ligne, avec la vente de la commande) */}
+                                    {peutAgir && (
+                                      <label style={{ ...etiquette, width: 190 }} title="Ajoute une ligne pour cette personne sur la même commande, avec l’unité, la base et le taux de la commande">
+                                        Ajouter une personne
+                                        <select
+                                          value=""
+                                          onChange={(e) => {
+                                            if (e.target.value) void staffer(l.affaire_id, e.target.value);
+                                          }}
+                                          style={champ}
+                                        >
+                                          <option value="">+ sur cette commande…</option>
+                                          {annuaire
+                                            .filter((p) => !lignes.some((x) => x.affaire_id === l.affaire_id && x.collaborateur_id === p.id))
+                                            .map((p) => (
+                                              <option key={p.id} value={p.id}>
+                                                {nomCollab(p)}
+                                              </option>
+                                            ))}
+                                        </select>
+                                      </label>
+                                    )}
                                     <label style={{ ...etiquette, width: 160 }}>
                                       Activité
                                       <select disabled={verrou} value={l.activite_id ?? ""} onChange={(e) => void modifierLigne(l, { activite_id: e.target.value || null })} style={champ}>
