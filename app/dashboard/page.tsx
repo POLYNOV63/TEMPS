@@ -71,6 +71,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [prenom, setPrenom] = useState("");
+  const [monTrigramme, setMonTrigramme] = useState(""); // SALUT_MCO
   const [role, setRole] = useState("");
 
   const [chargement, setChargement] = useState(true);
@@ -248,6 +249,7 @@ export default function DashboardPage() {
         if (!collaborateur) throw new Error("Aucun collaborateur associé à votre compte.");
 
         setPrenom(collaborateur.prenom ?? "");
+        setMonTrigramme(String(collaborateur.trigramme ?? "").trim().toUpperCase());
         setMonCollaborateurId(collaborateur.id);
 
         const roleUtilisateur = String(collaborateur.role ?? "").toUpperCase();
@@ -473,7 +475,8 @@ export default function DashboardPage() {
           <div>
             <h1 style={stylesV2.bonjour}>
               Bonjour {(apercu ? apercu.prenom ?? LIBELLE_ROLE[apercu.role] ?? "" : prenom) || ""}
-              {" 👋"}
+              {/* SALUT_MCO : un salut particulier pour MCO (et pour qui le regarde en aperçu) */}
+              {(apercu ? (apercu.trigramme ?? "").toUpperCase() : monTrigramme) === "MCO" ? " 💩" : " 👋"}
             </h1>
 
             <div style={stylesV2.semaine}>
