@@ -222,6 +222,66 @@ function PrestationsContenu() {
   const [reglages, setReglages] = useState<Map<string, { unite: "JOUR" | "HEURE" | null; base: number | null }>>(new Map());
   const [consoLigneAvant, setConsoLigneAvant] = useState<Map<string, number>>(new Map());
   const [fiche, setFiche] = useState<string | null>(null);
+  /* FICHE_FAMILLE_CHIFFRES : pour chaque commande de la famille (base, avenants), ses lignes, ce qui est fait au relevé
+     (jusqu'à aujourd'hui) et ses mois clôturés (facturés) */
+  type ChiffresFamille = {
+    lignes: { id: string; unite: "JOUR" | "HEURE"; taux: number | null; base: number }[];
+    faitH: Map<string, number>;
+    mois: { ligne_id: string; mois: string; heures: number; montant: number }[];
+  };
+  const [famOuvertes, setFamOuvertes] = useState<Set<string>>(new Set());
+  const [familleData, setFamilleData] = useState<Map<string, ChiffresFamille> | null>(null);
+  useEffect(() => {
+    setFamOuvertes(new Set(fiche ? [fiche] : []));
+    setFamilleData(null);
+    if (!fiche) return;
+    const a = affaires.find((x) => x.id === fiche);
+    if (!a) return;
+    const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
+    const ids = affaires.filter((x) => (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "") === base).map((x) => x.id);
+    let actif = true;
+    void (async () => {
+      const { data: ls } = await supabase.from("prestation_lignes").select("id,affaire_id,unite,taux,base_horaire").in("affaire_id", ids);
+      const lignesF = ((ls ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null }[]).map((l) => ({
+        id: l.id,
+        affaire_id: l.affaire_id,
+        unite: l.unite,
+        taux: l.taux === null ? null : Number(l.taux),
+        base: Number(l.base_horaire) || 7,
+      }));
+      const lids = lignesF.map((l) => l.id);
+      const d = new Date();
+      const auj = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      let pm: { ligne_id: string; mois: string; heures_fige: number | string | null; montant_fige: number | string | null }[] = [];
+      let sa: { ligne_id: string; heures: number | string | null }[] = [];
+      if (lids.length > 0)
+        [pm, sa] = await Promise.all([
+          chargerTout<{ ligne_id: string; mois: string; heures_fige: number | string | null; montant_fige: number | string | null }>((x, y) =>
+            supabase.from("prestation_mois").select("ligne_id,mois,heures_fige,montant_fige").in("ligne_id", lids).eq("valide", true).order("mois").range(x, y)
+          ),
+          chargerTout<{ ligne_id: string; heures: number | string | null }>((x, y) =>
+            supabase.from("prestation_saisies").select("ligne_id,heures").in("ligne_id", lids).lte("jour", auj).order("jour").range(x, y)
+          ),
+        ]);
+      if (!actif) return;
+      const faitH = new Map<string, number>();
+      for (const s of sa) faitH.set(s.ligne_id, (faitH.get(s.ligne_id) ?? 0) + (Number(s.heures) || 0));
+      const m = new Map<string, ChiffresFamille>();
+      for (const id of ids) {
+        const lsA = lignesF.filter((l) => l.affaire_id === id);
+        const lidsA = new Set(lsA.map((l) => l.id));
+        m.set(id, {
+          lignes: lsA,
+          faitH,
+          mois: pm.filter((x) => lidsA.has(x.ligne_id)).map((x) => ({ ligne_id: x.ligne_id, mois: String(x.mois).slice(0, 7), heures: Number(x.heures_fige) || 0, montant: Number(x.montant_fige) || 0 })),
+        });
+      }
+      setFamilleData(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [fiche, affaires]);
   /* FICHE_FAMILLE : dates de chaque commande de la famille (base et avenants), lues dans la copie du Suivi d'affaire */
   const [datesCommandes, setDatesCommandes] = useState<Map<string, { statut: string | null; ouverture: string | null; reception: string | null; livraison: string | null }>>(new Map());
   useEffect(() => {
@@ -2003,8 +2063,8 @@ function PrestationsContenu() {
           /* RELEVE_UNE_LIGNE_V7 : n° d’une affaire à staffer cliquable ; flèches du mois fixes dans l’en-tête (le tableau reste affiché pendant le chargement, la page ne remonte pas) ; « à staffer » en haut, jours plus étroits ; n° de semaine, jours qui se partagent la largeur de l’écran, un seul ascenseur (celui de la page) ; tout à gauche (commande, mois, montant, reste, réglages), le calendrier mince à droite ; une ligne par commande × personne, comme le Suivi des prestations.
              Le calendrier reste fixe en haut ; la commande (à gauche) et le mois, le montant, le reste
              (à droite) restent visibles quand on fait défiler. ⚙ ouvre les réglages de la ligne. */
-          const L_CMD = 180;
-          const L_PERS = 62;
+          const L_CMD = 250; // RELEVE_AERE : première colonne plus large
+          const L_PERS = 72;
           const L_MOIS = 66;
           const L_MONTANT = 80;
           const L_RESTE = 104;
@@ -2040,7 +2100,7 @@ function PrestationsContenu() {
           // ENTETES_VISIBLES : titres de colonnes plus grands et plus foncés
           const entete: CSSProperties = { ...th, position: "sticky", top: HAUT, zIndex: 3, background: "#f1f2f4", padding: "6px 4px", fontSize: 13, fontWeight: 800, color: "#1f2328", letterSpacing: ".3px", borderBottom: "2px solid #b3b9c0", textAlign: "center", whiteSpace: "normal", lineHeight: 1.15, overflow: "visible", textOverflow: "clip" }; // ENTETES_CENTRES
           const fixeG = (left: number, largeur: number, fond: string = fondFixe): CSSProperties => ({ position: "sticky", left, zIndex: 2, background: fond, minWidth: largeur, maxWidth: largeur, width: largeur });
-          const cellule: CSSProperties = { ...td, padding: "3px 4px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
+          const cellule: CSSProperties = { ...td, padding: "7px 6px", fontSize: 13, borderBottom: `1px solid ${C.ligne}`, overflow: "hidden", textOverflow: "ellipsis" };
           const enUnite = (l: Ligne, heures: number) =>
             l.unite === "JOUR" ? `${(Math.round((heures / l.base_horaire) * 100) / 100).toLocaleString("fr-FR")} j` : formatHeures(heures);
           const etiquette: CSSProperties = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris };
@@ -2145,13 +2205,13 @@ function PrestationsContenu() {
                           <button
                             type="button"
                             onClick={() => setFiche(a.id)}
-                            title="Voir la fiche commande : ce qui est commandé, le taux, le montant"
-                            style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textDecoration: "underline dotted" }}
+                            title={a.statut === "EN_ATTENTE" ? "Intention de commande (commande pas encore reçue). Voir la fiche commande" : "Voir la fiche commande : ce qui est commandé, le taux, le montant"}
+                            style={{ all: "unset", cursor: "pointer", fontWeight: 800, color: C.rougeFonce, textDecoration: "underline dotted", ...(a.statut === "EN_ATTENTE" ? { background: "#ffe94d", padding: "0 4px", borderRadius: 3 } : {}) }}
                           >
                             {numeroFacture(a).numero}
                           </button>
                           {numeroFacture(a).devis && <span title="Devis d’origine (Suivi d’affaire BE)" style={{ fontSize: 11, fontWeight: 700, color: C.gris }}>DBE{String(numeroFacture(a).devis).replace(/^DBE/i, "")}</span>}
-                          {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                          
                         </span>
                       </td>
                       <td colSpan={nbCol - 1} style={cellule}>
@@ -2224,7 +2284,7 @@ function PrestationsContenu() {
                                         {nf?.numero}
                                       </Link>
                                       {nf?.devis && <span title="Devis d’origine (Suivi d’affaire BE)" style={{ fontSize: 11, fontWeight: 700, color: C.gris }}>DBE{String(nf?.devis).replace(/^DBE/i, "")}</span>}
-                                      {a.statut === "EN_ATTENTE" && <span style={{ fontSize: 11, color: "#7a3e00", fontWeight: 800 }}>INT.</span>}
+                                      
                                       {/* REPERE_REPORT : heures reportées du mois précédent sur cette ligne */}
                                       {!c.reporte && c.reportEntrant > 0.01 && (
                                         <span
@@ -2446,8 +2506,8 @@ function PrestationsContenu() {
                                         fontWeight: 700,
                                         color: s?.code ? "#7a3e00" : C.encre,
                                         fontFamily: "inherit",
-                                        padding: "7px 0",
-                                        cursor: verrou ? "default" : "cell",
+                                        padding: "10px 0",
+ cursor: verrou ? "default" : "cell",
                                       }}
                                     />
                                   </td>
@@ -2801,6 +2861,41 @@ function PrestationsContenu() {
                     .filter((x) => (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "") === base)
                     .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
                   const frD = (d: string | null) => (d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "—");
+                  /* FICHE_FAMILLE_CHIFFRES : commandé, livré (fait au relevé), facturé (mois clôturés), reste à facturer, dans l'unité de la commande */
+                  const chiffres = (x: AffaireP) => {
+                    const fx = ficheDe(x);
+                    const dx = familleData?.get(x.id);
+                    if (!dx) return null;
+                    const k = (lid: string) => (fx.unite === "JOUR" ? dx.lignes.find((l) => l.id === lid)?.base || fx.base : 1);
+                    let faitU = 0;
+                    let faitE = 0;
+                    for (const l of dx.lignes) {
+                      const h = dx.faitH.get(l.id) ?? 0;
+                      faitU += h / k(l.id);
+                      const tH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base : l.taux;
+                      if (tH !== null) faitE += h * tH;
+                    }
+                    const parMois = new Map<string, { q: number; e: number }>();
+                    for (const mm of dx.mois) {
+                      const v = parMois.get(mm.mois) ?? { q: 0, e: 0 };
+                      v.q += mm.heures / k(mm.ligne_id);
+                      v.e += mm.montant;
+                      parMois.set(mm.mois, v);
+                    }
+                    const factureU = [...parMois.values()].reduce((t, v) => t + v.q, 0);
+                    const factureE = [...parMois.values()].reduce((t, v) => t + v.e, 0);
+                    return { fx, u: fx.unite === "JOUR" ? "j" : "h", faitU, faitE, factureU, factureE, parMois: [...parMois.entries()].sort((p, q) => p[0].localeCompare(q[0])) };
+                  };
+                  const n2 = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+                  const ligneChiffre = (lib: string, q: number | null, u: string, e: number | null, aide?: string, couleur?: string) => (
+                    <div title={aide} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0", borderBottom: `1px dotted ${C.ligne}` }}>
+                      <span style={{ color: C.gris }}>{lib}</span>
+                      <strong style={{ color: couleur }}>
+                        {q === null ? "—" : `${n2(Math.round(q * 100) / 100)} ${u}`}
+                        {e !== null && Math.abs(e) >= 0.5 ? ` · ${euros(e)}` : ""}
+                      </strong>
+                    </div>
+                  );
                   return (
                     <>
                       {titreSection(famille.length > 1 ? "Commandes de la famille" : "Dates de la commande")}
@@ -2819,8 +2914,23 @@ function PrestationsContenu() {
                             const d = datesCommandes.get(x.numero.toUpperCase().replace(/^0+/, ""));
                             const inversee = Boolean(d?.reception && d?.ouverture && (new Date(`${d.ouverture.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${d.reception.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > 60); // DATES_TOLERANCE
                             return (
-                              <tr key={x.id} style={x.id === a.id ? { background: "#fff7e0" } : undefined}>
-                                <td style={{ ...page.td, padding: "4px 6px", fontWeight: 800 }}>{x.numero}</td>
+                              <Fragment key={x.id}>
+                              <tr
+                                onClick={() =>
+                                  setFamOuvertes((s) => {
+                                    const n = new Set(s);
+                                    if (n.has(x.id)) n.delete(x.id);
+                                    else n.add(x.id);
+                                    return n;
+                                  })
+                                }
+                                title="Déplier : quantités et montants commandés, livrés, facturés"
+                                style={{ cursor: "pointer", ...(x.id === a.id ? { background: "#fff7e0" } : {}) }}
+                              >
+                                <td style={{ ...page.td, padding: "4px 6px", fontWeight: 800, whiteSpace: "nowrap" }}>
+                                  <span style={{ color: C.gris, marginRight: 4 }}>{famOuvertes.has(x.id) ? "▾" : "▸"}</span>
+                                  {x.numero}
+                                </td>
                                 <td style={{ ...page.td, padding: "4px 6px" }}>{d?.statut ?? (x.statut === "LIVREE" ? "Livrée" : x.statut === "EN_COURS" ? "En cours" : x.statut)}</td>
                                 <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.ouverture ?? null)}</td>
                                 <td
@@ -2832,10 +2942,63 @@ function PrestationsContenu() {
                                 </td>
                                 <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.livraison ?? null)}</td>
                               </tr>
+                              {famOuvertes.has(x.id) && (
+                                <tr>
+                                  <td colSpan={5} style={{ ...page.td, padding: "6px 10px 10px 24px", background: "#fafbfc", fontSize: 13 }}>
+                                    {(() => {
+                                      const cx = chiffres(x);
+                                      if (!cx) return <span style={{ color: C.gris }}>Chargement…</span>;
+                                      const resteQ = cx.fx.quantite === null ? null : cx.fx.quantite - cx.factureU;
+                                      const resteE = cx.fx.montant > 0 ? cx.fx.montant - cx.factureE : null;
+                                      return (
+                                        <>
+                                          {ligneChiffre("Commandé", cx.fx.quantite, cx.u, cx.fx.montant > 0 ? cx.fx.montant : null)}
+                                          {ligneChiffre("Livré (fait au relevé, à ce jour)", cx.faitU, cx.u, cx.faitE, "Heures saisies au relevé jusqu’à aujourd’hui, au taux de chaque ligne")}
+                                          {ligneChiffre("Facturé (mois clôturés)", cx.factureU, cx.u, cx.factureE, "Mois clôturés du relevé : heures et montants figés", "#1b5e20")}
+                                          {ligneChiffre("Livré, pas encore facturé", cx.faitU - cx.factureU, cx.u, cx.faitE - cx.factureE, "Fait au relevé moins facturé (mois en cours, mois non clôturés, reports)")}
+                                          {ligneChiffre("Reste à facturer sur la commande", resteQ, cx.u, resteE, "Commandé moins facturé", resteQ !== null && resteQ < -0.01 ? "#b3261e" : undefined)}
+                                          {cx.parMois.length > 0 && (
+                                            <div style={{ marginTop: 6, fontSize: 12, color: "#3b4046", lineHeight: 1.6 }}>
+                                              <span style={{ color: C.gris, fontWeight: 700 }}>Facturé mois par mois : </span>
+                                              {cx.parMois.map(([mo, v]) => (
+                                                <span key={mo} style={{ display: "inline-block", marginRight: 12, whiteSpace: "nowrap" }}>
+                                                  {NOMS_MOIS[Number(mo.slice(5, 7)) - 1].slice(0, 4)}. {mo.slice(2, 4)} : <strong>{n2(Math.round(v.q * 100) / 100)} {cx.u}</strong> · {euros(v.e)}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
+                                  </td>
+                                </tr>
+                              )}
+                              </Fragment>
                             );
                           })}
+                          {/* FICHE_FAMILLE_CHIFFRES : total de la famille */}
+                          {famille.length > 1 &&
+                            (() => {
+                              const cs = famille.map(chiffres);
+                              if (cs.some((x) => x === null)) return null;
+                              const ok = cs as NonNullable<ReturnType<typeof chiffres>>[];
+                              const memeUnite = ok.every((x) => x.u === ok[0].u);
+                              const s = (f: (x: (typeof ok)[number]) => number) => ok.reduce((t, x) => t + f(x), 0);
+                              const q = (v: number) => (memeUnite ? `${n2(Math.round(v * 100) / 100)} ${ok[0].u} · ` : "");
+                              return (
+                                <tr>
+                                  <td colSpan={5} style={{ ...page.td, padding: "6px 6px", fontSize: 13, background: "#f1f2f4", borderTop: `2px solid ${C.ligne}` }}>
+                                    <strong>Famille</strong> · commandé {q(s((x) => x.fx.quantite ?? 0))}
+                                    {euros(s((x) => x.fx.montant))} · livré {q(s((x) => x.faitU))}
+                                    {euros(s((x) => x.faitE))} · <span style={{ color: "#1b5e20" }}>facturé {q(s((x) => x.factureU))}
+                                    {euros(s((x) => x.factureE))}</span>
+                                  </td>
+                                </tr>
+                              );
+                            })()}
                         </tbody>
                       </table>
+                      <div style={{ fontSize: 12, color: C.gris, marginBottom: 6 }}>Cliquer sur une commande pour voir ses quantités et montants commandés, livrés et facturés.</div>
                     </>
                   );
                 })()}
