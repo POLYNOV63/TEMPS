@@ -498,12 +498,12 @@ function BilanContenu() {
   return (
     <main style={page.fond} className="bilan-page">
       <style>{CSS_MOBILE_BILAN}</style>
-      <EnTetePage section="Bilan affaire" />
+      <EnTetePage section="Pilotage BE" />
       {/* NAVIGATION_AXES */}<OngletsPilotage actif="bilan" />
 
       <div className="bilan-contenu" style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ marginBottom: 16 }}>
-          <h1 style={page.titre}>Bilan affaire</h1>
+          <h1 style={page.titre}>Fiche affaire</h1>
           <p style={page.sousTitre}>
             Heures chiffrées (Suivi d’affaire BE, commande et avenants) comparées aux heures réalisées (feuilles d’heures et
             historique), par activité, par ligne de commande, par personne et mois par mois.
@@ -774,7 +774,15 @@ function BilanContenu() {
             <SousDossiersAffaire type={affaire.type} numero={affaire.numero} />
 
             {/* ---------- négoce : vendu et acheté (administration, responsables, Direction) ---------- */}
-            {affaire.type === "CBE" && <BilanFinancierAffaire type={affaire.type} numero={affaire.numero} />}
+            {/* MONTANTS_FICHE_AFFAIRE : montants (droit « Montants des affaires »), avec les heures pointées par activité */}
+            {affaire.type === "CBE" && (
+              <BilanFinancierAffaire
+                type={affaire.type}
+                numero={affaire.numero}
+                realiseParActivite={new Map(bilan.parActivite.map((a) => [a.id, a.realise]))}
+                correspondance={correspondance}
+              />
+            )}
 
             {/* ---------- commande et avenants ---------- */}
             {/* REPARTITION_FAMILLE : le pointé de la famille remplit la commande, puis chaque avenant dans l'ordre ;

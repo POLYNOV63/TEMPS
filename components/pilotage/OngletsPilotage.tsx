@@ -32,7 +32,7 @@ const ONGLETS = [
   { cle: "facturation", groupe: 2, court: "Facturation", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
   { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
-  { cle: "bilan", groupe: 2, court: "Bilan affaire", libelle: "Bilan affaire", href: "/affaires/bilan", droit: "voirPlanning" },
+  { cle: "bilan", groupe: 2, court: "Fiche affaire", libelle: "Fiche affaire", href: "/affaires/bilan", droit: "voirPlanning" },
   // la charge
   { cle: "ressources", groupe: 3, court: "Charge ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
   { cle: "charge-activites", groupe: 3, court: "Disponibilités", libelle: "Disponibilités par activité", href: "/analyse/charge-activites", droit: "chargeRessources" },

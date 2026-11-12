@@ -61,7 +61,7 @@ export const DROITS = {
   indicateurs: 2, // indicateurs et finances
   suiviDevis: 1, // SUIVI_DEVIS : page Suivi des devis (liste : ADMIN, RESPONSABLE ; statistiques : ADMIN, DIRECTION)
   suiviAffaires: 0, // DROITS_ROLES : page Suivi des affaires (tout le monde sauf la Direction)
-  montantsAffaires: 2, // DROITS_ROLES : montants du Suivi des affaires (montant, facturé, reste à facturer, € / h)
+  montantsAffaires: 2, // DROITS_ROLES : montants des affaires (Suivi des affaires, Fiche affaire)
   administration: 2, // codes, activités, profils, bilans, imports, export IA...
 } as const;
 
@@ -72,7 +72,7 @@ export const DESCRIPTIONS_DROITS: Record<Droit, { libelle: string; aide: string;
   voirPlanning: { libelle: "Voir le planning", aide: "Planning des affaires, planning par ressource, fiche affaire (lecture)", groupe: "Pilotage" },
   piloterBE: { libelle: "Piloter le BE", aide: "Modifier les affaires, affecter au planning, feuilles de route de l’équipe", groupe: "Pilotage" },
   suiviAffaires: { libelle: "Suivi des affaires", aide: "L’onglet et la page « Suivi des affaires » (heures chiffrées, réalisées, planifiées)", groupe: "Pilotage" },
-  montantsAffaires: { libelle: "Suivi des affaires avec les montants", aide: "Montant, facturé, reste à facturer et € / h réalisé, dans la page et son export", groupe: "Pilotage" },
+  montantsAffaires: { libelle: "Montants des affaires", aide: "Tout ce qui est en euros : colonne des montants du Suivi des affaires (et son export), bloc « Montants de l’affaire » de la Fiche affaire", groupe: "Pilotage" },
   relevePrestations: { libelle: "Relevé PE / PI", aide: "Saisir et clôturer le relevé des prestations, staffer les PE / PI", groupe: "Pilotage" },
   suiviDevis: { libelle: "Suivi des devis", aide: "Gestion des devis et relances ; statistiques pour ceux qui ont aussi « Analyse et finances »", groupe: "Pilotage" },
   chargeRessources: { libelle: "Charge et disponibilités", aide: "Charge par ressource, disponibilités par activité", groupe: "Analyse" },
