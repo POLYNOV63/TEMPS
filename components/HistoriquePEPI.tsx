@@ -22,6 +22,9 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    en courbes puis en tableau ; puis commande par commande.
    Les quantités et les montants viennent des mêmes chiffres : un
    dépassement en jours et en euros se correspondent.
+   Base horaire (BASE_HORAIRE) : la journée de chaque commande (relevé, sinon
+   heures chiffrées ÷ jours vendus du Suivi d'affaire, sinon les lignes) ;
+   les heures chiffrées du Suivi d'affaire font foi (HEURES_CHIFFREES).
    Unité (UNITE_VENDUE) : celle de la prestation vendue (jours ou heures),
    synchronisée du Suivi d'affaire ; sinon le réglage du relevé, sinon les
    lignes. Quantité commandée : la quantité vendue ; sinon montant ÷ taux.
@@ -30,7 +33,7 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    Montants et taux : seulement avec la fonction « Montants des affaires ».
 ================================================================ */
 
-type LigneP = { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | null; base_horaire: number };
+type LigneP = { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | null; base_horaire: number | null; actif: boolean };
 type Etat = "FACTURE" | "A_FACTURER" | "PREVU";
 type Mois = { heures: number; montant: number; etat: Etat };
 type Commande = {
@@ -81,10 +84,10 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
       if (famille.length === 0) return;
 
-      const { data: pl, error: ep } = await supabase.from("prestation_lignes").select("id,affaire_id,unite,taux,base_horaire").in("affaire_id", famille.map((a) => a.id));
+      const { data: pl, error: ep } = await supabase.from("prestation_lignes").select("id,affaire_id,unite,taux,base_horaire,actif").in("affaire_id", famille.map((a) => a.id));
       if (ep) return actif && setMessage("Le relevé PE / PI de cette affaire ne vous est pas ouvert.");
-      const lignes = ((pl ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null }[]).map(
-        (l): LigneP => ({ id: l.id, affaire_id: l.affaire_id, unite: l.unite, taux: l.taux === null ? null : n(l.taux), base_horaire: n(l.base_horaire) || 7 })
+      const lignes = ((pl ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).map(
+        (l): LigneP => ({ id: l.id, affaire_id: l.affaire_id, unite: l.unite, taux: l.taux === null ? null : n(l.taux), base_horaire: n(l.base_horaire) || null, actif: l.actif !== false })
       );
       if (lignes.length === 0) return actif && setMessage("Aucune ligne au relevé PE / PI pour cette affaire.");
       const ids = lignes.map((l) => l.id);
@@ -122,6 +125,30 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       }
       const cles = new Set<string>([...saisi.keys(), ...etats.keys()]);
 
+      /* BASE_HORAIRE : la journée d'une commande (7 h, 7,5 h…) :
+         1. celle réglée au relevé pour la commande ;
+         2. sinon celle du Suivi d'affaire : heures chiffrées ÷ jours vendus (ex. 75 h ÷ 10 j = 7,5 h) ;
+         3. sinon la plus fréquente des lignes actives qui ont des heures, puis des lignes actives ;
+         4. sinon 7 h. */
+      const plusFrequente = (vals: number[]) => {
+        const c = new Map<number, number>();
+        for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
+        return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
+      };
+      const baseDe = (affaireId: string): number => {
+        const a = famille.find((x) => x.id === affaireId);
+        if (!a) return 7;
+        if (n(a.releve_base_horaire) > 0) return n(a.releve_base_horaire);
+        const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
+        if (a.prestation_unite === "JOURS" && n(a.prestation_quantite) > 0 && n(s?.heures_total) > 0) {
+          const r = n(s?.heures_total) / n(a.prestation_quantite);
+          if (r >= 5 && r <= 10) return Math.round(r * 100) / 100;
+        }
+        const ls = lignes.filter((l) => l.affaire_id === affaireId && l.base_horaire);
+        const avecHeures = ls.filter((l) => l.actif && [...saisi.keys()].some((k) => k.startsWith(`${l.id}|`)));
+        return plusFrequente(avecHeures.map((l) => l.base_horaire as number)) ?? plusFrequente(ls.filter((l) => l.actif).map((l) => l.base_horaire as number)) ?? plusFrequente(ls.map((l) => l.base_horaire as number)) ?? 7;
+      };
+
       const res: Commande[] = famille.map((a) => {
         const ls = lignes.filter((l) => l.affaire_id === a.id);
         const mois = new Map<string, Mois>();
@@ -130,7 +157,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
           const l = ls.find((x) => x.id === lid);
           if (!l) continue;
           const e = etats.get(cle);
-          const tauxH = l.taux === null ? 0 : l.unite === "JOUR" ? l.taux / l.base_horaire : l.taux;
+          const tauxH = l.taux === null ? 0 : l.unite === "JOUR" ? l.taux / (l.base_horaire ?? baseDe(a.id)) : l.taux;
           const valide = Boolean(e?.valide);
           const h = valide && e?.heures_fige !== null && e?.heures_fige !== undefined ? n(e.heures_fige) : saisi.get(cle) ?? 0;
           const mt = valide && e?.montant_fige !== null && e?.montant_fige !== undefined ? n(e.montant_fige) : h * tauxH;
@@ -144,17 +171,19 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         }
         const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
         const montant = s ? montants.get(s.id) ?? 0 : 0;
-        const l0 = ls.find((l) => l.taux !== null);
-        const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / l0.base_horaire : l0.taux) : null;
+        const l0 = ls.find((l) => l.taux !== null && l.actif) ?? ls.find((l) => l.taux !== null);
+        const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / (l0.base_horaire ?? baseDe(a.id)) : l0.taux) : null;
         /* UNITE_VENDUE : jours ou heures, d'après ce qui est VENDU (unité de la prestation, synchronisée du Suivi
            d'affaire), sinon le réglage du relevé, sinon les lignes */
         const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
         const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
         const unite: "JOUR" | "HEURE" = uniteVendue ?? uniteReleve ?? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : ls[0]?.unite ?? "HEURE");
-        const baseH = n(a.releve_base_horaire) || ls[0]?.base_horaire || 7;
-        // QUANTITE_COHERENTE : la quantité vendue (jours ou heures) ; sinon montant ÷ taux ; sinon les heures du Suivi d'affaire
+        const baseH = baseDe(a.id);
+        /* HEURES_CHIFFREES : les heures chiffrées du Suivi d'affaire font foi ; à défaut, la quantité vendue
+           (jours × base de la commande) ; à défaut, montant ÷ taux */
         const qte = n(a.prestation_quantite);
-        const heuresCmd = qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : montant > 0 && tauxH0 ? montant / tauxH0 : n(s?.heures_total) > 0 ? n(s?.heures_total) : null;
+        const hSuivi = n(s?.heures_total);
+        const heuresCmd = hSuivi > 0 ? hSuivi : qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : montant > 0 && tauxH0 ? montant / tauxH0 : null;
         const premierMois = [...mois.keys()].sort()[0] ?? null;
         return {
           id: a.id,
@@ -233,7 +262,12 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
 
   // unité d'affichage : celle des commandes si elles ont toutes la même, sinon l'heure
   const enJours = commandes.every((c) => c.unite === "JOUR");
-  const baseJ = commandes[0]?.base ?? 7;
+  const baseJ = (() => {
+    const poids = new Map<number, number>();
+    for (const c of commandes) poids.set(c.base, (poids.get(c.base) ?? 0) + (c.heuresCmd ?? 0) + [...c.mois.values()].reduce((t, x) => t + x.heures, 0));
+    return [...poids.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? 7;
+  })();
+  const bases = [...new Set(commandes.map((c) => c.base))];
   const q = (h: number) => (enJours ? `${(Math.round((h / baseJ) * 10) / 10).toLocaleString("fr-FR")} j` : `${(Math.round(h * 10) / 10).toLocaleString("fr-FR")} h`);
   const qc = (c: Commande, h: number) => (c.unite === "JOUR" ? `${(Math.round((h / c.base) * 10) / 10).toLocaleString("fr-FR")} j` : `${(Math.round(h * 10) / 10).toLocaleString("fr-FR")} h`);
   const gris = "#5b6168";
@@ -291,6 +325,11 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 16, marginBottom: 16, overflowX: "auto" }}>
       <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Historique de la PE / PI</h2>
+      <p style={{ margin: "0 0 4px", fontSize: 13.5 }}>
+        Unité : <strong>{enJours ? `jours de ${baseJ.toLocaleString("fr-FR")} h` : "heures"}</strong>
+        {enJours && bases.length > 1 && <span style={{ color: gris }}> (bases des commandes : {bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(", ")})</span>}
+        <span style={{ color: gris }}> · se règle dans la fiche de paramétrage du relevé (« Journée de »)</span>
+      </p>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
         <strong>Commandé</strong> : ce que le client a commandé (base et avenants). <strong>Relevé</strong> : ce qu’on facture, d’après le relevé PE / PI (facturé, à facturer, prévu).{" "}
         <strong>Pointé</strong> : le travail saisi dans les feuilles d’heures. <strong>Reste</strong> : commandé − relevé, prévu compris.
@@ -473,7 +512,10 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                 <td style={tdG}>
                   <strong style={{ color: "#a30000" }}>{c.numero}</strong> <span style={{ fontSize: 12, color: gris }}>{c.statut}</span>
                 </td>
-                <td style={td}>{c.recue ? libMois(c.recue) : "—"}</td>
+                <td style={td}>
+                  {c.recue ? libMois(c.recue) : "—"}
+                  {c.unite === "JOUR" && <div style={{ fontSize: 11, color: gris }}>jour de {c.base.toLocaleString("fr-FR")} h</div>}
+                </td>
                 {cel(c.heuresCmd ?? 0, c.montant)}
                 {cel(s("FACTURE"), sE("FACTURE"), VERT)}
                 {cel(s("A_FACTURER"), sE("A_FACTURER"), "#8a6500")}
