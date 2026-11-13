@@ -9,11 +9,9 @@ import { formatDate, formatHeures, libelleStatut, nomCollab, num, traduireErreur
 import type { Affectation, JourRow } from "@/lib/pilotagePlanning";
 
 /* ===============================================================
-   BILAN AFFAIRE - PANNEAU « PILOTAGE » (ancienne fiche affaire)
+   FICHE AFFAIRE - PANNEAU « PILOTAGE » (ancienne fiche affaire)
 
-   La fiche du Pilotage et le Bilan affaire ne font plus qu'une page.
-   Ce panneau reprend ce que la fiche avait en propre, commande par
-   commande (base et avenants) :
+   Commande par commande (base et avenants) :
    - responsable (à changer) ;
    - délai initial et actuel, à modifier avec un motif (historisé) ;
    - historique des délais ;
@@ -21,6 +19,10 @@ import type { Affectation, JourRow } from "@/lib/pilotagePlanning";
    - suppression (administration).
    Visible des responsables, de l'administration et de la Direction
    (lecture) ; invisible pour les autres (la base ne leur renvoie rien).
+
+   PANNEAU_COMPACT : avec compact, le panneau tient sur une ligne, dans
+   le cadre de l'affaire (Fiche affaire) : responsable ✏️, délai initial
+   → actuel ✏️, historique ; les affectations à venir sont dans la fiche.
 ================================================================ */
 
 type Historique = {
@@ -35,7 +37,7 @@ type Historique = {
 
 const MOTIFS = ["Ressource indisponible", "Demande du client", "Retard fournisseur", "Changement de périmètre", "Replanification interne", "Date de rendu du devis"];
 
-export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "DBE"; base: string }) {
+export default function PanneauPilotageAffaire({ type, base, compact = false }: { type: "CBE" | "DBE"; base: string; compact?: boolean }) {
   const [commandes, setCommandes] = useState<Affaire[]>([]);
   const [choisie, setChoisie] = useState<string>("");
   const [moi, setMoi] = useState<Moi | null>(null);
@@ -175,6 +177,172 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
   const valeur: CSSProperties = { fontSize: 19, fontWeight: 700, marginTop: 2 };
   const lien: CSSProperties = { all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: C.rougeFonce, display: "block", marginTop: 4 };
 
+  /* ------- les morceaux communs : formulaires et historique ------- */
+  const formulaireResponsable = (
+    <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+      <select value={fResp} onChange={(e) => setFResp(e.target.value)} style={{ ...page.entrees, width: 230, minHeight: 38 }}>
+        {[...annuaire]
+          .sort((x, y) => nomCollab(x).localeCompare(nomCollab(y), "fr"))
+          .map((c) => (
+            <option key={c.id} value={c.id}>
+              {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+            </option>
+          ))}
+      </select>
+      <button type="button" disabled={enCours} onClick={() => void enregistrerResponsable()} style={{ ...page.btnPrimaire, minHeight: 38 }}>
+        OK
+      </button>
+      <button type="button" onClick={() => setEdition("")} style={{ ...page.btnSecondaire, minHeight: 38 }}>
+        ✕
+      </button>
+    </div>
+  );
+  const formulaireDelai = (
+    <div style={{ marginTop: 12, padding: 12, background: "#fff6fa", borderRadius: 10, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+      <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
+        Nouvelle date
+        <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} style={{ ...page.entrees, width: 170, minHeight: 38 }} />
+      </label>
+      <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris, flex: "1 1 220px" }}>
+        Motif (obligatoire, gardé dans l’historique)
+        <input list="motifs-delai" value={fMotif} onChange={(e) => setFMotif(e.target.value)} style={{ ...page.entrees, minHeight: 38 }} />
+        <datalist id="motifs-delai">
+          {MOTIFS.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      </label>
+      <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris, flex: "1 1 200px" }}>
+        Commentaire
+        <input value={fCommentaire} onChange={(e) => setFCommentaire(e.target.value)} style={{ ...page.entrees, minHeight: 38 }} />
+      </label>
+      <button type="button" disabled={enCours} onClick={() => void enregistrerDelai()} style={{ ...page.btnPrimaire, minHeight: 38 }}>
+        {enCours ? "Enregistrement…" : "Enregistrer"}
+      </button>
+      <button type="button" onClick={() => setEdition("")} style={{ ...page.btnSecondaire, minHeight: 38 }}>
+        Annuler
+      </button>
+    </div>
+  );
+  const tableHistorique = (
+    <div style={{ overflowX: "auto", marginTop: 8 }}>
+      {historique.length === 0 ? (
+        <p style={{ margin: 0, color: C.gris }}>Aucun changement de date.</p>
+      ) : (
+        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+          <thead>
+            <tr>
+              <th style={page.th}>Changé le</th>
+              <th style={page.th}>Ancienne date</th>
+              <th style={page.th}>Nouvelle date</th>
+              <th style={page.th}>Motif</th>
+              <th style={page.th}>Par</th>
+            </tr>
+          </thead>
+          <tbody>
+            {historique.map((h) => (
+              <tr key={h.id}>
+                <td style={page.td}>{formatDate(h.modifie_le)}</td>
+                <td style={page.td}>{formatDate(h.ancienne_date)}</td>
+                <td style={{ ...page.td, fontWeight: 800 }}>{formatDate(h.nouvelle_date)}</td>
+                <td style={page.td}>
+                  {h.motif}
+                  {h.commentaire && <div style={{ fontSize: 12, color: C.gris }}>{h.commentaire}</div>}
+                </td>
+                <td style={page.td}>{nomCollab(h.modifie_par ? collabs.get(h.modifie_par) : undefined)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+  const ouvrirDelai = () => {
+    setFDate(affaire.echeance ?? "");
+    setFMotif("");
+    setFCommentaire("");
+    setEdition("delai");
+    setErreur("");
+  };
+
+  /* ------- PANNEAU_COMPACT : sur une ligne, dans le cadre de l'affaire ------- */
+  if (compact) {
+    const enRetard = Boolean(affaire.echeance && affaire.statut !== "LIVREE" && affaire.echeance < new Date().toISOString().slice(0, 10));
+    const petitLien: CSSProperties = { all: "unset", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: C.rougeFonce, marginLeft: 6 };
+    return (
+      <>
+        {commandes.length > 1 && (
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="Le responsable et le délai sont propres à chaque commande">
+            <span style={{ color: C.gris }}>Commande</span>
+            <select
+              value={choisie}
+              onChange={(e) => {
+                setChoisie(e.target.value);
+                setEdition("");
+                setErreur("");
+                setInfo("");
+              }}
+              style={{ ...page.entrees, width: "auto", minHeight: 30, padding: "0 6px", fontWeight: 800 }}
+            >
+              {commandes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.numero} · {libelleStatut(c.statut).toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span>
+          <span style={{ color: C.gris }}>{dbe ? "Rédacteur" : "Responsable"}</span> <strong>{nomCollab(collabs.get(affaire.responsable_id))}</strong>
+          {peutModifier && edition !== "responsable" && (
+            <button
+              type="button"
+              style={petitLien}
+              onClick={() => {
+                setFResp(affaire.responsable_id);
+                setEdition("responsable");
+                setErreur("");
+              }}
+              title="Changer"
+            >
+              ✏️
+            </button>
+          )}
+        </span>
+        <span>
+          <span style={{ color: C.gris }}>{dbe ? "Rendu" : "Délai"}</span>{" "}
+          {affaire.echeance_initiale && affaire.echeance_initiale !== affaire.echeance && (
+            <span style={{ color: C.gris, textDecoration: "line-through" }} title="Délai initial">
+              {formatDate(affaire.echeance_initiale)}
+            </span>
+          )}
+          {affaire.echeance_initiale && affaire.echeance_initiale !== affaire.echeance ? " → " : ""}
+          <strong style={{ color: enRetard ? "#b3261e" : undefined }}>{formatDate(affaire.echeance)}</strong>
+          {peutModifier && !delaiExcel && edition !== "delai" && (
+            <button type="button" style={petitLien} onClick={ouvrirDelai} title={dbe ? "Modifier la date de rendu" : "Modifier le délai"}>
+              ✏️
+            </button>
+          )}
+          {delaiExcel && <span style={{ fontSize: 12, color: C.gris }} title="Se modifie dans le Suivi d’affaire BE"> (Suivi d’affaire)</span>}
+          {historique.length > 0 && (
+            <button type="button" style={{ ...petitLien, color: C.gris, fontWeight: 600 }} onClick={() => setVoirHistorique((v) => !v)}>
+              {voirHistorique ? "▾" : "▸"} {historique.length} changement{historique.length > 1 ? "s" : ""}
+            </button>
+          )}
+        </span>
+        {(erreur || info || edition || voirHistorique) && (
+          <div style={{ flexBasis: "100%" }}>
+            {erreur && <Message genre="erreur">{erreur}</Message>}
+            {info && <Message genre="ok">{info}</Message>}
+            {edition === "responsable" && formulaireResponsable}
+            {edition === "delai" && formulaireDelai}
+            {voirHistorique && tableHistorique}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <section style={{ ...page.carte, padding: 16, marginBottom: 16, borderLeft: `5px solid ${C.rouge}` }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -220,23 +388,7 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
         <div>
           <div style={etiquette}>{dbe ? "Rédacteur" : "Responsable"}</div>
           {edition === "responsable" ? (
-            <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-              <select value={fResp} onChange={(e) => setFResp(e.target.value)} style={{ ...page.entrees, width: 230, minHeight: 38 }}>
-                {[...annuaire]
-                  .sort((x, y) => nomCollab(x).localeCompare(nomCollab(y), "fr"))
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
-                    </option>
-                  ))}
-              </select>
-              <button type="button" disabled={enCours} onClick={() => void enregistrerResponsable()} style={{ ...page.btnPrimaire, minHeight: 38 }}>
-                OK
-              </button>
-              <button type="button" onClick={() => setEdition("")} style={{ ...page.btnSecondaire, minHeight: 38 }}>
-                ✕
-              </button>
-            </div>
+            formulaireResponsable
           ) : (
             <>
               <div style={valeur}>{nomCollab(collabs.get(affaire.responsable_id))}</div>
@@ -278,17 +430,7 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
             </div>
           )}
           {peutModifier && !delaiExcel && edition !== "delai" && (
-            <button
-              type="button"
-              style={lien}
-              onClick={() => {
-                setFDate(affaire.echeance ?? "");
-                setFMotif("");
-                setFCommentaire("");
-                setEdition("delai");
-                setErreur("");
-              }}
-            >
+            <button type="button" style={lien} onClick={ouvrirDelai}>
               ✏️ {affaire.echeance ? (dbe ? "modifier la date de rendu" : "modifier le délai") : dbe ? "définir la date de rendu" : "définir le délai"}
             </button>
           )}
@@ -301,33 +443,7 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
         </div>
       </div>
 
-      {edition === "delai" && (
-        <div style={{ marginTop: 12, padding: 12, background: "#fff6fa", borderRadius: 10, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris }}>
-            Nouvelle date
-            <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} style={{ ...page.entrees, width: 170, minHeight: 38 }} />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris, flex: "1 1 220px" }}>
-            Motif (obligatoire, gardé dans l’historique)
-            <input list="motifs-delai" value={fMotif} onChange={(e) => setFMotif(e.target.value)} style={{ ...page.entrees, minHeight: 38 }} />
-            <datalist id="motifs-delai">
-              {MOTIFS.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, fontWeight: 700, color: C.gris, flex: "1 1 200px" }}>
-            Commentaire
-            <input value={fCommentaire} onChange={(e) => setFCommentaire(e.target.value)} style={{ ...page.entrees, minHeight: 38 }} />
-          </label>
-          <button type="button" disabled={enCours} onClick={() => void enregistrerDelai()} style={{ ...page.btnPrimaire, minHeight: 38 }}>
-            {enCours ? "Enregistrement…" : "Enregistrer"}
-          </button>
-          <button type="button" onClick={() => setEdition("")} style={{ ...page.btnSecondaire, minHeight: 38 }}>
-            Annuler
-          </button>
-        </div>
-      )}
+      {edition === "delai" && formulaireDelai}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginTop: 14 }}>
         <button type="button" onClick={() => setVoirAffectations((v) => !v)} style={{ all: "unset", cursor: "pointer", fontWeight: 800 }}>
@@ -377,39 +493,7 @@ export default function PanneauPilotageAffaire({ type, base }: { type: "CBE" | "
         </div>
       )}
 
-      {voirHistorique && (
-        <div style={{ overflowX: "auto", marginTop: 8 }}>
-          {historique.length === 0 ? (
-            <p style={{ margin: 0, color: C.gris }}>Aucun changement de date.</p>
-          ) : (
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-              <thead>
-                <tr>
-                  <th style={page.th}>Changé le</th>
-                  <th style={page.th}>Ancienne date</th>
-                  <th style={page.th}>Nouvelle date</th>
-                  <th style={page.th}>Motif</th>
-                  <th style={page.th}>Par</th>
-                </tr>
-              </thead>
-              <tbody>
-                {historique.map((h) => (
-                  <tr key={h.id}>
-                    <td style={page.td}>{formatDate(h.modifie_le)}</td>
-                    <td style={page.td}>{formatDate(h.ancienne_date)}</td>
-                    <td style={{ ...page.td, fontWeight: 800 }}>{formatDate(h.nouvelle_date)}</td>
-                    <td style={page.td}>
-                      {h.motif}
-                      {h.commentaire && <div style={{ fontSize: 12, color: C.gris }}>{h.commentaire}</div>}
-                    </td>
-                    <td style={page.td}>{nomCollab(h.modifie_par ? collabs.get(h.modifie_par) : undefined)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+      {voirHistorique && tableHistorique}
     </section>
   );
 }

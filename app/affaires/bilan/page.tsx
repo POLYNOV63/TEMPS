@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
@@ -13,30 +14,30 @@ import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import { chargerPlanifie } from "@/lib/pilotageDonnees";
 
 /* ===============================================================
-   FICHE AFFAIRE (FICHE_AFFAIRE_V2) - ancien « Bilan affaire »
+   FICHE AFFAIRE (FICHE_AFFAIRE_V3) - ancien « Bilan affaire »
    (reprend et remplace ORDRE_FICHE et MONTANTS_FICHE_AFFAIRE)
 
    Pour une affaire (CBE ou DBE), de haut en bas :
-   - EN TÊTE : l'affaire et le PILOTAGE D'UN COUP D'ŒIL : chiffré,
-     pointé, planifié à venir, reste à planifier, une jauge, la
-     projection (fin au rythme planifié, dépassement prévu), l'avancement
-     estimé s'il est saisi, et les points d'attention ; puis le panneau
-     de pilotage (responsable, délai et son historique, affectations).
-   - ① LA COMMANDE (repliée) : commande, avenants, échéances et lots,
-     dates, statuts, heures commandées par activité.
-   - ② PRÉVU, CONSOMMÉ, PLANIFIÉ : un seul tableau, par activité ou par
-     commande ; puis le planifié à venir (qui, quand).
-   - ③ LE DÉTAIL DES HEURES, à onglets : par personne, par mois (avec la
-     courbe du cumul face au chiffré), par code, par sous-dossier,
-     semaine par semaine.
-   - ④ L'ARGENT (BilanFinancierAffaire) : seulement pour la fonction
+   - L'AFFAIRE, en un seul cadre compact (FICHE_COMPACTE) : n°, devis,
+     désignation, statut ; « 📅 Voir au planning » (et le relevé PE / PI) ;
+     client, réception, responsable et délai (modifiables, PANNEAU_COMPACT,
+     historique) ; le pilotage d'un coup d'œil (chiffré, pointé, à venir,
+     reste à planifier ou dépassement prévu, avancement estimé, jauge) et
+     les points d'attention ; la commande, repliée (mère, filles,
+     échéances, dates, statuts, heures commandées par activité).
+   - ① LE BILAN DES HEURES : prévu, consommé, planifié, par activité ou
+     par commande ; les affectations à venir (qui, quand), comparées au
+     chiffré.
+   - ② LE DÉTAIL DES HEURES, à onglets : par personne, par mois (courbe du
+     cumul face au chiffré), par code, par sous-dossier, semaine par
+     semaine.
+   - ③ L'ARGENT (BilanFinancierAffaire) : seulement pour la fonction
      « Montants des affaires » ; caché en entier pour les autres.
 
    CHIFFRÉ : Suivi d'affaire BE (commande de base + avenants retenus),
-   par activité (correspondance Méca → …) ; à défaut, les besoins du
-   Pilotage. POINTÉ : feuilles d'heures + historique importé (fonction
-   SQL bilan_affaire_imputations). PLANIFIÉ : planning des affaires, à
-   partir d'aujourd'hui.
+   par activité ; à défaut, les besoins du Pilotage. POINTÉ : feuilles
+   d'heures + historique importé (bilan_affaire_imputations). À VENIR :
+   planning des affaires, à partir d'aujourd'hui.
 ================================================================ */
 
 type TypeAffaire = "CBE" | "DBE";
@@ -496,8 +497,6 @@ function BilanContenu() {
     if (echeance && echeance < auj()) attention.push({ texte: `Délai dépassé (${formatDate(echeance)}) et pas encore livrée.`, grave: true });
     if (finPlanifiee && echeance && finPlanifiee > echeance) attention.push({ texte: `Le planifié court jusqu’au ${formatDate(finPlanifiee)}, après le délai du ${formatDate(echeance)}.`, grave: true });
     if (depassementPrevu > 0.5) attention.push({ texte: `Dépassement prévu : pointé + planifié dépassent le chiffré de ${formatHeures(depassementPrevu)}.`, grave: true });
-    if (resteAPlanifier > 0.5 && aVenir.length === 0 && !bilan.toutAuMontant && bilan.totalChiffre > 0)
-      attention.push({ texte: `${formatHeures(resteAPlanifier)} chiffrées restent à faire, et rien n’est planifié.`, grave: false });
     if (avancement !== null && consommePct !== null && consommePct - avancement > 15)
       attention.push({ texte: `${Math.round(consommePct)} % des heures consommées pour ${Math.round(avancement)} % d’avancement estimé : dérive à surveiller.`, grave: true });
   }
@@ -543,7 +542,6 @@ function BilanContenu() {
       <div className="bilan-contenu" style={{ ...page.contenu, maxWidth: 1200 }}>
         <div style={{ marginBottom: 16 }}>
           <h1 style={page.titre}>Fiche affaire</h1>
-          <p style={page.sousTitre}>Où en est l’affaire : la commande, les heures chiffrées, pointées et planifiées, et, pour qui y a droit, l’argent.</p>
         </div>
 
         <form onSubmit={rechercher} style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
@@ -588,133 +586,150 @@ function BilanContenu() {
 
         {affaire && !chargement && !erreur && (
           <>
-            {/* ================= EN TÊTE : l'affaire et le pilotage d'un coup d'œil ================= */}
-            <section style={{ ...page.carte, padding: 18, marginBottom: 16 }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                <BadgeType type={affaire.type} />
-                <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
-                {devis && <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 16, fontWeight: 800, color: C.gris }}>{devis}</span>}
-                <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
-                {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginTop: 8, fontSize: 14, color: "#3b4046" }}>
-                {client && <span>Client : <strong>{client}</strong></span>}
-                {base?.imputation && <span>Imputation : <strong>{base.imputation}</strong></span>}
-                {base?.redacteur && <span>Devis rédigé par : <strong>{base.redacteur}</strong></span>}
-                {base?.date_reception_commande && <span>Commande reçue le <strong>{formatDate(base.date_reception_commande)}</strong></span>}
-                {echeance && <span>Délai : <strong style={{ color: !livree && echeance < auj() ? C.rougeTexte : undefined }}>{formatDate(echeance)}</strong></span>}
-              </div>
-
-              {/* PILOTAGE_COUP_D_OEIL */}
-              {affaire.type === "CBE" && (
-                <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.ligne}` }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 30px", alignItems: "flex-end" }}>
-                    {[
-                      ["Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—", bilan.sourceChiffre === "PILOTAGE" ? "besoins du Pilotage" : `${comptees.length} commande${comptees.length > 1 ? "s" : ""}`],
-                      ["Pointé", formatHeures(bilan.totalRealise), bilan.horsComparaison > 0.01 ? `dont ${formatHeures(bilan.horsComparaison)} scan / négoce` : `${formatHeures(bilan.sources.historique)} d’historique`],
-                      ["Planifié à venir", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—", finPlanifiee ? `jusqu’au ${formatDate(finPlanifiee)}` : "rien au planning"],
-                      [bilan.toutAuMontant ? "Vendu au montant" : resteAPlanifier < -0.01 ? "Dépassement prévu" : "Reste à planifier", bilan.toutAuMontant ? "—" : bilan.totalChiffre > 0 ? formatHeures(Math.abs(resteAPlanifier)) : "—", bilan.toutAuMontant ? "temps passé, sans comparaison" : "chiffré − pointé − planifié"],
-                    ].map(([l, v, s], i) => (
-                      <div key={l} style={{ minWidth: 130 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>{l}</div>
-                        <div style={{ fontSize: 24, fontWeight: 800, color: i === 3 && resteAPlanifier < -0.01 && !bilan.toutAuMontant ? C.rougeTexte : "#1f2328" }}>{v}</div>
-                        <div style={{ fontSize: 12, color: C.gris }}>{s}</div>
-                      </div>
+            {/* ================= L'AFFAIRE (FICHE_COMPACTE) : identité, pilotage et commande, en un seul cadre ================= */}
+            {(() => {
+              const cols = COLONNES_EXCEL.filter(({ champ }) => lignesExcel.some((l) => (Number(l[champ]) || 0) > 0));
+              const ordreL = [...lignesExcel].sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
+              const meres = ordreL.filter((l) => l.genre !== "LOT" && l.genre !== "ECHEANCE");
+              const num = (l: LigneExcel) => String(l.numero_affaire ?? l.cle).toUpperCase();
+              const filles = (l: LigneExcel) =>
+                ordreL.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && num(d).startsWith(num(l)) && !meres.some((m) => m !== l && num(m).length > num(l).length && num(d).startsWith(num(m))));
+              const nbCommandes = meres.filter((l) => l.genre !== "DEVIS").length;
+              const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
+              const nbDecoupes = ordreL.length - meres.length;
+              const prestation = base?.imputation === "PE" || base?.imputation === "PI";
+              const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
+              const chiffre = (libelle: string, valeur: string, sous?: string, rouge?: boolean) => (
+                <div style={{ minWidth: 110 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>{libelle}</div>
+                  <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.15, color: rouge ? C.rougeTexte : "#1f2328" }}>{valeur}</div>
+                  {sous && <div style={{ fontSize: 12, color: C.gris }}>{sous}</div>}
+                </div>
+              );
+              const ligne = (l: LigneExcel, fille: boolean) => {
+                const compte = comptees.includes(l);
+                const intention = l.statut === "Intention de commande";
+                return (
+                  <tr key={l.cle} style={{ opacity: l.disparue || (!fille && !compte && l.genre !== "DEVIS") ? 0.55 : 1, background: fille ? undefined : "#fafbfc" }}>
+                    <td style={{ ...td, whiteSpace: "nowrap", paddingLeft: fille ? 26 : 8 }}>
+                      {fille ? "↳ " : ""}
+                      <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce, ...(intention ? { background: "#ffe58a", borderRadius: 3, padding: "0 4px" } : {}) }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</span>
+                      <span style={{ fontSize: 12, color: C.gris }}> {nature(l)}</span>
+                    </td>
+                    <td style={td}>
+                      {l.statut ?? "—"}
+                      {!fille && !compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
+                    </td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
+                    {cols.map(({ colonne, champ }) => (
+                      <td key={colonne} style={tdN}>
+                        {fille ? "" : (Number(l[champ]) || 0) > 0 ? formatHeures(Number(l[champ])) : "—"}
+                      </td>
                     ))}
-                    {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
-                      <div style={{ flex: "1 1 220px" }}>
-                        <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} large={240} />
-                        <div style={{ fontSize: 12, color: C.gris, marginTop: 2 }}>pointé (foncé) + planifié (clair)</div>
-                      </div>
-                    )}
-                    {avancement !== null && (
-                      <div title={pilotage?.avancement_le ? `Avancement estimé saisi le ${formatDate(pilotage.avancement_le)}` : "Avancement estimé"} style={{ minWidth: 130 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>Avancement estimé</div>
-                        <div style={{ fontSize: 24, fontWeight: 800 }}>{Math.round(avancement)} %</div>
-                        <div style={{ fontSize: 12, color: C.gris }}>{consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : ""}</div>
-                      </div>
+                    <td style={{ ...tdN, fontWeight: 800 }}>{fille || l.genre === "DEVIS" ? "" : formatHeures(l.heures_total)}</td>
+                  </tr>
+                );
+              };
+              return (
+                <section style={{ ...page.carte, padding: "14px 18px", marginBottom: 16 }}>
+                  {/* l'affaire, et les raccourcis */}
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                    <BadgeType type={affaire.type} />
+                    <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
+                    {devis && <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 15, fontWeight: 800, color: C.gris }}>{devis}</span>}
+                    <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
+                    {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
+                    <span style={{ flex: 1 }} />
+                    {/* LIEN_PLANNING : l'affaire au planning, dépliée sur ses affectations */}
+                    <Link href={pilotage ? `/pilotage/affaires?ouvrir=${pilotage.id}` : "/pilotage/affaires"} style={bouton}>
+                      📅 Voir au planning
+                    </Link>
+                    {prestation && (
+                      <Link href={`/pilotage/prestations?affaire=${encodeURIComponent(affaire.numero)}`} style={bouton}>
+                        📋 Relevé PE / PI
+                      </Link>
                     )}
                   </div>
-                  {attention.length > 0 ? (
-                    <ul style={{ margin: "12px 0 0", paddingLeft: 0, listStyle: "none", display: "grid", gap: 4 }}>
+
+                  {/* qui, quand : client, réception, responsable et délai (modifiables) */}
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 22px", marginTop: 8, fontSize: 14 }}>
+                    {client && (
+                      <span>
+                        <span style={{ color: C.gris }}>Client</span> <strong>{client}</strong>
+                      </span>
+                    )}
+                    {base?.imputation && (
+                      <span>
+                        <span style={{ color: C.gris }}>Imputation</span> <strong>{base.imputation}</strong>
+                      </span>
+                    )}
+                    {base?.date_reception_commande && (
+                      <span>
+                        <span style={{ color: C.gris }}>Reçue le</span> <strong>{formatDate(base.date_reception_commande)}</strong>
+                      </span>
+                    )}
+                    {pilotage ? (
+                      <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} compact />
+                    ) : (
+                      echeance && (
+                        <span>
+                          <span style={{ color: C.gris }}>Délai</span> <strong>{formatDate(echeance)}</strong>
+                        </span>
+                      )
+                    )}
+                    {base?.redacteur && (
+                      <span>
+                        <span style={{ color: C.gris }}>Devis rédigé par</span> <strong>{base.redacteur}</strong>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* PILOTAGE_COUP_D_OEIL */}
+                  {affaire.type === "CBE" && (bilan.totalChiffre > 0 || bilan.totalRealise > 0) && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 26px", alignItems: "flex-end", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                      {chiffre("Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—")}
+                      {chiffre("Pointé", formatHeures(bilan.totalRealise))}
+                      {chiffre("À venir", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—", finPlanifiee ? `jusqu’au ${formatDate(finPlanifiee)}` : undefined)}
+                      {!bilan.toutAuMontant &&
+                        bilan.totalChiffre > 0 &&
+                        chiffre(resteAPlanifier < -0.01 ? "Dépassement prévu" : "Reste à planifier", formatHeures(Math.abs(resteAPlanifier)), undefined, resteAPlanifier < -0.01)}
+                      {avancement !== null && chiffre("Avancement estimé", `${Math.round(avancement)} %`, consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : undefined)}
+                      {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
+                        <div style={{ flex: "1 1 200px", paddingBottom: 4 }}>
+                          <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} large={220} />
+                        </div>
+                      )}
+                      {bilan.toutAuMontant && <span style={{ fontSize: 13, color: C.gris, paddingBottom: 4 }}>vendu au montant : temps passé, sans comparaison au chiffré</span>}
+                    </div>
+                  )}
+                  {attention.length > 0 && (
+                    <ul style={{ margin: "10px 0 0", paddingLeft: 0, listStyle: "none", display: "grid", gap: 3 }}>
                       {attention.map((a) => (
-                        <li key={a.texte} style={{ fontSize: 14, color: a.grave ? "#8d1d16" : "#7a3e00" }}>
+                        <li key={a.texte} style={{ fontSize: 13.5, color: a.grave ? "#8d1d16" : "#7a3e00" }}>
                           {a.grave ? "⚠" : "•"} {a.texte}
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    !livree && bilan.totalChiffre > 0 && <div style={{ marginTop: 10, fontSize: 14, color: "#1b5e20", fontWeight: 700 }}>✓ Rien à signaler.</div>
                   )}
-                </div>
-              )}
-            </section>
 
-            {/* responsable, délai et son historique, affectations */}
-            <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} />
-
-            {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
-              <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
-            )}
-            {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
-            {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
-
-            {/* ================= ① LA COMMANDE (repliée) ================= */}
-            {lignesExcel.length > 0 &&
-              (() => {
-                const cols = COLONNES_EXCEL.filter(({ champ }) => lignesExcel.some((l) => (Number(l[champ]) || 0) > 0));
-                const ordreL = [...lignesExcel].sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
-                const meres = ordreL.filter((l) => l.genre !== "LOT" && l.genre !== "ECHEANCE");
-                const num = (l: LigneExcel) => String(l.numero_affaire ?? l.cle).toUpperCase();
-                const filles = (l: LigneExcel) =>
-                  ordreL.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && num(d).startsWith(num(l)) && !meres.some((m) => m !== l && num(m).length > num(l).length && num(d).startsWith(num(m))));
-                const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
-                const nbDecoupes = ordreL.length - meres.length;
-                const ligne = (l: LigneExcel, fille: boolean) => {
-                  const compte = comptees.includes(l);
-                  const intention = l.statut === "Intention de commande";
-                  return (
-                    <tr key={l.cle} style={{ opacity: l.disparue || (!fille && !compte && l.genre !== "DEVIS") ? 0.55 : 1, background: fille ? undefined : "#fafbfc" }}>
-                      <td style={{ ...td, whiteSpace: "nowrap", paddingLeft: fille ? 26 : 8 }}>
-                        {fille ? "↳ " : ""}
-                        <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce, ...(intention ? { background: "#ffe58a", borderRadius: 3, padding: "0 4px" } : {}) }}>{l.numero_affaire ?? l.numero_devis ?? l.cle}</span>
-                        <div style={{ fontSize: 12, color: C.gris }}>{nature(l)}</div>
-                      </td>
-                      <td style={td}>
-                        {l.statut ?? "—"}
-                        {!fille && !compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
-                      </td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
-                      {cols.map(({ colonne, champ }) => (
-                        <td key={colonne} style={tdN}>
-                          {fille ? "" : (Number(l[champ]) || 0) > 0 ? formatHeures(Number(l[champ])) : "—"}
-                        </td>
-                      ))}
-                      <td style={{ ...tdN, fontWeight: 800 }}>{fille || l.genre === "DEVIS" ? "" : formatHeures(l.heures_total)}</td>
-                    </tr>
-                  );
-                };
-                return (
-                  <>
-                    <TitrePartie numero="①" titre="La commande" />
-                    <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
-                      <button type="button" aria-expanded={commandeOuverte} onClick={() => setCommandeOuverte((v) => !v)} style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10, width: "100%" }}>
+                  {/* la commande, repliée */}
+                  {lignesExcel.length > 0 && (
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.ligne}`, overflowX: "auto" }}>
+                      <button type="button" aria-expanded={commandeOuverte} onClick={() => setCommandeOuverte((v) => !v)} style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8 }}>
                         <span style={{ fontWeight: 800, color: C.rougeFonce }}>{commandeOuverte ? "▾" : "▸"}</span>
-                        <strong style={{ fontSize: 16 }}>
-                          {meres.filter((l) => l.genre !== "DEVIS").length} commande{meres.filter((l) => l.genre !== "DEVIS").length > 1 ? "s" : ""}
+                        <strong style={{ fontSize: 14.5 }}>
+                          {nbCommandes} commande{nbCommandes > 1 ? "s" : ""}
                           {nbAvenants > 0 ? ` (dont ${nbAvenants} avenant${nbAvenants > 1 ? "s" : ""})` : ""}
                           {nbDecoupes > 0 ? ` · ${nbDecoupes} échéance${nbDecoupes > 1 ? "s" : ""} ou lot${nbDecoupes > 1 ? "s" : ""}` : ""}
                         </strong>
-                        <span style={{ fontSize: 14, color: C.gris }}>
-                          {base?.date_reception_commande ? `reçue le ${formatDate(base.date_reception_commande)}` : ""}
-                          {echeance ? ` · délai ${formatDate(echeance)}` : ""}
-                          {comptees.length > 0 ? ` · ${formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))} commandées` : ""}
+                        <span style={{ fontSize: 13.5, color: C.gris }}>
+                          {comptees.length > 0 ? `${formatHeures(comptees.reduce((s, l) => s + l.heures_total, 0))} commandées · ` : ""}dates, statuts, heures par activité
                         </span>
                       </button>
                       {commandeOuverte && (
-                        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 12 }}>
+                        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 10 }}>
                           <thead>
                             <tr>
                               <th style={th}>N°</th>
@@ -748,13 +763,20 @@ function BilanContenu() {
                           </tbody>
                         </table>
                       )}
-                    </section>
-                  </>
-                );
-              })()}
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
+
+            {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
+              <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
+            )}
+            {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
+            {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
 
             {/* ================= ② PRÉVU, CONSOMMÉ, PLANIFIÉ ================= */}
-            <TitrePartie numero="②" titre="Prévu, consommé, planifié" />
+            <TitrePartie numero="①" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <button type="button" aria-pressed={vue === "ACTIVITE"} onClick={() => setVue("ACTIVITE")} style={bascule(vue === "ACTIVITE")}>
@@ -843,7 +865,18 @@ function BilanContenu() {
 
               {/* qui, quand */}
               <div style={{ marginTop: 16 }}>
-                <strong style={{ fontSize: 15 }}>Planifié à venir : qui, quand</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 16px" }}>
+                  <strong style={{ fontSize: 15 }}>Affectations à venir : qui, quand</strong>
+                  {bilan.totalChiffre > 0 && !bilan.toutAuMontant && (
+                    <span style={{ fontSize: 13.5, color: "#3b4046" }}>
+                      pointé {formatHeures(pointe)} + à venir {formatHeures(planifieTotal)} = <strong>{formatHeures(pointe + planifieTotal)}</strong> pour {formatHeures(bilan.totalChiffre)} chiffrées
+                      {" "}
+                      <span style={{ fontWeight: 800, color: resteAPlanifier < -0.01 ? C.rougeTexte : "#1b5e20" }}>
+                        ({resteAPlanifier < -0.01 ? `+${formatHeures(-resteAPlanifier)} au-delà` : `${formatHeures(resteAPlanifier)} non planifiées`})
+                      </span>
+                    </span>
+                  )}
+                </div>
                 {aVenir.length === 0 ? (
                   <p style={{ margin: "6px 0 0", color: C.gris }}>Rien n’est planifié à partir d’aujourd’hui.</p>
                 ) : (
@@ -876,7 +909,7 @@ function BilanContenu() {
             </section>
 
             {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}
-            <TitrePartie numero="③" titre="Le détail des heures" />
+            <TitrePartie numero="②" titre="Le détail des heures" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                 {(
