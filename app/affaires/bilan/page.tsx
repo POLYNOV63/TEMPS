@@ -13,6 +13,8 @@ import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui"
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import { chargerPlanifie } from "@/lib/pilotageDonnees";
+import { peut } from "@/lib/droits";
+import { chargerDroitsRoles } from "@/lib/droitsRoles";
 
 /* ===============================================================
    FICHE AFFAIRE (FICHE_AFFAIRE_V3) - ancien « Bilan affaire »
@@ -26,6 +28,10 @@ import { chargerPlanifie } from "@/lib/pilotageDonnees";
      reste à planifier ou dépassement prévu, avancement estimé, jauge) et
      les points d'attention ; la commande, repliée (mère, filles,
      échéances, dates, statuts, heures commandées par activité).
+   ONGLETS_FICHE : sous le cadre de l'affaire, trois onglets : « Affaire et
+   heures » (bilan et détail des heures), « Historique PE / PI » (pour une
+   PE / PI) et « Financier » (fonction « Montants des affaires ») ; l'onglet
+   est retenu dans l'adresse (?vue=pepi, ?vue=financier).
    - ① LE BILAN DES HEURES : prévu, consommé, planifié, par activité ou
      par commande ; les affectations à venir (qui, quand), comparées au
      chiffré. Pour une PE / PI, l'historique du relevé mois par mois et
@@ -163,7 +169,7 @@ function Jauge({ chiffre, pointe, prevu, large = 120 }: { chiffre: number; point
 function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
   return (
     <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
-      {numero} {titre} {aide && <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>{aide}</span>}
+      {numero ? `${numero} ` : ""}{titre} {aide && <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>{aide}</span>}
     </h2>
   );
 }
@@ -191,6 +197,34 @@ function BilanContenu() {
   const [commandeOuverte, setCommandeOuverte] = useState(false);
   const [vue, setVue] = useState<"ACTIVITE" | "COMMANDE">("ACTIVITE");
   const [onglet, setOnglet] = useState<"PERSONNE" | "MOIS" | "CODE" | "SOUS_DOSSIER" | "SEMAINE">("PERSONNE");
+  /* ONGLETS_FICHE : onglet de la fiche (retenu dans l'adresse : ?vue=pepi, ?vue=financier) */
+  const [ongletFiche, setOngletFiche] = useState<"AFFAIRE" | "PEPI" | "ARGENT">(() => {
+    if (typeof window === "undefined") return "AFFAIRE";
+    const v = new URLSearchParams(window.location.search).get("vue");
+    return v === "pepi" ? "PEPI" : v === "financier" ? "ARGENT" : "AFFAIRE";
+  });
+  const changerOnglet = (o: "AFFAIRE" | "PEPI" | "ARGENT") => {
+    setOngletFiche(o);
+    const u = new URL(window.location.href);
+    if (o === "AFFAIRE") u.searchParams.delete("vue");
+    else u.searchParams.set("vue", o === "PEPI" ? "pepi" : "financier");
+    window.history.replaceState(null, "", u.toString());
+  };
+  const [voitMontants, setVoitMontants] = useState(false);
+  useEffect(() => {
+    let actif = true;
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
+      if (actif) setVoitMontants(peut(moi?.role ?? null, "montantsAffaires"));
+    })();
+    return () => {
+      actif = false;
+    };
+  }, []);
 
   useEffect(() => {
     void supabase
@@ -480,6 +514,7 @@ function BilanContenu() {
   const livree = comptees.length > 0 && comptees.every((l) => l.statut === "Livrée");
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
+  const prestation = affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI");
 
   // planifié à venir
   const planifieTotal = aVenir.reduce((s, x) => s + x.heures, 0);
@@ -605,7 +640,6 @@ function BilanContenu() {
               const nbCommandes = meres.filter((l) => l.genre !== "DEVIS").length;
               const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
               const nbDecoupes = ordreL.length - meres.length;
-              const prestation = base?.imputation === "PE" || base?.imputation === "PI";
               const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
               const chiffre = (libelle: string, valeur: string, sous?: string, rouge?: boolean) => (
                 <div style={{ minWidth: 110 }}>
@@ -802,7 +836,42 @@ function BilanContenu() {
             {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
 
             {/* ================= ② PRÉVU, CONSOMMÉ, PLANIFIÉ ================= */}
-            <TitrePartie numero="①" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
+            {/* ONGLETS_FICHE : l'affaire et les heures · l'historique PE / PI · le financier */}
+            {(() => {
+              const onglets: [typeof ongletFiche, string][] = [["AFFAIRE", "Affaire et heures"]];
+              if (prestation) onglets.push(["PEPI", "Historique PE / PI"]);
+              if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
+              if (onglets.length < 2) return null;
+              return (
+                <div role="tablist" style={{ display: "flex", gap: 4, margin: "6px 0 14px", borderBottom: `2px solid ${C.ligne}` }}>
+                  {onglets.map(([cle, libelle]) => (
+                    <button
+                      key={cle}
+                      type="button"
+                      role="tab"
+                      aria-selected={ongletFiche === cle}
+                      onClick={() => changerOnglet(cle)}
+                      style={{
+                        all: "unset",
+                        cursor: "pointer",
+                        padding: "10px 18px",
+                        fontWeight: 800,
+                        fontSize: 16,
+                        color: ongletFiche === cle ? C.rougeFonce : "#3b4046",
+                        borderBottom: `3px solid ${ongletFiche === cle ? C.rouge : "transparent"}`,
+                        marginBottom: -2,
+                      }}
+                    >
+                      {libelle}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {ongletFiche === "AFFAIRE" && (
+            <>
+            <TitrePartie numero="" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <button type="button" aria-pressed={vue === "ACTIVITE"} onClick={() => setVue("ACTIVITE")} style={bascule(vue === "ACTIVITE")}>
@@ -935,12 +1004,7 @@ function BilanContenu() {
             </section>
 
             {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}
-            {/* HISTORIQUE_PEPI : pour une PE / PI, ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
-            {affaire.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI") && (
-              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />
-            )}
-
-            <TitrePartie numero="②" titre="Le détail des heures" />
+            <TitrePartie numero="" titre="Le détail des heures" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                 {(
@@ -1139,8 +1203,14 @@ function BilanContenu() {
               )}
             </section>
 
-            {/* ================= ④ L'ARGENT (fonction « Montants des affaires ») ================= */}
-            {affaire.type === "CBE" && (
+            </>
+            )}
+
+            {/* HISTORIQUE_PEPI : ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
+            {ongletFiche === "PEPI" && prestation && <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />}
+
+            {/* FINANCIER (fonction « Montants des affaires ») */}
+            {ongletFiche === "ARGENT" && voitMontants && affaire.type === "CBE" && (
               <BilanFinancierAffaire
                 type={affaire.type}
                 numero={affaire.numero}
