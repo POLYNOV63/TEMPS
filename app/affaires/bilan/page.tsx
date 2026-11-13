@@ -194,6 +194,8 @@ function BilanContenu() {
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
   const [noteJours, setNoteJours] = useState(""); // JOURS_VENDUS
+  /* FACTURATION_ENTETE : PE / PI facturée au jour (journée de …) ou à l'heure, d'après le relevé */
+  const [facturation, setFacturation] = useState<{ unite: "JOUR" | "HEURE"; bases: number[]; jours: number; heures: number } | null>(null);
   // présentation
   const [commandeOuverte, setCommandeOuverte] = useState(false);
   const [vue, setVue] = useState<"ACTIVITE" | "COMMANDE">("ACTIVITE");
@@ -318,6 +320,7 @@ function BilanContenu() {
          à 7 h : 371 h = 53 j). On recale les heures chiffrées de chaque commande, et leur répartition par
          activité au prorata. */
       setNoteJours("");
+      setFacturation(null);
       if (cible.type === "CBE") {
         type PilJ = { id: string; numero: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
         const famille = ((pil.data ?? []) as PilJ[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === num);
@@ -336,7 +339,14 @@ function BilanContenu() {
           const u = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : ls.length ? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : a.prestation_unite === "JOURS" ? "JOUR" : "HEURE";
           return u === "JOUR";
         });
+        // FACTURATION_ENTETE : à l'heure, si la famille a des lignes au relevé et aucune commande au jour
+        const imputationBase = (lignes.find((l) => l.genre === "BASE") ?? lignes[0])?.imputation ?? "";
+        if (auJour.length === 0 && lignesR.length > 0 && (imputationBase === "PE" || imputationBase === "PI"))
+          setFacturation({ unite: "HEURE", bases: [], jours: 0, heures: lignes.filter((l) => (l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue && !INACTIFS.includes(l.statut ?? "")).reduce((t, l) => t + l.heures_total, 0) });
         if (auJour.length > 0) {
+          let totJours = 0;
+          let totHeures = 0;
+          const bases = new Set<number>();
           // montants des commandes (pour montant ÷ taux au jour), s'ils sont lisibles
           const ids = lignes.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").map((l) => (l as LigneExcel & { id?: string }).id).filter((x): x is string => Boolean(x));
           const montantDe = new Map<string, number>();
@@ -366,6 +376,11 @@ function BilanContenu() {
                       : 0;
             if (jours <= 0) continue;
             const cibleH = jours * baseC;
+            if (!l.disparue && !INACTIFS.includes(l.statut ?? "")) {
+              totJours += jours;
+              totHeures += cibleH;
+              bases.add(baseC);
+            }
             if (Math.abs(cibleH - l.heures_total) < 0.05) continue;
             const f = l.heures_total > 0 ? cibleH / l.heures_total : 0;
             const avant = l.heures_total;
@@ -378,6 +393,7 @@ function BilanContenu() {
             setLignesExcel([...lignes]);
             setNoteJours(notes.join(" · "));
           }
+          setFacturation({ unite: "JOUR", bases: [...bases].sort(), jours: totJours, heures: totHeures });
         }
       }
 
@@ -798,6 +814,23 @@ function BilanContenu() {
                     {base?.date_reception_commande && (
                       <span>
                         <span style={{ color: C.gris }}>Reçue le</span> <strong>{formatDate(base.date_reception_commande)}</strong>
+                      </span>
+                    )}
+                    {facturation && (
+                      <span title="D’après le relevé PE / PI : la façon dont la commande est facturée">
+                        <span style={{ color: C.gris }}>Facturée</span>{" "}
+                        <strong>
+                          {facturation.unite === "JOUR"
+                            ? `au jour · journée de ${facturation.bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(" / ") || "?"}`
+                            : "à l’heure"}
+                        </strong>
+                        <span style={{ color: C.gris }}>
+                          {" "}
+                          ·{" "}
+                          {facturation.unite === "JOUR"
+                            ? `${(Math.round(facturation.jours * 10) / 10).toLocaleString("fr-FR")} j commandés (${formatHeures(facturation.heures)})`
+                            : `${formatHeures(facturation.heures)} commandées`}
+                        </span>
                       </span>
                     )}
                     {pilotage ? (
