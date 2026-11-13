@@ -303,7 +303,7 @@ export default function CollaborateursPage() {
   function appliquerBase(baseId: string) {
     setBaseSelectionnee(baseId);
 
-    const base = bases.find((b) => b.id === baseId);
+    const base = profils.find((b) => b.id === baseId); // RYTHME_PROFILS : les rythmes de « Rythmes horaires »
 
     if (!base) return;
 
@@ -387,40 +387,40 @@ export default function CollaborateursPage() {
     }
 
     if (!personnalise && !baseSelectionnee) {
-      setErreur("Veuillez sélectionner une base horaire.");
+      setErreur("Veuillez choisir un rythme horaire (ou « Personnalisé »).");
       return;
     }
 
-    const nomProfil = personnalise
-      ? `Personnalisé - ${prenom} ${nom}`
-      : bases.find((b) => b.id === baseSelectionnee)?.nom || "Profil horaire";
-
-const { data: profil, error: erreurProfil } = await supabase
-  .from("profils_horaires")
-  .insert({
-    nom: nomProfil,
-    lundi: Number(lundi),
-    mardi: Number(mardi),
-    mercredi: Number(mercredi),
-    jeudi: Number(jeudi),
-    vendredi: Number(vendredi),
-    // PROFILS_HORAIRES_V2 : colonnes obligatoires explicites
-    samedi: 0,
-    dimanche: 0,
-    forfait: false,
-    actif: true,
-  })
-  .select()
-  .single();
-
-    if (erreurProfil || !profil) {
-      console.error(erreurProfil);
-      setErreur(
-        erreurProfil?.message
-          ? `Impossible de créer le profil horaire. Cause : ${erreurProfil.message}`
-          : "Impossible de créer le profil horaire."
-      );
-      return;
+    // RYTHME_PROFILS : un rythme choisi dans la liste est celui de « Rythmes horaires » (partagé, rien n'est copié) ;
+    // seul « Personnalisé » crée un rythme propre à la personne
+    const modele = personnalise ? null : profils.find((p) => p.id === baseSelectionnee) ?? null;
+    let profil: { id: string } | null = modele ? { id: modele.id } : null;
+    const nomRythme = modele ? modele.nom : `Personnalisé - ${prenom} ${nom}`;
+    let profilCree = false;
+    if (!profil) {
+      const { data: cree, error: erreurProfil } = await supabase
+        .from("profils_horaires")
+        .insert({
+          nom: nomRythme,
+          lundi: Number(lundi),
+          mardi: Number(mardi),
+          mercredi: Number(mercredi),
+          jeudi: Number(jeudi),
+          vendredi: Number(vendredi),
+          samedi: 0,
+          dimanche: 0,
+          forfait: false,
+          actif: true,
+        })
+        .select()
+        .single();
+      if (erreurProfil || !cree) {
+        console.error(erreurProfil);
+        setErreur(erreurProfil?.message ? `Impossible de créer le rythme personnalisé. Cause : ${erreurProfil.message}` : "Impossible de créer le rythme personnalisé.");
+        return;
+      }
+      profil = cree as { id: string };
+      profilCree = true;
     }
 
     const { data: collaborateur, error: erreurCollaborateur } =
@@ -433,6 +433,7 @@ const { data: profil, error: erreurProfil } = await supabase
           trigramme: trigrammeNormalise,
           role,
           profil_horaire_id: profil.id,
+          rythme: nomRythme,
           date_entree: dateEntree,
           actif: true,
         })
@@ -443,7 +444,7 @@ const { data: profil, error: erreurProfil } = await supabase
       console.error(erreurCollaborateur);
 
       // On ne laisse pas de profil horaire orphelin.
-      await supabase.from("profils_horaires").delete().eq("id", profil.id);
+      if (profilCree && profil) await supabase.from("profils_horaires").delete().eq("id", profil.id);
 
       setErreur("Impossible de créer le collaborateur.");
       return;
@@ -1761,7 +1762,7 @@ const { data: profil, error: erreurProfil } = await supabase
               </div>
             ) : (
             <>
-            <label style={labelStyle}>Base horaire</label>
+            <label style={labelStyle}>Rythme horaire</label>
 
             <select
               value={personnalise ? "PERSONNALISE" : baseSelectionnee}
@@ -1774,11 +1775,11 @@ const { data: profil, error: erreurProfil } = await supabase
               }}
               style={inputStyle}
             >
-              <option value="">Sélectionner une base...</option>
+              <option value="">Choisir un rythme…</option>
 
-              {bases.map((base) => (
-                <option key={base.id} value={base.id}>
-                  {base.code} — {base.nom}
+              {profils.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nom} · {(Number(p.lundi) + Number(p.mardi) + Number(p.mercredi) + Number(p.jeudi) + Number(p.vendredi)).toLocaleString("fr-FR")} h
                 </option>
               ))}
 
