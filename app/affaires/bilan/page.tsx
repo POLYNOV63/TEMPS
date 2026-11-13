@@ -6,6 +6,7 @@ import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
+import HistoriquePEPI from "@/components/HistoriquePEPI";
 import SousDossiersAffaire from "@/components/SousDossiersAffaire";
 import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
 import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
@@ -27,7 +28,8 @@ import { chargerPlanifie } from "@/lib/pilotageDonnees";
      échéances, dates, statuts, heures commandées par activité).
    - ① LE BILAN DES HEURES : prévu, consommé, planifié, par activité ou
      par commande ; les affectations à venir (qui, quand), comparées au
-     chiffré.
+     chiffré. Pour une PE / PI, l'historique du relevé mois par mois et
+     avenant par avenant (HISTORIQUE_PEPI).
    - ② LE DÉTAIL DES HEURES, à onglets : par personne, par mois (courbe du
      cumul face au chiffré), par code, par sous-dossier, semaine par
      semaine.
@@ -909,6 +911,11 @@ function BilanContenu() {
             </section>
 
             {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}
+            {/* HISTORIQUE_PEPI : pour une PE / PI, ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
+            {affaire.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI") && (
+              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />
+            )}
+
             <TitrePartie numero="②" titre="Le détail des heures" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
