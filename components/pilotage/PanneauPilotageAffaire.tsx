@@ -68,7 +68,9 @@ export default function PanneauPilotageAffaire({ type, base, compact = false }: 
     setChoisie((c) => {
       if (c && famille.some((a) => a.id === c)) return c;
       const demandee = new URLSearchParams(window.location.search).get("commande");
-      return (famille.find((a) => a.numero.toUpperCase() === (demandee ?? "").toUpperCase()) ?? famille.find((a) => /^\d+$/.test(a.numero)) ?? famille[0])?.id ?? "";
+      // la commande demandée, sinon la plus récente qui vit encore (pas livrée), sinon la commande de base
+      const vivantes = famille.filter((a) => a.statut !== "LIVREE" && a.statut !== "ABANDONNEE");
+      return (famille.find((a) => a.numero.toUpperCase() === (demandee ?? "").toUpperCase()) ?? vivantes[vivantes.length - 1] ?? famille.find((a) => /^\d+$/.test(a.numero)) ?? famille[0])?.id ?? "";
     });
   }, [type, base]);
 

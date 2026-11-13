@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { chargerDroitsRoles } from "@/lib/droitsRoles";
@@ -31,6 +31,7 @@ type Commande = {
   numero: string;
   statut: string;
   commande: number; // montant commandé (Suivi d'affaire)
+  heuresCmd: number | null; // heures commandées (Suivi d'affaire, ou montant ÷ taux)
   unite: "JOUR" | "HEURE";
   base: number;
   mois: Map<string, Cellule>;
@@ -55,7 +56,6 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [voitMontants, setVoitMontants] = useState(false);
   const [message, setMessage] = useState("");
-  const [ouvertes, setOuvertes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let actif = true;
@@ -92,7 +92,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((x, y) =>
           supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).order("jour").range(x, y)
         ),
-        supabase.from("suivi_lignes").select("id,numero_affaire,genre,statut").eq("base_affaire", b).in("genre", ["BASE", "AVENANT"]),
+        supabase.from("suivi_lignes").select("id,numero_affaire,genre,statut,heures_total").eq("base_affaire", b).in("genre", ["BASE", "AVENANT"]),
       ]);
       const etats = new Map<string, MoisP>(
         pm.map((x) => [
@@ -101,7 +101,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         ])
       );
       // montant commandé de chaque commande (Suivi d'affaire BE)
-      const suivi = (sl.data ?? []) as { id: string; numero_affaire: string | null; genre: string; statut: string | null }[];
+      const suivi = (sl.data ?? []) as { id: string; numero_affaire: string | null; genre: string; statut: string | null; heures_total: number | string | null }[];
       const montants = new Map<string, number>();
       if (voitMontantsAvant(moi?.role ?? null) && suivi.length > 0) {
         const { data: mts } = await supabase.from("suivi_lignes_montants").select("ligne_id,montant").in("ligne_id", suivi.map((s) => s.id));
@@ -154,11 +154,16 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
           mois.set(m, c);
         }
         const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
+        const commande = s ? montants.get(s.id) ?? 0 : 0;
+        const l0 = ls.find((l) => l.taux !== null);
+        const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / l0.base_horaire : l0.taux) : null;
+        const hCmd = n(s?.heures_total);
         return {
           id: a.id,
           numero: a.numero,
           statut: s?.statut ?? a.statut,
-          commande: s ? montants.get(s.id) ?? 0 : 0,
+          commande,
+          heuresCmd: hCmd > 0 ? hCmd : commande > 0 && tauxH0 ? commande / tauxH0 : null,
           unite: ls[0]?.unite ?? "HEURE",
           base: ls[0]?.base_horaire ?? 7,
           mois,
@@ -167,9 +172,6 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       });
       if (!actif) return;
       setCommandes(res.filter((c) => c.mois.size > 0 || c.commande > 0));
-      // la commande la plus récente dépliée d'office
-      const der = res.filter((c) => c.mois.size > 0).slice(-1)[0];
-      if (der) setOuvertes(new Set([der.id]));
     })().catch(() => undefined);
     return () => {
       actif = false;
@@ -201,180 +203,154 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
     );
   if (!commandes || commandes.length === 0) return null;
 
-  const th: CSSProperties = { textAlign: "left", padding: "7px 8px", fontSize: 12.5, background: "#f4f5f7", borderBottom: "2px solid #d5d9de", whiteSpace: "nowrap" };
-  const thN: CSSProperties = { ...th, textAlign: "right" };
-  const td: CSSProperties = { padding: "7px 8px", borderBottom: "1px solid #eceef1", fontSize: 14 };
-  const tdN: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+  /* HISTORIQUE_PEPI_V2 : un seul tableau. Une ligne par mois ; une colonne par commande (base, avenants),
+     avec en tête ce qui est commandé, et en pied ce qui est facturé, en cours, prévu, et le reste. */
+  const th: CSSProperties = { textAlign: "center", padding: "6px 8px", fontSize: 12.5, background: "#f4f5f7", borderBottom: "1px solid #d5d9de", whiteSpace: "nowrap" };
+  const td: CSSProperties = { padding: "6px 8px", borderBottom: "1px solid #eceef1", fontSize: 14, textAlign: "right", whiteSpace: "nowrap" };
+  const sep: CSSProperties = { borderLeft: "2px solid #d5d9de" };
   const gris = "#5b6168";
-  const taux = (montant: number, h: number) => (h > 0.05 && montant > 0.5 ? `${euros(montant / h)} / h` : "—");
+  const qte = (c: Commande, h: number) => (c.unite === "JOUR" ? `${(Math.round((h / c.base) * 10) / 10).toLocaleString("fr-FR")} j` : heures(h));
   const etiquette = (e: Etat) => <span style={{ fontSize: 12, fontWeight: 800, color: LIBELLE_ETAT[e].couleur }}>{LIBELLE_ETAT[e].texte}</span>;
-  const somme = (liste: [string, Cellule][], f: (c: Cellule) => number, filtre?: (e: Etat) => boolean) => liste.filter(([, c]) => !filtre || filtre(c.etat)).reduce((t, [, c]) => t + f(c), 0);
+  const moisCourant = new Date().toISOString().slice(0, 7);
+  const tot = (c: Commande, f: (x: Cellule) => number, filtre: (e: Etat) => boolean) => [...c.mois.values()].filter((x) => filtre(x.etat)).reduce((t, x) => t + f(x), 0);
+  const estFacture = (e: Etat) => e === "CLOTURE";
+  const estEnCours = (e: Etat) => e === "EN_COURS" || e === "A_FACTURER" || e === "REPORTE";
+  const estPrevu = (e: Etat) => e === "PREVU";
+  const nbColsFamille = voitMontants ? 5 : 3;
+  const enTetePied: CSSProperties = { ...td, textAlign: "left", fontWeight: 800, background: "#fafbfc" };
+
+  const ligneTotaux = (libelle: string, filtre: (e: Etat) => boolean, couleur: string, avecPointe: boolean) => {
+    const lignes = famille.filter(([, x]) => filtre(x.etat));
+    const h = lignes.reduce((t, [, x]) => t + x.heures, 0);
+    const mt = lignes.reduce((t, [, x]) => t + x.montant, 0);
+    const p = avecPointe ? lignes.reduce((t, [mo]) => t + (pointeParMois.get(mo) ?? 0), 0) : 0;
+    return (
+      <tr>
+        <td style={{ ...enTetePied, color: couleur }} colSpan={2}>
+          {libelle}
+        </td>
+        {commandes.map((c) => {
+          const hc = tot(c, (x) => x.heures, filtre);
+          const mc = tot(c, (x) => x.montant, filtre);
+          return (
+            <td key={c.id} style={{ ...td, ...sep, background: "#fafbfc", color: couleur, fontWeight: 700 }}>
+              {hc > 0.05 ? qte(c, hc) : "—"}
+              {voitMontants && mc > 0.5 && <div style={{ fontSize: 11.5, color: gris, fontWeight: 400 }}>{euros(mc)}</div>}
+            </td>
+          );
+        })}
+        <td style={{ ...td, ...sep, background: "#fafbfc", fontWeight: 800 }}>{h > 0.05 ? heures(h) : "—"}</td>
+        {voitMontants && <td style={{ ...td, background: "#fafbfc" }}>{h > 0.05 && mt > 0.5 ? `${euros(mt / h)} / h` : ""}</td>}
+        {voitMontants && <td style={{ ...td, background: "#fafbfc", fontWeight: 800 }}>{mt > 0.5 ? euros(mt) : "—"}</td>}
+        <td style={{ ...td, background: "#fafbfc" }}>{avecPointe ? heures(p) : ""}</td>
+        <td style={{ ...td, background: "#fafbfc", fontWeight: 700, color: avecPointe && h - p < -0.5 ? "#b3261e" : "#1b5e20" }}>
+          {avecPointe ? (Math.abs(h - p) < 0.5 ? "=" : `${h - p > 0 ? "+" : "−"}${heures(Math.abs(h - p))}`) : ""}
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 16, marginBottom: 16, overflowX: "auto" }}>
       <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Historique de la PE / PI</h2>
-      <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
-        D’après le relevé PE / PI : mois clôturés (figés à la facture), mois en cours ou à clôturer, mois prévus ; face aux heures pointées dans les feuilles d’heures. Hors mois clôturés, les montants sont estimés (heures × taux de la ligne).
+      <p style={{ margin: "0 0 10px", fontSize: 13, color: gris }}>
+        Une ligne par mois, une colonne par commande. En tête : ce qui est commandé. En pied : facturé, en cours, prévu, et le reste. Mois clôturés : figés à la facture ; autres mois : heures du relevé × taux de la ligne (estimation).
       </p>
-
-      {/* toute la famille, mois par mois */}
-      <strong style={{ fontSize: 15 }}>Mois par mois, toute la famille</strong>
-      <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
+      <table style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
-            <th style={th}>Mois</th>
-            <th style={th}>État</th>
-            <th style={thN}>Heures facturées</th>
-            {voitMontants && <th style={thN}>Taux moyen</th>}
-            {voitMontants && <th style={thN}>Montant</th>}
-            <th style={thN}>Pointé (feuilles)</th>
-            <th style={thN}>Écart</th>
+            <th style={{ ...th, textAlign: "left" }} rowSpan={2}>
+              Mois
+            </th>
+            <th style={{ ...th, textAlign: "left" }} rowSpan={2}>
+              État
+            </th>
+            {commandes.map((c) => (
+              <th key={c.id} style={{ ...th, ...sep, color: "#a30000", fontSize: 14 }}>
+                {c.numero}
+                <div style={{ fontSize: 11, fontWeight: 600, color: gris }}>{c.statut}</div>
+              </th>
+            ))}
+            <th style={{ ...th, ...sep }} colSpan={nbColsFamille}>
+              Toute la famille
+            </th>
+          </tr>
+          <tr>
+            {/* ce qui est commandé, commande par commande */}
+            {commandes.map((c) => (
+              <th key={c.id} style={{ ...th, ...sep, background: "#eef4fb", fontWeight: 700 }} title="Commandé (Suivi d’affaire BE)">
+                commandé {c.heuresCmd !== null ? qte(c, c.heuresCmd) : "?"}
+                {voitMontants && c.commande > 0.5 && <div style={{ fontSize: 11.5, fontWeight: 400 }}>{euros(c.commande)}</div>}
+              </th>
+            ))}
+            <th style={{ ...th, ...sep }}>Heures</th>
+            {voitMontants && <th style={th}>Taux moyen</th>}
+            {voitMontants && <th style={th}>Montant</th>}
+            <th style={th}>Pointé</th>
+            <th style={th}>Écart</th>
           </tr>
         </thead>
         <tbody>
-          {famille.map(([mo, c]) => {
+          {famille.map(([mo, f]) => {
+            const futur = mo > moisCourant;
             const p = pointeParMois.get(mo) ?? 0;
-            const ecart = c.heures - p;
-            const futur = c.etat === "PREVU";
+            const ecart = f.heures - p;
             return (
-              <tr key={mo} style={{ background: futur ? "#fafbfc" : undefined, fontStyle: futur ? "italic" : undefined }}>
-                <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{libMois(mo)}</td>
-                <td style={td}>{etiquette(c.etat)}</td>
-                <td style={{ ...tdN, fontWeight: 800 }}>{c.heures > 0.05 ? heures(c.heures) : "—"}</td>
-                {voitMontants && <td style={tdN}>{taux(c.montant, c.heures)}</td>}
-                {voitMontants && <td style={{ ...tdN, fontWeight: 700 }}>{c.montant > 0.5 ? euros(c.montant) : "—"}</td>}
-                <td style={tdN}>{futur ? "" : p > 0.05 ? heures(p) : "—"}</td>
-                <td style={{ ...tdN, fontWeight: 700, color: futur || Math.abs(ecart) < 0.5 ? gris : ecart < 0 ? "#b3261e" : "#1b5e20" }}>
+              <tr key={mo} style={{ fontStyle: futur ? "italic" : undefined, background: mo === moisCourant ? "#fffafa" : undefined }}>
+                <td style={{ ...td, textAlign: "left", fontWeight: 700 }}>{libMois(mo)}</td>
+                <td style={{ ...td, textAlign: "left" }}>{etiquette(f.etat)}</td>
+                {commandes.map((c) => {
+                  const x = c.mois.get(mo);
+                  return (
+                    <td key={c.id} style={{ ...td, ...sep }} title={x && voitMontants && x.montant > 0.5 ? `${euros(x.montant)} · ${LIBELLE_ETAT[x.etat].texte}` : x ? LIBELLE_ETAT[x.etat].texte : undefined}>
+                      {x && x.heures > 0.05 ? <span style={{ color: LIBELLE_ETAT[x.etat].couleur, fontWeight: 700 }}>{qte(c, x.heures)}</span> : ""}
+                    </td>
+                  );
+                })}
+                <td style={{ ...td, ...sep, fontWeight: 800 }}>{f.heures > 0.05 ? heures(f.heures) : "—"}</td>
+                {voitMontants && <td style={td}>{f.heures > 0.05 && f.montant > 0.5 ? `${euros(f.montant / f.heures)} / h` : "—"}</td>}
+                {voitMontants && <td style={{ ...td, fontWeight: 700 }}>{f.montant > 0.5 ? euros(f.montant) : "—"}</td>}
+                <td style={td}>{futur ? "" : p > 0.05 ? heures(p) : "—"}</td>
+                <td style={{ ...td, fontWeight: 700, color: futur || Math.abs(ecart) < 0.5 ? gris : ecart < 0 ? "#b3261e" : "#1b5e20" }}>
                   {futur ? "" : Math.abs(ecart) < 0.5 ? "=" : `${ecart > 0 ? "+" : "−"}${heures(Math.abs(ecart))}`}
                 </td>
               </tr>
             );
           })}
-          {(() => {
-            const passe = (e: Etat) => e !== "PREVU";
-            const h = somme(famille, (c) => c.heures, passe);
-            const mt = somme(famille, (c) => c.montant, passe);
-            const p = famille.filter(([, c]) => passe(c.etat)).reduce((t, [mo]) => t + (pointeParMois.get(mo) ?? 0), 0);
-            const bord = { borderTop: "2px solid #d5d9de" };
-            return (
-              <tr>
-                <td colSpan={2} style={{ ...td, ...bord, fontWeight: 800 }}>
-                  Total à ce jour
-                </td>
-                <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{heures(h)}</td>
-                {voitMontants && <td style={{ ...tdN, ...bord }}>{taux(mt, h)}</td>}
-                {voitMontants && <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(mt)}</td>}
-                <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{heures(p)}</td>
-                <td style={{ ...tdN, ...bord, fontWeight: 800, color: h - p < -0.5 ? "#b3261e" : "#1b5e20" }}>{Math.abs(h - p) < 0.5 ? "=" : `${h - p > 0 ? "+" : "−"}${heures(Math.abs(h - p))}`}</td>
-              </tr>
-            );
-          })()}
         </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={2 + commandes.length + nbColsFamille} style={{ padding: 0, borderTop: "2px solid #a30000" }} />
+          </tr>
+          {ligneTotaux("Facturé", estFacture, "#1b5e20", true)}
+          {ligneTotaux("En cours, à clôturer", estEnCours, "#1f4e99", true)}
+          {ligneTotaux("Prévu", estPrevu, gris, false)}
+          {/* là où ça nous mène */}
+          <tr>
+            <td style={{ ...enTetePied, borderTop: "2px solid #d5d9de" }} colSpan={2}>
+              Reste après le prévu
+            </td>
+            {commandes.map((c) => {
+              const tout = tot(c, (x) => x.heures, () => true);
+              const reste = c.heuresCmd !== null ? c.heuresCmd - tout : null;
+              const resteE = voitMontants && c.commande > 0.5 ? c.commande - tot(c, (x) => x.montant, () => true) : null;
+              return (
+                <td key={c.id} style={{ ...td, ...sep, background: "#fafbfc", borderTop: "2px solid #d5d9de", fontWeight: 800, color: reste === null ? gris : reste < -0.05 ? "#b3261e" : "#1b5e20" }}>
+                  {reste === null ? "—" : reste < -0.05 ? `dépassé de ${qte(c, -reste)}` : reste <= 0.05 ? "✓ soldé" : qte(c, reste)}
+                  {resteE !== null && Math.abs(resteE) > 0.5 && <div style={{ fontSize: 11.5, fontWeight: 400, color: gris }}>{resteE < 0 ? `− ${euros(-resteE)}` : euros(resteE)}</div>}
+                  {c.finPrevue && <div style={{ fontSize: 11.5, fontWeight: 400, color: gris }}>fin du prévu le {new Date(`${c.finPrevue}T00:00:00`).toLocaleDateString("fr-FR")}</div>}
+                </td>
+              );
+            })}
+            <td colSpan={nbColsFamille} style={{ ...td, ...sep, background: "#fafbfc", borderTop: "2px solid #d5d9de", fontSize: 12.5, color: gris, textAlign: "left", whiteSpace: "normal" }}>
+              commandé − facturé − en cours − prévu, commande par commande
+            </td>
+          </tr>
+        </tfoot>
       </table>
       <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-        Écart = heures facturées − heures pointées : en rouge, du travail pointé et pas facturé ; en vert, facturé au-delà du pointé. Les heures sont pointées sur la commande de base : la comparaison se fait pour toute la famille.
+        Écart = heures facturées − heures pointées (toute la famille : les feuilles d’heures sont pointées sur le n° de base). En rouge, du travail pointé et pas facturé.
       </p>
-
-      {/* avenant par avenant : là où ça nous mène */}
-      <strong style={{ display: "block", fontSize: 15, marginTop: 16 }}>Commande par commande : là où ça nous mène</strong>
-      <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
-        <thead>
-          <tr>
-            <th style={th}>Commande</th>
-            {voitMontants && <th style={thN}>Commandé</th>}
-            <th style={thN}>Facturé</th>
-            <th style={thN}>En cours, à clôturer</th>
-            <th style={thN}>Prévu</th>
-            {voitMontants && <th style={thN}>Reste après le prévu</th>}
-            <th style={th}>Fin du prévu</th>
-          </tr>
-        </thead>
-        <tbody>
-          {commandes.map((c) => {
-            const liste = [...c.mois.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-            const fact = (f: (x: Cellule) => number) => somme(liste, f, (e) => e === "CLOTURE");
-            const cours = (f: (x: Cellule) => number) => somme(liste, f, (e) => e === "EN_COURS" || e === "A_FACTURER" || e === "REPORTE");
-            const prev = (f: (x: Cellule) => number) => somme(liste, f, (e) => e === "PREVU");
-            const reste = c.commande - fact((x) => x.montant) - cours((x) => x.montant) - prev((x) => x.montant);
-            const ouverte = ouvertes.has(c.id);
-            const qte = (h: number) => (c.unite === "JOUR" ? `${(Math.round((h / c.base) * 10) / 10).toLocaleString("fr-FR")} j` : heures(h));
-            const val = (h: number, mt: number) => (
-              <>
-                <strong>{h > 0.05 ? qte(h) : "—"}</strong>
-                {voitMontants && mt > 0.5 && <div style={{ fontSize: 12, color: gris }}>{euros(mt)}</div>}
-              </>
-            );
-            return (
-              <Fragment key={c.id}>
-                <tr
-                  onClick={() =>
-                    setOuvertes((s) => {
-                      const nv = new Set(s);
-                      if (nv.has(c.id)) nv.delete(c.id);
-                      else nv.add(c.id);
-                      return nv;
-                    })
-                  }
-                  title="Déplier : le détail mois par mois"
-                  style={{ cursor: "pointer", background: "#fafbfc" }}
-                >
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>
-                    <span style={{ color: gris, marginRight: 4 }}>{ouverte ? "▾" : "▸"}</span>
-                    <strong style={{ color: "#a30000" }}>{c.numero}</strong>
-                    <span style={{ fontSize: 12, color: gris }}> {c.statut}</span>
-                  </td>
-                  {voitMontants && <td style={{ ...tdN, fontWeight: 800 }}>{c.commande > 0.5 ? euros(c.commande) : "—"}</td>}
-                  <td style={{ ...tdN, color: "#1b5e20" }}>{val(fact((x) => x.heures), fact((x) => x.montant))}</td>
-                  <td style={{ ...tdN, color: "#1f4e99" }}>{val(cours((x) => x.heures), cours((x) => x.montant))}</td>
-                  <td style={{ ...tdN, color: gris }}>{val(prev((x) => x.heures), prev((x) => x.montant))}</td>
-                  {voitMontants && (
-                    <td style={{ ...tdN, fontWeight: 800, color: c.commande <= 0.5 ? gris : reste < -0.5 ? "#b3261e" : "#1b5e20" }}>
-                      {c.commande <= 0.5 ? "—" : reste < -0.5 ? `dépassé de ${euros(-reste)}` : euros(reste)}
-                    </td>
-                  )}
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>{c.finPrevue ? new Date(`${c.finPrevue}T00:00:00`).toLocaleDateString("fr-FR") : "—"}</td>
-                </tr>
-                {ouverte && (
-                  <tr>
-                    <td colSpan={voitMontants ? 7 : 5} style={{ ...td, padding: "4px 8px 10px 30px", background: "#ffffff" }}>
-                      {liste.length === 0 ? (
-                        <span style={{ color: gris }}>Rien au relevé pour cette commande.</span>
-                      ) : (
-                        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                          <thead>
-                            <tr>
-                              <th style={th}>Mois</th>
-                              <th style={th}>État</th>
-                              <th style={thN}>Quantité</th>
-                              {voitMontants && <th style={thN}>Taux</th>}
-                              {voitMontants && <th style={thN}>Montant</th>}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {liste.map(([mo, x]) => (
-                              <tr key={mo} style={{ fontStyle: x.etat === "PREVU" ? "italic" : undefined }}>
-                                <td style={{ ...td, whiteSpace: "nowrap" }}>{libMois(mo)}</td>
-                                <td style={td}>{etiquette(x.etat)}</td>
-                                <td style={{ ...tdN, fontWeight: 700 }}>{qte(x.heures)}</td>
-                                {voitMontants && (
-                                  <td style={tdN}>
-                                    {x.heures > 0.05 && x.montant > 0.5 ? (c.unite === "JOUR" ? `${euros((x.montant / x.heures) * c.base)} / j` : `${euros(x.montant / x.heures)} / h`) : "—"}
-                                  </td>
-                                )}
-                                {voitMontants && <td style={{ ...tdN, fontWeight: 700 }}>{x.montant > 0.5 ? euros(x.montant) : "—"}</td>}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
     </section>
   );
 }

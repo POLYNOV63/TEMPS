@@ -467,7 +467,13 @@ function BilanContenu() {
 
   const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
   const devis = affaire?.type === "CBE" ? numeroDevis(base?.base_devis ?? base?.numero_devis) : null;
+  /* STATUT_FAMILLE : pour une famille (base + avenants), la commande qui vit encore (la plus récente pas
+     livrée) donne le statut et le délai de l'en-tête ; la base livrée ne fait pas croire l'affaire terminée */
+  const commandeActive =
+    [...comptees].filter((l) => l.statut !== "Livrée").sort((a, b) => String(a.numero_affaire ?? a.cle).localeCompare(String(b.numero_affaire ?? b.cle), "fr", { numeric: true })).slice(-1)[0] ?? null;
+  const livreesFamille = comptees.filter((l) => l.statut === "Livrée");
   const echeance = (() => {
+    if (commandeActive && comptees.length > 1) return commandeActive.delai ?? commandeActive.date_livraison_estimee ?? null;
     const dates = comptees.map((l) => l.delai ?? l.date_livraison_estimee).filter((d): d is string => Boolean(d)).sort();
     return pilotage?.echeance ?? dates[dates.length - 1] ?? null;
   })();
@@ -642,7 +648,25 @@ function BilanContenu() {
                     <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
                     {devis && <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 15, fontWeight: 800, color: C.gris }}>{devis}</span>}
                     <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
-                    {livree ? <Pastille genre="info">Livrée{dateLivraison ? ` le ${formatDate(dateLivraison)}` : ""}</Pastille> : base?.statut ? <Pastille genre="info">{base.statut}</Pastille> : null}
+                    {livree ? (
+                      <Pastille genre="info">
+                        {comptees.length > 1 ? "Toutes les commandes livrées" : "Livrée"}
+                        {dateLivraison ? ` · dernière le ${formatDate(dateLivraison)}` : ""}
+                      </Pastille>
+                    ) : commandeActive && comptees.length > 1 ? (
+                      <>
+                        <Pastille genre="info">
+                          {commandeActive.statut ?? "En cours"} · {commandeActive.numero_affaire ?? commandeActive.cle}
+                        </Pastille>
+                        {livreesFamille.length > 0 && (
+                          <span style={{ fontSize: 13, color: C.gris }}>
+                            {livreesFamille.map((l) => l.numero_affaire ?? l.cle).join(", ")} livrée{livreesFamille.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </>
+                    ) : base?.statut ? (
+                      <Pastille genre="info">{base.statut}</Pastille>
+                    ) : null}
                     <span style={{ flex: 1 }} />
                     {/* LIEN_PLANNING : l'affaire au planning, dépliée sur ses affectations */}
                     <Link href={pilotage ? `/pilotage/affaires?ouvrir=${pilotage.id}` : "/pilotage/affaires"} style={bouton}>
