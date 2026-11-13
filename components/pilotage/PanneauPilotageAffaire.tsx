@@ -312,7 +312,7 @@ export default function PanneauPilotageAffaire({ type, base, compact = false }: 
           )}
         </span>
         <span>
-          <span style={{ color: C.gris }}>{dbe ? "Rendu" : "Délai"}</span>{" "}
+          <span style={{ color: C.gris }}>{dbe ? "Rendu" : delaiExcel ? "Délai client" : "Délai"}</span>{" "}
           {affaire.echeance_initiale && affaire.echeance_initiale !== affaire.echeance && (
             <span style={{ color: C.gris, textDecoration: "line-through" }} title="Délai initial">
               {formatDate(affaire.echeance_initiale)}

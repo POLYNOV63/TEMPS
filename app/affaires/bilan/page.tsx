@@ -592,11 +592,14 @@ function BilanContenu() {
   const commandeActive =
     [...comptees].filter((l) => l.statut !== "Livrée").sort((a, b) => String(a.numero_affaire ?? a.cle).localeCompare(String(b.numero_affaire ?? b.cle), "fr", { numeric: true })).slice(-1)[0] ?? null;
   const livreesFamille = comptees.filter((l) => l.statut === "Livrée");
-  const echeance = (() => {
-    if (commandeActive && comptees.length > 1) return commandeActive.delai ?? commandeActive.date_livraison_estimee ?? null;
-    const dates = comptees.map((l) => l.delai ?? l.date_livraison_estimee).filter((d): d is string => Boolean(d)).sort();
-    return pilotage?.echeance ?? dates[dates.length - 1] ?? null;
-  })();
+  /* DELAIS_FICHE : comme au Suivi des affaires, le DÉLAI ESTIMÉ (« Date de livraison estimée » du Suivi d'affaire)
+     fait foi pour l'état, les alertes et la projection ; le DÉLAI CLIENT (« Délai ») est affiché pour mémoire.
+     Famille : ceux de la commande qui vit encore ; sinon le plus tardif des commandes retenues. */
+  const delaisSource = commandeActive && comptees.length > 1 ? [commandeActive] : comptees;
+  const plusTard = (ds: (string | null)[]) => ds.filter((d): d is string => Boolean(d)).sort().slice(-1)[0] ?? null;
+  const delaiEstime = plusTard(delaisSource.map((l) => l.date_livraison_estimee));
+  const delaiClient = plusTard(delaisSource.map((l) => l.delai));
+  const echeance = delaiEstime ?? delaiClient ?? pilotage?.echeance ?? null;
   const livree = comptees.length > 0 && comptees.every((l) => l.statut === "Livrée");
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
@@ -623,8 +626,8 @@ function BilanContenu() {
   if (affaire?.type === "CBE" && !livree) {
     if (lignesExcel.some((l) => l.statut === "Intention de commande") && bilan.totalRealise > 0.5)
       attention.push({ texte: `Intention de commande, mais ${formatHeures(bilan.totalRealise)} déjà pointées : travail à risque tant que la commande n’est pas reçue.`, grave: true });
-    if (echeance && echeance < auj()) attention.push({ texte: `Délai dépassé (${formatDate(echeance)}) et pas encore livrée.`, grave: true });
-    if (finPlanifiee && echeance && finPlanifiee > echeance) attention.push({ texte: `Le planifié court jusqu’au ${formatDate(finPlanifiee)}, après le délai du ${formatDate(echeance)}.`, grave: true });
+    if (echeance && echeance < auj()) attention.push({ texte: `${delaiEstime ? "Délai estimé" : "Délai"} dépassé (${formatDate(echeance)}) et pas encore livrée.`, grave: true });
+    if (finPlanifiee && echeance && finPlanifiee > echeance) attention.push({ texte: `Le planifié court jusqu’au ${formatDate(finPlanifiee)}, après le délai ${delaiEstime ? "estimé " : ""}du ${formatDate(echeance)}.`, grave: true });
     if (depassementPrevu > 0.5) attention.push({ texte: `Dépassement prévu : pointé + planifié dépassent le chiffré de ${formatHeures(depassementPrevu)}.`, grave: true });
     if (avancement !== null && consommePct !== null && consommePct - avancement > 15)
       attention.push({ texte: `${Math.round(consommePct)} % des heures consommées pour ${Math.round(avancement)} % d’avancement estimé : dérive à surveiller.`, grave: true });
@@ -749,7 +752,8 @@ function BilanContenu() {
                       {!fille && !compte && (l.genre === "BASE" || l.genre === "AVENANT") && <div style={{ fontSize: 12, color: C.gris }}>non retenue dans le chiffré</div>}
                     </td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_reception_commande)}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.delai ?? l.date_livraison_estimee)}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(l.date_livraison_estimee)}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{formatDate(l.delai)}</td>
                     <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
                     {cols.map(({ colonne, champ }) => (
                       <td key={colonne} style={tdN}>
@@ -833,9 +837,23 @@ function BilanContenu() {
                         </span>
                       </span>
                     )}
+                    {/* DELAIS_FICHE : délai estimé (fait foi) et délai client (pour mémoire) */}
+                    {affaire.type === "CBE" && delaiEstime && (
+                      <span title="« Date de livraison estimée » du Suivi d’affaire : elle fait foi pour l’état, les alertes et le planning">
+                        <span style={{ color: C.gris }}>Délai estimé</span>{" "}
+                        <strong style={{ color: !livree && delaiEstime < auj() ? C.rougeTexte : undefined }}>{formatDate(delaiEstime)}</strong>
+                      </span>
+                    )}
+                    {/* le délai client d’une commande suivie au Pilotage est affiché par le panneau (avec son historique) */}
+                    {affaire.type === "CBE" && !pilotage && delaiClient && delaiClient !== delaiEstime && (
+                      <span title="« Délai » du Suivi d’affaire : la date demandée par le client, pour mémoire">
+                        <span style={{ color: C.gris }}>Délai client</span> <strong>{formatDate(delaiClient)}</strong>
+                      </span>
+                    )}
                     {pilotage ? (
                       <PanneauPilotageAffaire type={affaire.type} base={affaire.numero} compact />
                     ) : (
+                      affaire.type !== "CBE" &&
                       echeance && (
                         <span>
                           <span style={{ color: C.gris }}>Délai</span> <strong>{formatDate(echeance)}</strong>
@@ -898,7 +916,8 @@ function BilanContenu() {
                               <th style={th}>N°</th>
                               <th style={th}>Statut</th>
                               <th style={th}>Reçue le</th>
-                              <th style={th}>Délai</th>
+                              <th style={th} title="Date de livraison estimée (Suivi d’affaire) : fait foi">Délai estimé</th>
+                              <th style={th} title="Délai demandé par le client (Suivi d’affaire), pour mémoire">Délai client</th>
                               <th style={th}>Livrée le</th>
                               {cols.map(({ colonne }) => (
                                 <th key={colonne} style={thN}>
@@ -912,7 +931,7 @@ function BilanContenu() {
                             {meres.flatMap((l) => [ligne(l, false), ...filles(l).map((d) => ligne(d, true))])}
                             {comptees.length > 1 && (
                               <tr>
-                                <td colSpan={5} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
+                                <td colSpan={6} style={{ ...td, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>
                                   Toute la famille (commandes retenues)
                                 </td>
                                 {cols.map(({ colonne, champ }) => (
