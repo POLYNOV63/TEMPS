@@ -2832,6 +2832,21 @@ function PrestationsContenu() {
           const titreSection = (t: string) => <div style={{ marginTop: 14, fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>{t}</div>;
           const tousPropres = f.personnes.length > 0 && f.personnes.every((p) => p.propre);
           const sansLigne = f.personnes.length === 0;
+          /* FICHE_INFO_COURTE : quantité commandée, même règle que l'Historique PE / PI de la Fiche affaire :
+             au jour : jours vendus (quantité en jours), sinon montant ÷ taux au jour, sinon heures du Suivi d'affaire ÷ 7 h ;
+             à l'heure : quantité vendue, sinon heures du Suivi d'affaire, sinon montant ÷ taux */
+          const qCmd = (() => {
+            const qv = Number(a.prestation_quantite) || 0;
+            if (f.unite === "JOUR") {
+              if (qv > 0 && a.prestation_unite === "JOURS") return qv;
+              if (f.montant > 0 && f.taux) return f.montant / f.taux;
+              if (qv > 0) return qv / 7;
+              return f.heuresCmd > 0 ? f.heuresCmd / 7 : null;
+            }
+            if (qv > 0 && a.prestation_unite !== "JOURS") return qv;
+            if (f.heuresCmd > 0) return f.heuresCmd;
+            return f.montant > 0 && f.taux ? f.montant / f.taux : null;
+          })();
           return (
             <div role="dialog" aria-modal="true" aria-label="Fiche d’information PI / PE" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setFiche(null)}>
               <div style={{ ...page.carte, padding: 20, width: 540, maxWidth: "94vw", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
@@ -2853,14 +2868,14 @@ function PrestationsContenu() {
                   {a.designation}
                 </div>
 
-                {titreSection("Ce que prévoit la commande (Suivi d’affaire)")}
-                {info("Montant", f.montant > 0 ? euros(f.montant) : <span style={{ color: "#b3261e" }}>absent</span>)}
-                {info("Total d’heures", f.heuresCmd > 0 ? formatHeures(f.heuresCmd) : <span style={{ color: "#b3261e" }}>absent</span>)}
-
-                {titreSection("La vente")}
-                {info("Vendue", f.unite === "JOUR" ? `au jour (journée de ${deux(f.base)} h)` : "à l’heure", "Se règle dans la fiche de paramétrage (⚙) des lignes")}
-                {info("Quantité commandée", f.quantite === null ? "—" : `${deux(f.quantite)} ${u}`, "Montant de la commande ÷ taux des lignes")}
-                {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`, "Taux des lignes du relevé (celui de la première, s’il y en a plusieurs)")}
+                {titreSection("La commande")}
+                {info("Facturée", f.unite === "JOUR" ? `au jour (journée de ${deux(f.base)} h)` : "à l’heure", "D’après le relevé : réglage de la commande, sinon ses lignes")}
+                {info(
+                  "Commandé",
+                  qCmd === null ? <span style={{ color: "#b3261e" }}>quantité inconnue</span> : `${deux(Math.round(qCmd * 100) / 100)} ${u}${f.montant > 0 ? ` · ${euros(f.montant)}` : ""}`,
+                  "Quantité vendue (Suivi d’affaire) ; à défaut montant ÷ taux, ou heures ÷ 7 h"
+                )}
+                {info("Taux de la commande", f.taux === null ? "—" : `${deux(f.taux)} € / ${u}`)}
 
                 {(() => {
                   const auj = (() => {
@@ -2896,19 +2911,18 @@ function PrestationsContenu() {
                       planE += plan * tH;
                     }
                   }
-                  const q = f.quantite ?? 0;
+                  const q = qCmd ?? 0;
                   const reste = q - faitU - planU;
                   const resteE = f.montant > 0 ? f.montant - faitE - planE : null;
                   const arr = (n: number) => deux(Math.round(n * 100) / 100);
                   return (
                     <>
                       {titreSection(`Où on en est au ${new Date().toLocaleDateString("fr-FR")}`)}
-                      {info("Commandé", f.quantite === null ? "—" : `${arr(q)} ${u}${f.montant > 0 ? ` · ${euros(f.montant)}` : ""}`)}
-                      {info("Fait", `${arr(faitU)} ${u}${faitE > 0 ? ` · ${euros(faitE)}` : ""}`, "Saisi au relevé jusqu’à aujourd’hui, toutes personnes confondues")}
+                                            {info("Fait", `${arr(faitU)} ${u}${faitE > 0 ? ` · ${euros(faitE)}` : ""}`, "Saisi au relevé jusqu’à aujourd’hui, toutes personnes confondues")}
                       {info("Planifié", `${arr(planU)} ${u}${planE > 0 ? ` · ${euros(planE)}` : ""}`, "Saisi au relevé après aujourd’hui (ce mois-ci et les mois suivants)")}
                       {info(
                         "Reste à planifier",
-                        f.quantite === null ? (
+                        qCmd === null ? (
                           "—"
                         ) : (
                           <span style={{ color: reste < -0.01 ? "#b3261e" : reste <= 0.05 ? "#1b5e20" : undefined }}>
@@ -2923,149 +2937,18 @@ function PrestationsContenu() {
                 })()}
 
                 {(() => {
-                  const base = (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "");
-                  const famille = affaires
-                    .filter((x) => (x.numero.match(/^\d+/)?.[0] ?? x.numero).replace(/^0+/, "") === base)
-                    .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
-                  const frD = (d: string | null) => (d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "—");
-                  /* FICHE_FAMILLE_CHIFFRES : commandé, livré (fait au relevé), facturé (mois clôturés), reste à facturer, dans l'unité de la commande */
-                  const chiffres = (x: AffaireP) => {
-                    const fx = ficheDe(x);
-                    const dx = familleData?.get(x.id);
-                    if (!dx) return null;
-                    const k = (lid: string) => (fx.unite === "JOUR" ? dx.lignes.find((l) => l.id === lid)?.base || fx.base : 1);
-                    let faitU = 0;
-                    let faitE = 0;
-                    for (const l of dx.lignes) {
-                      const h = dx.faitH.get(l.id) ?? 0;
-                      faitU += h / k(l.id);
-                      const tH = l.taux === null ? null : l.unite === "JOUR" ? l.taux / l.base : l.taux;
-                      if (tH !== null) faitE += h * tH;
-                    }
-                    const parMois = new Map<string, { q: number; e: number }>();
-                    for (const mm of dx.mois) {
-                      const v = parMois.get(mm.mois) ?? { q: 0, e: 0 };
-                      v.q += mm.heures / k(mm.ligne_id);
-                      v.e += mm.montant;
-                      parMois.set(mm.mois, v);
-                    }
-                    const factureU = [...parMois.values()].reduce((t, v) => t + v.q, 0);
-                    const factureE = [...parMois.values()].reduce((t, v) => t + v.e, 0);
-                    return { fx, u: fx.unite === "JOUR" ? "j" : "h", faitU, faitE, factureU, factureE, parMois: [...parMois.entries()].sort((p, q) => p[0].localeCompare(q[0])) };
-                  };
-                  const n2 = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
-                  const ligneChiffre = (lib: string, q: number | null, u: string, e: number | null, aide?: string, couleur?: string) => (
-                    <div title={aide} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0", borderBottom: `1px dotted ${C.ligne}` }}>
-                      <span style={{ color: C.gris }}>{lib}</span>
-                      <strong style={{ color: couleur }}>
-                        {q === null ? "—" : `${n2(Math.round(q * 100) / 100)} ${u}`}
-                        {e !== null && Math.abs(e) >= 0.5 ? ` · ${euros(e)}` : ""}
-                      </strong>
-                    </div>
+                  const d = datesCommandes.get(a.numero.toUpperCase().replace(/^0+/, ""));
+                  if (!d) return null;
+                  const frD = (x: string | null) => (x ? new Date(`${x.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR") : "—");
+                  const inversee = Boolean(
+                    d.reception && d.ouverture && (new Date(`${d.ouverture.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${d.reception.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > 60
                   );
                   return (
                     <>
-                      {titreSection(famille.length > 1 ? "Commandes de la famille" : "Dates de la commande")}
-                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, marginBottom: 6 }}>
-                        <thead>
-                          <tr>
-                            <th style={{ ...page.th, padding: "4px 6px" }}>N°</th>
-                            <th style={{ ...page.th, padding: "4px 6px" }}>Statut</th>
-                            <th style={{ ...page.th, padding: "4px 6px" }}>Ouverte</th>
-                            <th style={{ ...page.th, padding: "4px 6px" }}>Reçue</th>
-                            <th style={{ ...page.th, padding: "4px 6px" }}>Livrée</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {famille.map((x) => {
-                            const d = datesCommandes.get(x.numero.toUpperCase().replace(/^0+/, ""));
-                            const inversee = Boolean(d?.reception && d?.ouverture && (new Date(`${d.ouverture.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${d.reception.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000 > 60); // DATES_TOLERANCE
-                            return (
-                              <Fragment key={x.id}>
-                              <tr
-                                onClick={() =>
-                                  setFamOuvertes((s) => {
-                                    const n = new Set(s);
-                                    if (n.has(x.id)) n.delete(x.id);
-                                    else n.add(x.id);
-                                    return n;
-                                  })
-                                }
-                                title="Déplier : quantités et montants commandés, livrés, facturés"
-                                style={{ cursor: "pointer", ...(x.id === a.id ? { background: "#fff7e0" } : {}) }}
-                              >
-                                <td style={{ ...page.td, padding: "4px 6px", fontWeight: 800, whiteSpace: "nowrap" }}>
-                                  <span style={{ color: C.gris, marginRight: 4 }}>{famOuvertes.has(x.id) ? "▾" : "▸"}</span>
-                                  {x.numero}
-                                </td>
-                                <td style={{ ...page.td, padding: "4px 6px" }}>{d?.statut ?? (x.statut === "LIVREE" ? "Livrée" : x.statut === "EN_COURS" ? "En cours" : x.statut)}</td>
-                                <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.ouverture ?? null)}</td>
-                                <td
-                                  style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap", color: inversee ? "#b3261e" : undefined, fontWeight: inversee ? 800 : undefined }}
-                                  title={inversee ? "Reçue avant son ouverture : date à vérifier dans le Suivi d’affaire (jour et mois inversés ?)" : undefined}
-                                >
-                                  {frD(d?.reception ?? null)}
-                                  {inversee ? " ⚠" : ""}
-                                </td>
-                                <td style={{ ...page.td, padding: "4px 6px", whiteSpace: "nowrap" }}>{frD(d?.livraison ?? null)}</td>
-                              </tr>
-                              {famOuvertes.has(x.id) && (
-                                <tr>
-                                  <td colSpan={5} style={{ ...page.td, padding: "6px 10px 10px 24px", background: "#fafbfc", fontSize: 13 }}>
-                                    {(() => {
-                                      const cx = chiffres(x);
-                                      if (!cx) return <span style={{ color: C.gris }}>Chargement…</span>;
-                                      const resteQ = cx.fx.quantite === null ? null : cx.fx.quantite - cx.factureU;
-                                      const resteE = cx.fx.montant > 0 ? cx.fx.montant - cx.factureE : null;
-                                      return (
-                                        <>
-                                          {ligneChiffre("Commandé", cx.fx.quantite, cx.u, cx.fx.montant > 0 ? cx.fx.montant : null)}
-                                          {ligneChiffre("Livré (fait au relevé, à ce jour)", cx.faitU, cx.u, cx.faitE, "Heures saisies au relevé jusqu’à aujourd’hui, au taux de chaque ligne")}
-                                          {ligneChiffre("Facturé (mois clôturés)", cx.factureU, cx.u, cx.factureE, "Mois clôturés du relevé : heures et montants figés", "#1b5e20")}
-                                          {ligneChiffre("Livré, pas encore facturé", cx.faitU - cx.factureU, cx.u, cx.faitE - cx.factureE, "Fait au relevé moins facturé (mois en cours, mois non clôturés, reports)")}
-                                          {ligneChiffre("Reste à facturer sur la commande", resteQ, cx.u, resteE, "Commandé moins facturé", resteQ !== null && resteQ < -0.01 ? "#b3261e" : undefined)}
-                                          {cx.parMois.length > 0 && (
-                                            <div style={{ marginTop: 6, fontSize: 12, color: "#3b4046", lineHeight: 1.6 }}>
-                                              <span style={{ color: C.gris, fontWeight: 700 }}>Facturé mois par mois : </span>
-                                              {cx.parMois.map(([mo, v]) => (
-                                                <span key={mo} style={{ display: "inline-block", marginRight: 12, whiteSpace: "nowrap" }}>
-                                                  {NOMS_MOIS[Number(mo.slice(5, 7)) - 1].slice(0, 4)}. {mo.slice(2, 4)} : <strong>{n2(Math.round(v.q * 100) / 100)} {cx.u}</strong> · {euros(v.e)}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </>
-                                      );
-                                    })()}
-                                  </td>
-                                </tr>
-                              )}
-                              </Fragment>
-                            );
-                          })}
-                          {/* FICHE_FAMILLE_CHIFFRES : total de la famille */}
-                          {famille.length > 1 &&
-                            (() => {
-                              const cs = famille.map(chiffres);
-                              if (cs.some((x) => x === null)) return null;
-                              const ok = cs as NonNullable<ReturnType<typeof chiffres>>[];
-                              const memeUnite = ok.every((x) => x.u === ok[0].u);
-                              const s = (f: (x: (typeof ok)[number]) => number) => ok.reduce((t, x) => t + f(x), 0);
-                              const q = (v: number) => (memeUnite ? `${n2(Math.round(v * 100) / 100)} ${ok[0].u} · ` : "");
-                              return (
-                                <tr>
-                                  <td colSpan={5} style={{ ...page.td, padding: "6px 6px", fontSize: 13, background: "#f1f2f4", borderTop: `2px solid ${C.ligne}` }}>
-                                    <strong>Famille</strong> · commandé {q(s((x) => x.fx.quantite ?? 0))}
-                                    {euros(s((x) => x.fx.montant))} · livré {q(s((x) => x.faitU))}
-                                    {euros(s((x) => x.faitE))} · <span style={{ color: "#1b5e20" }}>facturé {q(s((x) => x.factureU))}
-                                    {euros(s((x) => x.factureE))}</span>
-                                  </td>
-                                </tr>
-                              );
-                            })()}
-                        </tbody>
-                      </table>
-                      <div style={{ fontSize: 12, color: C.gris, marginBottom: 6 }}>Cliquer sur une commande pour voir ses quantités et montants commandés, livrés et facturés.</div>
+                      {info("Dates", `ouverte ${frD(d.ouverture)} · reçue ${frD(d.reception)}${d.livraison ? ` · livrée ${frD(d.livraison)}` : ""}`)}
+                      {inversee && (
+                        <div style={{ fontSize: 12, color: "#b3261e", fontWeight: 700, padding: "4px 0" }}>⚠ Reçue avant son ouverture : date à vérifier dans le Suivi d’affaire (jour et mois inversés ?)</div>
+                      )}
                     </>
                   );
                 })()}
@@ -3101,9 +2984,18 @@ function PrestationsContenu() {
                 )}
 
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-                  <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
-                    Fiche de l’affaire (bilan) →
-                  </Link>
+                  <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+                    <Link
+                      href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}&vue=pepi`}
+                      title="Commandé, facturé, à facturer, prévu et pointé, mois par mois et avenant par avenant"
+                      style={{ ...page.btnPrimaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                    >
+                      Historique complet →
+                    </Link>
+                    <Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+                      Fiche affaire →
+                    </Link>
+                  </span>
                   <button type="button" style={page.btnPrimaire} onClick={() => setFiche(null)}>
                     Fermer
                   </button>

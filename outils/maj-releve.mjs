@@ -5,6 +5,9 @@
    - l'étiquette « INT. » disparaît : l'intention de commande se voit au
      surlignage jaune du n° (ajouté aussi aux commandes à staffer) ;
    - le tableau est plus aéré, la première colonne (commande) plus large ;
+   - fiche d'information PI / PE courte : où on en est (même règle que
+     l'Historique PE / PI), personnes et taux, alertes, « Historique
+     complet → » (FICHE_INFO_COURTE) ;
    - staffage d'un avenant (⚙ Paramétrer) : jamais dans un mois passé (au
      plus tôt le 1er du mois en cours), et les mois remplis sans report
      (STAFFAGE_SANS_REPORT) ;
@@ -171,6 +174,100 @@ if (!erreurs.length) {
     remplacerSouple(f5, "const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(\"fr-FR\"); setInfo(`${s.affaire.numero} staffé :", "// STAFFAGE_SANS_REPORT : ce qui vient d'être rempli compte pour son mois, sans report (sauf mois déjà clôturé)\n        const moisRemplis = [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))];\n        const { data: dejaMois } = await supabase.from(\"prestation_mois\").select(\"mois,valide\").eq(\"ligne_id\", ligneId).in(\"mois\", moisRemplis);\n        const clos = new Set(((dejaMois ?? []) as { mois: string; valide: boolean | null }[]).filter((x) => x.valide).map((x) => String(x.mois).slice(0, 10)));\n        const aOuvrir = moisRemplis.filter((m) => !clos.has(m)).map((m) => ({ ligne_id: ligneId, mois: m, reporte: false }));\n        if (aOuvrir.length) {\n          const { error: er } = await supabase.from(\"prestation_mois\").upsert(aOuvrir, { onConflict: \"ligne_id,mois\" });\n          if (er) setErreur(`Report non désactivé : ${traduireErreur(er.message)}`);\n        }\n        const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(\"fr-FR\");\n        setInfo(`${s.affaire.numero} staffé :", "staffage : mois remplis sans report");
     remplacerSouple(f5, "repris de <strong>{s.source}</strong>, début à la suite de son dernier jour. Vérifiez, puis confirmez.", "repris de <strong>{s.source}</strong>, début à la suite de son dernier jour (au plus tôt le 1er du mois en cours : rien n’est reporté). Vérifiez, puis confirmez.", "staffage : message de l’avenant");
     if (!ecritures.includes(f5)) ecritures.push(f5);
+  }
+}
+
+/* 6. Fiche d'information PI / PE courte : où on en est (même règle que l'Historique PE / PI), personnes et taux,
+      alertes de saisie, et « Historique complet → » (FICHE_INFO_COURTE) */
+if (!erreurs.length) {
+  const f6 = ecritures.find((x) => x.rel === "app/pilotage/prestations/page.tsx") ?? lire("app/pilotage/prestations/page.tsx");
+  if (f6 && f6.texte.includes("FICHE_INFO_COURTE")) {
+    console.log("  = app/pilotage/prestations/page.tsx : fiche d'information déjà allégée");
+  } else if (f6) {
+    // a. quantité commandée : la même règle que l'Historique PE / PI
+    remplacerSouple(
+      f6,
+      "const sansLigne = f.personnes.length === 0;",
+      `const sansLigne = f.personnes.length === 0;
+          /* FICHE_INFO_COURTE : quantité commandée, même règle que l'Historique PE / PI de la Fiche affaire :
+             au jour : jours vendus (quantité en jours), sinon montant ÷ taux au jour, sinon heures du Suivi d'affaire ÷ 7 h ;
+             à l'heure : quantité vendue, sinon heures du Suivi d'affaire, sinon montant ÷ taux */
+          const qCmd = (() => {
+            const qv = Number(a.prestation_quantite) || 0;
+            if (f.unite === "JOUR") {
+              if (qv > 0 && a.prestation_unite === "JOURS") return qv;
+              if (f.montant > 0 && f.taux) return f.montant / f.taux;
+              if (qv > 0) return qv / 7;
+              return f.heuresCmd > 0 ? f.heuresCmd / 7 : null;
+            }
+            if (qv > 0 && a.prestation_unite !== "JOURS") return qv;
+            if (f.heuresCmd > 0) return f.heuresCmd;
+            return f.montant > 0 && f.taux ? f.montant / f.taux : null;
+          })();`,
+      "fiche d’information : quantité commandée (même règle que l’Historique)"
+    );
+    // b. la commande : unité, commandé, taux (au lieu de « Ce que prévoit… » et « La vente »)
+    remplacerRe(
+      f6,
+      /\{titreSection\("Ce que prévoit la commande \(Suivi d’affaire\)"\)\}[\s\S]*?\{info\("Taux de la commande"[^\n]*\n/,
+      () => `{titreSection("La commande")}
+                {info("Facturée", f.unite === "JOUR" ? \`au jour (journée de \${deux(f.base)} h)\` : "à l’heure", "D’après le relevé : réglage de la commande, sinon ses lignes")}
+                {info(
+                  "Commandé",
+                  qCmd === null ? <span style={{ color: "#b3261e" }}>quantité inconnue</span> : \`\${deux(Math.round(qCmd * 100) / 100)} \${u}\${f.montant > 0 ? \` · \${euros(f.montant)}\` : ""}\`,
+                  "Quantité vendue (Suivi d’affaire) ; à défaut montant ÷ taux, ou heures ÷ 7 h"
+                )}
+                {info("Taux de la commande", f.taux === null ? "—" : \`\${deux(f.taux)} € / \${u}\`)}
+`,
+      "fiche d’information : la commande en trois lignes"
+    );
+    // c. où on en est : avec la même quantité commandée
+    remplacerSouple(f6, "const q = f.quantite ?? 0; const reste = q - faitU - planU;", "const q = qCmd ?? 0;\n                  const reste = q - faitU - planU;", "fiche d’information : où on en est, même quantité");
+    remplacerRe(f6, /\{info\("Commandé", f\.quantite === null \? "—" : `\$\{arr\(q\)\} \$\{u\}\$\{f\.montant > 0 \? ` · \$\{euros\(f\.montant\)\}` : ""\}`\)\}\n/, () => "", "fiche d’information : « Commandé » une seule fois");
+    remplacerSouple(f6, '"Reste à planifier", f.quantite === null ? (', '"Reste à planifier",\n                        qCmd === null ? (', "fiche d’information : reste à planifier");
+    // d. la famille détaillée part dans l'Historique PE / PI ; on garde les dates et l'alerte de dates inversées
+    remplacerRe(
+      f6,
+      /\{\(\(\) => \{\s*const base = \(a\.numero\.match\(\/\^\\d\+\/\)\?\.\[0\] \?\? a\.numero\)\.replace\(\/\^0\+\/, ""\);\s*const famille = affaires[\s\S]*?(\{titreSection\("Personnes"\)\})/,
+      (_m, suite) => `{(() => {
+                  const d = datesCommandes.get(a.numero.toUpperCase().replace(/^0+/, ""));
+                  if (!d) return null;
+                  const frD = (x: string | null) => (x ? new Date(\`\${x.slice(0, 10)}T00:00:00\`).toLocaleDateString("fr-FR") : "—");
+                  const inversee = Boolean(
+                    d.reception && d.ouverture && (new Date(\`\${d.ouverture.slice(0, 10)}T00:00:00Z\`).getTime() - new Date(\`\${d.reception.slice(0, 10)}T00:00:00Z\`).getTime()) / 86400000 > 60
+                  );
+                  return (
+                    <>
+                      {info("Dates", \`ouverte \${frD(d.ouverture)} · reçue \${frD(d.reception)}\${d.livraison ? \` · livrée \${frD(d.livraison)}\` : ""}\`)}
+                      {inversee && (
+                        <div style={{ fontSize: 12, color: "#b3261e", fontWeight: 700, padding: "4px 0" }}>⚠ Reçue avant son ouverture : date à vérifier dans le Suivi d’affaire (jour et mois inversés ?)</div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                ${suite}`,
+      "fiche d’information : dates et alerte, sans le détail de la famille"
+    );
+    // e. le lien vers l'Historique PE / PI
+    remplacerSouple(
+      f6,
+      '<Link href={`/affaires/bilan?affaire=${a.type}${numeroBase(a.numero)}&commande=${encodeURIComponent(a.numero)}`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}> Fiche de l’affaire (bilan) → </Link>',
+      `<span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+                    <Link
+                      href={\`/affaires/bilan?affaire=\${a.type}\${numeroBase(a.numero)}&commande=\${encodeURIComponent(a.numero)}&vue=pepi\`}
+                      title="Commandé, facturé, à facturer, prévu et pointé, mois par mois et avenant par avenant"
+                      style={{ ...page.btnPrimaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                    >
+                      Historique complet →
+                    </Link>
+                    <Link href={\`/affaires/bilan?affaire=\${a.type}\${numeroBase(a.numero)}&commande=\${encodeURIComponent(a.numero)}\`} style={{ ...page.btnSecondaire, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+                      Fiche affaire →
+                    </Link>
+                  </span>`,
+      "fiche d’information : « Historique complet → »"
+    );
+    if (!ecritures.includes(f6)) ecritures.push(f6);
   }
 }
 
