@@ -107,6 +107,7 @@ export default function CollaborateursPage() {
   const [historique, setHistorique] = useState<Historique[]>([]);
 
   const [chargement, setChargement] = useState(true);
+  const [recherche, setRecherche] = useState(""); // COLLAB_RECHERCHE
   const [erreur, setErreur] = useState("");
 
   const [modalAjout, setModalAjout] = useState(false);
@@ -907,8 +908,16 @@ export default function CollaborateursPage() {
     );
   }
 
-  const equipe = collaborateurs.filter((c) => c.actif && !estDirection(c.role));
-  const direction = collaborateurs.filter((c) => estDirection(c.role));
+  // COLLAB_RECHERCHE : chaque mot cherché dans le trigramme, le prénom, le nom et l'e-mail (accents ignorés)
+  const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const mots = sansAccents(recherche).split(/\s+/).filter(Boolean);
+  const correspond = (c: Collaborateur) => {
+    if (mots.length === 0) return true;
+    const texte = sansAccents(`${c.trigramme ?? ""} ${c.prenom ?? ""} ${c.nom ?? ""} ${c.email ?? ""}`);
+    return mots.every((m) => texte.includes(m));
+  };
+  const equipe = collaborateurs.filter((c) => c.actif && !estDirection(c.role) && correspond(c));
+  const direction = collaborateurs.filter((c) => estDirection(c.role) && correspond(c));
 
   return (
     <main
@@ -986,6 +995,29 @@ export default function CollaborateursPage() {
         >
           Collaborateurs
         </h1>
+
+        {/* COLLAB_RECHERCHE : par trigramme, prénom, nom ou e-mail */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
+          <input
+            type="search"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            placeholder="Rechercher : trigramme, prénom, nom…"
+            aria-label="Rechercher un collaborateur"
+            autoFocus
+            style={{ ...inputStyle, maxWidth: 360, fontSize: 15 }}
+          />
+          {recherche.trim() && (
+            <>
+              <span style={{ color: "#666", fontSize: 14 }}>
+                {equipe.length + direction.length + collaborateurs.filter((c) => !c.actif && !estDirection(c.role) && correspond(c)).length} résultat(s)
+              </span>
+              <button type="button" onClick={() => setRecherche("")} style={secondaryButtonStyle}>
+                Effacer
+              </button>
+            </>
+          )}
+        </div>
 
         {equipe.length === 0 && collaborateurs.filter(c => !c.actif).length === 0 ? (
           <div style={{background:"white",borderRadius:10,padding:40,textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>
@@ -1321,11 +1353,11 @@ export default function CollaborateursPage() {
               })}
             </div>
 
-            {collaborateurs.some(c => !c.actif && !estDirection(c.role)) && (
+            {collaborateurs.some(c => !c.actif && !estDirection(c.role) && correspond(c)) && (
               <details style={{marginTop:24,background:"white",border:"1px solid #ddd",borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
-                <summary style={{cursor:"pointer",padding:"16px 20px",fontWeight:800,fontSize:17,listStyle:"none"}}>📁 Inactifs ({collaborateurs.filter(c => !c.actif && !estDirection(c.role)).length})</summary>
+                <summary style={{cursor:"pointer",padding:"16px 20px",fontWeight:800,fontSize:17,listStyle:"none"}}>📁 Inactifs ({collaborateurs.filter(c => !c.actif && !estDirection(c.role) && correspond(c)).length})</summary>
                 <div style={{padding:"0 20px 20px",display:"grid",gap:10}}>
-                  {collaborateurs.filter(c => !c.actif && !estDirection(c.role)).map(c => (
+                  {collaborateurs.filter(c => !c.actif && !estDirection(c.role) && correspond(c)).map(c => (
                     <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:15,padding:14,borderTop:"1px solid #eee",background:"#fafafa",borderRadius:8}}>
                       <div><strong>{nomCollaborateur(c)}</strong> <span style={{color:"#777",marginLeft:8}}>{c.trigramme || "—"}</span><div style={{fontSize:13,color:"#777",marginTop:3}}>{c.email}</div></div>
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>

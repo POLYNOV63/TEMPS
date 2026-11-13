@@ -520,6 +520,38 @@ function ProfilsHorairesPageContenu() {
      STATISTIQUES
   ============================================================= */
 
+  /* RYTHMES_SUPPRESSION : supprimer un rythme qui ne sert à personne (ni fiche, ni historique des rythmes) */
+  async function supprimerProfil(profil: Profil) {
+    setErreur("");
+    setMessage("");
+    const [fiches, histo] = await Promise.all([
+      supabase.from("collaborateurs").select("id", { count: "exact", head: true }).eq("profil_horaire_id", profil.id),
+      supabase.from("historique_profils_horaires").select("id", { count: "exact", head: true }).eq("profil_horaire_id", profil.id),
+    ]);
+    if (fiches.error || histo.error) {
+      setErreur(messageErreur(fiches.error ?? histo.error, "Impossible de vérifier si le rythme est utilisé."));
+      return;
+    }
+    const nbFiches = fiches.count ?? 0;
+    const nbHisto = histo.count ?? 0;
+    if (nbFiches > 0 || nbHisto > 0) {
+      setErreur(
+        `« ${profil.nom} » ne peut pas être supprimé : ${nbFiches} fiche${nbFiches > 1 ? "s" : ""} l’utilise${nbFiches > 1 ? "nt" : ""} et il figure ${nbHisto} fois dans l’historique des rythmes (il a servi à calculer des feuilles passées). Désactivez-le : il disparaîtra des listes, l’historique restera juste.`
+      );
+      return;
+    }
+    if (!window.confirm(`Supprimer définitivement le rythme « ${profil.nom} » ?\n\nIl ne sert à personne : rien d’autre n’est touché.`)) return;
+    setEnregistrement(profil.id);
+    const { error } = await supabase.from("profils_horaires").delete().eq("id", profil.id);
+    setEnregistrement(null);
+    if (error) {
+      setErreur(messageErreur(error, "Impossible de supprimer le rythme."));
+      return;
+    }
+    setProfils((anciens) => anciens.filter((p) => p.id !== profil.id));
+    setMessage(`Rythme « ${profil.nom} » supprimé.`);
+  }
+
   const statistiques = useMemo(() => {
     const actifs = profils.filter(
       (p) => p.actif
@@ -1056,17 +1088,25 @@ function ProfilsHorairesPageContenu() {
                               </button>
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setEdition(
-                                  profil.id
-                                )
-                              }
-                              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-[#c00000] hover:text-[#c00000]"
-                            >
-                              Modifier
-                            </button>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEdition(profil.id)}
+                                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-bold text-gray-700 transition hover:border-[#c00000] hover:text-[#c00000]"
+                              >
+                                Modifier
+                              </button>
+                              {/* RYTHMES_SUPPRESSION */}
+                              <button
+                                type="button"
+                                disabled={enregistrement === profil.id}
+                                onClick={() => void supprimerProfil(profil)}
+                                title="Supprimer ce rythme (seulement s’il ne sert à personne)"
+                                className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-bold text-gray-500 transition hover:border-[#c00000] hover:text-[#c00000] disabled:opacity-50"
+                              >
+                                Supprimer
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1284,17 +1324,23 @@ function ProfilsHorairesPageContenu() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEdition(
-                              profil.id
-                            )
-                          }
-                          className="rounded-lg border px-4 py-2 text-sm font-bold hover:border-[#c00000] hover:text-[#c00000]"
-                        >
-                          Modifier
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEdition(profil.id)}
+                            className="rounded-lg border px-4 py-2 text-sm font-bold hover:border-[#c00000] hover:text-[#c00000]"
+                          >
+                            Modifier
+                          </button>
+                          <button
+                            type="button"
+                            disabled={enregistrement === profil.id}
+                            onClick={() => void supprimerProfil(profil)}
+                            className="rounded-lg border px-3 py-2 text-sm font-bold text-gray-500 hover:border-[#c00000] hover:text-[#c00000] disabled:opacity-50"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
