@@ -183,6 +183,8 @@ function PrestationsContenu() {
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
   const [imputations, setImputations] = useState<Imputation[]>([]);
   const [annuaire, setAnnuaire] = useState<Collab[]>([]);
+  // INACTIFS_VISIBLES : toutes les personnes, inactives comprises, pour afficher les noms ; « annuaire » sert aux choix
+  const [annuaireTous, setAnnuaireTous] = useState<Collab[]>([]);
   const [referentiel, setReferentiel] = useState<ReferentielActivites | null>(null);
   const [charges, setCharges] = useState<Charge[]>([]);
   const [planifie, setPlanifie] = useState<{ affectations: Affectation[]; jours: JourRow[] }>({ affectations: [], jours: [] });
@@ -465,7 +467,7 @@ function PrestationsContenu() {
           chargerMoi(),
           chargerAffaires({ horsPlanning: true }),
           chargerImputations(),
-          chargerAnnuaire(),
+          chargerAnnuaire({ inactifs: true }),
           chargerActivites(),
           chargerCharges(),
           chargerPlanifie(debut),
@@ -565,7 +567,8 @@ function PrestationsContenu() {
         setMoiId(moi?.id ?? null);
         setAffaires(affPrest);
         setImputations(im);
-        setAnnuaire(an);
+        setAnnuaire(an.filter((c) => c.actif !== false));
+        setAnnuaireTous(an);
         setReferentiel(ref);
         setCharges(ch);
         setPlanifie({ affectations: pl.affectations, jours: joursMois });
@@ -629,7 +632,7 @@ function PrestationsContenu() {
   const dort = useCallback((affaireId: string) => dormantes.has(affaireId) && !reveillees.has(affaireId), [dormantes, reveillees]);
 
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
-  const collabs = useMemo(() => new Map(annuaire.map((c) => [c.id, c])), [annuaire]);
+  const collabs = useMemo(() => new Map((annuaireTous.length ? annuaireTous : annuaire).map((c) => [c.id, c])), [annuaire, annuaireTous]);
   const nomsActivites = useMemo(() => new Map((referentiel?.activites ?? []).map((a) => [a.id, a.nom])), [referentiel]);
   const saisieParCle = useMemo(() => new Map(saisies.map((s) => [`${s.ligne_id}|${s.jour}`, s])), [saisies]);
 
