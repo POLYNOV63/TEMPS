@@ -25,9 +25,10 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    Base horaire (BASE_HORAIRE) : la journée de chaque commande (« Journée de »
    du relevé, sinon les lignes, sinon 7 h). Vendue au jour, une commande vaut
    jours vendus × cette journée (HEURES_COMMANDEES).
-   Unité (UNITE_VENDUE) : celle de la prestation vendue (jours ou heures),
-   synchronisée du Suivi d'affaire ; sinon le réglage du relevé, sinon les
-   lignes. Quantité commandée : la quantité vendue ; sinon montant ÷ taux.
+   Unité (UNITE_FACTUREE) : celle de la facturation au relevé (réglage de la
+   commande, sinon lignes actives), sinon l'unité vendue. Facturée au jour :
+   jours vendus (quantité en jours, sinon montant ÷ taux au jour, sinon heures
+   du Suivi d'affaire ÷ 7 h) × journée de la commande.
    Le graphique (GRAPHE_ANNOTE) porte les graduations dans cette unité, et
    chaque commande reçue avec sa quantité et le nouveau cumul.
    Montants et taux : seulement avec la fonction « Montants des affaires ».
@@ -53,6 +54,8 @@ const n = (v: unknown) => Number(v) || 0;
 const euros = (v: number) => v.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const NOMS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 const libMois = (m: string) => `${NOMS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
+/* le classeur Suivi d'affaire BE compte ses jours à 7 h */
+const BASE_CHIFFRAGE = 7;
 const moisSuivant = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
 
 export default function HistoriquePEPI({ base, pointeParMois }: { base: string; pointeParMois: Map<string, number> }) {
@@ -171,18 +174,38 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         const montant = s ? montants.get(s.id) ?? 0 : 0;
         const l0 = ls.find((l) => l.taux !== null && l.actif) ?? ls.find((l) => l.taux !== null);
         const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / (l0.base_horaire ?? baseDe(a.id)) : l0.taux) : null;
-        /* UNITE_VENDUE : jours ou heures, d'après ce qui est VENDU (unité de la prestation, synchronisée du Suivi
-           d'affaire), sinon le réglage du relevé, sinon les lignes */
-        const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
+        /* UNITE_FACTUREE : jours ou heures, d'après la façon dont on FACTURE : le réglage de vente du relevé pour
+           la commande, sinon l'unité des lignes actives, sinon l'unité vendue au Suivi d'affaire */
+        const actives = ls.filter((l) => l.actif);
         const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
-        const unite: "JOUR" | "HEURE" = uniteVendue ?? uniteReleve ?? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : ls[0]?.unite ?? "HEURE");
+        const uniteLignes = actives.length > 0 ? (actives.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : null;
+        const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
+        const unite: "JOUR" | "HEURE" = uniteReleve ?? uniteLignes ?? uniteVendue ?? (ls[0]?.unite ?? "HEURE");
         const baseH = baseDe(a.id);
-        /* HEURES_COMMANDEES : vendue au jour, la commande vaut jours vendus × journée de la commande (7,5 h…),
-           et non les heures du Suivi d'affaire (souvent comptées à 7 h) ; vendue à l'heure, la quantité vendue ;
-           à défaut, les heures du Suivi d'affaire, puis montant ÷ taux */
+        /* HEURES_COMMANDEES : facturée au jour, la commande vaut JOURS vendus × journée de la commande (7,5 h…).
+           Les jours vendus : la quantité vendue si elle est en jours ; sinon montant ÷ taux au jour ; sinon les
+           heures du Suivi d'affaire ÷ 7 h (le classeur compte ses jours à 7 h : 371 h = 53 j). Facturée à
+           l'heure : la quantité vendue, sinon les heures du Suivi d'affaire, sinon montant ÷ taux. */
         const qte = n(a.prestation_quantite);
         const hSuivi = n(s?.heures_total);
-        const heuresCmd = qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : hSuivi > 0 ? hSuivi : montant > 0 && tauxH0 ? montant / tauxH0 : null;
+        const lJour = actives.find((l) => l.unite === "JOUR" && l.taux) ?? ls.find((l) => l.unite === "JOUR" && l.taux);
+        let joursVendus: number | null = null;
+        if (unite === "JOUR") {
+          if (qte > 0 && a.prestation_unite === "JOURS") joursVendus = qte;
+          else if (montant > 0 && lJour?.taux) joursVendus = montant / lJour.taux;
+          else if (qte > 0 && a.prestation_unite === "HEURES") joursVendus = qte / BASE_CHIFFRAGE;
+          else if (hSuivi > 0) joursVendus = hSuivi / BASE_CHIFFRAGE;
+        }
+        const heuresCmd =
+          unite === "JOUR" && joursVendus !== null
+            ? joursVendus * baseH
+            : qte > 0 && a.prestation_unite !== "JOURS"
+              ? qte
+              : hSuivi > 0
+                ? hSuivi
+                : montant > 0 && tauxH0
+                  ? montant / tauxH0
+                  : null;
         const premierMois = [...mois.keys()].sort()[0] ?? null;
         return {
           id: a.id,

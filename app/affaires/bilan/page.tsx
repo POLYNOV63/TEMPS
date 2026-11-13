@@ -277,7 +277,7 @@ function BilanContenu() {
         supabase
           .from("suivi_lignes")
           .select(
-            "cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
+            "id,cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
           )
           .eq(cible.type === "CBE" ? "base_affaire" : "base_devis", num),
         supabase.from("pilotage_affaires").select("*").eq("type", cible.type),
@@ -312,30 +312,59 @@ function BilanContenu() {
       const p = ((pil.data ?? []) as (AffairePilotage & { numero: string })[]).find((a) => a.numero.replace(/^0+/, "") === num) ?? null;
       setPilotage(p);
 
-      /* JOURS_VENDUS : une PE / PI vendue au JOUR vaut jours vendus × journée de la commande (7,5 h…). Le Suivi
-         d'affaire compte souvent ses heures à 7 h : on recale les heures chiffrées de chaque commande (et leur
-         répartition par activité, au prorata) sur la journée réglée au relevé (« Journée de », sinon les lignes). */
+      /* JOURS_VENDUS : une PE / PI facturée au JOUR (réglage de la commande au relevé, sinon ses lignes actives)
+         vaut jours vendus × journée de la commande (7,5 h…). Jours vendus : la quantité si elle est en jours ;
+         sinon montant ÷ taux au jour ; sinon les heures du Suivi d'affaire ÷ 7 h (le classeur compte ses jours
+         à 7 h : 371 h = 53 j). On recale les heures chiffrées de chaque commande, et leur répartition par
+         activité au prorata. */
       setNoteJours("");
       if (cible.type === "CBE") {
-        type PilJ = { id: string; numero: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_base_horaire: number | string | null };
+        type PilJ = { id: string; numero: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
         const famille = ((pil.data ?? []) as PilJ[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === num);
-        const auJour = famille.filter((a) => a.prestation_unite === "JOURS" && (Number(a.prestation_quantite) || 0) > 0);
+        const { data: plj } = famille.length
+          ? await supabase.from("prestation_lignes").select("affaire_id,unite,taux,base_horaire,actif").in("affaire_id", famille.map((a) => a.id))
+          : { data: [] };
+        const lignesR = ((plj ?? []) as { affaire_id: string; unite: string | null; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).filter((l) => l.actif !== false);
+        const frequente = (vals: number[]) => {
+          const c = new Map<number, number>();
+          for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
+          return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
+        };
+        const baseFamille = famille.map((a) => Number(a.releve_base_horaire) || 0).find((v) => v > 0) ?? frequente(lignesR.map((l) => Number(l.base_horaire) || 0).filter((v) => v > 0));
+        const auJour = famille.filter((a) => {
+          const ls = lignesR.filter((l) => l.affaire_id === a.id);
+          const u = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : ls.length ? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : a.prestation_unite === "JOURS" ? "JOUR" : "HEURE";
+          return u === "JOUR";
+        });
         if (auJour.length > 0) {
-          const { data: plj } = await supabase.from("prestation_lignes").select("affaire_id,base_horaire,actif").in("affaire_id", famille.map((a) => a.id));
-          const lignesB = ((plj ?? []) as { affaire_id: string; base_horaire: number | string | null; actif: boolean | null }[]).filter((l) => (Number(l.base_horaire) || 0) > 0 && l.actif !== false);
-          const frequente = (vals: number[]) => {
-            const c = new Map<number, number>();
-            for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
-            return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
-          };
-          const baseFamille = famille.map((a) => Number(a.releve_base_horaire) || 0).find((v) => v > 0) ?? frequente(lignesB.map((l) => Number(l.base_horaire)));
+          // montants des commandes (pour montant ÷ taux au jour), s'ils sont lisibles
+          const ids = lignes.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").map((l) => (l as LigneExcel & { id?: string }).id).filter((x): x is string => Boolean(x));
+          const montantDe = new Map<string, number>();
+          if (ids.length) {
+            const { data: mts } = await supabase.from("suivi_lignes_montants").select("ligne_id,montant").in("ligne_id", ids);
+            for (const m of (mts ?? []) as { ligne_id: string; montant: number | string | null }[]) montantDe.set(m.ligne_id, Number(m.montant) || 0);
+          }
           const notes: string[] = [];
           for (const a of auJour) {
-            const baseC = (Number(a.releve_base_horaire) || 0) || frequente(lignesB.filter((l) => l.affaire_id === a.id).map((l) => Number(l.base_horaire))) || baseFamille;
+            const lsA = lignesR.filter((l) => l.affaire_id === a.id);
+            const baseC = (Number(a.releve_base_horaire) || 0) || frequente(lsA.map((l) => Number(l.base_horaire) || 0).filter((v) => v > 0)) || baseFamille;
             if (!baseC) continue;
             const l = lignes.find((x) => (x.genre === "BASE" || x.genre === "AVENANT") && String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
             if (!l) continue;
-            const jours = Number(a.prestation_quantite) || 0;
+            const qte = Number(a.prestation_quantite) || 0;
+            const tauxJour = Number(lsA.find((x) => x.unite === "JOUR" && Number(x.taux) > 0)?.taux) || 0;
+            const montant = montantDe.get((l as LigneExcel & { id?: string }).id ?? "") ?? 0;
+            const jours =
+              qte > 0 && a.prestation_unite === "JOURS"
+                ? qte
+                : montant > 0 && tauxJour > 0
+                  ? montant / tauxJour
+                  : qte > 0
+                    ? qte / 7
+                    : l.heures_total > 0
+                      ? l.heures_total / 7
+                      : 0;
+            if (jours <= 0) continue;
             const cibleH = jours * baseC;
             if (Math.abs(cibleH - l.heures_total) < 0.05) continue;
             const f = l.heures_total > 0 ? cibleH / l.heures_total : 0;
@@ -343,7 +372,7 @@ function BilanContenu() {
             if (f > 0) for (const { champ } of COLONNES_EXCEL) (l as Record<string, unknown>)[champ] = (Number(l[champ]) || 0) * f;
             else l.heures_autre = cibleH;
             l.heures_total = cibleH;
-            notes.push(`${a.numero} : ${jours.toLocaleString("fr-FR")} j × ${baseC.toLocaleString("fr-FR")} h = ${formatHeures(cibleH)}${avant > 0 ? ` (au lieu de ${formatHeures(avant)})` : ""}`);
+            notes.push(`${a.numero} : ${(Math.round(jours * 100) / 100).toLocaleString("fr-FR")} j × ${baseC.toLocaleString("fr-FR")} h = ${formatHeures(cibleH)}${avant > 0 ? ` (au lieu de ${formatHeures(avant)})` : ""}`);
           }
           if (notes.length > 0) {
             setLignesExcel([...lignes]);
