@@ -22,6 +22,11 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    en courbes puis en tableau ; puis commande par commande.
    Les quantités et les montants viennent des mêmes chiffres : un
    dépassement en jours et en euros se correspondent.
+   Unité (UNITE_VENDUE) : celle de la prestation vendue (jours ou heures),
+   synchronisée du Suivi d'affaire ; sinon le réglage du relevé, sinon les
+   lignes. Quantité commandée : la quantité vendue ; sinon montant ÷ taux.
+   Le graphique (GRAPHE_ANNOTE) porte les graduations dans cette unité, et
+   chaque commande reçue avec sa quantité et le nouveau cumul.
    Montants et taux : seulement avec la fonction « Montants des affaires ».
 ================================================================ */
 
@@ -66,8 +71,12 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
       if (actif) setVoitMontants(peut(moi?.role ?? null, "montantsAffaires"));
 
-      const { data: afs } = await supabase.from("pilotage_affaires").select("id,numero,statut").eq("type", "CBE");
-      const famille = ((afs ?? []) as { id: string; numero: string; statut: string }[])
+      const { data: afs } = await supabase
+        .from("pilotage_affaires")
+        .select("id,numero,statut,prestation_quantite,prestation_unite,releve_unite,releve_base_horaire")
+        .eq("type", "CBE");
+      type AffP = { id: string; numero: string; statut: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
+      const famille = ((afs ?? []) as AffP[])
         .filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === b)
         .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
       if (famille.length === 0) return;
@@ -137,8 +146,15 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         const montant = s ? montants.get(s.id) ?? 0 : 0;
         const l0 = ls.find((l) => l.taux !== null);
         const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / l0.base_horaire : l0.taux) : null;
-        // QUANTITE_COHERENTE : la commande est un montant ; sa quantité = montant ÷ taux (sinon, les heures du Suivi d'affaire)
-        const heuresCmd = montant > 0 && tauxH0 ? montant / tauxH0 : n(s?.heures_total) > 0 ? n(s?.heures_total) : null;
+        /* UNITE_VENDUE : jours ou heures, d'après ce qui est VENDU (unité de la prestation, synchronisée du Suivi
+           d'affaire), sinon le réglage du relevé, sinon les lignes */
+        const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
+        const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
+        const unite: "JOUR" | "HEURE" = uniteVendue ?? uniteReleve ?? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : ls[0]?.unite ?? "HEURE");
+        const baseH = n(a.releve_base_horaire) || ls[0]?.base_horaire || 7;
+        // QUANTITE_COHERENTE : la quantité vendue (jours ou heures) ; sinon montant ÷ taux ; sinon les heures du Suivi d'affaire
+        const qte = n(a.prestation_quantite);
+        const heuresCmd = qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : montant > 0 && tauxH0 ? montant / tauxH0 : n(s?.heures_total) > 0 ? n(s?.heures_total) : null;
         const premierMois = [...mois.keys()].sort()[0] ?? null;
         return {
           id: a.id,
@@ -147,8 +163,8 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
           recue: s?.date_reception_commande ? String(s.date_reception_commande).slice(0, 7) : premierMois,
           montant,
           heuresCmd,
-          unite: ls[0]?.unite ?? "HEURE",
-          base: ls[0]?.base_horaire ?? 7,
+          unite,
+          base: baseH,
           mois,
           finPrevue: dernier.get(a.id) ?? null,
         };
@@ -248,10 +264,10 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
 
   // la courbe : commandé (marches), relevé cumulé (prévu en pointillé), pointé cumulé
   const W = 720;
-  const H = 210;
+  const H = 250;
   const max = Math.max(1, ...serie.map((x) => Math.max(x.cCmd, x.cRel, x.cPt ?? 0))) * 1.1;
-  const X = (i: number) => (serie.length === 1 ? W / 2 : 40 + (i * (W - 70)) / (serie.length - 1));
-  const Y = (v: number) => H - 26 - (v / max) * (H - 46);
+  const X = (i: number) => (serie.length === 1 ? W / 2 : 46 + (i * (W - 150)) / (serie.length - 1));
+  const Y = (v: number) => H - 26 - (v / max) * (H - 60);
   const poly = (vals: (number | null)[]) =>
     vals
       .map((v, i) => (v === null ? null : `${X(i)},${Y(v)}`))
@@ -300,11 +316,52 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
 
       {/* COURBES_PEPI : la commande, le relevé et le pointé dans le temps */}
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 860, height: "auto" }} role="img" aria-label="Commandé, relevé et pointé cumulés, mois par mois">
-        {iCourant > 0 && <rect x={X(iCourant) - (W - 70) / Math.max(1, serie.length - 1) / 2} y={10} width={W} height={H - 36} fill="#f6f7f9" />}
+        {iCourant > 0 && <rect x={X(iCourant) - (W - 150) / Math.max(1, serie.length - 1) / 2} y={10} width={W} height={H - 36} fill="#f6f7f9" />}
         <polyline points={marches} fill="none" stroke="#1f2328" strokeWidth={2} />
         <polyline points={poly(serie.map((x) => x.cPt))} fill="none" stroke="#e08a1e" strokeWidth={2} />
         <polyline points={poly(passeRel)} fill="none" stroke="#2e7d32" strokeWidth={3} />
         <polyline points={poly(futurRel)} fill="none" stroke="#2e7d32" strokeWidth={3} strokeDasharray="6 5" />
+        {/* GRAPHE_ANNOTE : graduations dans l'unité vendue */}
+        {(() => {
+          const div = enJours ? baseJ : 1; // graduations rondes dans l'unité affichée
+          const maxU = max / div;
+          const brut = maxU / 4;
+          const p10 = Math.pow(10, Math.floor(Math.log10(Math.max(brut, 0.0001))));
+          const pasU = [1, 2, 5, 10].map((k) => k * p10).find((v) => v >= brut) ?? brut;
+          const ticks: number[] = [];
+          for (let v = 0; v <= maxU + 1e-9; v += pasU) ticks.push(v * div);
+          return ticks.map((v) => (
+            <g key={v}>
+              <line x1={36} x2={W - 20} y1={Y(v)} y2={Y(v)} stroke="#eceef1" strokeWidth={1} />
+              <text x={32} y={Y(v) + 4} textAnchor="end" fontSize={10.5} fill={gris}>
+                {q(v).replace(/\s/g, " ")}
+              </text>
+            </g>
+          ));
+        })()}
+        {/* chaque commande reçue : + quantité (n°) et le nouveau cumul */}
+        {serie.map((x, i) =>
+          x.recues.length > 0 ? (
+            <g key={`cmd-${x.m}`}>
+              <circle cx={X(i)} cy={Y(x.cCmd)} r={4} fill="#1f2328" />
+              <text x={X(i) + 6} y={Y(x.cCmd) - 16} fontSize={11.5} fontWeight={800} fill="#1f2328">
+                + {q(x.recues.reduce((t, c) => t + (c.heuresCmd ?? 0), 0))} ({x.recues.map((c) => c.numero).join(", ")})
+              </text>
+              <text x={X(i) + 6} y={Y(x.cCmd) - 4} fontSize={11} fill={gris}>
+                = {q(x.cCmd)} commandés
+              </text>
+            </g>
+          ) : null
+        )}
+        {/* en bout de courbe : le relevé (prévu compris) et le pointé */}
+        <text x={X(serie.length - 1)} y={Y(fin.cRel) + (fin.cRel > fin.cCmd ? -8 : 16)} textAnchor="end" fontSize={11.5} fontWeight={800} fill="#2e7d32">
+          relevé + prévu : {q(fin.cRel)}
+        </text>
+        {der.cPt !== null && (
+          <text x={X(serie.indexOf(der))} y={Y(der.cPt) + 16} textAnchor="middle" fontSize={11} fontWeight={700} fill="#b26100">
+            pointé : {q(der.cPt)}
+          </text>
+        )}
         {serie.map((x, i) =>
           i % Math.max(1, Math.ceil(serie.length / 12)) === 0 || i === serie.length - 1 ? (
             <text key={x.m} x={X(i)} y={H - 8} textAnchor="middle" fontSize={11} fill={gris}>
