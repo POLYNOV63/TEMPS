@@ -17,7 +17,8 @@ import { chargerDroitsRoles } from "@/lib/droitsRoles";
    - le négoce : vendu, acheté, marge brute, temps passé (heures pointées
      × coût de structure) et marge résiduelle (NEGOCE_RECAP) ;
    - la facturation ligne par ligne : commande, avenants, échéances et
-     lots, mois du relevé ; facturé le… ou à facturer (ECHEANCIER_FICHE).
+     lots, mois du relevé ; facturé le… ou à facturer, prévu au délai
+     ESTIMÉ (délai client pour mémoire, DELAIS_FICHE) (ECHEANCIER_FICHE).
 
    Visible seulement des rôles qui ont la fonction « Montants des
    affaires » (Paramétrage › Droits d'accès ; à l'origine l'ADMIN).
@@ -57,7 +58,7 @@ type Montant = {
 };
 type Commande = { numero: string; statut: string; montant: number; etudes: number; negoce: number; achats: number; facture: number; parReleve: boolean };
 /* ECHEANCIER_FICHE : chaque ligne facturable de la famille (commande, avenant, échéance, lot, mois du relevé) */
-type LigneFacture = { cle: string; niveau: 0 | 1; numero: string; nature: string; statut: string; montant: number; facturee: string | null; prevue: string | null; releve?: boolean; parent?: string };
+type LigneFacture = { cle: string; niveau: 0 | 1; numero: string; nature: string; statut: string; montant: number; facturee: string | null; prevue: string | null; client?: string | null; releve?: boolean; parent?: string };
 type Discipline = { cle: string; libelle: string; montant: number; heures: number | null; colonnes: string[] };
 
 const n = (v: unknown) => Number(v) || 0;
@@ -230,10 +231,10 @@ export default function BilanFinancierAffaire({
       const nature = (g: string) => (g === "BASE" ? "Commande" : g === "AVENANT" ? "Avenant" : g === "ECHEANCE" ? "Échéance" : g === "LOT" ? "Lot" : g);
       for (const l of ls.filter((x) => x.genre === "BASE" || x.genre === "AVENANT").sort((a, b) => String(a.numero_affaire ?? a.cle).localeCompare(String(b.numero_affaire ?? b.cle), "fr", { numeric: true }))) {
         const num = String(l.numero_affaire ?? l.cle).toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "");
-        ech.push({ cle: l.cle, niveau: 0, numero: l.numero_affaire ?? l.cle, nature: nature(l.genre), statut: l.statut ?? "", montant: n(montants.get(l.id)?.montant), facturee: l.date_livraison, prevue: l.delai ?? l.date_livraison_estimee });
+        ech.push({ cle: l.cle, niveau: 0, numero: l.numero_affaire ?? l.cle, nature: nature(l.genre), statut: l.statut ?? "", montant: n(montants.get(l.id)?.montant), facturee: l.date_livraison, prevue: l.date_livraison_estimee ?? l.delai, client: l.delai });
         for (const d of enfants(l.cle).sort((a, b) => a.cle.localeCompare(b.cle, "fr", { numeric: true }))) {
           const md = montants.get(d.id);
-          ech.push({ parent: l.cle, cle: d.cle, niveau: 1, numero: d.numero_affaire ?? d.cle, nature: nature(d.genre), statut: d.statut ?? "", montant: md ? n(md.montant_echeances) || n(md.montant) : 0, facturee: d.date_livraison, prevue: d.delai ?? d.date_livraison_estimee });
+          ech.push({ parent: l.cle, cle: d.cle, niveau: 1, numero: d.numero_affaire ?? d.cle, nature: nature(d.genre), statut: d.statut ?? "", montant: md ? n(md.montant_echeances) || n(md.montant) : 0, facturee: d.date_livraison, prevue: d.date_livraison_estimee ?? d.delai, client: d.delai });
         }
         for (const m of (releveMois.get(num) ?? []).sort((a, b) => a.mois.localeCompare(b.mois)))
           ech.push({ parent: l.cle, cle: `${l.cle}|${m.mois}`, niveau: 1, numero: `Relevé ${m.mois.slice(5, 7)}/${m.mois.slice(0, 4)}`, nature: "Mois clôturé (PE / PI)", statut: "Clôturé", montant: m.montant, facturee: `${m.mois}-01`, prevue: null, releve: true });
@@ -389,7 +390,10 @@ export default function BilanFinancierAffaire({
                       ) : aDesEnfants ? (
                         <span style={{ color: gris, fontSize: 13 }}>{enfantsE.some((x) => x.releve) ? "au relevé, mois par mois" : "par ses échéances"}</span>
                       ) : (
-                        <span style={{ color: "#8a6500" }}>à facturer{e.prevue ? ` · prévu le ${date(e.prevue)}` : ""}</span>
+                        <span style={{ color: "#8a6500" }} title="Prévu au délai estimé du Suivi d’affaire (« Date de livraison estimée ») ; délai client pour mémoire">
+                          à facturer{e.prevue ? ` · prévu le ${date(e.prevue)}` : ""}
+                          {e.client && e.client !== e.prevue && <span style={{ color: gris, fontSize: 12 }}> (client : {date(e.client)})</span>}
+                        </span>
                       )}
                     </td>
                   </tr>
