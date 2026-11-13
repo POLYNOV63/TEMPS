@@ -22,9 +22,9 @@ import { chargerTout } from "@/lib/pilotageDonnees";
    en courbes puis en tableau ; puis commande par commande.
    Les quantités et les montants viennent des mêmes chiffres : un
    dépassement en jours et en euros se correspondent.
-   Base horaire (BASE_HORAIRE) : la journée de chaque commande (relevé, sinon
-   heures chiffrées ÷ jours vendus du Suivi d'affaire, sinon les lignes) ;
-   les heures chiffrées du Suivi d'affaire font foi (HEURES_CHIFFREES).
+   Base horaire (BASE_HORAIRE) : la journée de chaque commande (« Journée de »
+   du relevé, sinon les lignes, sinon 7 h). Vendue au jour, une commande vaut
+   jours vendus × cette journée (HEURES_COMMANDEES).
    Unité (UNITE_VENDUE) : celle de la prestation vendue (jours ou heures),
    synchronisée du Suivi d'affaire ; sinon le réglage du relevé, sinon les
    lignes. Quantité commandée : la quantité vendue ; sinon montant ÷ taux.
@@ -126,10 +126,9 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       const cles = new Set<string>([...saisi.keys(), ...etats.keys()]);
 
       /* BASE_HORAIRE : la journée d'une commande (7 h, 7,5 h…) :
-         1. celle réglée au relevé pour la commande ;
-         2. sinon celle du Suivi d'affaire : heures chiffrées ÷ jours vendus (ex. 75 h ÷ 10 j = 7,5 h) ;
-         3. sinon la plus fréquente des lignes actives qui ont des heures, puis des lignes actives ;
-         4. sinon 7 h. */
+         1. celle réglée au relevé pour la commande (« Journée de ») ;
+         2. sinon la plus fréquente des lignes actives qui ont des heures, puis des lignes actives ;
+         3. sinon 7 h. */
       const plusFrequente = (vals: number[]) => {
         const c = new Map<number, number>();
         for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
@@ -139,14 +138,13 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         const a = famille.find((x) => x.id === affaireId);
         if (!a) return 7;
         if (n(a.releve_base_horaire) > 0) return n(a.releve_base_horaire);
-        const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
-        if (a.prestation_unite === "JOURS" && n(a.prestation_quantite) > 0 && n(s?.heures_total) > 0) {
-          const r = n(s?.heures_total) / n(a.prestation_quantite);
-          if (r >= 5 && r <= 10) return Math.round(r * 100) / 100;
-        }
         const ls = lignes.filter((l) => l.affaire_id === affaireId && l.base_horaire);
         const avecHeures = ls.filter((l) => l.actif && [...saisi.keys()].some((k) => k.startsWith(`${l.id}|`)));
-        return plusFrequente(avecHeures.map((l) => l.base_horaire as number)) ?? plusFrequente(ls.filter((l) => l.actif).map((l) => l.base_horaire as number)) ?? plusFrequente(ls.map((l) => l.base_horaire as number)) ?? 7;
+        const propre = plusFrequente(avecHeures.map((l) => l.base_horaire as number)) ?? plusFrequente(ls.filter((l) => l.actif).map((l) => l.base_horaire as number)) ?? plusFrequente(ls.map((l) => l.base_horaire as number));
+        if (propre) return propre;
+        // un avenant sans réglage ni ligne propre prend la journée du reste de la famille
+        const reglee = famille.map((x) => n(x.releve_base_horaire)).find((v) => v > 0);
+        return reglee ?? plusFrequente(lignes.filter((l) => l.actif && l.base_horaire).map((l) => l.base_horaire as number)) ?? 7;
       };
 
       const res: Commande[] = famille.map((a) => {
@@ -179,11 +177,12 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
         const unite: "JOUR" | "HEURE" = uniteVendue ?? uniteReleve ?? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : ls[0]?.unite ?? "HEURE");
         const baseH = baseDe(a.id);
-        /* HEURES_CHIFFREES : les heures chiffrées du Suivi d'affaire font foi ; à défaut, la quantité vendue
-           (jours × base de la commande) ; à défaut, montant ÷ taux */
+        /* HEURES_COMMANDEES : vendue au jour, la commande vaut jours vendus × journée de la commande (7,5 h…),
+           et non les heures du Suivi d'affaire (souvent comptées à 7 h) ; vendue à l'heure, la quantité vendue ;
+           à défaut, les heures du Suivi d'affaire, puis montant ÷ taux */
         const qte = n(a.prestation_quantite);
         const hSuivi = n(s?.heures_total);
-        const heuresCmd = hSuivi > 0 ? hSuivi : qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : montant > 0 && tauxH0 ? montant / tauxH0 : null;
+        const heuresCmd = qte > 0 ? (unite === "JOUR" ? qte * baseH : qte) : hSuivi > 0 ? hSuivi : montant > 0 && tauxH0 ? montant / tauxH0 : null;
         const premierMois = [...mois.keys()].sort()[0] ?? null;
         return {
           id: a.id,

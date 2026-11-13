@@ -193,6 +193,7 @@ function BilanContenu() {
   const [filtrePersonne, setFiltrePersonne] = useState("");
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
+  const [noteJours, setNoteJours] = useState(""); // JOURS_VENDUS
   // présentation
   const [commandeOuverte, setCommandeOuverte] = useState(false);
   const [vue, setVue] = useState<"ACTIVITE" | "COMMANDE">("ACTIVITE");
@@ -310,6 +311,46 @@ function BilanContenu() {
 
       const p = ((pil.data ?? []) as (AffairePilotage & { numero: string })[]).find((a) => a.numero.replace(/^0+/, "") === num) ?? null;
       setPilotage(p);
+
+      /* JOURS_VENDUS : une PE / PI vendue au JOUR vaut jours vendus × journée de la commande (7,5 h…). Le Suivi
+         d'affaire compte souvent ses heures à 7 h : on recale les heures chiffrées de chaque commande (et leur
+         répartition par activité, au prorata) sur la journée réglée au relevé (« Journée de », sinon les lignes). */
+      setNoteJours("");
+      if (cible.type === "CBE") {
+        type PilJ = { id: string; numero: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_base_horaire: number | string | null };
+        const famille = ((pil.data ?? []) as PilJ[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === num);
+        const auJour = famille.filter((a) => a.prestation_unite === "JOURS" && (Number(a.prestation_quantite) || 0) > 0);
+        if (auJour.length > 0) {
+          const { data: plj } = await supabase.from("prestation_lignes").select("affaire_id,base_horaire,actif").in("affaire_id", famille.map((a) => a.id));
+          const lignesB = ((plj ?? []) as { affaire_id: string; base_horaire: number | string | null; actif: boolean | null }[]).filter((l) => (Number(l.base_horaire) || 0) > 0 && l.actif !== false);
+          const frequente = (vals: number[]) => {
+            const c = new Map<number, number>();
+            for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
+            return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
+          };
+          const baseFamille = famille.map((a) => Number(a.releve_base_horaire) || 0).find((v) => v > 0) ?? frequente(lignesB.map((l) => Number(l.base_horaire)));
+          const notes: string[] = [];
+          for (const a of auJour) {
+            const baseC = (Number(a.releve_base_horaire) || 0) || frequente(lignesB.filter((l) => l.affaire_id === a.id).map((l) => Number(l.base_horaire))) || baseFamille;
+            if (!baseC) continue;
+            const l = lignes.find((x) => (x.genre === "BASE" || x.genre === "AVENANT") && String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
+            if (!l) continue;
+            const jours = Number(a.prestation_quantite) || 0;
+            const cibleH = jours * baseC;
+            if (Math.abs(cibleH - l.heures_total) < 0.05) continue;
+            const f = l.heures_total > 0 ? cibleH / l.heures_total : 0;
+            const avant = l.heures_total;
+            if (f > 0) for (const { champ } of COLONNES_EXCEL) (l as Record<string, unknown>)[champ] = (Number(l[champ]) || 0) * f;
+            else l.heures_autre = cibleH;
+            l.heures_total = cibleH;
+            notes.push(`${a.numero} : ${jours.toLocaleString("fr-FR")} j × ${baseC.toLocaleString("fr-FR")} h = ${formatHeures(cibleH)}${avant > 0 ? ` (au lieu de ${formatHeures(avant)})` : ""}`);
+          }
+          if (notes.length > 0) {
+            setLignesExcel([...lignes]);
+            setNoteJours(notes.join(" · "));
+          }
+        }
+      }
 
       if (p) {
         const { data } = await supabase.from("pilotage_charges").select("activite_id,heures").eq("affaire_id", p.id);
@@ -831,6 +872,11 @@ function BilanContenu() {
 
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
               <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
+            )}
+            {noteJours && (
+              <Message genre="info">
+                Vendue au jour : heures chiffrées recalculées sur la journée de la commande (« Journée de » du relevé) : {noteJours}.
+              </Message>
             )}
             {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
             {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
