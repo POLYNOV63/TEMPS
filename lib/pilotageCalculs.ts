@@ -60,6 +60,7 @@ export type Collab = {
   nom: string | null;
   inclus_statistiques: boolean;
   date_sortie?: string | null; // RESSOURCE_SORTIE : dernier jour travaillé (SQL 89)
+  actif?: boolean; // INACTIFS_VISIBLES : false pour une fiche désactivée (annuaire avec les inactifs, SQL 99)
 };
 
 export type Imputation = {

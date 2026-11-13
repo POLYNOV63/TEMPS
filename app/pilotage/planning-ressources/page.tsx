@@ -130,7 +130,7 @@ function PlanningRessourcesContenu() {
   useEffect(() => {
     let actif = true;
     setChargement(true);
-    Promise.all([chargerAnnuaire(), chargerAffaires({ horsPlanning: true }), chargerPlanifie(debut), chargerCapacitesAbsences(debut, fin)])
+    Promise.all([chargerAnnuaire({ inactifs: true }), chargerAffaires({ horsPlanning: true }), chargerPlanifie(debut), chargerCapacitesAbsences(debut, fin)])
       .then(([an, af, pl, cap]) => {
         if (!actif) return;
         setAnnuaire(an);
@@ -337,7 +337,9 @@ function PlanningRessourcesContenu() {
 
     const q = recherche.trim().toLowerCase();
     return annuaire
-      .filter((c) => avecEncadrement || c.inclus_statistiques !== false)
+      // INACTIFS_VISIBLES : une personne inactive n'apparaît que si elle a des affectations sur la période
+      .filter((c) => c.actif !== false || parPersonne.has(c.id))
+      .filter((c) => avecEncadrement || c.inclus_statistiques !== false || c.actif === false)
       .filter((c) => !q || `${c.trigramme ?? ""} ${c.prenom ?? ""} ${c.nom ?? ""}`.toLowerCase().includes(q))
       .map((c) => {
         const p = parPersonne.get(c.id) ?? { segments: [], charge: colonnes.map(() => 0) };
@@ -346,7 +348,12 @@ function PlanningRessourcesContenu() {
         const totalAffecte = p.charge.reduce((t, h) => t + h, 0);
         const totalNet = nets.reduce((t, h) => t + h, 0);
         const voies = Math.max(1, ...p.segments.map((s) => s.voie + 1));
-        const g = predo.size > 0 ? predo.get(c.id) ?? { nom: "Sans prédominance", ordre: 9999 } : { nom: "", ordre: 0 };
+        const g =
+          c.actif === false
+            ? { nom: "Personnes inactives", ordre: 99999 }
+            : predo.size > 0
+              ? predo.get(c.id) ?? { nom: "Sans prédominance", ordre: 9999 }
+              : { nom: "", ordre: 0 };
         return { collab: c, ...p, nets, totalAffecte, totalNet, voies, groupe: g.nom, ordreGroupe: g.ordre, vendu: venduPar.get(c.id) ?? colonnes.map(() => 0), dbe: dbePar.get(c.id) ?? colonnes.map(() => 0), divers: diversPar.get(c.id) ?? colonnes.map(() => 0) };
       })
       .sort((x, y) => x.ordreGroupe - y.ordreGroupe || (nomCollab(x.collab) ?? "").localeCompare(nomCollab(y.collab) ?? ""));
@@ -492,7 +499,7 @@ function PlanningRessourcesContenu() {
                     </>
                   );
                 })()}
-                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.actif === false || (l.collab.date_sortie && l.collab.date_sortie < aujourdhui) ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
                   <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
                     <strong style={{ fontSize: 15, color: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? C.gris : undefined }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>

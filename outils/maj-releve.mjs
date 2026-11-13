@@ -5,6 +5,9 @@
    - l'étiquette « INT. » disparaît : l'intention de commande se voit au
      surlignage jaune du n° (ajouté aussi aux commandes à staffer) ;
    - le tableau est plus aéré, la première colonne (commande) plus large ;
+   - staffage d'un avenant (⚙ Paramétrer) : jamais dans un mois passé (au
+     plus tôt le 1er du mois en cours), et les mois remplis sans report
+     (STAFFAGE_SANS_REPORT) ;
    - réglages (⚙) d'une ligne : « Ajouter une personne » sur la même
      commande (RELEVE_AJOUT_PERSONNE), « Retirer de la commande » pour une
      ligne sans heures ; dans une commande, la personne d'origine (celle
@@ -154,6 +157,20 @@ if (!erreurs.length) {
     remplacerSouple(f4, "<div style={{ position: \"sticky\", left: 0, display: \"flex\", flexWrap: \"wrap\", alignItems: \"flex-end\", gap: 12, padding: \"10px 12px\", maxWidth: \"min(100vw - 80px, 1300px)\", boxSizing: \"border-box\" }}>", "<div style={{ position: \"sticky\", left: 0, display: \"flex\", flexWrap: \"wrap\", alignItems: \"flex-end\", gap: 12, padding: \"10px 12px\", maxWidth: \"min(100vw - 80px, 1300px)\", boxSizing: \"border-box\" }}>\n                                    <div style={{ flexBasis: \"100%\", fontSize: 12, fontWeight: 800, letterSpacing: \".4px\", textTransform: \"uppercase\", color: C.gris }}>\n                                      ⚙ Fiche de paramétrage PI / PE · {nomCollab(collabs.get(l.collaborateur_id))} sur {a?.numero}\n                                    </div>", "fiche de paramétrage : titre");
     remplacerSouple(f4, "title=\"Réglages de la ligne : personne, activité, unité, taux, base, intergroupe, report, heures sup\"", "title=\"Fiche de paramétrage PI / PE : personne, ajout d’une personne, activité, unité, taux, base, intergroupe, report, heures sup\"", "bouton ⚙ : info-bulle");
     if (!ecritures.includes(f4)) ecritures.push(f4);
+  }
+}
+
+
+/* 5. Staffage d'un avenant : jamais dans un mois passé, et sans report (STAFFAGE_SANS_REPORT) */
+if (!erreurs.length) {
+  const f5 = ecritures.find((x) => x.rel === "app/pilotage/prestations/page.tsx") ?? lire("app/pilotage/prestations/page.tsx");
+  if (f5 && f5.texte.includes("STAFFAGE_SANS_REPORT")) {
+    console.log("  = app/pilotage/prestations/page.tsx : staffage sans report déjà en place");
+  } else if (f5) {
+    remplacerSouple(f5, "    const unite = modele?.unite ?? f.unite;", "    // STAFFAGE_SANS_REPORT : on ne remplit jamais un mois passé : au plus tôt le 1er du mois en cours\n    {\n      const d0 = new Date();\n      const premierDuMois = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, \"0\")}-01`;\n      if (depart < premierDuMois) {\n        depart = premierDuMois;\n        dejaH = 0;\n      }\n    }\n    const unite = modele?.unite ?? f.unite;", "staffage : début au plus tôt le 1er du mois en cours");
+    remplacerSouple(f5, "const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(\"fr-FR\"); setInfo(`${s.affaire.numero} staffé :", "// STAFFAGE_SANS_REPORT : ce qui vient d'être rempli compte pour son mois, sans report (sauf mois déjà clôturé)\n        const moisRemplis = [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))];\n        const { data: dejaMois } = await supabase.from(\"prestation_mois\").select(\"mois,valide\").eq(\"ligne_id\", ligneId).in(\"mois\", moisRemplis);\n        const clos = new Set(((dejaMois ?? []) as { mois: string; valide: boolean | null }[]).filter((x) => x.valide).map((x) => String(x.mois).slice(0, 10)));\n        const aOuvrir = moisRemplis.filter((m) => !clos.has(m)).map((m) => ({ ligne_id: ligneId, mois: m, reporte: false }));\n        if (aOuvrir.length) {\n          const { error: er } = await supabase.from(\"prestation_mois\").upsert(aOuvrir, { onConflict: \"ligne_id,mois\" });\n          if (er) setErreur(`Report non désactivé : ${traduireErreur(er.message)}`);\n        }\n        const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(\"fr-FR\");\n        setInfo(`${s.affaire.numero} staffé :", "staffage : mois remplis sans report");
+    remplacerSouple(f5, "repris de <strong>{s.source}</strong>, début à la suite de son dernier jour. Vérifiez, puis confirmez.", "repris de <strong>{s.source}</strong>, début à la suite de son dernier jour (au plus tôt le 1er du mois en cours : rien n’est reporté). Vérifiez, puis confirmez.", "staffage : message de l’avenant");
+    if (!ecritures.includes(f5)) ecritures.push(f5);
   }
 }
 

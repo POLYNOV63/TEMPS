@@ -183,6 +183,8 @@ function PrestationsContenu() {
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
   const [imputations, setImputations] = useState<Imputation[]>([]);
   const [annuaire, setAnnuaire] = useState<Collab[]>([]);
+  // INACTIFS_VISIBLES : toutes les personnes, inactives comprises, pour afficher les noms ; « annuaire » sert aux choix
+  const [annuaireTous, setAnnuaireTous] = useState<Collab[]>([]);
   const [referentiel, setReferentiel] = useState<ReferentielActivites | null>(null);
   const [charges, setCharges] = useState<Charge[]>([]);
   const [planifie, setPlanifie] = useState<{ affectations: Affectation[]; jours: JourRow[] }>({ affectations: [], jours: [] });
@@ -465,7 +467,7 @@ function PrestationsContenu() {
           chargerMoi(),
           chargerAffaires({ horsPlanning: true }),
           chargerImputations(),
-          chargerAnnuaire(),
+          chargerAnnuaire({ inactifs: true }),
           chargerActivites(),
           chargerCharges(),
           chargerPlanifie(debut),
@@ -565,7 +567,8 @@ function PrestationsContenu() {
         setMoiId(moi?.id ?? null);
         setAffaires(affPrest);
         setImputations(im);
-        setAnnuaire(an);
+        setAnnuaire(an.filter((c) => c.actif !== false));
+        setAnnuaireTous(an);
         setReferentiel(ref);
         setCharges(ch);
         setPlanifie({ affectations: pl.affectations, jours: joursMois });
@@ -629,7 +632,7 @@ function PrestationsContenu() {
   const dort = useCallback((affaireId: string) => dormantes.has(affaireId) && !reveillees.has(affaireId), [dormantes, reveillees]);
 
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
-  const collabs = useMemo(() => new Map(annuaire.map((c) => [c.id, c])), [annuaire]);
+  const collabs = useMemo(() => new Map((annuaireTous.length ? annuaireTous : annuaire).map((c) => [c.id, c])), [annuaire, annuaireTous]);
   const nomsActivites = useMemo(() => new Map((referentiel?.activites ?? []).map((a) => [a.id, a.nom])), [referentiel]);
   const saisieParCle = useMemo(() => new Map(saisies.map((s) => [`${s.ligne_id}|${s.jour}`, s])), [saisies]);
 
@@ -1300,6 +1303,15 @@ function PrestationsContenu() {
         }
       }
     }
+        // STAFFAGE_SANS_REPORT : on ne remplit jamais un mois passé : au plus tôt le 1er du mois en cours
+    {
+      const d0 = new Date();
+      const premierDuMois = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, "0")}-01`;
+      if (depart < premierDuMois) {
+        depart = premierDuMois;
+        dejaH = 0;
+      }
+    }
     const unite = modele?.unite ?? f.unite;
     const baseH = modele ? modele.base_horaire : k ? (k.base_hebdo || 37.5) / 5 : f.base;
     const rythmeK = k ? (a.imputation === "PE" ? k.rythme_pe : k.rythme_pi) : null;
@@ -1393,6 +1405,15 @@ function PrestationsContenu() {
         for (const m of [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))]) {
           const { error: ep } = await supabase.rpc("prestation_synchroniser_planning", { p_ligne_id: ligneId, p_mois: m });
           if (ep) setErreur(`Planning non mis à jour (${m.slice(0, 7)}) : ${traduireErreur(ep.message)}`);
+        }
+        // STAFFAGE_SANS_REPORT : ce qui vient d'être rempli compte pour son mois, sans report (sauf mois déjà clôturé)
+        const moisRemplis = [...new Set(sim.jours.map((x) => `${x.jour.slice(0, 7)}-01`))];
+        const { data: dejaMois } = await supabase.from("prestation_mois").select("mois,valide").eq("ligne_id", ligneId).in("mois", moisRemplis);
+        const clos = new Set(((dejaMois ?? []) as { mois: string; valide: boolean | null }[]).filter((x) => x.valide).map((x) => String(x.mois).slice(0, 10)));
+        const aOuvrir = moisRemplis.filter((m) => !clos.has(m)).map((m) => ({ ligne_id: ligneId, mois: m, reporte: false }));
+        if (aOuvrir.length) {
+          const { error: er } = await supabase.from("prestation_mois").upsert(aOuvrir, { onConflict: "ligne_id,mois" });
+          if (er) setErreur(`Report non désactivé : ${traduireErreur(er.message)}`);
         }
         const fr = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR");
         setInfo(`${s.affaire.numero} staffé : ${texteHeures(Math.round(sim.jours.reduce((t, x) => t + x.heures, 0) * 100) / 100)} h du ${fr(sim.jours[0].jour)} au ${fr(sim.fin ?? sim.jours[0].jour)}.`);
@@ -3134,7 +3155,7 @@ function PrestationsContenu() {
                 </div>
                 {s.source && (
                   <Message genre="info">
-                    Avenant : personne, unité, base et taux repris de <strong>{s.source}</strong>, début à la suite de son dernier jour. Vérifiez, puis confirmez.
+                    Avenant : personne, unité, base et taux repris de <strong>{s.source}</strong>, début à la suite de son dernier jour (au plus tôt le 1er du mois en cours : rien n’est reporté). Vérifiez, puis confirmez.
                   </Message>
                 )}
                 {k && (

@@ -120,8 +120,10 @@ export async function chargerRealise(): Promise<Realise[]> {
   );
 }
 
-export async function chargerAnnuaire(): Promise<Collab[]> {
-  const { data, error } = await supabase.rpc("pilotage_annuaire");
+/* INACTIFS_VISIBLES : { inactifs: true } renvoie aussi les fiches désactivées (actif = false), pour afficher leur passé ;
+   sans option, seulement les personnes actives (listes de choix) */
+export async function chargerAnnuaire(options: { inactifs?: boolean } = {}): Promise<Collab[]> {
+  const { data, error } = options.inactifs ? await supabase.rpc("pilotage_annuaire", { p_inactifs: true }) : await supabase.rpc("pilotage_annuaire");
 
   if (error) throw new Error(error.message);
 

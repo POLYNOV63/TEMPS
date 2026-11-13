@@ -321,7 +321,7 @@ function PlanningAffairesContenu() {
     Promise.all([
       chargerAffaires({ horsPlanning: true }),
       chargerCharges(),
-      chargerAnnuaire(),
+      chargerAnnuaire({ inactifs: true }),
       chargerActivites(),
       chargerImputations(),
       chargerMoi(),
@@ -416,6 +416,8 @@ function PlanningAffairesContenu() {
   const aujourdhui = aISO(new Date());
 
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
+  // INACTIFS_VISIBLES : les noms des inactifs restent affichés ; les choix ne proposent que les personnes actives
+  const annuaireActif = useMemo(() => annuaire.filter((c) => c.actif !== false), [annuaire]);
   const estPE = useCallback((id: string) => affairesParId.get(id)?.imputation === "PE", [affairesParId]);
 
   /* Prestation (PE, PI) : imputation sans heures chiffrées obligatoires */
@@ -779,7 +781,7 @@ function PlanningAffairesContenu() {
   const ressources = useMemo(() => {
     const semaines = Array.from({ length: Math.min(8, nbSemaines) }, (_, w) => ajouterJours(lundi, w * 7));
 
-    return annuaire
+    return annuaireActif
       .filter((c) => c.inclus_statistiques)
       .map((c) => {
         const libre = semaines.map((l) => {
@@ -792,7 +794,7 @@ function PlanningAffairesContenu() {
         return { collab: c, libre, totalLibre: libre.reduce((t, v) => t + v, 0), chezLeClientJusquau: jusquau };
       })
       .sort((a, b) => Number(!!a.chezLeClientJusquau) - Number(!!b.chezLeClientJusquau) || b.totalLibre - a.totalLibre);
-  }, [annuaire, nbSemaines, lundi, capacites, joursAffectes, chezLeClient, aujourdhui]);
+  }, [annuaireActif, nbSemaines, lundi, capacites, joursAffectes, chezLeClient, aujourdhui]);
 
   /* ------------------------------ glisser / étirer ------------------------------ */
 
@@ -2078,7 +2080,7 @@ function PlanningAffairesContenu() {
                     style={{ minHeight: 28, borderRadius: 6, border: `1.5px solid ${focus ? "#1f6feb" : "#c9cdd2"}`, fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
                   >
                     <option value="">Voir une personne…</option>
-                    {annuaire.map((c) => (
+                    {annuaireActif.map((c) => (
                       <option key={c.id} value={c.id}>
                         {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
                       </option>
@@ -2625,7 +2627,7 @@ function PlanningAffairesContenu() {
             setRechargement((n) => n + 1);
           }}
           affaire={ficheRessource.affaire}
-          annuaire={annuaire}
+          annuaire={annuaireActif}
           affectations={affectations}
           joursRows={joursRows}
           estPE={estPE}
@@ -2661,7 +2663,7 @@ function PlanningAffairesContenu() {
             setRechargement((n) => n + 1);
           }}
           affaires={affaires}
-          annuaire={annuaire}
+          annuaire={annuaireActif}
           referentiel={referentiel}
           imputations={imputations}
           codesDivers={codesDivers}
@@ -2681,7 +2683,7 @@ function PlanningAffairesContenu() {
             setRechargement((n) => n + 1);
           }}
           affaire={dialogue.affaire}
-          annuaire={annuaire}
+          annuaire={annuaireActif}
           chiffre={chiffreParAffaire.get(dialogue.affaire.id) ?? 0}
           affectations={affectations}
           joursRows={joursRows}

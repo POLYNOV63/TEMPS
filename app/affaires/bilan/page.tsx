@@ -13,6 +13,8 @@ import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui"
 import { supabase } from "@/lib/supabase";
 import { formatDate, formatHeures } from "@/lib/pilotageCalculs";
 import { chargerPlanifie } from "@/lib/pilotageDonnees";
+import { peut } from "@/lib/droits";
+import { chargerDroitsRoles } from "@/lib/droitsRoles";
 
 /* ===============================================================
    FICHE AFFAIRE (FICHE_AFFAIRE_V3) - ancien « Bilan affaire »
@@ -26,6 +28,10 @@ import { chargerPlanifie } from "@/lib/pilotageDonnees";
      reste à planifier ou dépassement prévu, avancement estimé, jauge) et
      les points d'attention ; la commande, repliée (mère, filles,
      échéances, dates, statuts, heures commandées par activité).
+   ONGLETS_FICHE : sous le cadre de l'affaire, trois onglets : « Affaire et
+   heures » (bilan et détail des heures), « Historique PE / PI » (pour une
+   PE / PI) et « Financier » (fonction « Montants des affaires ») ; l'onglet
+   est retenu dans l'adresse (?vue=pepi, ?vue=financier).
    - ① LE BILAN DES HEURES : prévu, consommé, planifié, par activité ou
      par commande ; les affectations à venir (qui, quand), comparées au
      chiffré. Pour une PE / PI, l'historique du relevé mois par mois et
@@ -163,7 +169,7 @@ function Jauge({ chiffre, pointe, prevu, large = 120 }: { chiffre: number; point
 function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
   return (
     <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
-      {numero} {titre} {aide && <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>{aide}</span>}
+      {numero ? `${numero} ` : ""}{titre} {aide && <span style={{ fontSize: 14, fontWeight: 400, color: C.gris }}>{aide}</span>}
     </h2>
   );
 }
@@ -187,10 +193,41 @@ function BilanContenu() {
   const [filtrePersonne, setFiltrePersonne] = useState("");
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
+  const [noteJours, setNoteJours] = useState(""); // JOURS_VENDUS
+  /* FACTURATION_ENTETE : PE / PI facturée au jour (journée de …) ou à l'heure, d'après le relevé */
+  const [facturation, setFacturation] = useState<{ unite: "JOUR" | "HEURE"; bases: number[]; jours: number; heures: number } | null>(null);
   // présentation
   const [commandeOuverte, setCommandeOuverte] = useState(false);
   const [vue, setVue] = useState<"ACTIVITE" | "COMMANDE">("ACTIVITE");
   const [onglet, setOnglet] = useState<"PERSONNE" | "MOIS" | "CODE" | "SOUS_DOSSIER" | "SEMAINE">("PERSONNE");
+  /* ONGLETS_FICHE : onglet de la fiche (retenu dans l'adresse : ?vue=pepi, ?vue=financier) */
+  const [ongletFiche, setOngletFiche] = useState<"AFFAIRE" | "PEPI" | "ARGENT">(() => {
+    if (typeof window === "undefined") return "AFFAIRE";
+    const v = new URLSearchParams(window.location.search).get("vue");
+    return v === "pepi" ? "PEPI" : v === "financier" ? "ARGENT" : "AFFAIRE";
+  });
+  const changerOnglet = (o: "AFFAIRE" | "PEPI" | "ARGENT") => {
+    setOngletFiche(o);
+    const u = new URL(window.location.href);
+    if (o === "AFFAIRE") u.searchParams.delete("vue");
+    else u.searchParams.set("vue", o === "PEPI" ? "pepi" : "financier");
+    window.history.replaceState(null, "", u.toString());
+  };
+  const [voitMontants, setVoitMontants] = useState(false);
+  useEffect(() => {
+    let actif = true;
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
+      if (actif) setVoitMontants(peut(moi?.role ?? null, "montantsAffaires"));
+    })();
+    return () => {
+      actif = false;
+    };
+  }, []);
 
   useEffect(() => {
     void supabase
@@ -242,7 +279,7 @@ function BilanContenu() {
         supabase
           .from("suivi_lignes")
           .select(
-            "cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
+            "id,cle,genre,numero_affaire,numero_devis,base_devis,statut,imputation,designation,client_id,redacteur,date_ouverture,date_reception_commande,delai,date_livraison_estimee,date_livraison,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre,heures_total,disparue"
           )
           .eq(cible.type === "CBE" ? "base_affaire" : "base_devis", num),
         supabase.from("pilotage_affaires").select("*").eq("type", cible.type),
@@ -276,6 +313,89 @@ function BilanContenu() {
 
       const p = ((pil.data ?? []) as (AffairePilotage & { numero: string })[]).find((a) => a.numero.replace(/^0+/, "") === num) ?? null;
       setPilotage(p);
+
+      /* JOURS_VENDUS : une PE / PI facturée au JOUR (réglage de la commande au relevé, sinon ses lignes actives)
+         vaut jours vendus × journée de la commande (7,5 h…). Jours vendus : la quantité si elle est en jours ;
+         sinon montant ÷ taux au jour ; sinon les heures du Suivi d'affaire ÷ 7 h (le classeur compte ses jours
+         à 7 h : 371 h = 53 j). On recale les heures chiffrées de chaque commande, et leur répartition par
+         activité au prorata. */
+      setNoteJours("");
+      setFacturation(null);
+      if (cible.type === "CBE") {
+        type PilJ = { id: string; numero: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
+        const famille = ((pil.data ?? []) as PilJ[]).filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === num);
+        const { data: plj } = famille.length
+          ? await supabase.from("prestation_lignes").select("affaire_id,unite,taux,base_horaire,actif").in("affaire_id", famille.map((a) => a.id))
+          : { data: [] };
+        const lignesR = ((plj ?? []) as { affaire_id: string; unite: string | null; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).filter((l) => l.actif !== false);
+        const frequente = (vals: number[]) => {
+          const c = new Map<number, number>();
+          for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
+          return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
+        };
+        const baseFamille = famille.map((a) => Number(a.releve_base_horaire) || 0).find((v) => v > 0) ?? frequente(lignesR.map((l) => Number(l.base_horaire) || 0).filter((v) => v > 0));
+        const auJour = famille.filter((a) => {
+          const ls = lignesR.filter((l) => l.affaire_id === a.id);
+          const u = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : ls.length ? (ls.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : a.prestation_unite === "JOURS" ? "JOUR" : "HEURE";
+          return u === "JOUR";
+        });
+        // FACTURATION_ENTETE : à l'heure, si la famille a des lignes au relevé et aucune commande au jour
+        const imputationBase = (lignes.find((l) => l.genre === "BASE") ?? lignes[0])?.imputation ?? "";
+        if (auJour.length === 0 && lignesR.length > 0 && (imputationBase === "PE" || imputationBase === "PI"))
+          setFacturation({ unite: "HEURE", bases: [], jours: 0, heures: lignes.filter((l) => (l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue && !INACTIFS.includes(l.statut ?? "")).reduce((t, l) => t + l.heures_total, 0) });
+        if (auJour.length > 0) {
+          let totJours = 0;
+          let totHeures = 0;
+          const bases = new Set<number>();
+          // montants des commandes (pour montant ÷ taux au jour), s'ils sont lisibles
+          const ids = lignes.filter((l) => l.genre === "BASE" || l.genre === "AVENANT").map((l) => (l as LigneExcel & { id?: string }).id).filter((x): x is string => Boolean(x));
+          const montantDe = new Map<string, number>();
+          if (ids.length) {
+            const { data: mts } = await supabase.from("suivi_lignes_montants").select("ligne_id,montant").in("ligne_id", ids);
+            for (const m of (mts ?? []) as { ligne_id: string; montant: number | string | null }[]) montantDe.set(m.ligne_id, Number(m.montant) || 0);
+          }
+          const notes: string[] = [];
+          for (const a of auJour) {
+            const lsA = lignesR.filter((l) => l.affaire_id === a.id);
+            const baseC = (Number(a.releve_base_horaire) || 0) || frequente(lsA.map((l) => Number(l.base_horaire) || 0).filter((v) => v > 0)) || baseFamille;
+            if (!baseC) continue;
+            const l = lignes.find((x) => (x.genre === "BASE" || x.genre === "AVENANT") && String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
+            if (!l) continue;
+            const qte = Number(a.prestation_quantite) || 0;
+            const tauxJour = Number(lsA.find((x) => x.unite === "JOUR" && Number(x.taux) > 0)?.taux) || 0;
+            const montant = montantDe.get((l as LigneExcel & { id?: string }).id ?? "") ?? 0;
+            const jours =
+              qte > 0 && a.prestation_unite === "JOURS"
+                ? qte
+                : montant > 0 && tauxJour > 0
+                  ? montant / tauxJour
+                  : qte > 0
+                    ? qte / 7
+                    : l.heures_total > 0
+                      ? l.heures_total / 7
+                      : 0;
+            if (jours <= 0) continue;
+            const cibleH = jours * baseC;
+            if (!l.disparue && !INACTIFS.includes(l.statut ?? "")) {
+              totJours += jours;
+              totHeures += cibleH;
+              bases.add(baseC);
+            }
+            if (Math.abs(cibleH - l.heures_total) < 0.05) continue;
+            const f = l.heures_total > 0 ? cibleH / l.heures_total : 0;
+            const avant = l.heures_total;
+            if (f > 0) for (const { champ } of COLONNES_EXCEL) (l as Record<string, unknown>)[champ] = (Number(l[champ]) || 0) * f;
+            else l.heures_autre = cibleH;
+            l.heures_total = cibleH;
+            notes.push(`${a.numero} : ${(Math.round(jours * 100) / 100).toLocaleString("fr-FR")} j × ${baseC.toLocaleString("fr-FR")} h = ${formatHeures(cibleH)}${avant > 0 ? ` (au lieu de ${formatHeures(avant)})` : ""}`);
+          }
+          if (notes.length > 0) {
+            setLignesExcel([...lignes]);
+            setNoteJours(notes.join(" · "));
+          }
+          setFacturation({ unite: "JOUR", bases: [...bases].sort(), jours: totJours, heures: totHeures });
+        }
+      }
 
       if (p) {
         const { data } = await supabase.from("pilotage_charges").select("activite_id,heures").eq("affaire_id", p.id);
@@ -480,6 +600,7 @@ function BilanContenu() {
   const livree = comptees.length > 0 && comptees.every((l) => l.statut === "Livrée");
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
+  const prestation = affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI");
 
   // planifié à venir
   const planifieTotal = aVenir.reduce((s, x) => s + x.heures, 0);
@@ -605,7 +726,6 @@ function BilanContenu() {
               const nbCommandes = meres.filter((l) => l.genre !== "DEVIS").length;
               const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
               const nbDecoupes = ordreL.length - meres.length;
-              const prestation = base?.imputation === "PE" || base?.imputation === "PI";
               const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
               const chiffre = (libelle: string, valeur: string, sous?: string, rouge?: boolean) => (
                 <div style={{ minWidth: 110 }}>
@@ -694,6 +814,23 @@ function BilanContenu() {
                     {base?.date_reception_commande && (
                       <span>
                         <span style={{ color: C.gris }}>Reçue le</span> <strong>{formatDate(base.date_reception_commande)}</strong>
+                      </span>
+                    )}
+                    {facturation && (
+                      <span title="D’après le relevé PE / PI : la façon dont la commande est facturée">
+                        <span style={{ color: C.gris }}>Facturée</span>{" "}
+                        <strong>
+                          {facturation.unite === "JOUR"
+                            ? `au jour · journée de ${facturation.bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(" / ") || "?"}`
+                            : "à l’heure"}
+                        </strong>
+                        <span style={{ color: C.gris }}>
+                          {" "}
+                          ·{" "}
+                          {facturation.unite === "JOUR"
+                            ? `${(Math.round(facturation.jours * 10) / 10).toLocaleString("fr-FR")} j commandés (${formatHeures(facturation.heures)})`
+                            : `${formatHeures(facturation.heures)} commandées`}
+                        </span>
                       </span>
                     )}
                     {pilotage ? (
@@ -798,11 +935,51 @@ function BilanContenu() {
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
               <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
             )}
+            {noteJours && (
+              <Message genre="info">
+                Vendue au jour : heures chiffrées recalculées sur la journée de la commande (« Journée de » du relevé) : {noteJours}.
+              </Message>
+            )}
             {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
             {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}
 
             {/* ================= ② PRÉVU, CONSOMMÉ, PLANIFIÉ ================= */}
-            <TitrePartie numero="①" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
+            {/* ONGLETS_FICHE : l'affaire et les heures · l'historique PE / PI · le financier */}
+            {(() => {
+              const onglets: [typeof ongletFiche, string][] = [["AFFAIRE", "Affaire et heures"]];
+              if (prestation) onglets.push(["PEPI", "Historique PE / PI"]);
+              if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
+              if (onglets.length < 2) return null;
+              return (
+                <div role="tablist" style={{ display: "flex", gap: 4, margin: "6px 0 14px", borderBottom: `2px solid ${C.ligne}` }}>
+                  {onglets.map(([cle, libelle]) => (
+                    <button
+                      key={cle}
+                      type="button"
+                      role="tab"
+                      aria-selected={ongletFiche === cle}
+                      onClick={() => changerOnglet(cle)}
+                      style={{
+                        all: "unset",
+                        cursor: "pointer",
+                        padding: "10px 18px",
+                        fontWeight: 800,
+                        fontSize: 16,
+                        color: ongletFiche === cle ? C.rougeFonce : "#3b4046",
+                        borderBottom: `3px solid ${ongletFiche === cle ? C.rouge : "transparent"}`,
+                        marginBottom: -2,
+                      }}
+                    >
+                      {libelle}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {ongletFiche === "AFFAIRE" && (
+            <>
+            <TitrePartie numero="" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <button type="button" aria-pressed={vue === "ACTIVITE"} onClick={() => setVue("ACTIVITE")} style={bascule(vue === "ACTIVITE")}>
@@ -935,12 +1112,7 @@ function BilanContenu() {
             </section>
 
             {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}
-            {/* HISTORIQUE_PEPI : pour une PE / PI, ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
-            {affaire.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI") && (
-              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />
-            )}
-
-            <TitrePartie numero="②" titre="Le détail des heures" />
+            <TitrePartie numero="" titre="Le détail des heures" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
               <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                 {(
@@ -1139,8 +1311,14 @@ function BilanContenu() {
               )}
             </section>
 
-            {/* ================= ④ L'ARGENT (fonction « Montants des affaires ») ================= */}
-            {affaire.type === "CBE" && (
+            </>
+            )}
+
+            {/* HISTORIQUE_PEPI : ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
+            {ongletFiche === "PEPI" && prestation && <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />}
+
+            {/* FINANCIER (fonction « Montants des affaires ») */}
+            {ongletFiche === "ARGENT" && voitMontants && affaire.type === "CBE" && (
               <BilanFinancierAffaire
                 type={affaire.type}
                 numero={affaire.numero}
