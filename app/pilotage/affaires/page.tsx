@@ -2659,6 +2659,10 @@ function PlanningAffairesContenu() {
 
       {dialogue && (
         <AffecterDialog
+          nomAffaire={(id) => {
+            const x = affairesParId.get(id);
+            return x ? `${x.type} ${x.numero}` : "autre affaire";
+          }}
           onClose={() => setDialogue(null)}
           onSaved={(message) => {
             setDialogue(null);

@@ -61,6 +61,8 @@ type Props = {
   // PREREMPLI_RESTE : activité et heures proposées (« planifier le reste »)
   prefill?: { collaborateurId?: string; debut?: string; activiteId?: string; heures?: number };
   edition?: { affectation: Affectation; jours: JourRow[] };
+  /* SURCHARGE_DETAIL : « CBE 1775 » à partir de l'id d'une affaire */
+  nomAffaire?: (affaireId: string) => string;
 };
 
 function prochainJourOuvre(depuis: string): string {
@@ -82,6 +84,7 @@ export default function AffecterDialog({
   limiter,
   prefill,
   edition,
+  nomAffaire,
 }: Props) {
   const enEdition = Boolean(edition);
   const jourDuJour = aISO(new Date());
@@ -235,14 +238,26 @@ export default function AffecterDialog({
     const manquants = fin ? joursSansCapacite(debut, fin, cap) : [];
 
     // charge de la personne avec ce bloc, semaine par semaine
-    const autres: JourAffecte[] = joursRows
-      .filter((j) => !idsExclus.has(j.affectation_id) && affaireDe.get(j.affectation_id)?.collaborateur_id === collab)
-      .map((j) => ({ collaborateur_id: collab, jour: j.jour, heures: num(j.heures) }));
+    const lignesAutres = joursRows.filter((j) => !idsExclus.has(j.affectation_id) && affaireDe.get(j.affectation_id)?.collaborateur_id === collab);
+    const autres: JourAffecte[] = lignesAutres.map((j) => ({ collaborateur_id: collab, jour: j.jour, heures: num(j.heures) }));
     const nouveaux: JourAffecte[] = r.jours.map((j) => ({ collaborateur_id: collab, jour: j.jour, heures: j.heures }));
     const semaines = [...new Set(r.jours.map((j) => lundiDe(j.jour)))];
     const surcharges = semaines
       .map((l) => ({ l, s: chargeParSemaine(capacites, [...autres, ...nouveaux], collab, l) }))
-      .filter((x) => x.s.ecart > 0.01 && x.s.net > 0);
+      .filter((x) => x.s.ecart > 0.01 && x.s.net > 0)
+      .map((x) => {
+        // SURCHARGE_DETAIL : les autres affaires (ou événements) de la personne cette semaine-là, avec leurs heures
+        const fin = ajouterJours(x.l, 6);
+        const parAffaire = new Map<string, number>();
+        for (const j of lignesAutres) {
+          if (j.jour < x.l || j.jour > fin) continue;
+          const a = affaireDe.get(j.affectation_id);
+          const nom = a?.affaire_id ? (a.affaire_id === affaire.id ? `${affaire.type} ${affaire.numero} (déjà affecté)` : nomAffaire?.(a.affaire_id) ?? "autre affaire") : a?.libelle || "événement";
+          parAffaire.set(nom, (parAffaire.get(nom) ?? 0) + num(j.heures));
+        }
+        const avec = [...parAffaire.entries()].filter(([, h]) => h > 0.01).sort((a, b) => b[1] - a[1]);
+        return { ...x, avec };
+      });
 
     const client = chezLeClient.get(collab);
     const conflitsPE = client ? r.jours.filter((j) => client.has(j.jour)) : [];
@@ -441,12 +456,24 @@ export default function AffecterDialog({
               {calcul.surcharges.length > 0 &&
                 alerte(
                   <>
-                    <strong>▲ Déjà chargé(e).</strong>{" "}
-                    {calcul.surcharges
-                      .slice(0, 3)
-                      .map((s) => `S${numeroSemaine(s.l)} : ${Math.round((s.s.affecte / s.s.net) * 100)} % de sa capacité`)
-                      .join(" · ")}
-                    .
+                    <strong>▲ Déjà chargé(e).</strong>
+                    {calcul.surcharges.slice(0, 4).map((s) => (
+                      <div key={s.l} style={{ marginTop: 4 }}>
+                        <strong>S{numeroSemaine(s.l)}</strong> : {Math.round((s.s.affecte / s.s.net) * 100)} % de sa capacité
+                        {s.avec.length > 0 && (
+                          <>
+                            {" "}— déjà sur{" "}
+                            {s.avec.map(([nom, h], k) => (
+                              <span key={nom}>
+                                {k > 0 ? ", " : ""}
+                                <strong>{nom}</strong> ({formatHeures(h)})
+                              </span>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {calcul.surcharges.length > 4 && <div style={{ marginTop: 4 }}>… et {calcul.surcharges.length - 4} autre(s) semaine(s).</div>}
                   </>
                 )}
 
