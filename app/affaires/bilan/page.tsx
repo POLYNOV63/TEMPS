@@ -767,7 +767,7 @@ function BilanContenu() {
               const nbCommandes = meres.filter((l) => l.genre !== "DEVIS").length;
               const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
               const nbDecoupes = ordreL.length - meres.length;
-              const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
+              const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 32, padding: "0 10px", fontSize: 13, whiteSpace: "nowrap", textDecoration: "none", display: "inline-flex", alignItems: "center" };
               const chiffre = (libelle: string, valeur: string, sous?: string, etat?: { couleur: string; fond: string } | null) => (
                 <div style={{ minWidth: 120, border: `1px solid ${etat ? etat.couleur + "55" : C.ligne}`, borderRadius: 10, padding: "8px 14px", background: etat ? etat.fond : "#fcfcfd" }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: etat ? etat.couleur : C.gris }}>{libelle}</div>
@@ -835,7 +835,7 @@ function BilanContenu() {
                       <PastilleStatut statut={base.statut}>{base.statut}</PastilleStatut>
                     ) : null}
                     {/* CLIENT_EN_TETE : client et imputation sur la ligne du titre */}
-                    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 14, marginLeft: 6 }}>
+                    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 14, marginLeft: 4 }}>
                     {client && (
                       <span style={{ whiteSpace: "nowrap" }}>
                         <span style={{ color: C.gris }}>Client</span> <strong>{client}</strong>
@@ -849,14 +849,17 @@ function BilanContenu() {
                     </span>
                     <span style={{ flex: 1 }} />
                     {/* LIEN_PLANNING : l'affaire au planning, dépliée sur ses affectations */}
-                    <Link href={pilotage ? `/pilotage/affaires?ouvrir=${pilotage.id}` : "/pilotage/affaires"} style={bouton}>
-                      📅 Voir au planning
-                    </Link>
-                    {prestation && (
-                      <Link href={`/pilotage/prestations?affaire=${encodeURIComponent(affaire.numero)}`} style={bouton}>
-                        📋 Relevé PE / PI
+                    {/* BOUTONS_COMPACTS : toujours côte à côte, au bout de la ligne */}
+                    <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
+                      <Link href={pilotage ? `/pilotage/affaires?ouvrir=${pilotage.id}` : "/pilotage/affaires"} style={bouton} title="Voir l’affaire au planning des affaires">
+                        📅 Planning
                       </Link>
-                    )}
+                      {prestation && (
+                        <Link href={`/pilotage/prestations?affaire=${encodeURIComponent(affaire.numero)}`} style={bouton} title="Ouvrir le relevé PE / PI">
+                          📋 Relevé
+                        </Link>
+                      )}
+                    </span>
                   </div>
 
                   {/* qui, quand : client, réception, responsable et délai (modifiables) */}
