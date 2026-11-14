@@ -39,8 +39,10 @@ import {
                                      est disponible ;
      - « Pour un nombre de jours » : idem, pour N journées de travail ;
      - « Pour un nombre d'heures » : idem, pour N heures ;
-     - « Répartir sur une période » : N heures étalées entre deux dates
-                                     (petites affaires à plusieurs ressources).
+     - « Heures sur une période »  : N heures placées à partir du début, en
+                                     journées pleines (horaire de la personne),
+                                     le dernier jour reçoit le reste ; la date de
+                                     fin est une limite (JOURNEES_PLEINES).
    Pour les trois premières, les jours fériés et les absences (congés...) ne
    sont pas travaillés : LA DATE DE FIN EST REPOUSSEE d'autant.
 
@@ -276,8 +278,9 @@ export default function AffectationDialog({
         const r = remplirHeures({ debut, quantiteHeures: num(nbHeures.replace(",", ".")), capaciteJour: net, pourcent: p, horizon });
         resultat.set(id, { jours: r.jours, total: r.total, fin: r.fin, epuise: r.epuise, finDemandee: null });
       } else if (modeEffectif === "PERIODE") {
-        const r = genererJours({ mode: "HEURES", debut, fin, capaciteJour: net, total: num(total.replace(",", ".")) });
-        resultat.set(id, { jours: r.jours, total: r.total, fin: r.jours.length ? r.jours[r.jours.length - 1].jour : null, epuise: true, finDemandee: fin });
+        // JOURNEES_PLEINES : journées à l'horaire de la personne, le reste sur le dernier jour, sans dépasser la fin
+        const r = remplirHeures({ debut, quantiteHeures: num(total.replace(",", ".")), capaciteJour: net, pourcent: 100, horizon: fin });
+        resultat.set(id, { jours: r.jours, total: r.total, fin: r.fin, epuise: r.epuise, finDemandee: fin });
       } else {
         const r = genererJours({
           mode: "PAR_JOUR",
@@ -384,7 +387,11 @@ export default function AffectationDialog({
     const incomplet = ressources.some((id) => repartitions.get(id) && !repartitions.get(id)!.epuise);
 
     if (!manuel && incomplet) {
-      setErreur("La quantité demandée dépasse la période calculée (un an au plus) : réduisez-la.");
+      setErreur(
+        modeEffectif === "PERIODE"
+          ? `Les heures ne tiennent pas entre le ${formatDate(debut)} et le ${formatDate(fin)} en journées pleines : reculez la date de fin, ou réduisez les heures.`
+          : "La quantité demandée dépasse la période calculée (un an au plus) : réduisez-la."
+      );
       return;
     }
 
@@ -487,7 +494,7 @@ export default function AffectationDialog({
     { valeur: "DATE", libelle: "Jusqu’à une date", aide: "La personne est affectée jusqu’à cette date, les jours où elle est disponible. Congés et jours fériés repoussent la fin." },
     { valeur: "JOURS", libelle: "Pour un nombre de jours", aide: "La personne est affectée pour N journées de travail. Congés et jours fériés repoussent la fin." },
     { valeur: "NB_HEURES", libelle: "Pour un nombre d’heures", aide: "La personne est affectée jusqu’à avoir fait ces heures. Congés et jours fériés repoussent la fin." },
-    { valeur: "PERIODE", libelle: "Répartir sur une période", aide: "Les heures sont étalées entre les deux dates, proportionnellement à la disponibilité de chaque jour (petites affaires)." },
+    { valeur: "PERIODE", libelle: "Heures sur une période", aide: "Les heures sont placées à partir du début en journées pleines (horaire de la personne) ; le dernier jour reçoit le reste. La date de fin est une limite à ne pas dépasser." },
   ];
 
   return (
@@ -723,7 +730,11 @@ export default function AffectationDialog({
                         </strong>
                       )}
                       {!manuel && rep && !rep.epuise && (
-                        <strong style={{ color: C.rougeTexte }}> — la quantité dépasse un an de planning : réduisez-la</strong>
+                        <strong style={{ color: C.rougeTexte }}>
+                          {modeEffectif === "PERIODE"
+                            ? ` — ne tient pas avant le ${formatDate(rep.finDemandee)} : il manque ${formatHeures(arrondi2(num(total.replace(",", ".")) - somme))}`
+                            : " — la quantité dépasse un an de planning : réduisez-la"}
+                        </strong>
                       )}
                     </>
                   )}
