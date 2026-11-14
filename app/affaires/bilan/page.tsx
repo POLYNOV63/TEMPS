@@ -433,7 +433,8 @@ function BilanContenu() {
       const res: AVenir[] = [];
       for (const a of pl.affectations) {
         if (!a.affaire_id || !famille.has(a.affaire_id)) continue;
-        const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour >= a0 && (Number(j.heures) || 0) > 0);
+        // A_VENIR_DEMAIN : aujourd'hui compte déjà dans le pointé (feuille d'heures du jour) : le planifié commence demain
+        const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour > a0 && (Number(j.heures) || 0) > 0);
         if (js.length === 0) continue;
         const dates = js.map((j) => j.jour).sort();
         const x = a as unknown as { collaborateur_id?: string | null; activite_id?: string | null };
@@ -1009,7 +1010,7 @@ function BilanContenu() {
                     Par commande
                   </button>
                 )}
-                <span style={{ fontSize: 13, color: C.gris }}>planifié : planning des affaires, à partir d’aujourd’hui</span>
+                <span style={{ fontSize: 13, color: C.gris }}>planifié : planning des affaires, à partir de demain</span>
               </div>
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                 <thead>
@@ -1100,7 +1101,7 @@ function BilanContenu() {
                   )}
                 </div>
                 {aVenir.length === 0 ? (
-                  <p style={{ margin: "6px 0 0", color: C.gris }}>Rien n’est planifié à partir d’aujourd’hui.</p>
+                  <p style={{ margin: "6px 0 0", color: C.gris }}>Rien n’est planifié à partir de demain.</p>
                 ) : (
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 6 }}>
                     <thead>
