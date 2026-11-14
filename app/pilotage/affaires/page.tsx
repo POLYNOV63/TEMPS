@@ -1994,6 +1994,17 @@ function PlanningAffairesContenu() {
     cursor: "pointer",
   });
 
+  /* NAV_DANS_GRILLE : frise des mois (6 mois en arrière, 18 en avant, semaine par semaine) */
+  const friseOrigine = ajouterJours(lundiDe(aujourdhui), -26 * 7);
+  const friseNbPas = 26 + 78;
+  const frisePosition = Math.round((Date.parse(lundi) - Date.parse(friseOrigine)) / (7 * 86400000));
+  const friseMois: { pos: number; libelle: string }[] = [];
+  for (let k = 0; k <= friseNbPas; k++) {
+    const d = ajouterJours(friseOrigine, k * 7);
+    const precedent = ajouterJours(friseOrigine, (k - 1) * 7);
+    if (k === 0 || d.slice(5, 7) !== precedent.slice(5, 7))
+      friseMois.push({ pos: k, libelle: new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: d.slice(5, 7) === "01" || k === 0 ? "2-digit" : undefined }) });
+  }
   const fleche: CSSProperties = { minHeight: 44, minWidth: 44, border: "1.5px solid #b9bec5", background: "#ffffff", borderRadius: 8, color: C.rougeFonce, fontSize: 18, fontWeight: 800, cursor: "pointer" };
 
   const blocChoisi = selection ? tousLesBlocs.get(selection) : undefined;
@@ -2016,114 +2027,6 @@ function PlanningAffairesContenu() {
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}
 
-        {/* Ascenseur horizontal : glisser pour se déplacer dans les mois */}
-        {(() => {
-          const origine = ajouterJours(lundiDe(aujourdhui), -26 * 7); // 6 mois en arrière
-          const nbPas = 26 + 78; // jusqu'à 18 mois en avant, semaine par semaine
-          const position = Math.round((Date.parse(lundi) - Date.parse(origine)) / (7 * 86400000));
-          const mois: { pos: number; libelle: string }[] = [];
-          for (let k = 0; k <= nbPas; k++) {
-            const d = ajouterJours(origine, k * 7);
-            const precedent = ajouterJours(origine, (k - 1) * 7);
-            if (k === 0 || d.slice(5, 7) !== precedent.slice(5, 7))
-              mois.push({ pos: k, libelle: new Date(`${d}T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: d.slice(5, 7) === "01" || k === 0 ? "2-digit" : undefined }) });
-          }
-          return (
-            <div
-              style={{
-                ...page.carte,
-                padding: "6px 14px 4px",
-                marginBottom: 12,
-                // reste visible sous les onglets du Pilotage quand on descend dans les affaires
-                position: "sticky",
-                top: "var(--hauteur-nav, 50px)",
-                zIndex: 20,
-                boxShadow: "0 4px 10px -6px rgba(0,0,0,.35)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
-                <button type="button" aria-label="Semaine précédente" onClick={() => setLundi(ajouterJours(lundi, -7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>◀</button>
-                {/* PLANNING_NAV_UNIQUE : toute la navigation dans ce bandeau figé */}
-                <span>
-                  {formatDate(lundi)} → {formatDate(colonnes[colonnes.length - 1])}
-                  <span style={{ color: C.gris, fontWeight: 600 }}>
-                    {" "}
-                    · S{numeroSemaine(lundi)} à S{numeroSemaine(colonnes[colonnes.length - 1] ?? lundi)}
-                  </span>
-                </span>
-                <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 26, padding: "0 6px" }}>▶</button>
-                <button
-                  type="button"
-                  onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
-                  style={{ all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1f4e99", textDecoration: "underline" }}
-                >
-                  Aujourd’hui
-                </button>
-                <select
-                  value={nbSemaines}
-                  onChange={(e) => setNbSemaines(Number(e.target.value))}
-                  aria-label="Durée affichée"
-                  style={{ minHeight: 28, borderRadius: 6, border: "1.5px solid #c9cdd2", fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
-                >
-                  {[2, 4, 8, 12, 26, 52].map((n) => (
-                    <option key={n} value={n}>
-                      {n === 52 ? "1 an" : `${n} semaines`}
-                    </option>
-                  ))}
-                </select>
-                <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
-                  <span aria-hidden="true">👁</span>
-                  <select
-                    value={focus ?? ""}
-                    onChange={(e) => setFocus(e.target.value || null)}
-                    aria-label="Voir les affectations d'une personne"
-                    title="Allume toutes les affectations de la personne et montre sa charge jour par jour (Échap pour revenir)"
-                    style={{ minHeight: 28, borderRadius: 6, border: `1.5px solid ${focus ? "#1f6feb" : "#c9cdd2"}`, fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
-                  >
-                    <option value="">Voir une personne…</option>
-                    {annuaireActif.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
-                      </option>
-                    ))}
-                  </select>
-                  {focus && (
-                    <button type="button" onClick={() => setFocus(null)} style={{ ...fleche, minWidth: 26, minHeight: 26, padding: "0 6px", fontSize: 13 }} aria-label="Ne plus suivre cette personne">
-                      ✕
-                    </button>
-                  )}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={nbPas}
-                step={1}
-                value={Math.max(0, Math.min(nbPas, position))}
-                onChange={(e) => setLundi(ajouterJours(origine, Number(e.target.value) * 7))}
-                aria-label="Se déplacer dans les mois"
-                style={{ width: "100%", accentColor: C.rouge, cursor: "grab" }}
-              />
-              <div style={{ position: "relative", height: 16, fontSize: 11, color: C.gris, fontWeight: 700 }}>
-                {mois.map((m) => (
-                  <span key={m.pos} style={{ position: "absolute", left: `${(m.pos / nbPas) * 100}%`, transform: "translateX(-2px)", whiteSpace: "nowrap" }}>
-                    {m.libelle}
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  title="Revenir à aujourd’hui"
-                  aria-label="Revenir à aujourd’hui"
-                  onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
-                  style={{ position: "absolute", left: `calc(${(26 / nbPas) * 100}% - 6px)`, top: -6, width: 14, height: 22, padding: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", justifyContent: "center" }}
-                >
-                  <span aria-hidden="true" style={{ width: 2, height: "100%", background: C.rouge }} />
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 12 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input
@@ -2140,6 +2043,28 @@ function PlanningAffairesContenu() {
               </button>
             ))}
           </div>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+            <span aria-hidden="true">👁</span>
+            <select
+              value={focus ?? ""}
+              onChange={(e) => setFocus(e.target.value || null)}
+              aria-label="Voir les affectations d'une personne"
+              title="Allume toutes les affectations de la personne et montre sa charge jour par jour (Échap pour revenir)"
+              style={{ minHeight: 44, borderRadius: 8, border: `1.5px solid ${focus ? "#1f6feb" : "#c9cdd2"}`, fontFamily: "inherit", fontWeight: 700, fontSize: 14, padding: "0 8px" }}
+            >
+              <option value="">Voir une personne…</option>
+              {annuaireActif.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {nomCollab(c)} — {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim()}
+                </option>
+              ))}
+            </select>
+            {focus && (
+              <button type="button" onClick={() => setFocus(null)} style={{ ...fleche, minWidth: 36, minHeight: 36, padding: "0 6px", fontSize: 13 }} aria-label="Ne plus suivre cette personne">
+                ✕
+              </button>
+            )}
+          </span>
         </div>
 
         {/* Présence : d'autres personnes ont le planning ouvert */}
@@ -2280,14 +2205,42 @@ function PlanningAffairesContenu() {
                   display: "grid",
                   gridTemplateColumns: gabarit,
                   position: "sticky",
-                  top: "calc(var(--hauteur-nav, 50px) + 78px)",
+                  top: "var(--hauteur-nav, 50px)",
                   zIndex: 15,
                   background: "#ffffff",
                   boxShadow: "0 4px 6px -5px rgba(0,0,0,.35)",
                 }}
               >
-                <div style={{ gridColumn: 1, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 0 6px 4px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
-                  Affaire · ressource
+                {/* NAV_DANS_GRILLE : semaines, dates, aujourd'hui et durée dans la case de gauche */}
+                <div style={{ gridColumn: 1, gridRow: "1 / span 3", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 4, padding: "0 6px 6px 2px", fontSize: 13, fontWeight: 800 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                    <button type="button" aria-label="Semaine précédente" onClick={() => setLundi(ajouterJours(lundi, -7))} style={{ ...fleche, minWidth: 30, minHeight: 28, padding: "0 6px", fontSize: 14 }}>◀</button>
+                    <span title={`${formatDate(lundi)} → ${formatDate(colonnes[colonnes.length - 1])}`} style={{ flex: 1, textAlign: "center" }}>
+                      {formatDate(lundi).slice(0, 5)} → {formatDate(colonnes[colonnes.length - 1]).slice(0, 5)}
+                    </span>
+                    <button type="button" aria-label="Semaine suivante" onClick={() => setLundi(ajouterJours(lundi, 7))} style={{ ...fleche, minWidth: 30, minHeight: 28, padding: "0 6px", fontSize: 14 }}>▶</button>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
+                      style={{ all: "unset", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#1f4e99", textDecoration: "underline" }}
+                    >
+                      Aujourd’hui
+                    </button>
+                    <select
+                      value={nbSemaines}
+                      onChange={(e) => setNbSemaines(Number(e.target.value))}
+                      aria-label="Durée affichée"
+                      style={{ flex: 1, minHeight: 28, borderRadius: 6, border: "1.5px solid #c9cdd2", fontFamily: "inherit", fontWeight: 700, padding: "0 6px" }}
+                    >
+                      {[2, 4, 8, 12, 26, 52].map((n) => (
+                        <option key={n} value={n}>
+                          {n === 52 ? "1 an" : `${n} semaines`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 {/* les mois, au-dessus des numéros de semaine */}
                 {(() => {
@@ -2351,6 +2304,35 @@ function PlanningAffairesContenu() {
                 <div style={{ gridColumn: colonnes.length + 2, gridRow: "1 / span 3", display: "flex", alignItems: "flex-end", padding: "0 8px 6px", fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gris }}>
                   Pointé + planifié / chiffré
                 </div>
+                {/* FRISE_DANS_GRILLE : glisser pour se déplacer dans les mois */}
+                <div style={{ gridColumn: "1 / -1", gridRow: focusCollab ? 5 : 4, padding: "2px 6px 0", borderTop: `1px solid ${C.ligne}` }}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={friseNbPas}
+                    step={1}
+                    value={Math.max(0, Math.min(friseNbPas, frisePosition))}
+                    onChange={(e) => setLundi(ajouterJours(friseOrigine, Number(e.target.value) * 7))}
+                    aria-label="Se déplacer dans les mois"
+                    style={{ width: "100%", accentColor: C.rouge, cursor: "grab", margin: 0 }}
+                  />
+                  <div style={{ position: "relative", height: 15, fontSize: 11, color: C.gris, fontWeight: 700 }}>
+                    {friseMois.map((m) => (
+                      <span key={m.pos} style={{ position: "absolute", left: `${(m.pos / friseNbPas) * 100}%`, transform: "translateX(-2px)", whiteSpace: "nowrap" }}>
+                        {m.libelle}
+                      </span>
+                    ))}
+                    <button
+                      type="button"
+                      title="Revenir à aujourd’hui"
+                      aria-label="Revenir à aujourd’hui"
+                      onClick={() => setLundi(ajouterJours(lundiDe(aujourdhui), -7))}
+                      style={{ position: "absolute", left: `calc(${(26 / friseNbPas) * 100}% - 6px)`, top: -6, width: 14, height: 21, padding: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", justifyContent: "center" }}
+                    >
+                      <span aria-hidden="true" style={{ width: 2, height: "100%", background: C.rouge }} />
+                    </button>
+                  </div>
+                </div>
                 {focusCollab && (
                   <>
                     <div style={{ gridColumn: 1, gridRow: 4, display: "flex", alignItems: "center", gap: 6, padding: "2px 4px", fontSize: 12, fontWeight: 800, color: "#1f6feb" }}>
@@ -2396,7 +2378,7 @@ function PlanningAffairesContenu() {
                 const premierDeFamille = enFamille && (premierDuGroupe || baseDe(lignes[indexLigne - 1]) !== cle);
                 const suivante = lignes[indexLigne + 1];
                 const dernierDeFamille = enFamille && (!suivante || rangGroupe(suivante) !== groupe || baseDe(suivante) !== cle);
-                const titre = premierDuGroupe ? TITRES_GROUPES[groupe] : null;
+                const titre = premierDuGroupe && groupe > 0 ? TITRES_GROUPES[groupe] : null; // FRISE_DANS_GRILLE : plus de ligne « Affaires »
                 if (!enFamille) return rendreAffaire(affaire, titre, indexLigne === 0);
                 const rps = membres.map((a) => resteAPlanifier.get(a.id)).filter((x): x is { chiffre: number; pointe: number; planifie: number; reste: number } => Boolean(x));
                 const ch = rps.reduce((t, x) => t + x.chiffre, 0);
