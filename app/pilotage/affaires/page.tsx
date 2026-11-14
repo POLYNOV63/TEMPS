@@ -111,6 +111,8 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
 /* PE en haut, PI ensuite, le reste dessous */
 // de haut en bas : hors affaire (zone du haut), le reste, puis les PI, puis les PE
 const rangGroupe = (a: { imputation: string | null }) => (a.imputation === "PE" ? 2 : a.imputation === "PI" ? 1 : 0);
+const cleSuivi = (n: string) => n.toUpperCase().replace(/\s+/g, "").replace(/^CBE/, "").replace(/^0+/, "");
+
 const TITRES_GROUPES = ["Affaires", "Prestations internes (PI)", "Prestations externes (PE) — chez le client"];
 
 const LARGEUR_NOM = 250;
@@ -202,6 +204,8 @@ function PlanningAffairesContenu() {
   const [realiseActivite, setRealiseActivite] = useState<Map<string, number>>(new Map());
   // toutes les commandes (livrées comprises) : pour répartir le pointé d'une famille base + avenants
   const [toutesAffaires, setToutesAffaires] = useState<Affaire[]>([]);
+  /* DELAIS_DRAPEAUX : pour chaque commande au forfait, ce que dit le Suivi d'affaire BE (clé : n° sans « CBE » ni zéros) */
+  const [suiviDelais, setSuiviDelais] = useState<Map<string, { client: string | null; estime: string | null; reception: string | null }>>(new Map());
   // client (nom abrégé du Suivi d'affaire) par commande de base : « CBE|1750 »
   const [clientsParBase, setClientsParBase] = useState<Map<string, string>>(new Map());
 
@@ -421,6 +425,39 @@ function PlanningAffairesContenu() {
   const estPE = useCallback((id: string) => affairesParId.get(id)?.imputation === "PE", [affairesParId]);
 
   /* Prestation (PE, PI) : imputation sans heures chiffrées obligatoires */
+  useEffect(() => {
+    const bases = [...new Set(toutesAffaires.filter((a) => a.type === "CBE").map((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")).filter(Boolean))];
+    if (bases.length === 0) return;
+    let actif = true;
+    (async () => {
+      const m = new Map<string, { client: string | null; estime: string | null; reception: string | null }>();
+      for (let k = 0; k < bases.length; k += 200) {
+        const { data } = await supabase
+          .from("suivi_lignes")
+          .select("numero_affaire,genre,delai,date_livraison_estimee,date_reception_commande,disparue")
+          .in("base_affaire", bases.slice(k, k + 200))
+          .in("genre", ["BASE", "AVENANT"]);
+        for (const l of (data ?? []) as { numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null; date_reception_commande: string | null; disparue: boolean | null }[]) {
+          if (!l.numero_affaire || l.disparue) continue;
+          m.set(cleSuivi(l.numero_affaire), { client: l.delai, estime: l.date_livraison_estimee, reception: l.date_reception_commande });
+        }
+      }
+      if (actif) setSuiviDelais(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, [toutesAffaires]);
+
+  /* délais d'une commande au forfait : estimé (fait foi) et client (pour mémoire) */
+  const delaisDe = useCallback(
+    (a: Affaire) => {
+      const d = a.type === "CBE" ? suiviDelais.get(cleSuivi(a.numero)) : undefined;
+      return { estime: d?.estime ?? null, client: d?.client ?? a.echeance, reception: d?.reception ?? null, delai: d?.estime ?? d?.client ?? a.echeance };
+    },
+    [suiviDelais]
+  );
+
   const estPrestation = useCallback(
     (a: Affaire) => {
       const imputation = imputations.find((i) => i.code === a.imputation);
@@ -449,13 +486,22 @@ function PlanningAffairesContenu() {
 
       // La barre de l'affaire couvre ses dates ET ses affectations : une affaire sans dates (ou dont
       // les dates ne couvrent pas les affectations) apparaît dès qu'on y affecte quelqu'un.
-      const debuts = [af.date_debut, debutEffectif].filter(Boolean).sort() as string[];
-      const fins = [af.echeance, finEffective].filter(Boolean).sort() as string[];
+      /* BARRE_FORFAIT : un forfait commence à la commande reçue, sinon à la déclaration de l'intention de commande
+         (le jour où elle est apparue dans l'appli) ; il finit au délai estimé, sinon au délai client */
+      let debutAff = af.date_debut;
+      let finAff = af.echeance;
+      if (af.type === "CBE" && !estPrestation(af)) {
+        const d = delaisDe(af);
+        debutAff = d.reception ?? af.date_debut ?? (af.statut === "EN_ATTENTE" ? af.created_at.slice(0, 10) : null);
+        finAff = d.delai;
+      }
+      const debuts = [debutAff, debutEffectif].filter(Boolean).sort() as string[];
+      const fins = [finAff, finEffective].filter(Boolean).sort() as string[];
       m.set(af.id, { debut: debuts[0] ?? null, fin: fins[fins.length - 1] ?? null });
     }
 
     return m;
-  }, [affaires, affectations]);
+  }, [affaires, affectations, estPrestation, delaisDe]);
 
   const chiffreParAffaire = useMemo(() => {
     const m = new Map<string, number>();
@@ -1334,7 +1380,8 @@ function PlanningAffairesContenu() {
   function etatAffaire(affaire: Affaire, chiffre: number, affecte: number, finPrevue: string | null): { genre: Genre; texte: string } {
     if (affaire.statut === "LIVREE") return { genre: "info", texte: affaire.date_livraison ? `Livrée le ${formatDate(affaire.date_livraison)}` : "Livrée" };
     if (chiffre > 0 && affecte > chiffre + 0.001) return { genre: "crit", texte: `Au-delà du chiffré (+${formatHeures(affecte - chiffre)})` };
-    if (affaire.echeance && finPrevue && finPrevue > affaire.echeance) return { genre: "crit", texte: "Fin après la livraison souhaitée" };
+    const delaiRef = delaisDe(affaire).delai;
+    if (delaiRef && finPrevue && finPrevue > delaiRef) return { genre: "crit", texte: "Fin après le délai estimé" };
     if (chiffre > 0 && chiffre - affecte > 0.5) return { genre: "warn", texte: `Reste ${formatHeures(chiffre - affecte)} à affecter` };
     if (chiffre > 0) return { genre: "ok", texte: "Tout est planifié" };
     if (affecte > 0) return { genre: "info", texte: finPrevue ? `Fin le ${formatDate(finPrevue)}` : "Affectée" };
@@ -1624,11 +1671,13 @@ function PlanningAffairesContenu() {
     }
 
     const etat = etatAffaire(affaire, chiffre, affecteAffiche, total?.fin ?? null);
-    const idxLivraison = (() => {
-      if (!affaire.echeance) return -1;
-      const j = estWeekend(affaire.echeance) ? lundiDe(ajouterJours(affaire.echeance, 7)) : affaire.echeance;
+    const idxJour = (jour: string | null) => {
+      if (!jour) return -1;
+      const j = estWeekend(jour) ? lundiDe(ajouterJours(jour, 7)) : jour;
       return colonnes.indexOf(j);
-    })();
+    };
+    const idxLivraison = idxJour(affaire.echeance);
+    const delais = delaisDe(affaire);
     const pe = affaire.imputation === "PE";
     const prestation = estPrestation(affaire);
     const borne = bornesParAffaire.get(affaire.id);
@@ -1762,7 +1811,9 @@ function PlanningAffairesContenu() {
             })()}
 
           {/* jalon : livraison souhaitée / remise */}
+          {/* DELAIS_DRAPEAUX : un forfait a ses deux drapeaux (plus bas) ; le jalon reste pour les DBE */}
           {!prestation &&
+            affaire.type === "DBE" &&
             (() => {
               const dbe = affaire.type === "DBE";
               const deplacable = dbe && peutAgir && affaire.statut !== "LIVREE";
@@ -1797,6 +1848,37 @@ function PlanningAffairesContenu() {
                   {/* RENDU_DBE_EPINGLE */}
                   {dbe ? "📌" : "⚑"}
                 </div>
+              );
+            })()}
+
+          {/* DELAIS_DRAPEAUX : drapeau rouge = délai estimé (fait foi), bleu = délai client (pour mémoire) */}
+          {!prestation &&
+            affaire.type !== "DBE" &&
+            (() => {
+              const iE = idxJour(delais.estime);
+              const iC = idxJour(delais.client);
+              const drapeau = (idx: number, couleurs: string[], titre: string) => (
+                <div
+                  key={`dr-${idx}`}
+                  title={titre}
+                  style={{ gridColumn: col(idx), gridRow: 1, alignSelf: "center", justifySelf: "end", fontSize: 16, fontWeight: 800, zIndex: 2, pointerEvents: "auto", display: "inline-flex", gap: 0, textShadow: "0 0 2px #ffffff" }}
+                >
+                  {couleurs.map((c, k) => (
+                    <span key={k} style={{ color: c }}>
+                      ⚑
+                    </span>
+                  ))}
+                </div>
+              );
+              const tE = `Délai estimé : ${formatDate(delais.estime)} (c’est lui qui fait foi)`;
+              const tC = `Délai client : ${formatDate(delais.client)} (pour mémoire)`;
+              const suite = "\nIls se modifient dans le Suivi d’affaire BE.";
+              if (iE >= 0 && iE === iC) return drapeau(iE, ["#1f5fbf", "#c00000"], `${tE}\n${tC}${suite}`);
+              return (
+                <>
+                  {iC >= 0 && drapeau(iC, ["#1f5fbf"], tC + suite)}
+                  {iE >= 0 && drapeau(iE, ["#c00000"], tE + suite)}
+                </>
               );
             })()}
 
@@ -1872,7 +1954,8 @@ function PlanningAffairesContenu() {
                   if (!r || r.chiffre <= 0) return <Pastille genre={etat.genre}>{etat.texte}</Pastille>;
                   const fait = r.pointe + r.planifie;
                   const taux = fait / r.chiffre;
-                  const finTardive = Boolean(affaire.echeance && total?.fin && total.fin > affaire.echeance);
+                  const delaiRef = delaisDe(affaire).delai;
+                  const finTardive = Boolean(delaiRef && total?.fin && total.fin > delaiRef);
                   const tol = tolerance(r.chiffre);
                   const genre: Genre = finTardive || fait - r.chiffre > tol ? "crit" : r.chiffre - fait <= tol ? "ok" : "warn";
                   const texte = finTardive
@@ -1884,7 +1967,7 @@ function PlanningAffairesContenu() {
                         : `Reste ${formatHeures(r.chiffre - fait)} à planifier`;
                   return (
                     <span
-                      title={`Chiffré ${formatHeures(r.chiffre)} : déjà pointé ${formatHeures(r.pointe)} + planifié à venir ${formatHeures(r.planifie)}, soit ${Math.round(taux * 100)} %${finTardive ? ` · la dernière affectation finit après le délai (${formatDate(affaire.echeance)})` : ""}\n« Tout est planifié » à ${formatHeures(tol)} près (6 h au plus, 10 % du chiffré au plus).`}
+                      title={`Chiffré ${formatHeures(r.chiffre)} : déjà pointé ${formatHeures(r.pointe)} + planifié à venir ${formatHeures(r.planifie)}, soit ${Math.round(taux * 100)} %${finTardive ? ` · la dernière affectation finit après le délai estimé (${formatDate(delaiRef)})` : ""}\n« Tout est planifié » à ${formatHeures(tol)} près (6 h au plus, 10 % du chiffré au plus).`}
                     >
                       <Pastille genre={genre}>{texte}</Pastille>
                     </span>
