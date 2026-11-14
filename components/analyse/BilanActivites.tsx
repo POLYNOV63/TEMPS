@@ -273,6 +273,28 @@ function normaliserNom(prenom: string, nom: string) {
   return `${prenom ?? ""} ${nom ?? ""}`.trim();
 }
 
+/* LIGNES_COMPLETES : Supabase coupe toute réponse à 1000 lignes ; on lit page par page */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function toutesLesLignes<T>(requete: any): Promise<T[]> {
+  const tout: T[] = [];
+  for (let debut = 0; ; debut += 1000) {
+    const { data, error } = await requete.range(debut, debut + 999);
+    if (error) throw error;
+    const lot = (data ?? []) as T[];
+    tout.push(...lot);
+    if (lot.length < 1000) return tout;
+  }
+}
+
+/* … et par paquets de 150 identifiants pour les filtres « in » (adresse trop longue sinon) */
+async function parPaquets<T>(table: string, colonnes: string, colonne: string, ids: string[]): Promise<T[]> {
+  const tout: T[] = [];
+  for (let k = 0; k < ids.length; k += 150) {
+    tout.push(...(await toutesLesLignes<T>(supabase.from(table).select(colonnes).in(colonne, ids.slice(k, k + 150)).order("id", { ascending: true }))));
+  }
+  return tout;
+}
+
 /* CAPACITE_ACTIVITES : intégré dans l'Analyse de capacité (onglet « Par activité ») */
 export default function BilanActivites({ integre = false }: { integre?: boolean }) {
   const Conteneur = integre ? "div" : "main";
@@ -399,14 +421,9 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
         feuillesQuery = feuillesQuery.eq("collaborateur_id", collaborateurId);
       }
 
-      const { data: feuillesData, error: feuillesError } = await feuillesQuery.order(
-        "semaine_debut",
-        { ascending: true }
+      const feuilles = await toutesLesLignes<Feuille>(
+        feuillesQuery.order("semaine_debut", { ascending: true }).order("id", { ascending: true })
       );
-
-      if (feuillesError) throw feuillesError;
-
-      const feuilles = (feuillesData ?? []) as Feuille[];
       if (feuilles.length === 0) {
         setLignesActivites([]);
         setLignesCollaborateurs([]);
@@ -427,14 +444,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
         );
       }
 
-      const { data: joursData, error: joursError } = await supabase
-        .from("feuilles_heures_jours")
-        .select("id, feuille_id, date_jour")
-        .in("feuille_id", feuilleIds);
-
-      if (joursError) throw joursError;
-
-      const jours = (joursData ?? []) as Jour[];
+      const jours = await parPaquets<Jour>("feuilles_heures_jours", "id, feuille_id, date_jour", "feuille_id", feuilleIds);
       const jourIds = jours.map(j => j.id);
 
       if (jourIds.length === 0) {
@@ -446,14 +456,12 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
         return;
       }
 
-      const { data: imputationsData, error: imputationsError } = await supabase
-        .from("feuilles_heures_imputations")
-        .select("id, jour_id, type_affaire, activite_id, code, heures, numero_affaire")
-        .in("jour_id", jourIds);
-
-      if (imputationsError) throw imputationsError;
-
-      const imputations = (imputationsData ?? []) as Imputation[];
+      const imputations = await parPaquets<Imputation>(
+        "feuilles_heures_imputations",
+        "id, jour_id, type_affaire, activite_id, code, heures, numero_affaire",
+        "jour_id",
+        jourIds
+      );
       const feuillesMap = new Map(feuilles.map(f => [f.id, f]));
       const joursMap = new Map(jours.map(j => [j.id, j]));
       const collaborateursMap = new Map(collaborateursData.map(c => [c.id, c]));
