@@ -176,6 +176,14 @@ function raccord(chiffre: number, total: number): { couleur: string; fond: strin
   return { couleur: "#b3261e", fond: "#fdecec", texte: `${formatHeures(ecart)} au-delà du chiffré` };
 }
 
+const normNom = (t: string) =>
+  t
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z]+/g, " ")
+    .trim();
+
 /* STATUT_JAUNE : une intention de commande se voit en jaune, comme au Suivi d'affaire */
 function PastilleStatut({ statut, children }: { statut: string | null | undefined; children: ReactNode }) {
   if (statut === "Intention de commande")
@@ -210,6 +218,8 @@ function BilanContenu() {
   const [activites, setActivites] = useState<Map<string, { nom: string; ordre: number }>>(new Map());
   const [correspondance, setCorrespondance] = useState<Map<string, string>>(new Map());
   const [noms, setNoms] = useState<Map<string, string>>(new Map());
+  /* REDACTEUR_TRIGRAMME : « Amélie MAUBERT » (Suivi d'affaire) → son trigramme */
+  const [trigrammes, setTrigrammes] = useState<Map<string, string>>(new Map());
   const [suggestions, setSuggestions] = useState<{ cle: string; libelle: string }[]>([]);
   const [filtrePersonne, setFiltrePersonne] = useState("");
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
@@ -273,9 +283,16 @@ function BilanContenu() {
       setSuggestions(
         ((sug.data ?? []) as { numero_affaire: string | null; designation: string | null }[]).filter((s) => s.numero_affaire).map((s) => ({ cle: s.numero_affaire as string, libelle: s.designation ?? "" }))
       );
-      setNoms(
-        new Map(((col.data ?? []) as { id: string; prenom: string | null; nom: string | null; trigramme: string | null }[]).map((c) => [c.id, c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()]))
-      );
+      const collabs = (col.data ?? []) as { id: string; prenom: string | null; nom: string | null; trigramme: string | null }[];
+      setNoms(new Map(collabs.map((c) => [c.id, c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()])));
+      const tri = new Map<string, string>();
+      for (const c of collabs) {
+        if (!c.trigramme) continue;
+        tri.set(normNom(`${c.prenom ?? ""} ${c.nom ?? ""}`), c.trigramme);
+        tri.set(normNom(`${c.nom ?? ""} ${c.prenom ?? ""}`), c.trigramme);
+        tri.set(normNom(c.trigramme), c.trigramme);
+      }
+      setTrigrammes(tri);
     })();
 
     const depuisUrl = lireAffaireDansUrl();
@@ -817,6 +834,19 @@ function BilanContenu() {
                     ) : base?.statut ? (
                       <PastilleStatut statut={base.statut}>{base.statut}</PastilleStatut>
                     ) : null}
+                    {/* CLIENT_EN_TETE : client et imputation sur la ligne du titre */}
+                    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 14, marginLeft: 6 }}>
+                    {client && (
+                      <span style={{ whiteSpace: "nowrap" }}>
+                        <span style={{ color: C.gris }}>Client</span> <strong>{client}</strong>
+                      </span>
+                    )}
+                    {base?.imputation && (
+                      <span style={{ whiteSpace: "nowrap" }}>
+                        <span style={{ color: C.gris }}>Imputation</span> <strong>{base.imputation}</strong>
+                      </span>
+                    )}
+                    </span>
                     <span style={{ flex: 1 }} />
                     {/* LIEN_PLANNING : l'affaire au planning, dépliée sur ses affectations */}
                     <Link href={pilotage ? `/pilotage/affaires?ouvrir=${pilotage.id}` : "/pilotage/affaires"} style={bouton}>
@@ -831,16 +861,6 @@ function BilanContenu() {
 
                   {/* qui, quand : client, réception, responsable et délai (modifiables) */}
                   <div className="bilan-infos" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px", marginTop: 8, fontSize: 14 }}>
-                    {client && (
-                      <span>
-                        <span style={{ color: C.gris }}>Client</span> <strong>{client}</strong>
-                      </span>
-                    )}
-                    {base?.imputation && (
-                      <span>
-                        <span style={{ color: C.gris }}>Imputation</span> <strong>{base.imputation}</strong>
-                      </span>
-                    )}
                     {base?.date_reception_commande && (
                       <span>
                         <span style={{ color: C.gris }}>Reçue le</span> <strong>{formatDate(base.date_reception_commande)}</strong>
@@ -880,8 +900,8 @@ function BilanContenu() {
                       )
                     )}
                     {base?.redacteur && (
-                      <span style={{ whiteSpace: "nowrap" }} title="Devis rédigé par">
-                        <span style={{ color: C.gris }}>Devis</span> <strong>{base.redacteur}</strong>
+                      <span style={{ whiteSpace: "nowrap" }} title={`Devis rédigé par ${base.redacteur}`}>
+                        <span style={{ color: C.gris }}>Rédacteur</span> <strong>{trigrammes.get(normNom(base.redacteur)) ?? base.redacteur}</strong>
                       </span>
                     )}
                   </div>
@@ -988,7 +1008,7 @@ function BilanContenu() {
               if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
               if (onglets.length < 2) return null;
               return (
-                <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 16px", padding: 5, background: "#eceef1", borderRadius: 12 }}>
+                <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "6px 0 16px", padding: 6, background: "#e4e7eb", borderRadius: 12 }}>
                   {onglets.map(([cle, libelle]) => {
                     const actifO = ongletFiche === cle;
                     const icone = cle === "AFFAIRE" ? "⏱" : cle === "PEPI" ? "📈" : "💶";
@@ -1010,8 +1030,9 @@ function BilanContenu() {
                           fontSize: 16,
                           whiteSpace: "nowrap",
                           color: actifO ? "#ffffff" : "#3b4046",
-                          background: actifO ? C.rouge : "transparent",
-                          boxShadow: actifO ? "0 2px 6px rgba(163,0,0,.25)" : "none",
+                          background: actifO ? C.rouge : "#ffffff",
+                          border: `1.5px solid ${actifO ? C.rouge : "#c3c8ce"}`,
+                          boxShadow: actifO ? "0 2px 6px rgba(163,0,0,.25)" : "0 1px 2px rgba(0,0,0,.06)",
                         }}
                       >
                         {icone} {libelle}
