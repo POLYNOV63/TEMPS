@@ -166,6 +166,16 @@ function Jauge({ chiffre, pointe, prevu, large = 120 }: { chiffre: number; point
   );
 }
 
+/* RACCORD_COULEURS : pointé + planifié face au chiffré (vert raccord, orange il manque, rouge au-delà) */
+function raccord(chiffre: number, total: number): { couleur: string; fond: string; texte: string } | null {
+  if (chiffre <= 0.01) return null;
+  const ecart = total - chiffre;
+  const tolerance = Math.max(0.5, chiffre * 0.02);
+  if (Math.abs(ecart) <= tolerance) return { couleur: "#1b5e20", fond: "#e7f4e8", texte: "raccord au chiffré ✓" };
+  if (ecart < 0) return { couleur: "#8a4b00", fond: "#fff1dc", texte: `${formatHeures(-ecart)} restent à planifier` };
+  return { couleur: "#b3261e", fond: "#fdecec", texte: `${formatHeures(ecart)} au-delà du chiffré` };
+}
+
 function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
   return (
     <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
@@ -625,8 +635,6 @@ function BilanContenu() {
   // points d'attention
   const attention: { texte: string; grave: boolean }[] = [];
   if (affaire?.type === "CBE" && !livree) {
-    if (lignesExcel.some((l) => l.statut === "Intention de commande") && bilan.totalRealise > 0.5)
-      attention.push({ texte: `Intention de commande, mais ${formatHeures(bilan.totalRealise)} déjà pointées : travail à risque tant que la commande n’est pas reçue.`, grave: true });
     if (echeance && echeance < auj()) attention.push({ texte: `${delaiEstime ? "Délai estimé" : "Délai"} dépassé (${formatDate(echeance)}) et pas encore livrée.`, grave: true });
     if (finPlanifiee && echeance && finPlanifiee > echeance) attention.push({ texte: `Le planifié court jusqu’au ${formatDate(finPlanifiee)}, après le délai ${delaiEstime ? "estimé " : ""}du ${formatDate(echeance)}.`, grave: true });
     if (depassementPrevu > 0.5) attention.push({ texte: `Dépassement prévu : pointé + planifié dépassent le chiffré de ${formatHeures(depassementPrevu)}.`, grave: true });
@@ -651,6 +659,7 @@ function BilanContenu() {
     cursor: "pointer",
     fontFamily: "inherit",
   });
+  const cellule = (e: ReturnType<typeof raccord>): CSSProperties => (e ? { background: e.fond, color: e.couleur } : {});
   const reste = (h: number): ReactNode => (bilan.toutAuMontant ? "—" : h < -0.01 ? <strong style={{ color: C.rougeTexte }}>+{formatHeures(-h)} au-delà</strong> : formatHeures(h));
   const nature = (l: LigneExcel) => (l.genre === "BASE" ? "Commande" : l.genre === "AVENANT" ? "Avenant" : l.genre === "LOT" ? "Lot" : l.genre === "ECHEANCE" ? "Échéance" : "Devis");
   const cleNumero = (l: LigneExcel) => String(l.numero_affaire ?? "").toUpperCase().replace(/^(CBE|DBE)/, "").replace(/^0+/, "");
@@ -731,13 +740,14 @@ function BilanContenu() {
               const nbAvenants = meres.filter((l) => l.genre === "AVENANT").length;
               const nbDecoupes = ordreL.length - meres.length;
               const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
-              const chiffre = (libelle: string, valeur: string, sous?: string, rouge?: boolean) => (
-                <div style={{ minWidth: 110 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris }}>{libelle}</div>
-                  <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.15, color: rouge ? C.rougeTexte : "#1f2328" }}>{valeur}</div>
-                  {sous && <div style={{ fontSize: 12, color: C.gris }}>{sous}</div>}
+              const chiffre = (libelle: string, valeur: string, sous?: string, etat?: { couleur: string; fond: string } | null) => (
+                <div style={{ minWidth: 110, ...(etat ? { background: etat.fond, borderRadius: 8, padding: "4px 10px" } : {}) }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: etat ? etat.couleur : C.gris }}>{libelle}</div>
+                  <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.15, color: etat ? etat.couleur : "#1f2328" }}>{valeur}</div>
+                  {sous && <div style={{ fontSize: 12, fontWeight: etat ? 700 : 400, color: etat ? etat.couleur : C.gris }}>{sous}</div>}
                 </div>
               );
+              const etatTotal = bilan.toutAuMontant ? null : raccord(bilan.totalChiffre, pointe + planifieTotal);
               const ligne = (l: LigneExcel, fille: boolean) => {
                 const compte = comptees.includes(l);
                 const intention = l.statut === "Intention de commande";
@@ -826,16 +836,9 @@ function BilanContenu() {
                         <span style={{ color: C.gris }}>Facturée</span>{" "}
                         <strong>
                           {facturation.unite === "JOUR"
-                            ? `au jour · journée de ${facturation.bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(" / ") || "?"}`
+                            ? `au jour · Base ${facturation.bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(" / ") || "?"}`
                             : "à l’heure"}
                         </strong>
-                        <span style={{ color: C.gris }}>
-                          {" "}
-                          ·{" "}
-                          {facturation.unite === "JOUR"
-                            ? `${(Math.round(facturation.jours * 10) / 10).toLocaleString("fr-FR")} j commandés (${formatHeures(facturation.heures)})`
-                            : `${formatHeures(facturation.heures)} commandées`}
-                        </span>
                       </span>
                     )}
                     {/* DELAIS_FICHE : délai estimé (fait foi) et délai client (pour mémoire) */}
@@ -873,10 +876,8 @@ function BilanContenu() {
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 26px", alignItems: "flex-end", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
                       {chiffre("Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—")}
                       {chiffre("Pointé", formatHeures(bilan.totalRealise))}
-                      {chiffre("À venir", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—", finPlanifiee ? `jusqu’au ${formatDate(finPlanifiee)}` : undefined)}
-                      {!bilan.toutAuMontant &&
-                        bilan.totalChiffre > 0 &&
-                        chiffre(resteAPlanifier < -0.01 ? "Dépassement prévu" : "Reste à planifier", formatHeures(Math.abs(resteAPlanifier)), undefined, resteAPlanifier < -0.01)}
+                      {chiffre("Planifié", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—")}
+                      {etatTotal && chiffre("Pointé + planifié", formatHeures(pointe + planifieTotal), etatTotal.texte, etatTotal)}
                       {avancement !== null && chiffre("Avancement estimé", `${Math.round(avancement)} %`, consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : undefined)}
                       {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
                         <div style={{ flex: "1 1 200px", paddingBottom: 4 }}>
@@ -897,7 +898,8 @@ function BilanContenu() {
                   )}
 
                   {/* la commande, repliée */}
-                  {lignesExcel.length > 0 && (
+                  {/* COMMANDE_SI_FAMILLE : une seule commande → tout est déjà dans l'en-tête et le bilan des heures */}
+                  {ordreL.length > 1 && (
                     <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.ligne}`, overflowX: "auto" }}>
                       <button type="button" aria-expanded={commandeOuverte} onClick={() => setCommandeOuverte((v) => !v)} style={{ all: "unset", cursor: "pointer", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8 }}>
                         <span style={{ fontWeight: 800, color: C.rougeFonce }}>{commandeOuverte ? "▾" : "▸"}</span>
@@ -1010,7 +1012,7 @@ function BilanContenu() {
                     Par commande
                   </button>
                 )}
-                <span style={{ fontSize: 13, color: C.gris }}>planifié : planning des affaires, à partir de demain</span>
+                <span style={{ fontSize: 13, color: C.gris }}>planifié : planning des affaires, à partir de demain · <span style={{ color: "#1b5e20", fontWeight: 700 }}>vert</span> raccord, <span style={{ color: "#8a4b00", fontWeight: 700 }}>orange</span> il manque, <span style={{ color: "#b3261e", fontWeight: 700 }}>rouge</span> au-delà</span>
               </div>
               <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                 <thead>
@@ -1036,7 +1038,7 @@ function BilanContenu() {
                             <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
                             <td style={tdN}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
                             <td style={tdN}>{pl > 0.01 ? formatHeures(pl) : "—"}</td>
-                            <td style={{ ...tdN, fontWeight: 700 }}>{a.realise + pl > 0.01 ? formatHeures(a.realise + pl) : "—"}</td>
+                            <td style={{ ...tdN, fontWeight: 700, ...(info ? {} : cellule(raccord(a.chiffre, a.realise + pl))) }}>{a.realise + pl > 0.01 ? formatHeures(a.realise + pl) : "—"}</td>
                             <td style={{ ...tdN, color: info ? C.gris : undefined }}>{info ? "vendu au montant" : a.chiffre > 0 ? reste(ecart) : a.realise > 0 ? "non chiffré" : "—"}</td>
                             <td style={td}>{a.chiffre > 0 && !info ? <Jauge chiffre={a.chiffre} pointe={a.realise} prevu={pl} /> : null}</td>
                           </tr>
@@ -1054,7 +1056,7 @@ function BilanContenu() {
                             <td style={tdN}>{formatHeures(l.heures_total)}</td>
                             <td style={tdN}>{formatHeures(p)}</td>
                             <td style={tdN}>{pl > 0.01 ? formatHeures(pl) : "—"}</td>
-                            <td style={{ ...tdN, fontWeight: 700 }}>{formatHeures(p + pl)}</td>
+                            <td style={{ ...tdN, fontWeight: 700, ...(bilan.toutAuMontant ? {} : cellule(raccord(l.heures_total, p + pl))) }}>{formatHeures(p + pl)}</td>
                             <td style={tdN}>{reste(l.heures_total - p - pl)}</td>
                             <td style={td}>{l.heures_total > 0 && !bilan.toutAuMontant ? <Jauge chiffre={l.heures_total} pointe={p} prevu={pl} /> : null}</td>
                           </tr>
@@ -1075,7 +1077,7 @@ function BilanContenu() {
                     <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—"}</td>
                     <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise)}</td>
                     <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—"}</td>
-                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{formatHeures(bilan.totalRealise + planifieTotal)}</td>
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}`, ...(bilan.toutAuMontant ? {} : cellule(raccord(bilan.totalChiffre, pointe + planifieTotal))) }}>{formatHeures(bilan.totalRealise + planifieTotal)}</td>
                     <td style={{ ...tdN, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 ? reste(resteAPlanifier) : "—"}</td>
                     <td style={{ ...td, borderTop: `2px solid ${C.ligne}` }}>{bilan.totalChiffre > 0 && !bilan.toutAuMontant ? <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} /> : null}</td>
                   </tr>
@@ -1086,49 +1088,42 @@ function BilanContenu() {
                 <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Dont {formatHeures(bilan.horsComparaison)} de scan / négoce non chiffrées (vendues au montant) : comptées dans le pointé, hors comparaison au chiffré.</p>
               )}
 
-              {/* qui, quand */}
-              <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 16px" }}>
-                  <strong style={{ fontSize: 15 }}>Affectations à venir : qui, quand</strong>
-                  {bilan.totalChiffre > 0 && !bilan.toutAuMontant && (
-                    <span style={{ fontSize: 13.5, color: "#3b4046" }}>
-                      pointé {formatHeures(pointe)} + à venir {formatHeures(planifieTotal)} = <strong>{formatHeures(pointe + planifieTotal)}</strong> pour {formatHeures(bilan.totalChiffre)} chiffrées
-                      {" "}
-                      <span style={{ fontWeight: 800, color: resteAPlanifier < -0.01 ? C.rougeTexte : "#1b5e20" }}>
-                        ({resteAPlanifier < -0.01 ? `+${formatHeures(-resteAPlanifier)} au-delà` : `${formatHeures(resteAPlanifier)} non planifiées`})
-                      </span>
-                    </span>
-                  )}
-                </div>
-                {aVenir.length === 0 ? (
-                  <p style={{ margin: "6px 0 0", color: C.gris }}>Rien n’est planifié à partir de demain.</p>
-                ) : (
-                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14, marginTop: 6 }}>
-                    <thead>
-                      <tr>
-                        <th style={th}>Personne</th>
-                        <th style={th}>Activité</th>
-                        <th style={th}>Commande</th>
-                        <th style={th}>Du</th>
-                        <th style={th}>Au</th>
-                        <th style={thN}>Heures</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {aVenir.map((x) => (
-                        <tr key={x.id}>
-                          <td style={{ ...td, fontWeight: 800 }}>{x.personne}</td>
-                          <td style={td}>{x.activite}</td>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{x.numero}</td>
-                          <td style={{ ...td, whiteSpace: "nowrap" }}>{formatDate(x.du)}</td>
-                          <td style={{ ...td, whiteSpace: "nowrap", color: echeance && x.au > echeance && !livree ? C.rougeTexte : undefined }}>{formatDate(x.au)}</td>
-                          <td style={{ ...tdN, fontWeight: 800 }}>{formatHeures(x.heures)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+              {/* AFFECTATIONS_GROUPEES : qui, quand, en une ligne par personne */}
+              {(() => {
+                const parPersonne = new Map<string, { personne: string; heures: number; du: string; au: string; activites: Set<string>; numeros: Set<string> }>();
+                for (const x of aVenir) {
+                  const g = parPersonne.get(x.personne) ?? { personne: x.personne, heures: 0, du: x.du, au: x.au, activites: new Set<string>(), numeros: new Set<string>() };
+                  g.heures += x.heures;
+                  if (x.du < g.du) g.du = x.du;
+                  if (x.au > g.au) g.au = x.au;
+                  g.activites.add(x.activite);
+                  g.numeros.add(x.numero);
+                  parPersonne.set(x.personne, g);
+                }
+                const groupes = [...parPersonne.values()].sort((a, b) => b.heures - a.heures);
+                const plusieursCommandes = new Set(aVenir.map((x) => x.numero)).size > 1;
+                return (
+                  <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 8px", fontSize: 14 }}>
+                    <strong style={{ marginRight: 4 }}>Qui est planifié :</strong>
+                    {groupes.length === 0 ? (
+                      <span style={{ color: C.gris }}>personne à partir de demain.</span>
+                    ) : (
+                      groupes.map((g) => (
+                        <span key={g.personne} style={{ background: "#f3f4f6", border: `1px solid ${C.ligne}`, borderRadius: 999, padding: "3px 12px", whiteSpace: "nowrap" }}>
+                          <strong>{g.personne}</strong> {formatHeures(g.heures)}
+                          <span style={{ color: C.gris }}>
+                            {" "}
+                            · {[...g.activites].join(", ")}
+                            {plusieursCommandes ? ` · ${[...g.numeros].join(", ")}` : ""} · {formatDate(g.du)}
+                            {g.au !== g.du ? " → " : ""}
+                          </span>
+                          {g.au !== g.du && <span style={{ color: echeance && g.au > echeance && !livree ? C.rougeTexte : C.gris, fontWeight: echeance && g.au > echeance && !livree ? 800 : 400 }}>{formatDate(g.au)}</span>}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
             </section>
 
             {/* ================= ③ LE DÉTAIL DES HEURES (onglets) ================= */}

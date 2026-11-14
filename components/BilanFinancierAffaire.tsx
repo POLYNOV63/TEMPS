@@ -90,6 +90,7 @@ export default function BilanFinancierAffaire({
   const [disciplines, setDisciplines] = useState<Discipline[]>([]);
   const [echeancier, setEcheancier] = useState<LigneFacture[]>([]);
   const [coutHoraire, setCoutHoraire] = useState<number | null>(null);
+  const [coutAnnee, setCoutAnnee] = useState<number | null>(null);
   const [achatsRecus, setAchatsRecus] = useState<number | null>(null);
 
   useEffect(() => {
@@ -129,7 +130,10 @@ export default function BilanFinancierAffaire({
         const ex = d.getMonth() >= 10 ? d.getFullYear() : d.getFullYear() - 1;
         const liste = ((couts ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => ({ annee: Number(c.annee), cout: Number(c.cout_horaire) || 0 })).filter((c) => c.cout > 0);
         const c = liste.find((x) => x.annee === ex) ?? liste.sort((a, b) => b.annee - a.annee)[0];
-        if (actif) setCoutHoraire(c ? c.cout : null);
+        if (actif) {
+          setCoutHoraire(c ? c.cout : null);
+          setCoutAnnee(c ? c.annee : null);
+        }
       }
       if (em) return actif && setMessage(`Lecture des montants impossible : ${em.message}`);
       const montants = new Map(((mts ?? []) as Montant[]).map((m) => [m.ligne_id, m]));
@@ -407,61 +411,90 @@ export default function BilanFinancierAffaire({
       {/* par activité : montant et heures commandés, prix vendu, heures pointées, € / h obtenu */}
       {disciplines.some((d) => d.montant > 0.5) && (
         <div style={{ overflowX: "auto", marginTop: 16 }}>
-          <strong style={{ fontSize: 15 }}>Chiffré par activité, et taux de vente</strong>
-          <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
-            <thead>
-              <tr>
-                <th style={th}>Activité</th>
-                <th style={thN}>Montant commandé</th>
-                <th style={thN}>Heures commandées</th>
-                <th style={thN}>Prix vendu</th>
-                <th style={thN}>Heures pointées</th>
-                <th style={thN}>€ / h obtenu</th>
-              </tr>
-            </thead>
-            <tbody>
-              {disciplines
-                .filter((d) => d.montant > 0.5 || (d.heures ?? 0) > 0.05)
-                .map((d) => {
-                  const p = pointeDe(d);
-                  const vendu = d.heures && d.heures > 0.05 ? d.montant / d.heures : null;
-                  const obtenu = p && p > 0.05 ? d.montant / p : null;
-                  return (
-                    <tr key={d.cle}>
-                      <td style={{ ...td, fontWeight: 800 }}>{d.libelle}</td>
-                      <td style={{ ...tdN, fontWeight: 800 }}>{d.montant > 0.5 ? euros(d.montant) : "—"}</td>
-                      <td style={tdN}>{d.heures && d.heures > 0.05 ? heures(d.heures) : "—"}</td>
-                      <td style={tdN}>{vendu !== null ? `${euros(vendu)} / h` : "—"}</td>
-                      <td style={tdN}>{p !== null && p > 0.05 ? heures(p) : "—"}</td>
-                      <td style={{ ...tdN, fontWeight: 700, color: obtenu !== null && vendu !== null && obtenu < vendu * 0.9 ? "#b3261e" : undefined }}>
-                        {obtenu !== null ? `${euros(obtenu)} / h` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              {(() => {
-                // total des études (hors négoce) : montant, heures, taux moyen
-                const etudes = disciplines.filter((d) => d.cle !== "negoce");
-                const m = etudes.reduce((t, d) => t + d.montant, 0);
-                const h = etudes.reduce((t, d) => t + (d.heures ?? 0), 0);
-                const ps = etudes.map(pointeDe);
-                const p = ps.every((x) => x === null) ? null : ps.reduce<number>((t, x) => t + (x ?? 0), 0);
-                const bord = { borderTop: "2px solid #d5d9de" };
-                return (
+          {/* MARGE_ACTIVITE : taux de vente et marge face au coût de structure (Finances) */}
+          <strong style={{ fontSize: 15 }}>Chiffré par activité : taux de vente et marge</strong>
+          <span style={{ fontSize: 13, color: gris }}>
+            {" "}
+            · coût de structure {coutHoraire !== null ? `${euros(coutHoraire)} / h${coutAnnee ? ` (exercice ${coutAnnee}-${coutAnnee + 1})` : ""}` : "non saisi dans les Finances"}
+          </span>
+          {(() => {
+            const pcCout = (taux: number | null) => (taux !== null && coutHoraire ? Math.round((taux / coutHoraire - 1) * 100) : null);
+            const tauxCellule = (taux: number | null, gras: boolean, plus: CSSProperties = {}) => {
+              if (taux === null) return <td style={{ ...tdN, ...plus }}>—</td>;
+              const pc = pcCout(taux);
+              return (
+                <td style={{ ...tdN, fontWeight: gras ? 800 : 600, ...plus }}>
+                  {euros(taux)} / h
+                  {pc !== null && <div style={{ fontSize: 12, fontWeight: 700, color: pc < 0 ? "#b3261e" : pc < 15 ? "#8a4b00" : "#1b5e20" }}>{pc >= 0 ? "+" : ""}{pc} % / coût</div>}
+                </td>
+              );
+            };
+            const margeCellule = (montant: number, h: number | null, gras: boolean, plus: CSSProperties = {}) => {
+              if (coutHoraire === null || !h || h <= 0.05 || montant <= 0.5) return <td style={{ ...tdN, ...plus }}>—</td>;
+              const m = montant - h * coutHoraire;
+              return (
+                <td style={{ ...tdN, fontWeight: gras ? 800 : 700, color: m < 0 ? "#b3261e" : "#1b5e20", ...plus }}>
+                  {euros(m)}
+                  <div style={{ fontSize: 12 }}>{Math.round((m / montant) * 100)} %</div>
+                </td>
+              );
+            };
+            const etudes = disciplines.filter((d) => d.cle !== "negoce");
+            const mE = etudes.reduce((t, d) => t + d.montant, 0);
+            const hE = etudes.reduce((t, d) => t + (d.heures ?? 0), 0);
+            const psE = etudes.map(pointeDe);
+            const pE = psE.every((x) => x === null) ? null : psE.reduce<number>((t, x) => t + (x ?? 0), 0);
+            const bord: CSSProperties = { borderTop: "2px solid #d5d9de" };
+            return (
+              <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Activité</th>
+                    <th style={thN}>Montant commandé</th>
+                    <th style={thN}>Heures commandées</th>
+                    <th style={thN} title="Montant ÷ heures commandées, et écart au coût de structure">Taux de vente</th>
+                    <th style={thN} title="Montant − heures commandées × coût de structure">Marge prévue</th>
+                    <th style={thN}>Heures pointées</th>
+                    <th style={thN} title="Montant ÷ heures pointées, et écart au coût de structure">Taux obtenu</th>
+                    <th style={thN} title="Montant − heures pointées × coût de structure">Marge sur le pointé</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disciplines
+                    .filter((d) => d.montant > 0.5 || (d.heures ?? 0) > 0.05)
+                    .map((d) => {
+                      const p = pointeDe(d);
+                      const vendu = d.heures && d.heures > 0.05 ? d.montant / d.heures : null;
+                      const obtenu = p && p > 0.05 ? d.montant / p : null;
+                      return (
+                        <tr key={d.cle}>
+                          <td style={{ ...td, fontWeight: 800 }}>{d.libelle}</td>
+                          <td style={{ ...tdN, fontWeight: 800 }}>{d.montant > 0.5 ? euros(d.montant) : "—"}</td>
+                          <td style={tdN}>{d.heures && d.heures > 0.05 ? heures(d.heures) : "—"}</td>
+                          {tauxCellule(vendu, false)}
+                          {margeCellule(d.montant, d.heures, false)}
+                          <td style={tdN}>{p !== null && p > 0.05 ? heures(p) : "—"}</td>
+                          {tauxCellule(obtenu, false)}
+                          {margeCellule(d.montant, p, false)}
+                        </tr>
+                      );
+                    })}
                   <tr>
                     <td style={{ ...td, ...bord, fontWeight: 800 }}>Total des études</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(m)}</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{h > 0.05 ? heures(h) : "—"}</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{h > 0.05 ? `${euros(m / h)} / h` : "—"}</td>
-                    <td style={{ ...tdN, ...bord }}>{p !== null && p > 0.05 ? heures(p) : "—"}</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{p !== null && p > 0.05 ? `${euros(m / p)} / h` : "—"}</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(mE)}</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{hE > 0.05 ? heures(hE) : "—"}</td>
+                    {tauxCellule(hE > 0.05 ? mE / hE : null, true, bord)}
+                    {margeCellule(mE, hE, true, bord)}
+                    <td style={{ ...tdN, ...bord }}>{pE !== null && pE > 0.05 ? heures(pE) : "—"}</td>
+                    {tauxCellule(pE !== null && pE > 0.05 ? mE / pE : null, true, bord)}
+                    {margeCellule(mE, pE, true, bord)}
                   </tr>
-                );
-              })()}
-            </tbody>
-          </table>
+                </tbody>
+              </table>
+            );
+          })()}
           <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-            Prix vendu = montant ÷ heures commandées. € / h obtenu = montant ÷ heures pointées (en rouge s’il est inférieur de plus de 10 % au prix vendu).
+            Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ heures pointées ; « % / coût » = écart au coût de structure (rouge en dessous, orange moins de 15 % au-dessus). Marge = montant − heures × coût de structure ; tant que l’affaire n’est pas finie, la marge sur le pointé baisse à mesure qu’on pointe.
           </p>
         </div>
       )}
