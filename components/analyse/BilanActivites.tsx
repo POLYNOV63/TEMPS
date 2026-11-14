@@ -19,13 +19,17 @@ type Collaborateur = {
   prenom: string;
   nom: string;
   actif: boolean;
+  profil_horaire_id?: string | null;
 };
+
+type Profil = { id: string; lundi: number | null; mardi: number | null; mercredi: number | null; jeudi: number | null; vendredi: number | null };
 
 type Feuille = {
   id: string;
   collaborateur_id: string;
   semaine_debut: string;
   statut: string | null;
+  total_theorique?: number | string | null;
 };
 
 type Jour = {
@@ -64,6 +68,7 @@ type LigneCollaborateur = {
   heuresParActivite: Record<string, number>;
   semaines: number;
   capacite: number;
+  absence: number; // ABSENCES_COLLAB : absences et jours fériés, ramenés à 35 h
 };
 
 type LigneSemaine = {
@@ -86,11 +91,19 @@ const SEUIL_FAIBLE_IMPUTATION = 50;
 const COULEUR_CBE = "#c00000";
 const COULEUR_DBE = "#dc4f84";
 
+/* COULEURS_COMMUNES : les mêmes couleurs que les Disponibilités par activité et les Finances */
+const COULEURS_CONNUES: [RegExp, string][] = [
+  [/^meca|mecanique/, "#c00000"],
+  [/^elec|electri/, "#34506b"],
+  [/^calcul/, "#6b58a8"],
+  [/^scan/, "#e08a1e"],
+  [/^negoce/, "#8d6e63"],
+];
+const COULEUR_ABSENCE = "#1f9d8b"; // comme « Divers d'absences » dans l'Analyse de capacité
+const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
 const PALETTE_ACTIVITES = [
   "#2f6db5",
-  "#2a9d8f",
-  "#e08a1e",
-  "#7b5ea7",
   "#6b8e23",
   "#c4572e",
   "#3d8fa8",
@@ -378,7 +391,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
         throw new Error("Accès réservé aux administrateurs.");
       }
 
-      const [activitesResult, collaborateursResult] = await Promise.all([
+      const [activitesResult, collaborateursResult, profilsResult] = await Promise.all([
         supabase
           .from("activites")
           .select("id, code, nom, actif, ordre_affichage")
@@ -386,11 +399,13 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
           .order("nom", { ascending: true }),
         supabase
           .from("collaborateurs")
-          .select("id, trigramme, prenom, nom, actif")
+          .select("id, trigramme, prenom, nom, actif, profil_horaire_id")
           .order("actif", { ascending: false })
           .order("nom", { ascending: true })
           .order("prenom", { ascending: true }),
+        supabase.from("profils_horaires").select("id, lundi, mardi, mercredi, jeudi, vendredi"),
       ]);
+      const profilsMap = new Map(((profilsResult.data ?? []) as Profil[]).map((p) => [p.id, p]));
 
       if (activitesResult.error) throw activitesResult.error;
       if (collaborateursResult.error) throw collaborateursResult.error;
@@ -405,7 +420,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
 
       let feuillesQuery = supabase
         .from("feuilles_heures")
-        .select("id, collaborateur_id, semaine_debut, statut")
+        .select("id, collaborateur_id, semaine_debut, statut, total_theorique")
         .gte("semaine_debut", debut)
         .lt("semaine_debut", fin);
 
@@ -437,7 +452,18 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
 
       // Nombre de feuilles par collaborateur : base de sa capacité légale.
       const semainesParCollaborateur = new Map<string, number>();
+      /* ABSENCES_COLLAB : l'horaire de la feuille est net des absences et fériés ; ramené à 35 h comme
+         dans l'Analyse de capacité, ce qui manque pour faire 35 h est la part d'absence de la semaine */
+      const absenceParCollaborateur = new Map<string, number>();
+      const collabsParId = new Map(collaborateursData.map((c) => [c.id, c]));
       for (const f of feuilles) {
+        if (f.total_theorique !== null && f.total_theorique !== undefined) {
+          const pid = collabsParId.get(f.collaborateur_id)?.profil_horaire_id;
+          const p = pid ? profilsMap.get(pid) : undefined;
+          const horaire = p ? [p.lundi, p.mardi, p.mercredi, p.jeudi, p.vendredi].reduce<number>((t, x) => t + (Number(x) || 0), 0) : 0;
+          const net = Math.min(HEURES_LEGALES_HEBDO, (parseHeures(f.total_theorique) * HEURES_LEGALES_HEBDO) / (horaire > 0 ? horaire : HEURES_LEGALES_HEBDO));
+          absenceParCollaborateur.set(f.collaborateur_id, (absenceParCollaborateur.get(f.collaborateur_id) ?? 0) + Math.max(0, HEURES_LEGALES_HEBDO - net));
+        }
         semainesParCollaborateur.set(
           f.collaborateur_id,
           (semainesParCollaborateur.get(f.collaborateur_id) ?? 0) + 1
@@ -595,6 +621,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
             heuresParActivite,
             semaines,
             capacite: semaines * HEURES_LEGALES_HEBDO,
+            absence: absenceParCollaborateur.get(collabId) ?? 0,
           };
         })
         .sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
@@ -654,7 +681,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
   const echelleMaxPct = Math.max(
     100,
     ...lignesCollaborateurs.map(ligne =>
-      ligne.capacite > 0 ? (ligne.total / ligne.capacite) * 100 : 0
+      ligne.capacite > 0 ? ((ligne.total + ligne.absence) / ligne.capacite) * 100 : 0
     )
   );
 
@@ -663,7 +690,12 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
   );
 
   const couleurActivite = (id: string) => {
-    const index = activitesAffichees.findIndex(activite => activite.id === id);
+    const connue = (x: Activite) => COULEURS_CONNUES.find(([motif]) => motif.test(sansAccents(x.code ?? "")) || motif.test(sansAccents(x.nom ?? "")));
+    const a = activites.find(x => x.id === id);
+    const trouvee = a ? connue(a) : undefined;
+    if (trouvee) return trouvee[1];
+    const autres = activitesAffichees.filter(x => !connue(x));
+    const index = autres.findIndex(activite => activite.id === id);
     return PALETTE_ACTIVITES[(index < 0 ? 0 : index) % PALETTE_ACTIVITES.length];
   };
 
@@ -949,11 +981,13 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
               <div style={styles.sectionEyebrow}>COLLABORATEURS</div>
               <h2 style={styles.sectionTitle}>Répartition des heures par collaborateur</h2>
               <div style={styles.sectionHint}>
-                Chaque barre est comparée à la capacité légale du collaborateur :{" "}
+                Chaque barre est comparée à la capacité du collaborateur :{" "}
                 {HEURES_LEGALES_HEBDO} h × le nombre de feuilles de la période. Les
-                couleurs donnent la répartition par activité ; la zone grise est la
-                capacité non imputée sur une activité (absences, divers, heures non
-                rattachées) ; la zone hachurée est un dépassement.
+                couleurs donnent la répartition par activité, puis la part des
+                absences et jours fériés ; la zone grise est le temps présent non
+                imputé sur une activité (NI, divers, heures non rattachées) ; la zone
+                hachurée est un dépassement. Le pourcentage est pris sur le temps
+                présent (capacité moins absences).
               </div>
             </div>
           </div>
@@ -975,6 +1009,10 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
                   </span>
                 ))}
                 <span style={styles.legendeItem}>
+                  <i style={{ ...styles.pastille, background: COULEUR_ABSENCE }} />
+                  Absences et jours fériés
+                </span>
+                <span style={styles.legendeItem}>
                   <i
                     style={{
                       ...styles.pastille,
@@ -982,7 +1020,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
                       border: "1px solid #cfd4da",
                     }}
                   />
-                  Capacité non imputée
+                  Présent, non imputé sur une activité
                 </span>
                 <span style={styles.legendeItem}>
                   <i
@@ -998,11 +1036,12 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
 
               <div style={styles.barresCollaborateurs}>
                 {lignesCollaborateurs.map(ligne => {
-                  const pct =
-                    ligne.capacite > 0 ? (ligne.total / ligne.capacite) * 100 : 0;
+                  const present = Math.max(0, ligne.capacite - ligne.absence);
+                  const pct = present > 0 ? (ligne.total / present) * 100 : 0;
+                  const pctEmpile = ligne.capacite > 0 ? ((ligne.total + ligne.absence) / ligne.capacite) * 100 : 0;
                   const largeurCapacite = (100 / echelleMaxPct) * 100;
-                  const largeurRemplie = (pct / echelleMaxPct) * 100;
-                  const depassement = Math.max(0, ligne.total - ligne.capacite);
+                  const largeurRemplie = (pctEmpile / echelleMaxPct) * 100;
+                  const depassement = Math.max(0, ligne.total + ligne.absence - ligne.capacite);
                   const faible = pct < SEUIL_FAIBLE_IMPUTATION;
 
                   return (
@@ -1055,6 +1094,14 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
                               </div>
                             );
                           })}
+                          {ligne.absence > 0.01 && (
+                            <div
+                              title={`Absences et jours fériés : ${formatHeures(ligne.absence)} h (${formatPourcentage(pourcentage(ligne.absence, ligne.capacite))} % de la capacité)`}
+                              style={{ ...styles.segmentBarre, flex: `${ligne.absence} 1 0%`, background: COULEUR_ABSENCE }}
+                            >
+                              {ligne.capacite > 0 && ((ligne.absence / ligne.capacite) * 100 / echelleMaxPct) * 100 >= 5 ? formatHeures(ligne.absence) : ""}
+                            </div>
+                          )}
                         </div>
 
                         {depassement > 0 && (
@@ -1079,7 +1126,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
                         <div>
                           <strong>{formatHeures(ligne.total)} h</strong>
                           <span style={{ color: "#777" }}>
-                            {" "}/ {formatHeures(ligne.capacite)} h
+                            {" "}/ {formatHeures(present)} h présent
                           </span>
                         </div>
                         <div
@@ -1096,7 +1143,7 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
                         >
                           {depassement > 0
                             ? `+${formatHeures(depassement)} h au-dessus`
-                            : `${formatPourcentage(pct)} % de la capacité`}
+                            : `${formatPourcentage(pct)} % du temps présent`}
                         </div>
                       </div>
                     </div>
