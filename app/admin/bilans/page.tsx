@@ -748,11 +748,15 @@ function BilansPageContenu() {
             .order("semaine", { ascending: true })
         ),
 
-        supabase
-          .from("feuilles_heures")
-          .select(
-            "id,collaborateur_id,semaine_debut,total_heures,total_theorique,heures_supplementaires,statut"
-          ),
+        // LIGNES_COMPLETES : Supabase coupe toute réponse à 1000 lignes, on lit tout par pages
+        chargerToutesLesLignes<FeuilleHeures>(
+          supabase
+            .from("feuilles_heures")
+            .select(
+              "id,collaborateur_id,semaine_debut,total_heures,total_theorique,heures_supplementaires,statut"
+            )
+            .order("id", { ascending: true })
+        ).then((data) => ({ data, error: null })),
 
         supabase
           .from("codes_imputation")
@@ -848,20 +852,24 @@ function BilansPageContenu() {
         const idsFeuilles =
           feuillesChargees.map((f) => f.id);
 
-        const joursRes = await supabase
-          .from("feuilles_heures_jours")
-          .select(
-            "id,feuille_id,date_jour,presence,absence,ticket_restaurant,total_heures"
-          )
-          .in("feuille_id", idsFeuilles);
+        // LIGNES_COMPLETES : par paquets de 150 identifiants, chaque paquet lu page par page
+        const parPaquets = async <T,>(table: string, colonnes: string, colonne: string, ids: string[]): Promise<T[]> => {
+          const tout: T[] = [];
+          for (let k = 0; k < ids.length; k += 150) {
+            const lot = await chargerToutesLesLignes<T>(
+              supabase.from(table).select(colonnes).in(colonne, ids.slice(k, k + 150)).order("id", { ascending: true })
+            );
+            tout.push(...lot);
+          }
+          return tout;
+        };
 
-        if (joursRes.error) {
-          throw joursRes.error;
-        }
-
-        const joursCharges =
-          (joursRes.data ??
-            []) as FeuilleJour[];
+        const joursCharges = await parPaquets<FeuilleJour>(
+          "feuilles_heures_jours",
+          "id,feuille_id,date_jour,presence,absence,ticket_restaurant,total_heures",
+          "feuille_id",
+          idsFeuilles
+        );
 
         setJours(joursCharges);
 
@@ -869,21 +877,13 @@ function BilansPageContenu() {
           const idsJours =
             joursCharges.map((j) => j.id);
 
-          const imputationsRes =
-            await supabase
-              .from("feuilles_heures_imputations")
-              .select(
-                "id,jour_id,type_affaire,numero_affaire,description,code,heures"
-              )
-              .in("jour_id", idsJours);
-
-          if (imputationsRes.error) {
-            throw imputationsRes.error;
-          }
-
           setImputations(
-            (imputationsRes.data ??
-              []) as FeuilleImputation[]
+            await parPaquets<FeuilleImputation>(
+              "feuilles_heures_imputations",
+              "id,jour_id,type_affaire,numero_affaire,description,code,heures",
+              "jour_id",
+              idsJours
+            )
           );
         } else {
           setImputations([]);
@@ -1802,11 +1802,18 @@ feuilles.forEach((f) => {
                   profil
                 );
 
+              /* CAPACITE_35H : la capacité est de 35 h pour tout le monde, quel que soit son rythme.
+                 La feuille donne l'horaire de la semaine absences déduites (ex. 30 h sur 37,5 h) :
+                 on le ramène à 35 h dans la même proportion (30 / 37,5 × 35 = 28 h). Quelqu'un
+                 à 37,5 h produit donc plus d'heures sur la même capacité, et c'est normal. */
+              const horaireProfil = capaciteProfil(profil);
               const capacite =
                 capaciteCadreForfait
                   ? 0
-                  : nombre(
-                      feuille.total_theorique
+                  : Math.min(
+                      35,
+                      (nombre(feuille.total_theorique) * 35) /
+                        (horaireProfil > 0 ? horaireProfil : 35)
                     );
 
               /*
@@ -2229,6 +2236,7 @@ feuilles.forEach((f) => {
         semaine.totalTravaille =
           semaine.cbe +
           semaine.dbe +
+          semaine.cn +
           semaine.ni +
           semaine.formation +
           semaine.autres +
@@ -2855,7 +2863,7 @@ feuilles.forEach((f) => {
               }
             >
               Une vision simple de ce qui
-              est vendu, préparé, imputable,
+              est produit, préparé, imputable,
               improductif… et de ce qui reste
               à expliquer.
             </p>
@@ -3203,7 +3211,7 @@ feuilles.forEach((f) => {
           />
 
           <Kpi
-            label="CBE vendus"
+            label="CBE produit"
             value={heures(
               global.cbe
             )}
@@ -4246,7 +4254,7 @@ function ChargeTimelineBrut({
             color={
               COULEURS.rouge
             }
-            label="CBE vendu"
+            label="CBE produit"
           />
 
           <Legend
@@ -4550,7 +4558,7 @@ function ChargeTimelineBrut({
             Une barre pleine représente
             100 % de la capacité disponible
             de la semaine. Si le rouge monte,
-            les heures CBE vendues montent.
+            les heures CBE produites montent.
             Le blanc représente le temps qui
             reste sans explication dans les
             catégories du bilan.
@@ -4562,7 +4570,7 @@ function ChargeTimelineBrut({
 }
 
 /* =========================================================
-   COURBE CBE VENDU / DEVIS
+   COURBE CBE PRODUIT / DEVIS
 ========================================================= */
 
 const MOIS_COURTS = [
@@ -4645,11 +4653,11 @@ function CourbeCBEDevis({
         <div style={styles.sectionEyebrow}>Tendance</div>
 
         <h2 style={styles.cardTitle}>
-          Évolution du CBE vendu et des devis
+          Évolution du CBE produit et des devis
         </h2>
 
         <p style={styles.cardSubtitle}>
-          Part de la capacité occupée par les heures CBE vendues et par les
+          Part de la capacité occupée par les heures CBE produites et par les
           heures DBE / devis, sur la période choisie ci-dessus (essayez
           « 12 derniers mois » ou « Exercice »).
         </p>
@@ -4719,7 +4727,7 @@ function CourbeCBEDevis({
       {entete}
 
       <div style={styles.legend}>
-        <Legend color={COULEURS.rouge} label="CBE vendu" />
+        <Legend color={COULEURS.rouge} label="CBE produit" />
         <Legend color={couleurDevis} label="DBE / devis" />
       </div>
 
@@ -4727,7 +4735,7 @@ function CourbeCBEDevis({
         viewBox={`0 0 ${largeur} ${hauteur}`}
         style={{ width: "100%", height: "auto", display: "block" }}
         role="img"
-        aria-label="Courbe du CBE vendu et des devis en pourcentage de la capacité"
+        aria-label="Courbe du CBE produit et des devis en pourcentage de la capacité"
       >
         {graduations.map((valeur) => (
           <g key={valeur}>
@@ -4790,14 +4798,14 @@ function CourbeCBEDevis({
             </circle>
 
             <circle cx={x(index)} cy={y(p.cbe)} r={4} fill={COULEURS.rouge}>
-              <title>{`${p.libelle} : CBE vendu ${pourcent(p.cbe)}`}</title>
+              <title>{`${p.libelle} : CBE produit ${pourcent(p.cbe)}`}</title>
             </circle>
           </g>
         ))}
       </svg>
 
       <p style={{ ...styles.cardSubtitle, marginTop: 8 }}>
-        Moyenne sur la période : CBE vendu{" "}
+        Moyenne sur la période : CBE produit{" "}
         <strong>{pourcent(moyenne("cbe"))}</strong> · DBE / devis{" "}
         <strong>{pourcent(moyenne("dbe"))}</strong>. Passez la souris sur un
         point pour voir sa valeur.
