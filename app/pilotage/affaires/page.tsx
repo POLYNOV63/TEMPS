@@ -590,7 +590,7 @@ function PlanningAffairesContenu() {
     const futur = new Map<string, number>();
     for (const a of affectations) {
       if (!a.affaire_id) continue;
-      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour >= aujourdhui).reduce((t, j) => t + j.heures, 0);
+      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour > aujourdhui).reduce((t, j) => t + j.heures, 0); // A_VENIR_DEMAIN
       futur.set(a.affaire_id, (futur.get(a.affaire_id) ?? 0) + h);
     }
     const familles = new Map<string, Affaire[]>();
@@ -622,7 +622,7 @@ function PlanningAffairesContenu() {
     const futur = new Map<string, number>();
     for (const a of affectations) {
       if (!a.affaire_id || !a.activite_id) continue;
-      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour >= aujourdhui).reduce((t, j) => t + j.heures, 0);
+      const h = (joursParAffectation.get(a.id) ?? []).filter((j) => j.jour > aujourdhui).reduce((t, j) => t + j.heures, 0); // A_VENIR_DEMAIN
       const k = `${a.affaire_id}|${a.activite_id}`;
       futur.set(k, (futur.get(k) ?? 0) + h);
     }
@@ -944,8 +944,9 @@ function PlanningAffairesContenu() {
   );
 
   /* PE / PI : les heures se modifient dans le relevé des prestations */
-  function ouvrirReleve(jour: string) {
-    window.location.assign(`/pilotage/prestations?mois=${jour.slice(0, 7)}`);
+  /* RELEVE_FILTRE : le relevé s'ouvre sur le mois et filtré sur l'affaire */
+  function ouvrirReleve(jour: string, affaire?: Affaire) {
+    window.location.assign(`/pilotage/prestations?mois=${jour.slice(0, 7)}${affaire ? `&affaire=${encodeURIComponent(affaire.numero)}` : ""}`);
   }
 
   /* Ouvre la fenêtre de modification d'une barre de ressource */
@@ -964,7 +965,7 @@ function PlanningAffairesContenu() {
     if (!affaire) return;
 
     if (ref.current.estPrestation(affaire)) {
-      ouvrirReleve(bloc.jours[0]?.jour ?? aujourdhui);
+      ouvrirReleve(bloc.jours[0]?.jour ?? aujourdhui, affaire);
       return;
     }
 
@@ -1232,7 +1233,7 @@ function PlanningAffairesContenu() {
 
   function ouvrirAffectation(affaire: Affaire, debut: string, collaborateurId?: string) {
     if (estPrestation(affaire)) {
-      ouvrirReleve(debut);
+      ouvrirReleve(debut, affaire);
       return;
     }
     setDialogue({ affaire, prefill: { collaborateurId, debut } });
@@ -1914,11 +1915,11 @@ function PlanningAffairesContenu() {
                         return peutAgir && !prestation && resteAct > 0.5 ? (
                           <button
                             type="button"
-                            title={`Ouvrir l’affectation avec ${formatHeures(resteAct)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}
-                            onClick={() => setDialogue({ affaire, prefill: { debut: aujourdhui, activiteId: id, heures: Math.round(resteAct * 10) / 10 } })}
+                            title={`Ouvrir l’affectation avec ${formatHeures(Math.round(resteAct * 4) / 4)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}
+                            onClick={() => setDialogue({ affaire, prefill: { debut: ajouterJours(aujourdhui, 1), activiteId: id, heures: Math.round(resteAct * 4) / 4 } })}
                             style={{ minHeight: 26, padding: "0 8px", border: `1.5px dashed ${C.rouge}`, background: "#ffffff", borderRadius: 6, fontWeight: 800, fontSize: 12, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
                           >
-                            + planifier {formatHeures(resteAct)}
+                            + planifier {formatHeures(Math.round(resteAct * 4) / 4)}
                           </button>
                         ) : null;
                       })()}
@@ -1963,7 +1964,7 @@ function PlanningAffairesContenu() {
                   <button
                     type="button"
                     style={{ minHeight: 34, padding: "0 12px", border: "1.5px dashed #b9bec5", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit" }}
-                    onClick={() => (prestation ? ouvrirReleve(colonnes.includes(aujourdhui) ? aujourdhui : colonnes[0]) : setDialogue({ affaire }))}
+                    onClick={() => (prestation ? ouvrirReleve(colonnes.includes(aujourdhui) ? aujourdhui : colonnes[0], affaire) : setDialogue({ affaire }))}
                   >
                     + Affecter
                   </button>
