@@ -292,7 +292,7 @@ export default function BilanFinancierAffaire({
 
   return (
     <section aria-label="Montants de l'affaire" style={carte}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 22, color: "#a30000" }}>Financier <span style={{ fontSize: 14, fontWeight: 400, color: gris }}>montants, facturation, négoce</span></h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 20, color: "#a30000" }}>Financier <span style={{ fontSize: 14, fontWeight: 400, color: gris }}>montants, facturation, négoce</span></h2>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
         D’après le Suivi d’affaire BE (commande et avenants) et, pour les PE / PI, les mois clôturés du relevé. Visible selon la fonction « Montants des affaires » (Droits d’accès).
       </p>
@@ -425,7 +425,7 @@ export default function BilanFinancierAffaire({
               return (
                 <td style={{ ...tdN, fontWeight: gras ? 800 : 600, ...plus }}>
                   {euros(taux)} / h
-                  {pc !== null && <div style={{ fontSize: 12, fontWeight: 700, color: pc < 0 ? "#b3261e" : pc < 15 ? "#8a4b00" : "#1b5e20" }}>{pc >= 0 ? "+" : ""}{pc} % / coût</div>}
+                  {pc !== null && <span style={{ fontSize: 12, fontWeight: 700, color: pc < 0 ? "#b3261e" : pc < 15 ? "#8a4b00" : "#1b5e20" }}> {pc >= 0 ? "+" : ""}{pc} %</span>}
                 </td>
               );
             };
@@ -435,7 +435,7 @@ export default function BilanFinancierAffaire({
               return (
                 <td style={{ ...tdN, fontWeight: gras ? 800 : 700, color: m < 0 ? "#b3261e" : "#1b5e20", ...plus }}>
                   {euros(m)}
-                  <div style={{ fontSize: 12 }}>{Math.round((m / montant) * 100)} %</div>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}> · {Math.round((m / montant) * 100)} %</span>
                 </td>
               );
             };
@@ -494,7 +494,7 @@ export default function BilanFinancierAffaire({
             );
           })()}
           <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-            Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ heures pointées ; « % / coût » = écart au coût de structure (rouge en dessous, orange moins de 15 % au-dessus). Marge = montant − heures × coût de structure ; tant que l’affaire n’est pas finie, la marge sur le pointé baisse à mesure qu’on pointe.
+            Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ heures pointées ; le % à côté du taux = écart au coût de structure (rouge en dessous, orange moins de 15 % au-dessus). Marge = montant − heures × coût de structure ; tant que l’affaire n’est pas finie, la marge sur le pointé baisse à mesure qu’on pointe.
           </p>
         </div>
       )}

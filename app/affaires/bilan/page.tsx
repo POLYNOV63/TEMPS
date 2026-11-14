@@ -176,6 +176,17 @@ function raccord(chiffre: number, total: number): { couleur: string; fond: strin
   return { couleur: "#b3261e", fond: "#fdecec", texte: `${formatHeures(ecart)} au-delà du chiffré` };
 }
 
+/* STATUT_JAUNE : une intention de commande se voit en jaune, comme au Suivi d'affaire */
+function PastilleStatut({ statut, children }: { statut: string | null | undefined; children: ReactNode }) {
+  if (statut === "Intention de commande")
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 999, fontWeight: 800, fontSize: 13, background: "#ffe58a", color: "#5c4300", border: "1px solid #e8c84a", whiteSpace: "nowrap" }}>
+        ● {children}
+      </span>
+    );
+  return <Pastille genre="info">{children}</Pastille>;
+}
+
 function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
   return (
     <h2 style={{ margin: "28px 0 12px", fontSize: 22, color: C.rougeFonce, borderBottom: `2px solid ${C.rouge}`, paddingBottom: 4 }}>
@@ -741,7 +752,7 @@ function BilanContenu() {
               const nbDecoupes = ordreL.length - meres.length;
               const bouton: CSSProperties = { ...page.btnSecondaire, minHeight: 36, fontSize: 14, textDecoration: "none", display: "inline-flex", alignItems: "center" };
               const chiffre = (libelle: string, valeur: string, sous?: string, etat?: { couleur: string; fond: string } | null) => (
-                <div style={{ minWidth: 110, ...(etat ? { background: etat.fond, borderRadius: 8, padding: "4px 10px" } : {}) }}>
+                <div style={{ minWidth: 120, border: `1px solid ${etat ? etat.couleur + "55" : C.ligne}`, borderRadius: 10, padding: "8px 14px", background: etat ? etat.fond : "#fcfcfd" }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: etat ? etat.couleur : C.gris }}>{libelle}</div>
                   <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.15, color: etat ? etat.couleur : "#1f2328" }}>{valeur}</div>
                   {sous && <div style={{ fontSize: 12, fontWeight: etat ? 700 : 400, color: etat ? etat.couleur : C.gris }}>{sous}</div>}
@@ -781,7 +792,11 @@ function BilanContenu() {
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                     <BadgeType type={affaire.type} />
                     <span style={{ fontSize: 24, fontWeight: 800, color: C.rougeFonce }}>{affaire.numero}</span>
-                    {devis && <span title="Devis d'origine (Suivi d'affaire BE)" style={{ fontSize: 15, fontWeight: 800, color: C.gris }}>{devis}</span>}
+                    {devis && (
+                      <span title={`Devis d'origine (Suivi d'affaire BE)${base?.redacteur ? `, rédigé par ${base.redacteur}` : ""}`} style={{ fontSize: 15, fontWeight: 800, color: C.gris, whiteSpace: "nowrap" }}>
+                        {devis}
+                      </span>
+                    )}
                     <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
                     {livree ? (
                       <Pastille genre="info">
@@ -790,9 +805,9 @@ function BilanContenu() {
                       </Pastille>
                     ) : commandeActive && comptees.length > 1 ? (
                       <>
-                        <Pastille genre="info">
+                        <PastilleStatut statut={commandeActive.statut}>
                           {commandeActive.statut ?? "En cours"} · {commandeActive.numero_affaire ?? commandeActive.cle}
-                        </Pastille>
+                        </PastilleStatut>
                         {livreesFamille.length > 0 && (
                           <span style={{ fontSize: 13, color: C.gris }}>
                             {livreesFamille.map((l) => l.numero_affaire ?? l.cle).join(", ")} livrée{livreesFamille.length > 1 ? "s" : ""}
@@ -800,7 +815,7 @@ function BilanContenu() {
                         )}
                       </>
                     ) : base?.statut ? (
-                      <Pastille genre="info">{base.statut}</Pastille>
+                      <PastilleStatut statut={base.statut}>{base.statut}</PastilleStatut>
                     ) : null}
                     <span style={{ flex: 1 }} />
                     {/* LIEN_PLANNING : l'affaire au planning, dépliée sur ses affectations */}
@@ -815,7 +830,7 @@ function BilanContenu() {
                   </div>
 
                   {/* qui, quand : client, réception, responsable et délai (modifiables) */}
-                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 22px", marginTop: 8, fontSize: 14 }}>
+                  <div className="bilan-infos" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px", marginTop: 8, fontSize: 14 }}>
                     {client && (
                       <span>
                         <span style={{ color: C.gris }}>Client</span> <strong>{client}</strong>
@@ -865,22 +880,22 @@ function BilanContenu() {
                       )
                     )}
                     {base?.redacteur && (
-                      <span>
-                        <span style={{ color: C.gris }}>Devis rédigé par</span> <strong>{base.redacteur}</strong>
+                      <span style={{ whiteSpace: "nowrap" }} title="Devis rédigé par">
+                        <span style={{ color: C.gris }}>Devis</span> <strong>{base.redacteur}</strong>
                       </span>
                     )}
                   </div>
 
                   {/* PILOTAGE_COUP_D_OEIL */}
                   {affaire.type === "CBE" && (bilan.totalChiffre > 0 || bilan.totalRealise > 0) && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 26px", alignItems: "flex-end", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "stretch", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
                       {chiffre("Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—")}
                       {chiffre("Pointé", formatHeures(bilan.totalRealise))}
                       {chiffre("Planifié", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—")}
                       {etatTotal && chiffre("Pointé + planifié", formatHeures(pointe + planifieTotal), etatTotal.texte, etatTotal)}
                       {avancement !== null && chiffre("Avancement estimé", `${Math.round(avancement)} %`, consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : undefined)}
                       {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
-                        <div style={{ flex: "1 1 200px", paddingBottom: 4 }}>
+                        <div style={{ flex: "1 1 200px", display: "flex", alignItems: "center", paddingLeft: 6 }}>
                           <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} large={220} />
                         </div>
                       )}
@@ -973,28 +988,36 @@ function BilanContenu() {
               if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
               if (onglets.length < 2) return null;
               return (
-                <div role="tablist" style={{ display: "flex", gap: 4, margin: "6px 0 14px", borderBottom: `2px solid ${C.ligne}` }}>
-                  {onglets.map(([cle, libelle]) => (
-                    <button
-                      key={cle}
-                      type="button"
-                      role="tab"
-                      aria-selected={ongletFiche === cle}
-                      onClick={() => changerOnglet(cle)}
-                      style={{
-                        all: "unset",
-                        cursor: "pointer",
-                        padding: "10px 18px",
-                        fontWeight: 800,
-                        fontSize: 16,
-                        color: ongletFiche === cle ? C.rougeFonce : "#3b4046",
-                        borderBottom: `3px solid ${ongletFiche === cle ? C.rouge : "transparent"}`,
-                        marginBottom: -2,
-                      }}
-                    >
-                      {libelle}
-                    </button>
-                  ))}
+                <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "6px 0 16px", padding: 5, background: "#eceef1", borderRadius: 12 }}>
+                  {onglets.map(([cle, libelle]) => {
+                    const actifO = ongletFiche === cle;
+                    const icone = cle === "AFFAIRE" ? "⏱" : cle === "PEPI" ? "📈" : "💶";
+                    return (
+                      <button
+                        key={cle}
+                        type="button"
+                        role="tab"
+                        aria-selected={actifO}
+                        onClick={() => changerOnglet(cle)}
+                        style={{
+                          all: "unset",
+                          cursor: "pointer",
+                          flex: "1 1 180px",
+                          textAlign: "center",
+                          padding: "11px 18px",
+                          borderRadius: 9,
+                          fontWeight: 800,
+                          fontSize: 16,
+                          whiteSpace: "nowrap",
+                          color: actifO ? "#ffffff" : "#3b4046",
+                          background: actifO ? C.rouge : "transparent",
+                          boxShadow: actifO ? "0 2px 6px rgba(163,0,0,.25)" : "none",
+                        }}
+                      >
+                        {icone} {libelle}
+                      </button>
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -1352,6 +1375,7 @@ function BilanContenu() {
 
 /* BILAN_MOBILE : affichage téléphone (< 760 px) */
 const CSS_MOBILE_BILAN = `
+.bilan-infos > span { white-space: nowrap; }
 @media (max-width: 760px) {
   .bilan-contenu { padding: 10px 10px 40px !important; }
   .bilan-page h1 { font-size: 24px !important; }

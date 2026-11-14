@@ -116,6 +116,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       const moisCourant = new Date().toISOString().slice(0, 7);
       const auj = new Date().toISOString().slice(0, 10);
       const saisi = new Map<string, number>();
+      const saisiPrevu = new Map<string, number>(); // PREVU_JOUR_PAR_JOUR : la part après aujourd'hui
       const dernier = new Map<string, string>();
       const affaireDe = new Map(lignes.map((l) => [l.id, l.affaire_id]));
       for (const s of sa) {
@@ -123,6 +124,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         if (h <= 0) continue;
         const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
         saisi.set(k, (saisi.get(k) ?? 0) + h);
+        if (s.jour > auj) saisiPrevu.set(k, (saisiPrevu.get(k) ?? 0) + h);
         const a = affaireDe.get(s.ligne_id) ?? "";
         if (s.jour >= auj && s.jour > (dernier.get(a) ?? "")) dernier.set(a, s.jour);
       }
@@ -160,15 +162,26 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
           const e = etats.get(cle);
           const tauxH = l.taux === null ? 0 : l.unite === "JOUR" ? l.taux / (l.base_horaire ?? baseDe(a.id)) : l.taux;
           const valide = Boolean(e?.valide);
-          const h = valide && e?.heures_fige !== null && e?.heures_fige !== undefined ? n(e.heures_fige) : saisi.get(cle) ?? 0;
-          const mt = valide && e?.montant_fige !== null && e?.montant_fige !== undefined ? n(e.montant_fige) : h * tauxH;
-          if (h <= 0.001 && mt <= 0.5) continue;
-          const etat: Etat = valide ? "FACTURE" : m > moisCourant ? "PREVU" : "A_FACTURER";
-          const c = mois.get(m) ?? { heures: 0, montant: 0, etat };
-          c.heures += h;
-          c.montant += mt;
-          if (etat !== "FACTURE" && c.etat === "FACTURE") c.etat = etat;
-          mois.set(m, c);
+          /* un mois clôturé est facturé en entier ; sinon, comme la fiche d'information : jusqu'à aujourd'hui
+             « à facturer », après aujourd'hui « prévu » (le mois en cours est donc coupé en deux) */
+          const parts: [Etat, number, number][] = [];
+          if (valide) {
+            const h = e?.heures_fige !== null && e?.heures_fige !== undefined ? n(e.heures_fige) : saisi.get(cle) ?? 0;
+            parts.push(["FACTURE", h, e?.montant_fige !== null && e?.montant_fige !== undefined ? n(e.montant_fige) : h * tauxH]);
+          } else {
+            const tout = saisi.get(cle) ?? 0;
+            const apres = m > moisCourant ? tout : saisiPrevu.get(cle) ?? 0;
+            if (tout - apres > 0.001) parts.push(["A_FACTURER", tout - apres, (tout - apres) * tauxH]);
+            if (apres > 0.001) parts.push(["PREVU", apres, apres * tauxH]);
+          }
+          for (const [etat, h, mt] of parts) {
+            if (h <= 0.001 && mt <= 0.5) continue;
+            const k = `${m}|${etat}`;
+            const c = mois.get(k) ?? { heures: 0, montant: 0, etat };
+            c.heures += h;
+            c.montant += mt;
+            mois.set(k, c);
+          }
         }
         const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
         const montant = s ? montants.get(s.id) ?? 0 : 0;
@@ -206,7 +219,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                 : montant > 0 && tauxH0
                   ? montant / tauxH0
                   : null;
-        const premierMois = [...mois.keys()].sort()[0] ?? null;
+        const premierMois = [...mois.keys()].sort()[0]?.slice(0, 7) ?? null;
         return {
           id: a.id,
           numero: a.numero,
@@ -234,7 +247,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
     const moisCourant = new Date().toISOString().slice(0, 7);
     const tous = new Set<string>([...pointeParMois.keys()]);
     for (const c of commandes) {
-      for (const m of c.mois.keys()) tous.add(m);
+      for (const m of c.mois.keys()) tous.add(m.slice(0, 7));
       if (c.recue) tous.add(c.recue);
     }
     const liste = [...tous].sort();
@@ -246,6 +259,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
     let cCmdE = 0;
     let cRel = 0;
     let cRelE = 0;
+    let cFait = 0; // relevé sans le prévu : ce qui se compare au pointé
     let cPt = 0;
     const lignes = mois.map((m) => {
       const recues = commandes.filter((c) => c.recue === m);
@@ -256,19 +270,21 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       let pr = 0;
       let mt = 0;
       for (const c of commandes) {
-        const x = c.mois.get(m);
-        if (!x) continue;
-        if (x.etat === "FACTURE") f += x.heures;
-        else if (x.etat === "A_FACTURER") af += x.heures;
-        else pr += x.heures;
-        mt += x.montant;
+        for (const [k, x] of c.mois) {
+          if (!k.startsWith(m)) continue;
+          if (x.etat === "FACTURE") f += x.heures;
+          else if (x.etat === "A_FACTURER") af += x.heures;
+          else pr += x.heures;
+          mt += x.montant;
+        }
       }
       cRel += f + af + pr;
+      cFait += f + af;
       cRelE += mt;
       const passe = m <= moisCourant;
       const pt = passe ? pointeParMois.get(m) ?? 0 : 0;
       if (passe) cPt += pt;
-      return { m, recues, f, af, pr, mt, cCmd, cCmdE, cRel, cRelE, pt, cPt: passe ? cPt : null, reste: cCmd - cRel, resteE: cCmdE - cRelE, futur: !passe, courant: m === moisCourant };
+      return { m, recues, f, af, pr, mt, cCmd, cCmdE, cRel, cRelE, cFait, pt, cPt: passe ? cPt : null, reste: cCmd - cRel, resteE: cCmdE - cRelE, futur: !passe, courant: m === moisCourant };
     });
     return lignes;
   }, [commandes, pointeParMois]);
@@ -311,7 +327,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
   const factureE = commandes.reduce((t, c) => t + [...c.mois.values()].filter((x) => x.etat === "FACTURE").reduce((u, x) => u + x.montant, 0), 0);
   const finPrevue = commandes.map((c) => c.finPrevue).filter((x): x is string => Boolean(x)).sort().slice(-1)[0] ?? null;
   const tuile = (libelle: string, valeur: string, sous: string, couleur?: string) => (
-    <div style={{ minWidth: 130, flex: "1 1 130px", border: "1px solid #e3e6ea", borderRadius: 10, padding: "8px 12px" }}>
+    <div style={{ minWidth: 130, flex: "1 1 130px", border: "1px solid #e3e6ea", borderLeft: `4px solid ${couleur ?? "#c9cdd2"}`, borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
       <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: gris }}>{libelle}</div>
       <div style={{ fontSize: 21, fontWeight: 800, color: couleur ?? "#1f2328" }}>{valeur}</div>
       <div style={{ fontSize: 12, color: gris }}>{sous}</div>
@@ -346,7 +362,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
 
   return (
     <section style={{ background: "#ffffff", border: "1px solid #e3e6ea", borderRadius: 12, padding: 16, marginBottom: 16, overflowX: "auto" }}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>Historique de la PE / PI</h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 20, color: "#a30000" }}>Historique de la PE / PI</h2>
       <p style={{ margin: "0 0 4px", fontSize: 13.5 }}>
         Unité : <strong>{enJours ? `jours de ${baseJ.toLocaleString("fr-FR")} h` : "heures"}</strong>
         {enJours && bases.length > 1 && <span style={{ color: gris }}> (bases des commandes : {bases.map((b) => `${b.toLocaleString("fr-FR")} h`).join(", ")})</span>}
@@ -406,7 +422,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
             <g key={`cmd-${x.m}`}>
               <circle cx={X(i)} cy={Y(x.cCmd)} r={4} fill="#1f2328" />
               <text x={X(i) + 6} y={Y(x.cCmd) - 16} fontSize={11.5} fontWeight={800} fill="#1f2328">
-                + {q(x.recues.reduce((t, c) => t + (c.heuresCmd ?? 0), 0))} ({x.recues.map((c) => c.numero).join(", ")})
+                + {q(x.recues.reduce((t, c) => t + (c.heuresCmd ?? 0), 0))} ({x.recues.map((c) => `CBE${c.numero}`).join(", ")})
               </text>
               <text x={X(i) + 6} y={Y(x.cCmd) - 4} fontSize={11} fill={gris}>
                 = {q(x.cCmd)} commandés
@@ -448,7 +464,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
             <th style={th}>Au relevé</th>
             {voitMontants && <th style={th}>Montant</th>}
             <th style={th}>Cumul pointé</th>
-            <th style={th}>Cumul relevé</th>
+            <th style={th} title="Facturé + à facturer + prévu">Cumul relevé</th>
             <th style={thG}>Pointé face au relevé</th>
             <th style={th}>Reste de la commande</th>
           </tr>
@@ -458,7 +474,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
             const rel = x.f + x.af + x.pr;
             const etat = x.pr > 0 ? "prévu" : x.af > 0 ? "à facturer" : x.f > 0 ? "facturé" : "";
             const couleurEtat = x.pr > 0 ? gris : x.af > 0 ? "#8a6500" : VERT;
-            const e = x.cPt !== null ? ecartTexte(x.cPt, x.cRel) : null;
+            const e = x.cPt !== null ? ecartTexte(x.cPt, x.cFait) : null;
             return (
               <tr key={x.m} style={{ fontStyle: x.futur ? "italic" : undefined, background: x.courant ? "#fffafa" : undefined }}>
                 <td style={{ ...tdG, fontWeight: 700 }}>{libMois(x.m)}</td>
@@ -466,7 +482,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                   {x.recues.length > 0 ? (
                     <>
                       <strong>+ {q(x.recues.reduce((t, c) => t + (c.heuresCmd ?? 0), 0))}</strong>
-                      <div style={{ fontSize: 11.5, color: gris }}>{x.recues.map((c) => c.numero).join(", ")}</div>
+                      <span style={{ fontSize: 12, color: gris }}> · {x.recues.map((c) => `CBE${c.numero}`).join(", ")}</span>
                     </>
                   ) : (
                     ""
@@ -475,10 +491,17 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                 <td style={td}>{x.futur ? "" : x.pt > 0.05 ? q(x.pt) : "—"}</td>
                 <td style={{ ...td, fontWeight: 700 }}>
                   {rel > 0.05 ? (
-                    <>
-                      {q(rel)}
-                      <div style={{ fontSize: 11.5, fontWeight: 800, color: couleurEtat }}>{etat}</div>
-                    </>
+                    x.pr > 0.05 && x.f + x.af > 0.05 ? (
+                      <>
+                        {q(x.f + x.af)} <span style={{ fontSize: 12, fontWeight: 800, color: x.af > 0 ? "#8a6500" : VERT }}>{x.af > 0 ? "à facturer" : "facturé"}</span>
+                        <span style={{ color: gris, fontWeight: 400 }}> + </span>
+                        {q(x.pr)} <span style={{ fontSize: 12, fontWeight: 800, color: gris }}>prévu</span>
+                      </>
+                    ) : (
+                      <>
+                        {q(rel)} <span style={{ fontSize: 12, fontWeight: 800, color: couleurEtat }}>{etat}</span>
+                      </>
+                    )
                   ) : (
                     "—"
                   )}
@@ -489,7 +512,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                 <td style={{ ...tdG, fontSize: 12.5, color: e?.couleur }}>{e ? e.texte : ""}</td>
                 <td style={{ ...td, fontWeight: 800, color: x.reste < -0.05 ? ROUGE : VERT }}>
                   {x.cCmd <= 0.05 && x.cRel <= 0.05 ? "—" : x.reste < -0.05 ? `dépassé de ${q(-x.reste)}` : q(x.reste)}
-                  {voitMontants && x.cCmdE > 0.5 && <div style={{ fontSize: 11.5, fontWeight: 400, color: gris }}>{x.resteE < 0 ? `− ${euros(-x.resteE)}` : euros(x.resteE)}</div>}
+                  {voitMontants && x.cCmdE > 0.5 && <span style={{ fontSize: 12, fontWeight: 400, color: gris }}> · {x.resteE < 0 ? `− ${euros(-x.resteE)}` : euros(x.resteE)}</span>}
                 </td>
               </tr>
             );
@@ -497,12 +520,12 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
         </tbody>
       </table>
       <p style={{ fontSize: 12, color: gris, margin: "6px 0 14px" }}>
-        « Pointé face au relevé », en cumul : <span style={{ color: ROUGE }}>en rouge, du travail pointé qui n’est pas (encore) au relevé</span> ; <span style={{ color: "#7a3e00" }}>en ocre, plus au relevé que pointé</span>. Les heures
+        « Pointé face au relevé », en cumul et hors prévu : <span style={{ color: ROUGE }}>en rouge, du travail pointé qui n’est pas (encore) au relevé</span> ; <span style={{ color: "#7a3e00" }}>en ocre, plus au relevé que pointé</span>. Les heures
         sont pointées sur le n° de base : la comparaison se fait pour toute la famille.
       </p>
 
       {/* commande par commande */}
-      <strong style={{ fontSize: 15 }}>Commande par commande</strong>
+      <strong style={{ fontSize: 16, color: "#a30000" }}>Commande par commande</strong>
       <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
         <thead>
           <tr>
@@ -526,17 +549,18 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
             const cel = (h: number, e: number, couleur?: string) => (
               <td style={{ ...td, color: couleur }}>
                 {h > 0.05 ? qc(c, h) : "—"}
-                {voitMontants && e > 0.5 && <div style={{ fontSize: 11.5, color: gris }}>{euros(e)}</div>}
+                {voitMontants && e > 0.5 && <span style={{ fontSize: 12, color: gris }}> · {euros(e)}</span>}
               </td>
             );
             return (
               <tr key={c.id}>
                 <td style={tdG}>
-                  <strong style={{ color: "#a30000" }}>{c.numero}</strong> <span style={{ fontSize: 12, color: gris }}>{c.statut}</span>
+                  <strong style={{ color: "#a30000" }}>CBE{c.numero}</strong>{" "}
+                  <span style={{ fontSize: 12, ...(c.statut === "Intention de commande" ? { background: "#ffe58a", color: "#5c4300", fontWeight: 800, borderRadius: 999, padding: "2px 8px" } : { color: gris }) }}>{c.statut}</span>
                 </td>
                 <td style={td}>
                   {c.recue ? libMois(c.recue) : "—"}
-                  {c.unite === "JOUR" && <div style={{ fontSize: 11, color: gris }}>jour de {c.base.toLocaleString("fr-FR")} h</div>}
+                  {c.unite === "JOUR" && <span style={{ fontSize: 12, color: gris }}> · jour de {c.base.toLocaleString("fr-FR")} h</span>}
                 </td>
                 {cel(c.heuresCmd ?? 0, c.montant)}
                 {cel(s("FACTURE"), sE("FACTURE"), VERT)}
@@ -544,7 +568,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
                 {cel(s("PREVU"), sE("PREVU"), gris)}
                 <td style={{ ...td, fontWeight: 800, color: reste === null ? gris : reste < -0.05 ? ROUGE : VERT }}>
                   {reste === null ? "—" : reste < -0.05 ? `dépassé de ${qc(c, -reste)}` : reste <= 0.05 ? "✓ soldé" : qc(c, reste)}
-                  {voitMontants && c.montant > 0.5 && Math.abs(resteE) > 0.5 && <div style={{ fontSize: 11.5, fontWeight: 400, color: gris }}>{resteE < 0 ? `− ${euros(-resteE)}` : euros(resteE)}</div>}
+                  {voitMontants && c.montant > 0.5 && Math.abs(resteE) > 0.5 && <span style={{ fontSize: 12, fontWeight: 400, color: gris }}> · {resteE < 0 ? `− ${euros(-resteE)}` : euros(resteE)}</span>}
                 </td>
                 <td style={td}>{c.finPrevue ? new Date(`${c.finPrevue}T00:00:00`).toLocaleDateString("fr-FR") : "—"}</td>
               </tr>
