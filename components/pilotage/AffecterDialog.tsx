@@ -96,7 +96,7 @@ export default function AffecterDialog({
     edition
       ? String(Math.round(heuresExistantes * 100) / 100).replace(".", ",")
       : prefill?.heures
-        ? String(Math.round(prefill.heures * 4) / 4).replace(".", ",") // QUART_HEURE : ce qui sera vraiment placé
+        ? String(Math.round(prefill.heures * 100) / 100).replace(".", ",") // HEURES_EXACTES : le reste exact, le dernier jour prend l'appoint
         : ""
   );
   const [unite, setUnite] = useState<Unite>(edition || prefill?.heures ? "HEURES" : "JOURS");

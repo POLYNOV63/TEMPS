@@ -1915,11 +1915,11 @@ function PlanningAffairesContenu() {
                         return peutAgir && !prestation && resteAct > 0.5 ? (
                           <button
                             type="button"
-                            title={`Ouvrir l’affectation avec ${formatHeures(Math.round(resteAct * 4) / 4)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}
-                            onClick={() => setDialogue({ affaire, prefill: { debut: ajouterJours(aujourdhui, 1), activiteId: id, heures: Math.round(resteAct * 4) / 4 } })}
+                            title={`Ouvrir l’affectation avec ${formatHeures(resteAct)} de ${e.nom} (chiffré − pointé − planifié à venir) : il ne reste qu’à choisir la personne`}
+                            onClick={() => setDialogue({ affaire, prefill: { debut: ajouterJours(aujourdhui, 1), activiteId: id, heures: Math.round(resteAct * 100) / 100 } })}
                             style={{ minHeight: 26, padding: "0 8px", border: `1.5px dashed ${C.rouge}`, background: "#ffffff", borderRadius: 6, fontWeight: 800, fontSize: 12, color: C.rougeFonce, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
                           >
-                            + planifier {formatHeures(Math.round(resteAct * 4) / 4)}
+                            + planifier {formatHeures(resteAct)}
                           </button>
                         ) : null;
                       })()}

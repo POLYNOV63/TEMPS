@@ -370,7 +370,7 @@ export function remplirHeures(options: {
 }): ResultatRemplissage {
   const p = Math.min(100, Math.max(1, options.pourcent ?? 100)) / 100;
   const jours: JourHeures[] = [];
-  let reste = Math.max(0, arrondi025(options.quantiteHeures));
+  let reste = Math.max(0, arrondi2(options.quantiteHeures)); // HEURES_EXACTES : pas d'arrondi au quart d'heure du total
   let disponibles = 0;
 
   if (!options.debut || reste <= 0) return { jours, total: 0, joursDisponibles: 0, fin: null, epuise: reste <= 0 };
