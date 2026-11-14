@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { C, Message, Modal, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerCapacitesAbsences } from "@/lib/pilotageDonnees";
@@ -13,6 +13,7 @@ import {
   joursSansCapacite,
   lundiDe,
   numeroSemaine,
+  ratioDuBloc,
   remplirHeures,
   remplirJours,
   type Affectation,
@@ -95,15 +96,15 @@ export default function AffecterDialog({
     edition
       ? String(Math.round(heuresExistantes * 100) / 100).replace(".", ",")
       : prefill?.heures
-        ? String(Math.round(prefill.heures * 10) / 10).replace(".", ",")
+        ? String(Math.round(prefill.heures * 4) / 4).replace(".", ",") // QUART_HEURE : ce qui sera vraiment placé
         : ""
   );
   const [unite, setUnite] = useState<Unite>(edition || prefill?.heures ? "HEURES" : "JOURS");
-  const [pourcent, setPourcent] = useState(
-    edition && nbJoursExistant > 0
-      ? String(Math.min(100, Math.max(5, Math.round((heuresExistantes / nbJoursExistant / 7.5) * 100))))
-      : "100"
-  );
+  /* POURCENT_REEL : en modification, la part de temps se calcule sur la capacité réelle de la personne
+     (journée de 7 h, vendredi court…) une fois ses disponibilités chargées ; avant, on la comptait sur 7,5 h,
+     ce qui donnait par ex. 93 % pour une journée de 7 h, et des journées replacées à 6,5 h. */
+  const [pourcent, setPourcent] = useState("100");
+  const pourcentCale = useRef(!edition || nbJoursExistant === 0);
   const [commentaire, setCommentaire] = useState(edition?.affectation.commentaire ?? "");
   const [activiteId, setActiviteId] = useState(() => {
     if (edition) return edition.affectation.activite_id ?? "";
@@ -170,6 +171,19 @@ export default function AffecterDialog({
   }, [debut, horizon]);
 
   const pret = Boolean(capacites && couverture && couverture.debut === debut && couverture.fin === horizon && !chargement);
+
+  useEffect(() => {
+    if (pourcentCale.current || !edition || !capacites) return;
+    const cap = capacites.get(edition.affectation.collaborateur_id);
+    if (!cap) return;
+    pourcentCale.current = true;
+    const ratio = ratioDuBloc(
+      edition.jours.map((j) => ({ jour: j.jour, heures: num(j.heures) })),
+      (j) => cap.get(j)?.net ?? 0
+    );
+    // à 3 % près, c'est tout son temps
+    setPourcent(String(ratio >= 0.97 ? 100 : Math.max(5, Math.round(ratio * 100))));
+  }, [capacites, edition]);
 
   const idsExclus = useMemo(() => new Set(edition ? [edition.affectation.id] : []), [edition]);
   const affaireDe = useMemo(() => new Map(affectations.map((a) => [a.id, a])), [affectations]);
