@@ -965,6 +965,7 @@ function TuilesDomaines({
             { libelle: "Capacité", url: "/admin/bilans" },
             { libelle: "Cartographie", url: "/analyse/effectifs" },
             { libelle: "Fiabilité du chiffrage", url: "/analyse/fiabilite-chiffrage" },
+            { libelle: "Par client", url: "/analyse/clients" },
           ]
         : [
             { libelle: "Charge par ressource", url: "/pilotage/ressources" },
@@ -977,7 +978,7 @@ function TuilesDomaines({
           key="analyses"
           icone="📊"
           titre="Analyses"
-          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage" : "Charge par ressource et disponibilités par activité"}
+          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage, clients" : "Charge par ressource et disponibilités par activité"}
           url={ouvertes[0].url}
           aller={aller}
           raccourcis={ouvertes}

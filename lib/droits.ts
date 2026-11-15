@@ -111,6 +111,7 @@ export const PAGES: PageApp[] = [
   { href: "/pilotage/ressources", libelle: "Charge par ressource", groupe: "Analyse", droit: "chargeRessources" },
   { href: "/analyse/charge-activites", libelle: "Disponibilités par activité", groupe: "Analyse", droit: "chargeRessources" },
   { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "administration" },
+  { href: "/analyse/clients", libelle: "Analyse par client", groupe: "Analyse", droit: "administration" },
 
   { href: "/admin/feuilles", libelle: "Feuilles d’heures", groupe: "RH", droit: "voirFeuillesEquipe" },
   { href: "/admin/Valid_RH", libelle: "Validation RH", groupe: "RH", droit: "administration" },

@@ -40,6 +40,7 @@ const ONGLETS = [
   // en dernier : l'équipe et la capacité
   { cle: "effectifs", groupe: 4, court: "Équipe", libelle: "Cartographie de l’équipe", href: "/analyse/effectifs", droit: "indicateurs" },
   { cle: "capacite", groupe: 4, court: "Capacité", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
+  { cle: "clients", groupe: 4, court: "Clients", libelle: "Analyse par client", href: "/analyse/clients", droit: "administration" },
   { cle: "fiabilite", groupe: 4, court: "Fiabilité chiffrage", libelle: "Fiabilité du chiffrage", href: "/analyse/fiabilite-chiffrage", droit: "indicateurs" },
 ] as const satisfies readonly { cle: string; groupe: number; court: string; libelle: string; href: string; droit: Droit }[];
 
