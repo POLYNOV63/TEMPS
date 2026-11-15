@@ -269,7 +269,7 @@ function BilanContenu() {
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
   const [planifieMois, setPlanifieMois] = useState<Map<string, number>>(new Map());
-  const [noteJours, setNoteJours] = useState(""); // JOURS_VENDUS
+  const [, setNoteJours] = useState(""); // JOURS_VENDUS (plus affiché)
   /* FACTURATION_ENTETE : PE / PI facturée au jour (journée de …) ou à l'heure, d'après le relevé */
   const [facturation, setFacturation] = useState<{ unite: "JOUR" | "HEURE"; bases: number[]; jours: number; heures: number } | null>(null);
   // présentation
@@ -676,6 +676,7 @@ function BilanContenu() {
 
   /* COMMANDES_PEPI : pour une PE / PI, le relevé commande par commande (en-tête et Financier) */
   const [pepi, setPepi] = useState<CommandePEPI[] | null>(null);
+  const [commandesOuvertes, setCommandesOuvertes] = useState(false); // COMMANDES_REPLIEES
   const numeroPepi = affaire?.type === "CBE" ? affaire.numero : "";
   const estPepi = Boolean(numeroPepi) && lignesExcel.some((l) => l.genre === "BASE" && (l.imputation === "PE" || l.imputation === "PI"));
   useEffect(() => {
@@ -849,10 +850,10 @@ function BilanContenu() {
                     )}
                     <span style={{ fontSize: 18, fontWeight: 700 }}>{base?.designation ?? ""}</span>
                     {livree ? (
-                      <Pastille genre="info">
-                        {comptees.length > 1 ? "Toutes les commandes livrées" : "Livrée"}
+                      <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 12px", borderRadius: 999, fontWeight: 800, fontSize: 13, background: "#e7f4e8", color: "#1b5e20", border: "1px solid #a8d5ab", whiteSpace: "nowrap" }}>
+                        ● {comptees.length > 1 ? "Toutes les commandes livrées" : "Livrée"}
                         {dateLivraison ? ` · dernière le ${formatDate(dateLivraison)}` : ""}
-                      </Pastille>
+                      </span>
                     ) : commandeActive && comptees.length > 1 ? (
                       <>
                         <PastilleStatut statut={commandeActive.statut}>
@@ -1120,23 +1121,28 @@ function BilanContenu() {
                 };
                 return (
                   <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}`, overflowX: "auto" }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
-                      {meres.length} commande{meres.length > 1 ? "s" : ""}
+                    <button
+                      type="button"
+                      aria-expanded={commandesOuvertes}
+                      onClick={() => setCommandesOuvertes((v) => !v)}
+                      style={{ all: "unset", cursor: "pointer", display: "block", fontSize: 15, fontWeight: 800, marginBottom: commandesOuvertes ? 6 : 0 }}
+                    >
+                      <span style={{ color: C.rougeFonce }}>{commandesOuvertes ? "▾" : "▸"}</span> {meres.length} commande{meres.length > 1 ? "s" : ""}
                       <span style={{ fontSize: 14, fontWeight: 600, color: C.gris }}>
                         {" "}
                         {[compte(intentions, "intention"), compte(recues, "reçue"), compte(livrees, "livrée"), compte(perdues, "perdue ou annulée"), nbDecoupes > 0 ? `${nbDecoupes} échéance${nbDecoupes > 1 ? "s" : ""} ou lot${nbDecoupes > 1 ? "s" : ""}` : null]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>
-                    </div>
-                    {devis && (
+                    </button>
+                    {commandesOuvertes && devis && (
                       <p style={{ margin: "0 0 10px", fontSize: 14 }}>
                         <span style={{ color: C.gris }}>Devis d’origine</span> <strong>{devis}</strong>
                         {base?.date_ouverture && <span style={{ color: C.gris }}> · ouvert le {formatDate(base.date_ouverture)}</span>}
                         {base?.redacteur && <span style={{ color: C.gris }}> · rédigé par {base.redacteur}</span>}
                       </p>
                     )}
-                    {meres.length === 0 ? (
+                    {!commandesOuvertes ? null : meres.length === 0 ? (
                       <p style={{ margin: 0, color: C.gris }}>Pas de commande au Suivi d’affaire BE.</p>
                     ) : (
                       <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
@@ -1173,11 +1179,6 @@ function BilanContenu() {
 
             {lignesExcel.length === 0 && bilan.sourceChiffre === "AUCUN" && (
               <Message genre="info">Cette affaire n’est pas dans le Suivi d’affaire BE (antérieure au 01/11/2024, ou numéro inconnu) : pas d’heures chiffrées, seul le pointé est affiché.</Message>
-            )}
-            {noteJours && (
-              <Message genre="info">
-                Vendue au jour : heures chiffrées recalculées sur la journée de la commande (« Journée de » du relevé) : {noteJours}.
-              </Message>
             )}
             {bilan.sourceChiffre === "PILOTAGE" && <Message genre="info">Chiffré tiré des besoins saisis dans le Pilotage BE (pas de ligne dans le Suivi d’affaire).</Message>}
             {affaire.type === "DBE" && <Message genre="info">Un DBE n’a pas d’heures chiffrées à produire : on mesure ici le temps passé à préparer le devis.</Message>}

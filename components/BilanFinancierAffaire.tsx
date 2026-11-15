@@ -550,7 +550,7 @@ export default function BilanFinancierAffaire({
             <span style={{ fontSize: 13, color: gris }}>
               {" "}
               · facturé {euros(F)} sur {euros(M)}
-              {moyenne !== null ? ` · en moyenne ${moyenne} jours entre la commande reçue et sa facture` : ""}
+              {moyenne !== null ? ` · en moyenne ${moyenne} jours de la commande reçue à sa facture` : ""}
             </span>
             <div style={{ overflowX: "auto", marginTop: 6 }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -561,7 +561,7 @@ export default function BilanFinancierAffaire({
                     <th style={thN}>Montant</th>
                     <th style={th}>Reçue le</th>
                     <th style={th}>Facturée le</th>
-                    <th style={thN} title="De la commande reçue à la facture">Jours</th>
+                    <th style={thN} title="Nombre de jours entre la réception de la commande et sa facture (date de livraison au Suivi d’affaire)">Commande → facture</th>
                   </tr>
                 </thead>
                 <tbody>
