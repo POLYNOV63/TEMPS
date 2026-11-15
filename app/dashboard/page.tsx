@@ -874,6 +874,9 @@ function TuilesDomaines({
   const uRH = premiere(["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"]);
   const uFinance = premiere(["/analyse/finances", "/analyse/facturation", "/analyse/rentabilite"]);
   const uExports = premiere(["/admin/export-excel", "/admin/bilan-rh"]);
+  /* SOUS_MENUS_TUILES : sous chaque tuile, les liens directs vers ses pages ouvertes au rôle */
+  const liens = (liste: [string, string][]) =>
+    liste.filter(([, url]) => role === "ADMIN" || pageAutorisee(role, url)).map(([libelle, url]) => ({ libelle, url }));
   const tuiles: ReactNode[] = [];
   if (uPilotage)
     tuiles.push(
@@ -884,14 +887,14 @@ function TuilesDomaines({
         description="Affaires, devis, planning, charge et analyses"
         url={uPilotage}
         aller={aller}
-        raccourcis={
-          peut(role, "administration")
-            ? [
-                { libelle: "Planning des affaires", url: "/pilotage/affaires" },
-                { libelle: "Relevé PE / PI", url: "/pilotage/prestations" },
-              ]
-            : undefined
-        }
+        raccourcis={liens([
+          ["Suivi des affaires", "/pilotage"],
+          ["Suivi des devis", "/pilotage/devis"],
+          ["Planning des affaires", "/pilotage/affaires"],
+          ["Planning par ressource", "/pilotage/planning-ressources"],
+          ["Relevé PE / PI", "/pilotage/prestations"],
+          ["Fiche affaire", "/affaires/bilan"],
+        ])}
       />
     );
   if (uRH)
@@ -903,6 +906,14 @@ function TuilesDomaines({
         description={peut(role, "administration") ? "Feuilles d’heures, validations, absences et compteurs, notes de frais" : "Feuilles d’heures des collaborateurs"}
         url={uRH}
         aller={aller}
+        raccourcis={liens([
+          ["Feuilles d’heures", "/admin/feuilles"],
+          ["Validation RH", "/admin/Valid_RH"],
+          ["Absences et compteurs", "/admin/suivi-rh"],
+          ["Récupérations", "/admin/compteurs"],
+          ["Notes de frais", "/admin/suivi-notes-frais"],
+          ["Bilan RH", "/admin/bilan-rh"],
+        ])}
         badges={
           rh
             ? [
@@ -914,9 +925,36 @@ function TuilesDomaines({
       />
     );
   if (uFinance)
-    tuiles.push(<TuileDomaine key="finance" icone="💶" titre="Finance" description="CA de l’exercice, attendu, atterrissage face au prévisionnel" url={uFinance} aller={aller} />);
+    tuiles.push(
+      <TuileDomaine
+        key="finance"
+        icone="💶"
+        titre="Finance"
+        description="CA de l’exercice, attendu, atterrissage face au prévisionnel"
+        url={uFinance}
+        aller={aller}
+        raccourcis={liens([
+          ["Finances", "/analyse/finances"],
+          ["Facturation du mois", "/analyse/facturation"],
+          ["Rentabilité", "/analyse/rentabilite"],
+        ])}
+      />
+    );
   if (uExports)
-    tuiles.push(<TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url={uExports} aller={aller} />);
+    tuiles.push(
+      <TuileDomaine
+        key="exports"
+        icone="📤"
+        titre="Exports"
+        description="Fin de mois : bilan RH, récapitulatif d’heures, facturation"
+        url={uExports}
+        aller={aller}
+        raccourcis={liens([
+          ["Exports Excel", "/admin/export-excel"],
+          ["Bilan RH mensuel", "/admin/bilan-rh"],
+        ])}
+      />
+    );
   /* TUILE_ANALYSES : ADMIN et DIRECTION ; la Direction n'y a que la charge par ressource et les disponibilités */
   if (role === "ADMIN" || role === "DIRECTION") {
     const pagesAnalyse =
@@ -1491,7 +1529,7 @@ const stylesV2: Record<string, CSSProperties> = {
   grilleTuiles: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 16 }, // TUILES_UNE_LIGNE
   tuileDomaine: { background: "#ffffff", borderRadius: 14, borderTop: "5px solid #c00000", padding: "14px 14px", minHeight: 150, minWidth: 0, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", transition: "all 0.15s ease", outline: "none" },
   tuileIcone: { width: 46, height: 46, borderRadius: 12, background: "#c00000", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 2 },
-  raccourci: { border: "1.5px solid #e3b7b7", background: "#fff6f6", color: "#a30000", borderRadius: 999, padding: "4px 10px", fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" },
+  raccourci: { border: "1.5px solid #e3b7b7", background: "#fff6f6", color: "#a30000", borderRadius: 999, padding: "3px 8px", fontFamily: "inherit", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" },
   apercuChoix: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 18 },
   apercuSelect: { minHeight: 38, border: "1.5px solid #d5d9de", borderRadius: 8, padding: "0 8px", fontFamily: "inherit", fontSize: 14, fontWeight: 700, background: "#ffffff", maxWidth: 300 },
   apercuBandeau: { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#fff4c2", border: "1.5px solid #e5c100", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 14 },
