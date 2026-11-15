@@ -113,7 +113,6 @@ export const PAGES: PageApp[] = [
   { href: "/admin/feuilles", libelle: "Feuilles d’heures", groupe: "RH", droit: "voirFeuillesEquipe" },
   { href: "/admin/Valid_RH", libelle: "Validation RH", groupe: "RH", droit: "administration" },
   { href: "/admin/suivi-rh", libelle: "Absences et compteurs", groupe: "RH", droit: "administration" },
-  { href: "/admin/compteurs", libelle: "Compteurs de récupération", groupe: "RH", droit: "administration" },
   { href: "/admin/suivi-notes-frais", libelle: "Notes de frais (suivi)", groupe: "RH", droit: "administration" },
   { href: "/admin/bilan-rh", libelle: "Bilan RH mensuel", groupe: "RH", droit: "bilanRH" },
 

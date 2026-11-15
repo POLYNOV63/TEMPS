@@ -909,7 +909,6 @@ function TuilesDomaines({
           ["Feuilles d’heures", "/admin/feuilles"],
           ["Validation RH", "/admin/Valid_RH"],
           ["Absences et compteurs", "/admin/suivi-rh"],
-          ["Récupérations", "/admin/compteurs"],
           ["Notes de frais", "/admin/suivi-notes-frais"],
           ["Bilan RH et export", "/admin/bilan-rh"],
         ])}

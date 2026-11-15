@@ -84,7 +84,7 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
   frais, Bilan RH mensuel.
 - **Tableau de bord** (`app/dashboard/page.tsx`) : « Mon espace », puis **4 tuiles de domaine** sur une ligne, chacune
   avec ses sous-liens (filtrés par `pageAutorisee`) : **Pilotage** (Suivi des affaires, devis, Planning des affaires,
-  Ressources, Relevé PE / PI, Fiche affaire), **RH** (Feuilles, Validation RH, Absences et compteurs, Récupérations, Notes
+  Ressources, Relevé PE / PI, Fiche affaire), **RH** (Feuilles, Validation RH, Absences et compteurs, Notes
   de frais, Bilan RH et export ; badges « feuilles à relancer » / « demandes à valider »), **Finance** (Finances,
   Facturation du mois, Rentabilité), **Analyses** (ADMIN : Capacité, Fiabilité du chiffrage, Par client). Plus de tuile
   Exports. La Direction voit aussi les graphiques de disponibilités (`lib/disponibilitesActivites.ts`,
@@ -93,7 +93,7 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
   Ressources `#disponibilites` ; `/analyse/effectifs` → Ressources `#composition` ; `/admin/export-excel` → Bilan RH
   `#export` ; `/analyse/pointage` → Suivi des affaires ; `/pilotage/indicateurs` → Suivi des devis (onglet Statistiques) ;
   `/admin/bilan-activites` → Analyse de capacité ; `/pilotage/planning` → Planning des affaires ; `/pilotage/affaire/[id]`
-  → Fiche affaire.
+  → Fiche affaire ; `/admin/compteurs` (ex-« Récupérations », doublon) → Absences et compteurs.
 
 ## Feuille de temps (Ma semaine)
 
@@ -133,8 +133,7 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
 - **Point de départ** : `rh_droits.compteur_recuperation_initial` de l'exercice (première feuille seulement), à défaut
   `collaborateurs.compteur_recuperation`.
 - **Ajustement forcé** (`rh_regulariser_compteur`, motif obligatoire, tracé dans `rh_compteur_regularisations`) : depuis
-  Absences et compteurs (`/admin/suivi-rh`). La page `/admin/compteurs` (« Récupérations ») existe encore ; doublon probable
-  d'Absences et compteurs, à examiner avant de la supprimer.
+  Absences et compteurs (`/admin/suivi-rh`), seule page pour cela (l'ancienne page « Récupérations » y redirige).
 
 ## RH
 
@@ -276,7 +275,7 @@ bilan d'affaire et de suivi de dérive.
 ## À venir / en suspens
 
 - Agent serveur : synchronisation du Suivi d'affaire toutes les 5 min et sauvegarde nocturne.
-- Regroupements de pages encore possibles : Récupérations (`/admin/compteurs`) dans Absences et compteurs ; onglets
+- Regroupements de pages encore possibles : onglets
   Collaborateurs et Par activité de l'Analyse de capacité ; doublon onglet « Feuilles de route » / feuille de route du
   tableau de bord. Rentabilité et Analyse par client restent séparées (questions différentes).
 - Heures de négoce : la synchro du Suivi est peut-être à adapter (« Heures autre » devenue « Heures négoce ») ; colonnes
