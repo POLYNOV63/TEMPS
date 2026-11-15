@@ -35,6 +35,7 @@ type Ligne = {
   statut: string | null;
   disparue: boolean;
   date_livraison: string | null;
+  date_reception_commande: string | null;
   delai: string | null;
   date_livraison_estimee: string | null;
   heures_meca: number | string | null;
@@ -71,7 +72,21 @@ type Commande = {
   prevue: string | null; // délai estimé, sinon délai client
 };
 /* ECHEANCIER_FICHE : chaque ligne facturable de la famille (commande, avenant, échéance, lot, mois du relevé) */
-type LigneFacture = { cle: string; niveau: 0 | 1; numero: string; nature: string; statut: string; montant: number; facturee: string | null; prevue: string | null; client?: string | null; releve?: boolean; parent?: string };
+type LigneFacture = {
+  cle: string;
+  niveau: 0 | 1;
+  numero: string;
+  nature: string;
+  statut: string;
+  montant: number;
+  facturee: string | null;
+  prevue: string | null;
+  client?: string | null;
+  releve?: boolean;
+  parent?: string;
+  recue?: string | null; // RYTHME_FACTURATION : réception de la commande (celle de la mère pour une échéance)
+  livraisonMere?: string | null; // livraison de la commande mère : une échéance facturée avant est un acompte
+};
 type Discipline = { cle: string; libelle: string; montant: number; heures: number | null; colonnes: string[] };
 
 const n = (v: unknown) => Number(v) || 0;
@@ -86,12 +101,9 @@ export default function BilanFinancierAffaire({
   correspondance,
   heuresNegoce = 0,
 
-  pointeParMois,
   pointeTotal = 0,
   planifie = 0,
   chiffre = 0,
-  planifieParMois,
-  prestation = false,
 }: {
   type: string;
   numero: string;
@@ -115,10 +127,9 @@ export default function BilanFinancierAffaire({
   const [message, setMessage] = useState("");
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [disciplines, setDisciplines] = useState<Discipline[]>([]);
-  const [, setEcheancier] = useState<LigneFacture[]>([]);
+  const [echeancier, setEcheancier] = useState<LigneFacture[]>([]);
   const [coutHoraire, setCoutHoraire] = useState<number | null>(null);
   const [coutAnnee, setCoutAnnee] = useState<number | null>(null);
-  const [vueMarge, setVueMarge] = useState<"ACTIVITE" | "COMMANDE" | "MOIS">("COMMANDE");
   const [achatsRecus, setAchatsRecus] = useState<number | null>(null);
 
   useEffect(() => {
@@ -141,7 +152,7 @@ export default function BilanFinancierAffaire({
 
       const { data: lignes, error: el } = await supabase
         .from("suivi_lignes")
-        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue,date_livraison,delai,date_livraison_estimee,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre")
+        .select("id,cle,genre,parent_cle,numero_affaire,statut,disparue,date_livraison,date_reception_commande,delai,date_livraison_estimee,heures_meca,heures_calcul,heures_elec,heures_pneu,heures_scan,heures_autre")
         .eq("base_affaire", base);
       if (el) return actif && setMessage(`Lecture du Suivi d’affaire impossible : ${el.message}`);
       const ls = ((lignes ?? []) as Ligne[]).filter((l) => !l.disparue && !INACTIF.test(l.statut ?? ""));
@@ -287,13 +298,13 @@ export default function BilanFinancierAffaire({
       const nature = (g: string) => (g === "BASE" ? "Commande" : g === "AVENANT" ? "Avenant" : g === "ECHEANCE" ? "Échéance" : g === "LOT" ? "Lot" : g);
       for (const l of ls.filter((x) => x.genre === "BASE" || x.genre === "AVENANT").sort((a, b) => String(a.numero_affaire ?? a.cle).localeCompare(String(b.numero_affaire ?? b.cle), "fr", { numeric: true }))) {
         const num = String(l.numero_affaire ?? l.cle).toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "");
-        ech.push({ cle: l.cle, niveau: 0, numero: l.numero_affaire ?? l.cle, nature: nature(l.genre), statut: l.statut ?? "", montant: n(montants.get(l.id)?.montant), facturee: l.date_livraison, prevue: l.date_livraison_estimee ?? l.delai, client: l.delai });
+        ech.push({ cle: l.cle, niveau: 0, numero: l.numero_affaire ?? l.cle, nature: nature(l.genre), statut: l.statut ?? "", montant: n(montants.get(l.id)?.montant), facturee: l.date_livraison, prevue: l.date_livraison_estimee ?? l.delai, client: l.delai, recue: l.date_reception_commande });
         for (const d of enfants(l.cle).sort((a, b) => a.cle.localeCompare(b.cle, "fr", { numeric: true }))) {
           const md = montants.get(d.id);
-          ech.push({ parent: l.cle, cle: d.cle, niveau: 1, numero: d.numero_affaire ?? d.cle, nature: nature(d.genre), statut: d.statut ?? "", montant: md ? n(md.montant_echeances) || n(md.montant) : 0, facturee: d.date_livraison, prevue: d.date_livraison_estimee ?? d.delai, client: d.delai });
+          ech.push({ parent: l.cle, cle: d.cle, niveau: 1, numero: d.numero_affaire ?? d.cle, nature: nature(d.genre), statut: d.statut ?? "", montant: md ? n(md.montant_echeances) || n(md.montant) : 0, facturee: d.date_livraison, prevue: d.date_livraison_estimee ?? d.delai, client: d.delai, recue: l.date_reception_commande, livraisonMere: l.date_livraison });
         }
         for (const m of (releveMois.get(num) ?? []).sort((a, b) => a.mois.localeCompare(b.mois)))
-          ech.push({ parent: l.cle, cle: `${l.cle}|${m.mois}`, niveau: 1, numero: `Relevé ${m.mois.slice(5, 7)}/${m.mois.slice(0, 4)}`, nature: "Mois clôturé (PE / PI)", statut: "Clôturé", montant: m.montant, facturee: `${m.mois}-01`, prevue: null, releve: true });
+          ech.push({ parent: l.cle, cle: `${l.cle}|${m.mois}`, niveau: 1, numero: `Relevé ${m.mois.slice(5, 7)}/${m.mois.slice(0, 4)}`, nature: "Mois clôturé (PE / PI)", statut: "Clôturé", montant: m.montant, facturee: `${m.mois}-01`, prevue: null, releve: true, recue: l.date_reception_commande });
       }
 
       if (!actif) return;
@@ -339,364 +350,136 @@ export default function BilanFinancierAffaire({
     if (ids.size === 0) return null;
     return [...ids].reduce((t, id) => t + (realiseParActivite.get(id) ?? 0), 0);
   };
-  /* MARGES_DETAIL : les heures (pointées puis planifiées) sont réparties sur les commandes dans l'ordre,
-     chacune jusqu'à son chiffré ; le surplus va à la dernière. Commande livrée : marge réelle ; sinon estimée
-     avec le planifié. */
-  const C = coutHoraire ?? 0;
-  const cmds: Commande[] = commandes;
-  const moisCourant = new Date().toISOString().slice(0, 7);
-  const sommeH = commandes.reduce((t, c) => t + c.heures, 0);
-  const k = chiffre > 0 && sommeH > 0 ? chiffre / sommeH : 1;
-  const repartition = (() => {
-    let reel = pointeTotal;
-    let plan = planifie;
-    return commandes.map((c, i) => {
-      const dernier = i === commandes.length - 1;
-      const cap = dernier ? Infinity : c.heures * k;
-      const hR = Math.min(reel, cap);
-      reel -= hR;
-      const hP = c.livree ? 0 : Math.min(plan, cap - hR); // une commande livrée ne reçoit plus de planifié
-      plan -= hP;
-      return { c, hR, hP };
-    });
-  })();
-  const pctTxt = (v: number, base: number) => (base > 0.5 ? `${Math.round((v / base) * 100)} %` : "");
-  const couleurM = (v: number) => (v < 0 ? "#b3261e" : "#1b5e20");
-
-  function MargesParCommande() {
-    if (coutHoraire === null) return <p style={{ color: gris, margin: "8px 0" }}>Coût de structure non saisi dans les Finances : pas de marge calculable.</p>;
-    let tM = 0;
-    let tMarge = 0;
-    return (
-      <div style={{ overflowX: "auto", marginTop: 6 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-          <thead>
-            <tr>
-              <th style={th}>Commande</th>
-              <th style={thN}>Montant</th>
-              <th style={thN}>Heures chiffrées</th>
-              <th style={thN}>Taux de vente</th>
-              <th style={thN} title="Heures pointées attribuées à la commande, puis planifiées">Heures pointées + planifiées</th>
-              <th style={thN}>Marge</th>
-              <th style={th} />
-            </tr>
-          </thead>
-          <tbody>
-            {repartition.map(({ c, hR, hP }) => {
-              const h = c.livree ? hR : hR + hP;
-              const marge = c.montant - h * C - c.achats;
-              const hc = c.heures * k;
-              tM += c.montant;
-              tMarge += marge;
-              const taux = hc > 0.05 ? c.montant / hc : null;
-              return (
-                <tr key={c.numero}>
-                  <td style={{ ...td, whiteSpace: "nowrap" }}>
-                    <strong style={{ color: "#a30000" }}>CBE{c.numero.replace(/^CBE\s*/i, "")}</strong> <span style={{ fontSize: 12, color: gris }}>{c.statut}</span>
-                  </td>
-                  <td style={{ ...tdN, fontWeight: 800 }}>{euros(c.montant)}</td>
-                  <td style={tdN}>{hc > 0.05 ? heures(hc) : "—"}</td>
-                  <td style={tdN}>
-                    {taux !== null ? `${euros(taux)} / h` : "—"}
-                    {taux !== null && <span style={{ fontSize: 12, fontWeight: 700, color: taux < C ? "#b3261e" : "#1b5e20" }}> {Math.round((taux / C - 1) * 100) >= 0 ? "+" : ""}{Math.round((taux / C - 1) * 100)} %</span>}
-                  </td>
-                  <td style={tdN}>
-                    {heures(hR)}
-                    {!c.livree && hP > 0.05 && <span style={{ color: gris }}> + {heures(hP)}</span>}
-                    {hc > 0.05 && Math.abs(h - hc) > 0.5 && <span style={{ fontSize: 12, fontWeight: 700, color: h > hc ? "#b3261e" : "#1b5e20" }}> ({h > hc ? "+" : "−"}{heures(Math.abs(h - hc))})</span>}
-                  </td>
-                  <td style={{ ...tdN, fontWeight: 800, color: couleurM(marge) }}>
-                    {euros(marge)} <span style={{ fontSize: 12, fontWeight: 600 }}>· {pctTxt(marge, c.montant)}</span>
-                  </td>
-                  <td style={{ ...td, fontSize: 12, fontWeight: 700, color: c.livree ? "#1b5e20" : "#8a6500", whiteSpace: "nowrap" }}>{c.livree ? "réelle (livrée)" : "estimée avec le planifié"}</td>
-                </tr>
-              );
-            })}
-            {cmds.length > 1 && (
-              <tr>
-                <td style={{ ...td, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>Toute l’affaire</td>
-                <td style={{ ...tdN, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>{euros(tM)}</td>
-                <td colSpan={3} style={{ ...tdN, borderTop: "2px solid #d5d9de" }} />
-                <td style={{ ...tdN, fontWeight: 800, borderTop: "2px solid #d5d9de", color: couleurM(tMarge) }}>
-                  {euros(tMarge)} <span style={{ fontSize: 12, fontWeight: 600 }}>· {pctTxt(tMarge, tM)}</span>
-                </td>
-                <td style={{ ...td, borderTop: "2px solid #d5d9de" }} />
-              </tr>
-            )}
-          </tbody>
-        </table>
-        <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-          Les heures sont pointées sur le n° de base : elles sont attribuées aux commandes dans l’ordre (commande, puis R1, R2…), chacune jusqu’à ses heures chiffrées ; le surplus va à la dernière. Marge = montant − heures × coût de structure{achete > 0.5 ? " − achats" : ""}. Commande livrée : marge réelle ; sinon estimée avec le planifié. Entre parenthèses : l’écart d’heures au chiffré.
-        </p>
-      </div>
-    );
-  }
-
-  function MargesParMois() {
-    if (coutHoraire === null) return <p style={{ color: gris, margin: "8px 0" }}>Coût de structure non saisi dans les Finances : pas de marge calculable.</p>;
-    const M = somme((c) => c.montant);
-    const F = somme((c) => c.facture);
-    const facture = new Map<string, number>();
-    const achatsMois = new Map<string, number>();
-    const ajoute = (map: Map<string, number>, m: string, v: number) => map.set(m, (map.get(m) ?? 0) + v);
-    for (const c of cmds)
-      for (const [m, v] of c.parMois) {
-        ajoute(facture, m, v);
-        if (c.achats > 0.5 && c.montant > 0.5) ajoute(achatsMois, m, (c.achats * v) / c.montant);
-      }
-    const dernierFacture = [...facture.keys()].sort().pop() ?? "";
-    // l'estimé : ce qui reste à facturer
-    const estime = new Map<string, number>();
-    if (prestation) {
-      // PE / PI : au fil des heures (pointées non encore facturées, puis planifiées), au taux moyen de la commande, sans dépasser le commandé
-      const tauxMoyen = chiffre > 0 ? M / chiffre : 0;
-      let resteAF = Math.max(0, M - F);
-      const moisH = [...new Set([...(pointeParMois?.keys() ?? []), ...(planifieParMois?.keys() ?? [])])].filter((m) => m > dernierFacture).sort();
-      for (const m of moisH) {
-        const h = (pointeParMois?.get(m) ?? 0) + (planifieParMois?.get(m) ?? 0);
-        const v = Math.min(resteAF, h * tauxMoyen);
-        if (v > 0.5) ajoute(estime, m, v);
-        resteAF -= v;
-      }
-    } else {
-      // forfait : le reste de chaque commande non livrée, au mois de son délai estimé (au plus tôt le mois en cours)
-      for (const c of cmds) {
-        const r = c.montant - c.facture;
-        if (c.livree || r < 0.5) continue;
-        let m = (c.prevue ?? "").slice(0, 7) || [...(planifieParMois?.keys() ?? [])].sort().pop() || moisCourant;
-        if (m < moisCourant) m = moisCourant;
-        ajoute(estime, m, r);
-        if (c.achats > 0.5 && c.montant > 0.5) ajoute(achatsMois, m, (c.achats * r) / c.montant);
-      }
-    }
-    const tous = [...new Set([...facture.keys(), ...estime.keys(), ...(pointeParMois?.keys() ?? []), ...(planifieParMois?.keys() ?? [])])].sort();
-    let cumul = 0;
-    return (
-      <div style={{ overflowX: "auto", marginTop: 6 }}>
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-          <thead>
-            <tr>
-              <th style={th}>Mois</th>
-              <th style={thN}>Facturé</th>
-              <th style={thN}>Heures pointées</th>
-              <th style={thN}>Heures planifiées</th>
-              <th style={thN}>Coût</th>
-              <th style={thN}>Marge du mois</th>
-              <th style={thN}>Marge cumulée</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tous.map((m) => {
-              const fR = facture.get(m) ?? 0;
-              const fE = estime.get(m) ?? 0;
-              const hR = pointeParMois?.get(m) ?? 0;
-              const hP = planifieParMois?.get(m) ?? 0;
-              const cout = (hR + hP) * C;
-              const marge = fR + fE - cout - (achatsMois.get(m) ?? 0);
-              cumul += marge;
-              const futur = fE > 0.5 || hP > 0.05;
-              return (
-                <tr key={m} style={{ background: futur ? "#fbfbfc" : undefined, fontStyle: futur ? "italic" : undefined }}>
-                  <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: "numeric" })}</td>
-                  <td style={tdN}>
-                    {fR > 0.5 && <span style={{ color: "#1b5e20", fontWeight: 700 }}>{euros(fR)}</span>}
-                    {fR > 0.5 && fE > 0.5 && " + "}
-                    {fE > 0.5 && <span style={{ color: "#8a6500" }}>{euros(fE)} prévu</span>}
-                    {fR <= 0.5 && fE <= 0.5 && "—"}
-                  </td>
-                  <td style={tdN}>{hR > 0.05 ? heures(hR) : "—"}</td>
-                  <td style={{ ...tdN, color: gris }}>{hP > 0.05 ? heures(hP) : "—"}</td>
-                  <td style={{ ...tdN, color: gris }}>{cout > 0.5 ? euros(cout) : "—"}</td>
-                  <td style={{ ...tdN, fontWeight: 800, color: couleurM(marge) }}>{euros(marge)}</td>
-                  <td style={{ ...tdN, color: couleurM(cumul) }}>{euros(cumul)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-          En italique, l’estimé : {prestation ? "pour une PE / PI, les heures pointées pas encore facturées puis les heures planifiées, au taux moyen de la commande, sans dépasser le commandé" : "pour un forfait, le reste de chaque commande non livrée au mois de son délai estimé"} ; le coût = (pointé + planifié) × coût de structure{achete > 0.5 ? ", achats déduits au mois de leur facturation" : ""}. Un forfait coûte tant qu’il n’est pas livré : la marge cumulée remonte à la facturation.
-        </p>
-      </div>
-    );
-  }
-
   const vendu = somme((c) => c.negoce);
   const achete = somme((c) => c.achats);
 
   return (
     <section aria-label="Montants de l'affaire" style={carte}>
-      <h2 style={{ margin: "0 0 4px", fontSize: 20, color: "#a30000" }}>Financier <span style={{ fontSize: 14, fontWeight: 400, color: gris }}>facturé, marges, taux de vente</span></h2>
+      <h2 style={{ margin: "0 0 4px", fontSize: 20, color: "#a30000" }}>Financier <span style={{ fontSize: 14, fontWeight: 400, color: gris }}>facturation, rentabilité, négoce</span></h2>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
         D’après le Suivi d’affaire BE (commande et avenants) et, pour les PE / PI, les mois clôturés du relevé. Visible selon la fonction « Montants des affaires » (Droits d’accès).
       </p>
 
-      {/* MARGES_FICHE : où on en est, et où ça mène */}
+      {/* RYTHME_FACTURATION : chaque commande, échéance ou lot : reçue le, facturée le, en combien de jours */}
+      {(() => {
+        const M = somme((c) => c.montant);
+        const F = somme((c) => c.facture);
+        const jours = (a: string | null | undefined, b: string | null | undefined) =>
+          a && b ? Math.round((Date.parse(`${b.slice(0, 10)}T00:00:00`) - Date.parse(`${a.slice(0, 10)}T00:00:00`)) / 86400000) : null;
+        const date = (d: string | null | undefined, mois = false) => (d ? new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("fr-FR", mois ? { month: "long", year: "numeric" } : undefined) : "");
+        const delais = echeancier.filter((e) => e.facturee && !e.releve).map((e) => jours(e.recue, e.facturee)).filter((x): x is number => x !== null && x >= 0);
+        const moyenne = delais.length ? Math.round(delais.reduce((t, x) => t + x, 0) / delais.length) : null;
+        return (
+          <>
+            <strong style={{ fontSize: 16, color: "#a30000" }}>Rythme de facturation</strong>
+            <span style={{ fontSize: 13, color: gris }}>
+              {" "}
+              · facturé {euros(F)} sur {euros(M)}
+              {moyenne !== null ? ` · en moyenne ${moyenne} jours entre la commande reçue et sa facture` : ""}
+            </span>
+            <div style={{ overflowX: "auto", marginTop: 6 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>N°</th>
+                    <th style={th}>Nature</th>
+                    <th style={thN}>Montant</th>
+                    <th style={th}>Reçue le</th>
+                    <th style={th}>Facturée le</th>
+                    <th style={thN} title="De la commande reçue à la facture">Jours</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {echeancier.map((e) => {
+                    const enfantsE = echeancier.filter((x) => x.parent === e.cle);
+                    const parSesEnfants = e.niveau === 0 && enfantsE.length > 0;
+                    const j = e.facturee && !e.releve ? jours(e.recue, e.facturee) : null;
+                    const acompte = e.niveau === 1 && !e.releve && e.facturee && (!e.livraisonMere || e.facturee < e.livraisonMere);
+                    return (
+                      <tr key={e.cle} style={{ background: e.niveau === 0 ? "#fafbfc" : undefined }}>
+                        <td style={{ ...td, paddingLeft: e.niveau === 1 ? 26 : 8, fontWeight: e.niveau === 0 ? 800 : 600, color: e.niveau === 0 ? "#a30000" : "#3b4046", whiteSpace: "nowrap" }}>
+                          {e.niveau === 1 ? "↳ " : ""}
+                          {e.niveau === 0 ? `CBE${e.numero.replace(/^CBE\s*/i, "")}` : e.numero}{" "}
+                          <span style={{ fontSize: 12, fontWeight: 600, color: e.statut === "Intention de commande" ? "#8a6500" : gris }}>{e.niveau === 0 ? e.statut : ""}</span>
+                        </td>
+                        <td style={{ ...td, color: gris, fontSize: 13 }}>{e.nature}</td>
+                        <td style={{ ...tdN, fontWeight: e.niveau === 0 ? 800 : 600 }}>{e.montant > 0.5 ? euros(e.montant) : "—"}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap", color: e.niveau === 1 ? gris : undefined }}>{e.niveau === 0 ? date(e.recue) || "—" : ""}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap" }}>
+                          {e.facturee ? (
+                            <span style={{ color: "#1b5e20", fontWeight: 700 }}>✓ {date(e.facturee, e.releve)}</span>
+                          ) : parSesEnfants ? (
+                            <span style={{ color: gris, fontSize: 13 }}>{enfantsE.some((x) => x.releve) ? "au relevé, mois par mois" : "par ses échéances"}</span>
+                          ) : (
+                            <span style={{ color: "#8a6500" }}>à facturer{e.prevue ? ` · prévu le ${date(e.prevue)}` : ""}</span>
+                          )}
+                        </td>
+                        <td style={{ ...tdN, fontWeight: 700 }}>
+                          {acompte ? <span style={{ color: "#1f5fbf" }} title="Facturée avant la livraison de la commande">acompte{j !== null ? ` · ${j} j` : ""}</span> : j !== null ? `${j} j` : e.releve ? <span style={{ color: gris, fontWeight: 400 }}>mois clôturé</span> : ""}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td colSpan={2} style={{ ...td, fontWeight: 800, color: "#8a6500", borderTop: "2px solid #d5d9de" }}>
+                      Reste à facturer
+                    </td>
+                    <td style={{ ...tdN, fontWeight: 800, color: M - F < -0.5 ? "#b3261e" : "#8a6500", borderTop: "2px solid #d5d9de" }}>{M - F < -0.5 ? `− ${euros(F - M)}` : euros(Math.max(0, M - F))}</td>
+                    <td colSpan={3} style={{ ...td, borderTop: "2px solid #d5d9de" }} />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* RENTABILITE : commandé face au coût du temps passé et prévu */}
       {(() => {
         const M = somme((c) => c.montant);
         const F = somme((c) => c.facture);
         const A = achete;
-        const mois = [...new Set(commandes.flatMap((c) => [...c.parMois.keys()]))].sort();
-        const dernierMois = mois[mois.length - 1] ?? null;
-        const heuresAuFacture = dernierMois && pointeParMois ? [...pointeParMois.entries()].filter(([m]) => m <= dernierMois).reduce((t, [, h]) => t + h, 0) : 0;
-        const achatsFactures = M > 0.5 ? A * Math.min(1, F / M) : 0;
-        const margeFacturee = coutHoraire !== null && F > 0.5 ? F - heuresAuFacture * coutHoraire - achatsFactures : null;
-        const heuresFin = pointeTotal + planifie;
-        const margePrevue = coutHoraire !== null && M > 0.5 ? M - heuresFin * coutHoraire - A : null;
-        const margeSiChiffre = coutHoraire !== null && M > 0.5 && chiffre > heuresFin + 0.5 ? M - chiffre * coutHoraire - A : null;
-        const pc = (v: number, base: number) => (base > 0.5 ? ` · ${Math.round((v / base) * 100)} %` : "");
+        const toutesLivrees = commandes.length > 0 && commandes.every((c) => /livr/i.test(c.statut));
+        const hFin = toutesLivrees ? pointeTotal : pointeTotal + planifie;
+        const recette = toutesLivrees ? F : M;
+        const cout = coutHoraire !== null ? hFin * coutHoraire : null;
+        const marge = cout !== null && recette > 0.5 ? recette - cout - A : null;
+        const siChiffre = !toutesLivrees && coutHoraire !== null && chiffre > hFin + 0.5 && M > 0.5 ? M - chiffre * coutHoraire - A : null;
         const tuile = (titre: string, valeur: string, sous: string, couleur = "#1f2328") => (
-          <div style={{ flex: "1 1 170px", border: "1px solid #e3e6ea", borderLeft: `4px solid ${couleur}`, borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
+          <div style={{ flex: "1 1 190px", border: "1px solid #e3e6ea", borderLeft: `4px solid ${couleur}`, borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
             <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: gris }}>{titre}</div>
             <div style={{ fontSize: 21, fontWeight: 800, color: couleur }}>{valeur}</div>
             <div style={{ fontSize: 12, color: gris }}>{sous}</div>
           </div>
         );
-        const couleurMarge = (v: number | null) => (v === null ? "#5b6168" : v < 0 ? "#b3261e" : "#1b5e20");
-        const thM: CSSProperties = { ...thN, textAlign: "right" };
-        const ligneTotal: CSSProperties = { borderTop: "2px solid #d5d9de", fontWeight: 800 };
-        let cumul = 0;
         return (
-          <>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
-              {tuile("Commandé", euros(M), `${commandes.length} commande${commandes.length > 1 ? "s" : ""}${A > 0.5 ? ` · dont achats ${euros(A)}` : ""}`)}
-              {tuile("Facturé à ce jour", euros(F), dernierMois ? `jusqu’à ${new Date(`${dernierMois}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}` : "rien encore", "#1b5e20")}
-              {tuile("Reste à facturer", euros(Math.max(0, M - F)), M - F < -0.5 ? `facturé au-delà de la commande : ${euros(F - M)}` : "commandé − facturé", "#8a6500")}
+          <div style={{ marginTop: 18 }}>
+            <strong style={{ fontSize: 16, color: "#a30000" }}>Rentabilité</strong>
+            <span style={{ fontSize: 13, color: gris }}>
+              {" "}
+              · coût de structure {coutHoraire !== null ? `${euros(coutHoraire)} / h${coutAnnee ? ` (exercice ${coutAnnee}-${coutAnnee + 1})` : ""}` : "non saisi dans les Finances"}
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 6 }}>
+              {tuile(toutesLivrees ? "Facturé" : "Commandé", euros(recette), A > 0.5 ? `dont achats ${euros(A)}` : `${commandes.length} commande${commandes.length > 1 ? "s" : ""}`)}
+              {tuile("Coût du temps", cout !== null ? euros(cout) : "—", `${heures(hFin)} ${toutesLivrees ? "pointées" : "pointées + planifiées"}`)}
               {tuile(
-                "Marge sur le facturé",
-                margeFacturee === null ? "—" : euros(margeFacturee),
-                coutHoraire === null ? "coût de structure non saisi" : F <= 0.5 ? "rien de facturé pour l’instant" : `${euros(F)} − ${heures(heuresAuFacture)} × ${euros(coutHoraire)}${achatsFactures > 0.5 ? " − achats" : ""}${pc(margeFacturee ?? 0, F)}`,
-                couleurMarge(margeFacturee)
+                toutesLivrees ? "Marge réelle" : "Marge prévue",
+                marge !== null ? euros(marge) : "—",
+                marge !== null && recette > 0.5 ? `${Math.round((marge / recette) * 100)} %${toutesLivrees ? " · affaire livrée" : " · avec le planifié"}` : "—",
+                marge === null ? gris : marge < 0 ? "#b3261e" : "#1b5e20"
               )}
-              {tuile(
-                "Marge prévue",
-                margePrevue === null ? "—" : euros(margePrevue),
-                coutHoraire === null
-                  ? "coût de structure non saisi"
-                  : `pointé + planifié : ${heures(heuresFin)}${pc(margePrevue ?? 0, M)}${margeSiChiffre !== null ? ` · si tout le chiffré est consommé : ${euros(margeSiChiffre)}` : ""}`,
-                couleurMarge(margePrevue)
-              )}
+              {siChiffre !== null && tuile("Si tout le chiffré est consommé", euros(siChiffre), `${heures(chiffre)} au lieu de ${heures(hFin)}`, siChiffre < 0 ? "#b3261e" : "#8a6500")}
             </div>
-
-            {/* FACTURE_MOIS : chaque mois, ce qui est facturé sur chaque commande ; en bas, le commandé et le reste */}
-            <strong style={{ fontSize: 16, color: "#a30000" }}>Facturé mois par mois</strong>
-            <span style={{ fontSize: 13, color: gris }}> · face à chaque commande et avenant</span>
-            <div style={{ overflowX: "auto", marginTop: 6 }}>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Mois</th>
-                    {commandes.map((c) => (
-                      <th key={c.numero} style={thM} title={c.statut}>
-                        CBE{c.numero.replace(/^CBE\s*/i, "")}
-                        <div style={{ fontSize: 11, fontWeight: 600, color: c.statut === "Intention de commande" ? "#8a6500" : gris }}>{c.statut || "—"}</div>
-                      </th>
-                    ))}
-                    {commandes.length > 1 && <th style={thM}>Total du mois</th>}
-                    <th style={thM}>Cumul</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mois.length === 0 ? (
-                    <tr>
-                      <td colSpan={commandes.length + 3} style={{ ...td, color: gris }}>
-                        Rien de facturé pour l’instant.
-                      </td>
-                    </tr>
-                  ) : (
-                    mois.map((m) => {
-                      const totalMois = commandes.reduce((t, c) => t + (c.parMois.get(m) ?? 0), 0);
-                      cumul += totalMois;
-                      return (
-                        <tr key={m}>
-                          <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: "numeric" })}</td>
-                          {commandes.map((c) => (
-                            <td key={c.numero} style={tdN}>
-                              {c.parMois.get(m) ? euros(c.parMois.get(m)!) : ""}
-                            </td>
-                          ))}
-                          {commandes.length > 1 && <td style={{ ...tdN, fontWeight: 700 }}>{euros(totalMois)}</td>}
-                          <td style={{ ...tdN, color: gris }}>{euros(cumul)}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                  <tr>
-                    <td style={{ ...td, ...ligneTotal, color: "#1b5e20" }}>Facturé</td>
-                    {commandes.map((c) => (
-                      <td key={c.numero} style={{ ...tdN, ...ligneTotal, color: "#1b5e20" }}>
-                        {c.facture > 0.5 ? euros(c.facture) : "—"}
-                      </td>
-                    ))}
-                    {commandes.length > 1 && <td style={{ ...tdN, ...ligneTotal, color: "#1b5e20" }}>{euros(F)}</td>}
-                    <td style={{ ...tdN, ...ligneTotal }} />
-                  </tr>
-                  <tr>
-                    <td style={{ ...td, fontWeight: 800 }}>Commandé</td>
-                    {commandes.map((c) => (
-                      <td key={c.numero} style={{ ...tdN, fontWeight: 800 }}>
-                        {c.montant > 0.5 ? euros(c.montant) : "—"}
-                      </td>
-                    ))}
-                    {commandes.length > 1 && <td style={{ ...tdN, fontWeight: 800 }}>{euros(M)}</td>}
-                    <td style={tdN} />
-                  </tr>
-                  <tr>
-                    <td style={{ ...td, fontWeight: 800, color: "#8a6500" }}>Reste à facturer</td>
-                    {commandes.map((c) => {
-                      const r = c.montant - c.facture;
-                      return (
-                        <td key={c.numero} style={{ ...tdN, fontWeight: 800, color: r < -0.5 ? "#b3261e" : r > 0.5 ? "#8a6500" : "#1b5e20" }}>
-                          {r > 0.5 ? euros(r) : r < -0.5 ? `− ${euros(-r)}` : c.montant > 0.5 ? "✓ soldé" : "—"}
-                        </td>
-                      );
-                    })}
-                    {commandes.length > 1 && <td style={{ ...tdN, fontWeight: 800, color: "#8a6500" }}>{euros(M - F)}</td>}
-                    <td style={tdN} />
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p style={{ fontSize: 12, color: gris, margin: "6px 0 16px" }}>
-              Forfait : facturé au mois de livraison de chaque échéance, lot ou commande (Suivi d’affaire BE). PE / PI : mois clôturés du relevé. Marge sur le facturé = facturé − heures pointées jusqu’au dernier mois facturé × coût de structure
-              {coutAnnee ? ` (${euros(coutHoraire ?? 0)} / h, exercice ${coutAnnee}-${coutAnnee + 1})` : ""}
-              {A > 0.5 ? " − la part des achats correspondant au facturé" : ""}. Marge prévue = commandé − (pointé + planifié) × coût
-              {A > 0.5 ? " − achats" : ""}.
-            </p>
-          </>
+          </div>
         );
       })()}
 
       {/* par activité : montant et heures commandés, prix vendu, heures pointées, € / h obtenu */}
       {disciplines.some((d) => d.montant > 0.5) && (
-        <div style={{ overflowX: "auto", marginTop: 16 }}>
+        <div style={{ overflowX: "auto", marginTop: 18 }}>
           {/* MARGE_ACTIVITE : taux de vente et marge face au coût de structure (Finances) */}
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-            <strong style={{ fontSize: 16, color: "#a30000" }}>Taux de vente et marge</strong>
-            {(
-              [
-                ["COMMANDE", "Par commande"],
-                ["MOIS", "Par mois"],
-                ["ACTIVITE", "Par activité"],
-              ] as const
-            ).map(([cle, lib]) => (
-              <button
-                key={cle}
-                type="button"
-                aria-pressed={vueMarge === cle}
-                onClick={() => setVueMarge(cle)}
-                style={{ cursor: "pointer", fontFamily: "inherit", fontWeight: 800, fontSize: 13, padding: "5px 12px", borderRadius: 999, border: `1.5px solid ${vueMarge === cle ? "#a30000" : "#c3c8ce"}`, background: vueMarge === cle ? "#a30000" : "#ffffff", color: vueMarge === cle ? "#ffffff" : "#3b4046" }}
-              >
-                {lib}
-              </button>
-            ))}
-            <span style={{ fontSize: 13, color: gris }}>
-              coût de structure {coutHoraire !== null ? `${euros(coutHoraire)} / h${coutAnnee ? ` (exercice ${coutAnnee}-${coutAnnee + 1})` : ""}` : "non saisi dans les Finances"}
-            </span>
-          </div>
-          {vueMarge === "COMMANDE" && <MargesParCommande />}
-          {vueMarge === "MOIS" && <MargesParMois />}
-          {vueMarge === "ACTIVITE" && (() => {
+          <strong style={{ fontSize: 16, color: "#a30000" }}>Taux de vente par activité</strong>
+          {(() => {
             const pcCout = (taux: number | null) => (taux !== null && coutHoraire ? Math.round((taux / coutHoraire - 1) * 100) : null);
             const tauxCellule = (taux: number | null, gras: boolean, plus: CSSProperties = {}) => {
               if (taux === null) return <td style={{ ...tdN, ...plus }}>—</td>;
@@ -772,9 +555,9 @@ export default function BilanFinancierAffaire({
               </table>
             );
           })()}
-          {vueMarge === "ACTIVITE" && <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
+          <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
             Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ heures pointées ; le % à côté du taux = écart au coût de structure (rouge en dessous, orange moins de 15 % au-dessus). Marge = montant − heures × coût de structure ; tant que l’affaire n’est pas finie, la marge sur le pointé baisse à mesure qu’on pointe.
-          </p>}
+          </p>
         </div>
       )}
 
