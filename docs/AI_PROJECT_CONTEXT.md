@@ -203,7 +203,7 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
      passées ; aucun pourcentage. Un clic sur une barre ouvre l'affaire au planning.
   2. Pour le droit `chargeRessources` : **Charge de l'équipe** (`components/ressources/ChargeEquipe.tsx`, ancre `#charge`) :
      bandeau de la semaine (affecté / capacité, charge, disponible par niveau, surcharges), détail par personne avec
-     **« Déplacer… »** des heures vers une autre semaine, répartition CBE / DBE / Divers par activité sur 12 semaines ;
+     **« Déplacer… »** des heures vers une autre semaine (le tableau « Répartition du temps, par activité » a été retiré) ;
      **Disponibilités par activité** (`DisponibilitesActivites.tsx`, `#disponibilites`) : Méca, Elec, Calcul, composition
      (personnes et niveaux) puis graphiques capacité / occupé / disponible, récapitulatif replié.
   3. Pour le droit `indicateurs` : **Composition de l'équipe** (`CompositionEquipe.tsx`, `#composition`, repliée ; ex-

@@ -23,7 +23,7 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
      sans aucun pourcentage.
    - Droit « chargeRessources » (ADMIN, Direction) : sous le planning
      (qui reste sans pourcentage), la charge de l'équipe (avec Déplacer…),
-     la répartition CBE / DBE / Divers et les disponibilités par activité.
+     et les disponibilités par activité.
    - Droit « indicateurs » : la composition de l'équipe (ex-Cartographie).
    Les anciennes adresses (/pilotage/ressources, /analyse/charge-activites,
    /analyse/effectifs) renvoient ici, sur le bon bloc.
