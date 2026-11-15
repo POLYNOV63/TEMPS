@@ -58,7 +58,7 @@ const libMois = (m: string) => `${NOMS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 
 const BASE_CHIFFRAGE = 7;
 const moisSuivant = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
 
-export default function HistoriquePEPI({ base, pointeParMois }: { base: string; pointeParMois: Map<string, number> }) {
+export default function HistoriquePEPI({ base, pointeParMois, montants: avecMontants = true }: { base: string; pointeParMois: Map<string, number>; montants?: boolean }) {
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [voitMontants, setVoitMontants] = useState(false);
   const [message, setMessage] = useState("");
@@ -75,7 +75,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
       } = await supabase.auth.getUser();
       if (!user) return;
       const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
-      if (actif) setVoitMontants(peut(moi?.role ?? null, "montantsAffaires"));
+      if (actif) setVoitMontants(avecMontants && peut(moi?.role ?? null, "montantsAffaires")); // HEURES_REGROUPEES : jamais d'euros dans l'onglet des heures
 
       const { data: afs } = await supabase
         .from("pilotage_affaires")
@@ -239,7 +239,7 @@ export default function HistoriquePEPI({ base, pointeParMois }: { base: string; 
     return () => {
       actif = false;
     };
-  }, [base]);
+  }, [base, avecMontants]);
 
   /* la famille, mois par mois, avec les cumuls */
   const serie = useMemo(() => {

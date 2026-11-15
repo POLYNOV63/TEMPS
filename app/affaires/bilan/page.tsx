@@ -235,13 +235,13 @@ function BilanContenu() {
   const [ongletFiche, setOngletFiche] = useState<"AFFAIRE" | "PEPI" | "ARGENT">(() => {
     if (typeof window === "undefined") return "AFFAIRE";
     const v = new URLSearchParams(window.location.search).get("vue");
-    return v === "pepi" ? "PEPI" : v === "financier" ? "ARGENT" : "AFFAIRE";
+    return v === "financier" ? "ARGENT" : "AFFAIRE"; // HEURES_REGROUPEES : « pepi » ouvre l'onglet des heures
   });
   const changerOnglet = (o: "AFFAIRE" | "PEPI" | "ARGENT") => {
     setOngletFiche(o);
     const u = new URL(window.location.href);
     if (o === "AFFAIRE") u.searchParams.delete("vue");
-    else u.searchParams.set("vue", o === "PEPI" ? "pepi" : "financier");
+    else u.searchParams.set("vue", "financier");
     window.history.replaceState(null, "", u.toString());
   };
   const [voitMontants, setVoitMontants] = useState(false);
@@ -1006,8 +1006,8 @@ function BilanContenu() {
             {/* ================= ② PRÉVU, CONSOMMÉ, PLANIFIÉ ================= */}
             {/* ONGLETS_FICHE : l'affaire et les heures · l'historique PE / PI · le financier */}
             {(() => {
-              const onglets: [typeof ongletFiche, string][] = [["AFFAIRE", "Affaire et heures"]];
-              if (prestation) onglets.push(["PEPI", "Historique PE / PI"]);
+              /* HEURES_REGROUPEES : un onglet des heures (sans euros), un onglet Financier */
+              const onglets: [typeof ongletFiche, string][] = [["AFFAIRE", prestation ? "Heures et jours" : "Heures"]];
               if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
               if (onglets.length < 2) return null;
               return (
@@ -1376,8 +1376,10 @@ function BilanContenu() {
             </>
             )}
 
-            {/* HISTORIQUE_PEPI : ce qui est facturé mois par mois, avenant par avenant, face au pointé, et le prévu */}
-            {ongletFiche === "PEPI" && prestation && <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} />}
+            {/* HISTORIQUE_PEPI : dans l'onglet des heures, sans aucun montant (HEURES_REGROUPEES) */}
+            {ongletFiche === "AFFAIRE" && prestation && (
+              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} montants={false} />
+            )}
 
             {/* FINANCIER (fonction « Montants des affaires ») */}
             {ongletFiche === "ARGENT" && voitMontants && affaire.type === "CBE" && (
@@ -1388,6 +1390,10 @@ function BilanContenu() {
                 correspondance={correspondance}
                 heuresNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + a.realise, 0)}
                 depassementPrevu={depassementPrevu}
+                pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))}
+                pointeTotal={bilan.totalRealise}
+                planifie={planifieTotal}
+                chiffre={bilan.toutAuMontant ? 0 : bilan.totalChiffre}
               />
             )}
           </>
