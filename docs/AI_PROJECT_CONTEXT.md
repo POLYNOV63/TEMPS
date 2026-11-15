@@ -11,7 +11,8 @@ Mis à jour le 15/11/2026 (sessions 11 et 12 : fiche affaire, page Ressources, a
   projet. **Il ne code pas** : explications pas à pas, niveau débutant, en français, sans jargon.
 - **Travail direct dans le projet (VS Code / Claude Code)** : l'IA modifie les fichiers elle-même, lance `npm run build`
   (TypeScript strict : c'est ce qui bloque Vercel) et corrige jusqu'à ce que ça passe, puis `git add` / `git commit`.
-  **`git push` (= mise en ligne par Vercel) seulement avec l'accord de PLG.** Deux PC (`C:\Users\plgaufier\TEMPS` et
+  **Puis `git push` (= mise en ligne par Vercel) systématiquement, sans redemander** (décision de PLG du 15/11/2026) ;
+  jamais de push si le build échoue. Deux PC (`C:\Users\plgaufier\TEMPS` et
   `C:\Users\zoul\Documents\POLYNOV\polynov-temps`) : toujours `git pull` avant de commencer.
 - **Ancienne méthode, si l'IA n'a pas accès au projet** : un ZIP au nom du sujet, avec seulement les fichiers modifiés,
   décompressé à la racine ; pour un fichier qui a pu bouger chez PLG, un script `outils/maj-xxx.mjs` relançable, « tout
