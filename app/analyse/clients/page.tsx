@@ -44,7 +44,14 @@ type Ligne = {
   date_livraison: string | null;
   disparue: boolean;
 };
-type Montant = { ligne_id: string; montant: number | string | null; montant_echeances: number | string | null; montant_achats: number | string | null };
+type Montant = {
+  ligne_id: string;
+  montant: number | string | null;
+  montant_echeances: number | string | null;
+  montant_achats: number | string | null;
+  montant_scan: number | string | null;
+  montant_negoce: number | string | null;
+};
 type Heure = { type_affaire: string; numero: string; activite_id: string | null; heures: number | string };
 
 type Affaire = { base: string; designation: string; methode: string; statut: string; heures: number; ca: number };
@@ -61,7 +68,8 @@ type Stat = {
   heures: number;
   heuresDevis: number;
   parActivite: Map<string, number>;
-  parMethode: Map<string, number>;
+  parMethode: Map<string, number>; // METHODES_VENTE : heures en PE, PI, BE (forfait), Négoce, Scan
+  caMethode: Map<string, number>; // le CA facturé, même découpage
   affaires: Map<string, Affaire>;
 };
 
@@ -79,18 +87,25 @@ const COULEURS_ACTIVITES: [RegExp, string][] = [
   [/^negoce/, "#8d6e63"],
 ];
 const couleurAct = (nom: string) => COULEURS_ACTIVITES.find(([m]) => m.test(sansAccents(nom).replace(/ /g, "")))?.[1] ?? "#5b6168";
-const COULEURS_METHODES: Record<string, string> = { Forfait: "#c00000", PE: "#1f4e99", PI: "#2e7d6b", Intergroupe: "#6b58a8", Négoce: "#8d6e63", Scan: "#e08a1e", Devis: "#dc4f84", "Non renseignée": "#9aa0a6" };
+/* METHODES_VENTE : PE, PI, BE (forfait), Négoce, Scan. Sur un forfait, le négoce et le scan se reconnaissent
+   à l'activité des heures et aux montants négoce / scan de la commande ; une affaire imputée « Négoce » ou « Scan »
+   compte en entier dans sa méthode. */
+const METHODES = ["PE", "PI", "BE", "Négoce", "Scan"] as const;
+const COULEURS_METHODES: Record<string, string> = { PE: "#1f4e99", PI: "#2e7d6b", BE: "#c00000", Négoce: "#8d6e63", Scan: "#e08a1e" };
 
-function methodeDe(imp: string | null | undefined): string {
+function methodeDe(imp: string | null | undefined): "PE" | "PI" | "BE" | "Négoce" | "Scan" {
   const i = sansAccents(imp ?? "");
-  if (!i) return "Non renseignée";
   if (i === "pe") return "PE";
   if (i === "pi") return "PI";
-  if (i.startsWith("ig") || i.includes("intergroupe")) return "Intergroupe";
   if (i.startsWith("negoce")) return "Négoce";
   if (i.startsWith("scan")) return "Scan";
-  return "Forfait";
+  return "BE";
 }
+const methodeHeure = (methodeAffaire: string, activite: string) => {
+  if (methodeAffaire !== "BE") return methodeAffaire;
+  const a = sansAccents(activite);
+  return a.startsWith("negoce") ? "Négoce" : a.startsWith("scan") ? "Scan" : "BE";
+};
 
 async function toutesLesLignes<T>(requete: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const tout: T[] = [];
@@ -138,7 +153,7 @@ function ClientsContenu() {
               .order("id", { ascending: true })
               .range(a, b)
           ),
-          toutesLesLignes<Montant>((a, b) => supabase.from("suivi_lignes_montants").select("ligne_id,montant,montant_echeances,montant_achats").order("ligne_id", { ascending: true }).range(a, b)),
+          toutesLesLignes<Montant>((a, b) => supabase.from("suivi_lignes_montants").select("ligne_id,montant,montant_echeances,montant_achats,montant_scan,montant_negoce").order("ligne_id", { ascending: true }).range(a, b)),
           supabase.from("suivi_clients").select("id,nom_abrege"),
           supabase.from("client_regroupements").select("nom,groupe"),
           supabase.from("activites").select("id,nom"),
@@ -232,7 +247,7 @@ function ClientsContenu() {
     const stat = (client: string) => {
       let s = stats.get(client);
       if (!s) {
-        s = { client, devis: 0, gagnes: 0, perdus: 0, montantDevis: 0, commandes: 0, montantCommandes: 0, ca: 0, achats: 0, heures: 0, heuresDevis: 0, parActivite: new Map(), parMethode: new Map(), affaires: new Map() };
+        s = { client, devis: 0, gagnes: 0, perdus: 0, montantDevis: 0, commandes: 0, montantCommandes: 0, ca: 0, achats: 0, heures: 0, heuresDevis: 0, parActivite: new Map(), parMethode: new Map(), caMethode: new Map(), affaires: new Map() };
         stats.set(client, s);
       }
       return s;
@@ -268,6 +283,20 @@ function ClientsContenu() {
     // CA facturé dans l'exercice : forfaits (hors PE / PI, qui passent par le relevé)
     const enfants = new Map<string, Ligne[]>();
     for (const l of donnees.lignes) if (l.parent_cle) enfants.set(l.parent_cle, [...(enfants.get(l.parent_cle) ?? []), l]);
+    const parCle = new Map(donnees.lignes.map((l) => [l.cle, l]));
+    const ajoute = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+    // le CA d'une ligne de forfait, découpé en BE / Négoce / Scan selon les montants de sa commande
+    const decouperCA = (s: Stat, l: Ligne, v: number, methodeAffaire: string) => {
+      if (methodeAffaire !== "BE") return ajoute(s.caMethode, methodeAffaire, v);
+      const mere = l.genre === "ECHEANCE" || l.genre === "LOT" ? parCle.get(l.parent_cle ?? "") ?? l : l;
+      const md = donnees.montants.get(mere.id);
+      const total = n(md?.montant);
+      const scan = total > 0.5 ? Math.min(1, n(md?.montant_scan) / total) : 0;
+      const neg = total > 0.5 ? Math.min(1 - scan, n(md?.montant_negoce) / total) : 0;
+      if (scan > 0) ajoute(s.caMethode, "Scan", v * scan);
+      if (neg > 0) ajoute(s.caMethode, "Négoce", v * neg);
+      ajoute(s.caMethode, "BE", v * (1 - scan - neg));
+    };
     for (const l of donnees.lignes) {
       const b = sansZeros(l.base_affaire);
       if (!b || !l.date_livraison || !dans(l.date_livraison)) continue;
@@ -289,6 +318,7 @@ function ClientsContenu() {
       if (Math.abs(v) < 0.5) continue;
       const s = stat(clientDeLigne(l));
       s.ca += v;
+      decouperCA(s, l, v, m);
       affaireDe(s, b).ca += v;
     }
     // PE / PI : mois clôturés du relevé
@@ -296,6 +326,7 @@ function ClientsContenu() {
       const l = bases.get(r.base);
       const s = stat(groupe(l?.client_id ?? null));
       s.ca += r.montant;
+      ajoute(s.caMethode, methodeDe(l?.imputation) === "PI" ? "PI" : "PE", r.montant);
       affaireDe(s, r.base).ca += r.montant;
     }
 
@@ -308,16 +339,14 @@ function ClientsContenu() {
         const s = stat(groupe(devisBase.get(b)?.client_id ?? null));
         s.heures += v;
         s.heuresDevis += v;
-        s.parMethode.set("Devis", (s.parMethode.get("Devis") ?? 0) + v);
         const nomA = h.activite_id ? donnees.activites.get(h.activite_id) ?? "Autre" : "Sans activité";
         s.parActivite.set(nomA, (s.parActivite.get(nomA) ?? 0) + v);
         continue;
       }
       const s = stat(groupe(bases.get(b)?.client_id ?? null));
       s.heures += v;
-      const m = methodeAff(b);
-      s.parMethode.set(m, (s.parMethode.get(m) ?? 0) + v);
       const nomA = h.activite_id ? donnees.activites.get(h.activite_id) ?? "Autre" : "Sans activité";
+      ajoute(s.parMethode, methodeHeure(methodeAff(b), nomA), v);
       s.parActivite.set(nomA, (s.parActivite.get(nomA) ?? 0) + v);
       affaireDe(s, b).heures += v;
     }
@@ -499,26 +528,42 @@ function ClientsContenu() {
                                   </div>
                                   {/* méthodes de vente */}
                                   <div style={{ flex: "1 1 260px" }}>
-                                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Heures par méthode de vente</div>
-                                    {s.heures > 0.05 && (
-                                      <div style={{ display: "flex", height: 16, borderRadius: 6, overflow: "hidden", marginBottom: 8 }}>
-                                        {[...s.parMethode.entries()]
-                                          .sort((a, b) => b[1] - a[1])
-                                          .map(([m2, h]) => (
-                                            <div key={m2} title={`${m2} : ${formatHeures(h)}`} style={{ width: `${(h / s.heures) * 100}%`, background: COULEURS_METHODES[m2] ?? "#9aa0a6" }} />
-                                          ))}
-                                      </div>
-                                    )}
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", fontSize: 13 }}>
-                                      {[...s.parMethode.entries()]
-                                        .sort((a, b) => b[1] - a[1])
-                                        .map(([m2, h]) => (
-                                          <span key={m2}>
-                                            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEURS_METHODES[m2] ?? "#9aa0a6", marginRight: 5 }} />
-                                            <strong>{m2}</strong> {formatHeures(h)} <span style={{ color: C.gris }}>· {pc(h / s.heures)}</span>
-                                          </span>
-                                        ))}
-                                    </div>
+                                    <div style={{ fontWeight: 800, marginBottom: 6 }}>Répartition PE / PI / BE / Négoce / Scan</div>
+                                    {(
+                                      [
+                                        ["Heures", s.parMethode, (v: number) => formatHeures(v)],
+                                        ["CA facturé", s.caMethode, (v: number) => euros(v)],
+                                      ] as [string, Map<string, number>, (v: number) => string][]
+                                    ).map(([titre, carte, f]) => {
+                                      const total = [...carte.values()].reduce((t, x) => t + x, 0);
+                                      return (
+                                        <div key={titre} style={{ marginBottom: 10 }}>
+                                          <div style={{ fontSize: 12, fontWeight: 800, color: C.gris, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                                            {titre} {total > 0.05 ? `· ${f(total)}` : ""}
+                                          </div>
+                                          {total <= 0.05 ? (
+                                            <div style={{ color: C.gris, fontSize: 13 }}>—</div>
+                                          ) : (
+                                            <>
+                                              <div style={{ display: "flex", height: 14, borderRadius: 6, overflow: "hidden", marginBottom: 4 }}>
+                                                {METHODES.filter((m2) => (carte.get(m2) ?? 0) > 0.01).map((m2) => (
+                                                  <div key={m2} title={`${m2} : ${f(carte.get(m2) ?? 0)}`} style={{ width: `${((carte.get(m2) ?? 0) / total) * 100}%`, background: COULEURS_METHODES[m2] }} />
+                                                ))}
+                                              </div>
+                                              <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", fontSize: 13 }}>
+                                                {METHODES.filter((m2) => (carte.get(m2) ?? 0) > 0.01).map((m2) => (
+                                                  <span key={m2}>
+                                                    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEURS_METHODES[m2], marginRight: 5 }} />
+                                                    <strong>{m2}</strong> {f(carte.get(m2) ?? 0)} <span style={{ color: C.gris }}>· {pc((carte.get(m2) ?? 0) / total)}</span>
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                    {s.heuresDevis > 0.05 && <div style={{ fontSize: 13, color: C.gris }}>Temps passé sur ses devis (à part) : {formatHeures(s.heuresDevis)}</div>}
                                     {s.achats > 0.5 && <div style={{ marginTop: 8, fontSize: 13, color: C.gris }}>Achats des commandes livrées : {euros(s.achats)}</div>}
                                   </div>
                                 </div>
@@ -555,11 +600,7 @@ function ClientsContenu() {
                                     </tbody>
                                   </table>
                                 )}
-                                {s.heuresDevis > 0.05 && (
-                                  <div style={{ marginTop: 8, fontSize: 13, color: C.gris }}>
-                                    Dont {formatHeures(s.heuresDevis)} passées sur ses devis (DBE).
-                                  </div>
-                                )}
+
                               </td>
                             </tr>
                           )}
@@ -588,6 +629,9 @@ function ClientsContenu() {
                 </li>
                 <li>
                   <strong>Heures</strong> : pointées dans l’exercice sur ses affaires et ses devis (feuilles d’heures et historique).
+                  <strong> Répartition PE / PI / BE / Négoce / Scan</strong> : PE et PI d’après l’imputation de l’affaire ; sur un forfait, les heures
+                  pointées en activité Négoce ou Scan, et la part négoce / scan du montant de la commande pour le CA ; le reste est du BE. Le temps de
+                  devis est indiqué à part.
                 </li>
                 <li>
                   <strong>Marge</strong> = CA facturé − heures × coût de structure de l’exercice − achats des commandes livrées. Les heures et le CA d’une
