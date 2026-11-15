@@ -43,7 +43,6 @@ const SECTIONS: { cle: string; titre: string; onglets: Onglet[]; affichageSur: s
     titre: "Exports",
     onglets: [
       { href: "/admin/bilan-rh", libelle: "Bilan RH mensuel", droit: "bilanRH" },
-      { href: "/admin/export-excel", libelle: "Récapitulatif d’heures", droit: "exporterExcel" },
       { href: "/analyse/facturation", libelle: "Facturation du mois", droit: "indicateurs" },
     ],
     affichageSur: ["/admin/export-excel"],

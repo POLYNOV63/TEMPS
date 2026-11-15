@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import { peut } from "@/lib/droits";
 import { BoutonBilanEnvoye } from "@/components/rh/BilanRHEnvoi"; // BILAN_RH_RAPPEL
+import ExportHebdoExcel from "@/components/rh/ExportHebdoExcel"; // FIN_DE_MOIS
 
 export const dynamic = "force-dynamic";
 
@@ -218,6 +219,8 @@ export default function BilanRHPage() {
   const [exportation, setExportation] = useState(false);
   const [erreur, setErreur] = useState("");
   const [aAcces, setAAcces] = useState(false);
+  // FIN_DE_MOIS : le récapitulatif d'heures de la semaine (ex-page Export Excel) est en bas de cette page
+  const [peutExporter, setPeutExporter] = useState(false);
 
   const periode = periodes[periodeIndex];
 
@@ -247,6 +250,7 @@ export default function BilanRHPage() {
         // Accès : ADMIN et RESPONSABLE (voir lib/droits.ts)
         const autorise = peut(moi?.role, "bilanRH");
         setAAcces(autorise);
+        setPeutExporter(peut(moi?.role, "exporterExcel"));
 
         if (!autorise) {
           router.push("/dashboard");
@@ -446,6 +450,12 @@ export default function BilanRHPage() {
 
     if (periode) charger();
   }, [periode, router]);
+
+  /* FIN_DE_MOIS : arrivée depuis l'ancienne adresse de l'export (#export) */
+  useEffect(() => {
+    if (chargement || !peutExporter || window.location.hash !== "#export") return;
+    window.setTimeout(() => document.getElementById("export")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+  }, [chargement, peutExporter]);
 
   const totaux = useMemo(() => {
     return lignes.reduce(
@@ -654,7 +664,7 @@ export default function BilanRHPage() {
             <div style={styles.kicker}>ESPACE RH</div>
             <h1 style={styles.title}>Bilan RH mensuel</h1>
             <p style={styles.subtitle}>
-              Synthèse des TR, télétravail, heures supplémentaires et compteur de récupération.
+              Synthèse des TR, télétravail, heures supplémentaires et compteur de récupération ; en bas, le récapitulatif d’heures d’une semaine.
             </p>
           </div>
 
@@ -669,6 +679,16 @@ export default function BilanRHPage() {
           >
             {exportation ? "Export en cours…" : "📊 Exporter Excel"}
           </button>
+          {peutExporter && (
+            <button
+              type="button"
+              onClick={() => document.getElementById("export")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              style={{ ...styles.exportButton, background: "white", color: "#c00000" }}
+              title="Le fichier Excel des heures d’une semaine (ex-page Export Excel)"
+            >
+              ↓ Récapitulatif d’heures
+            </button>
+          )}
           {periode && <BoutonBilanEnvoye annee={periode.annee} moisZeroBase={periode.moisZeroBase} />}
         </div>
 
@@ -867,6 +887,9 @@ export default function BilanRHPage() {
             </section>
           </>
         )}
+
+        {/* FIN_DE_MOIS : ex-page Export Excel */}
+        {peutExporter && <ExportHebdoExcel />}
       </div>
     </main>
   );

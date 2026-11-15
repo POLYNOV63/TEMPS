@@ -117,7 +117,6 @@ export const PAGES: PageApp[] = [
   { href: "/admin/suivi-notes-frais", libelle: "Notes de frais (suivi)", groupe: "RH", droit: "administration" },
   { href: "/admin/bilan-rh", libelle: "Bilan RH mensuel", groupe: "RH", droit: "bilanRH" },
 
-  { href: "/admin/export-excel", libelle: "Exports Excel", groupe: "Exports", droit: "exporterExcel" },
 
   { href: "/admin/collaborateurs", libelle: "Collaborateurs", groupe: "Paramétrage", droit: "administration" },
   { href: "/admin/droits", libelle: "Droits d’accès", groupe: "Paramétrage", droit: "administration" },

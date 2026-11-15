@@ -855,8 +855,8 @@ function TuileDomaine({
 }
 
 /* Les tuiles de chaque rôle (DASHBOARD_4_TUILES) :
-   ADMIN : Pilotage, RH, Finance, Exports, Analyses ; DIRECTION : Pilotage, Finance, Analyses ;
-   RESPONSABLE : Pilotage, et RH / Exports selon ses droits */
+   ADMIN : Pilotage, RH, Finance, Analyses ; DIRECTION : Pilotage, Finance ;
+   RESPONSABLE : Pilotage, et RH selon ses droits (FIN_DE_MOIS : plus de tuile Exports, l'export est dans le Bilan RH) */
 function TuilesDomaines({
   aller,
   role,
@@ -873,7 +873,6 @@ function TuilesDomaines({
   const uPilotage = premiere(["/pilotage", "/pilotage/devis", "/pilotage/affaires", "/pilotage/prestations", "/pilotage/planning-ressources"]);
   const uRH = premiere(["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"]);
   const uFinance = premiere(["/analyse/finances", "/analyse/facturation", "/analyse/rentabilite"]);
-  const uExports = premiere(["/admin/export-excel", "/admin/bilan-rh"]);
   /* SOUS_MENUS_TUILES : sous chaque tuile, les liens directs vers ses pages ouvertes au rôle */
   const liens = (liste: [string, string][]) =>
     liste.filter(([, url]) => role === "ADMIN" || pageAutorisee(role, url)).map(([libelle, url]) => ({ libelle, url }));
@@ -884,7 +883,7 @@ function TuilesDomaines({
         key="pilotage"
         icone="🏗️"
         titre="Pilotage"
-        description="Affaires, devis, planning, charge et analyses"
+        description="Affaires, devis, planning, ressources et charge"
         url={uPilotage}
         aller={aller}
         raccourcis={liens([
@@ -903,7 +902,7 @@ function TuilesDomaines({
         key="rh"
         icone="🧑‍💼"
         titre="RH"
-        description={peut(role, "administration") ? "Feuilles d’heures, validations, absences et compteurs, notes de frais" : "Feuilles d’heures des collaborateurs"}
+        description={peut(role, "administration") ? "Feuilles d’heures, validations, absences et compteurs, notes de frais, fin de mois" : "Feuilles d’heures, bilan et export de fin de mois"}
         url={uRH}
         aller={aller}
         raccourcis={liens([
@@ -912,7 +911,7 @@ function TuilesDomaines({
           ["Absences et compteurs", "/admin/suivi-rh"],
           ["Récupérations", "/admin/compteurs"],
           ["Notes de frais", "/admin/suivi-notes-frais"],
-          ["Bilan RH", "/admin/bilan-rh"],
+          ["Bilan RH et export", "/admin/bilan-rh"],
         ])}
         badges={
           rh
@@ -940,37 +939,16 @@ function TuilesDomaines({
         ])}
       />
     );
-  if (uExports)
-    tuiles.push(
-      <TuileDomaine
-        key="exports"
-        icone="📤"
-        titre="Exports"
-        description="Fin de mois : bilan RH, récapitulatif d’heures, facturation"
-        url={uExports}
-        aller={aller}
-        raccourcis={liens([
-          ["Exports Excel", "/admin/export-excel"],
-          ["Bilan RH mensuel", "/admin/bilan-rh"],
-        ])}
-      />
-    );
-  /* TUILE_ANALYSES : ADMIN et DIRECTION ; la Direction n'y a que la charge de l'équipe et les disponibilités (blocs de la page Ressources) */
+  /* TUILE_ANALYSES : ADMIN seulement en pratique (charge, disponibilités et équipe sont dans la page Ressources, tuile Pilotage) */
   if (role === "ADMIN" || role === "DIRECTION") {
     const pagesAnalyse =
       role === "ADMIN"
         ? [
-            { libelle: "Charge de l’équipe", url: "/pilotage/planning-ressources#charge" },
-            { libelle: "Disponibilités", url: "/pilotage/planning-ressources#disponibilites" },
-            { libelle: "Composition de l’équipe", url: "/pilotage/planning-ressources#composition" },
             { libelle: "Capacité", url: "/admin/bilans" },
             { libelle: "Fiabilité du chiffrage", url: "/analyse/fiabilite-chiffrage" },
             { libelle: "Par client", url: "/analyse/clients" },
           ]
-        : [
-            { libelle: "Charge de l’équipe", url: "/pilotage/planning-ressources#charge" },
-            { libelle: "Disponibilités", url: "/pilotage/planning-ressources#disponibilites" },
-          ];
+        : []; // la Direction passe par « Ressources » (tuile Pilotage)
     const ouvertes = pagesAnalyse.filter((x) => role === "ADMIN" || pageAutorisee(role, x.url.split("#")[0]));
     if (ouvertes.length > 0)
       tuiles.push(
@@ -978,7 +956,7 @@ function TuilesDomaines({
           key="analyses"
           icone="📊"
           titre="Analyses"
-          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage, clients" : "Charge de l’équipe et disponibilités par activité"}
+          description={role === "ADMIN" ? "Capacité, fiabilité du chiffrage, clients" : ""}
           url={ouvertes[0].url}
           aller={aller}
           raccourcis={ouvertes}
