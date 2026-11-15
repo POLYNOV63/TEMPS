@@ -1571,6 +1571,8 @@ function BilanContenu() {
                 planifieParMois={planifieMois}
                 prestation={prestation}
                 pepi={prestation ? pepi : null}
+                planifieParActivite={planifieParActivite}
+                planifieNegoce={bilan.parActivite.filter((a) => /^n[ée]goce/i.test(a.nom)).reduce((t, a) => t + (planifieParActivite.get(a.id) ?? 0), 0)}
               />
             )}
           </>

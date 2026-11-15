@@ -107,6 +107,8 @@ export default function BilanFinancierAffaire({
   chiffre = 0,
   pointeParMois,
   pepi = null,
+  planifieParActivite,
+  planifieNegoce = 0,
 }: {
   type: string;
   numero: string;
@@ -127,6 +129,9 @@ export default function BilanFinancierAffaire({
   prestation?: boolean;
   /* PE / PI : le relevé commande par commande, mois par mois (FACTURE_PEPI) */
   pepi?: CommandePEPI[] | null;
+  /* MARGE_UNIQUE : heures planifiées à venir par activité (id), et sur le négoce */
+  planifieParActivite?: Map<string, number>;
+  planifieNegoce?: number;
 }) {
   const [autorise, setAutorise] = useState(false);
   const [message, setMessage] = useState("");
@@ -399,6 +404,21 @@ export default function BilanFinancierAffaire({
                 </div>
               </div>
               {tuile(toutesLivrees ? "Facturé" : "Commandé", euros(recette), `${commandes.length} commande${commandes.length > 1 ? "s" : ""}`)}
+              {/* BANQUE : ce qu'on a facturé face à ce qu'on a déjà engagé */}
+              {!toutesLivrees && (
+                <div style={{ flex: "1 1 190px", border: "1px solid #e3e6ea", borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: gris }}>Facturé à ce jour</div>
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>
+                    {euros(F)}
+                    {M > 0.5 && <span style={{ fontSize: 14, color: gris }}> · {Math.round((F / M) * 100)} %</span>}
+                  </div>
+                  {engage !== null && (
+                    <div style={{ fontSize: 12, fontWeight: 700, color: engage - F > 0.5 ? "#b3261e" : "#1b5e20" }}>
+                      {engage - F > 0.5 ? `on fait la banque : ${euros(engage - F)} engagés pas encore facturés` : `facturé d’avance : ${euros(F - engage)}`}
+                    </div>
+                  )}
+                </div>
+              )}
               {tuile("Déjà engagé", engage !== null ? euros(engage) : "—", `${heures(pointeTotal)} pointées${coutHoraire !== null ? ` × ${euros(coutHoraire)}` : ""}`)}
               {!toutesLivrees && tuile("Encore à engager", aEngager !== null ? euros(aEngager) : "—", `${heures(planifie)} planifiées`)}
               {A > 0.5 && tuile("Achats", euros(A), "scan, négoce")}
@@ -443,6 +463,7 @@ export default function BilanFinancierAffaire({
                     {pepi.map((c) => (
                       <th key={c.id} style={thN}>
                         CBE{c.numero}
+                        {c.heuresCmd !== null && <span style={{ fontWeight: 600, color: gris }}> ({q(c.heuresCmd, c)})</span>}
                       </th>
                     ))}
                     <th style={thN}>Total</th>
@@ -591,35 +612,52 @@ export default function BilanFinancierAffaire({
       {/* par activité : montant et heures commandés, prix vendu, heures pointées, € / h obtenu */}
       {disciplines.some((d) => d.montant > 0.5) && (
         <div style={{ overflowX: "auto", marginTop: 18 }}>
-          {/* MARGE_ACTIVITE : taux de vente et marge face au coût de structure (Finances) */}
-          <strong style={{ fontSize: 16, color: "#a30000" }}>Taux de vente par activité</strong>
+          {/* MARGE_UNIQUE : par activité, la même marge projetée que la grande tuile (pointé + planifié × coût) ;
+              le total « Toute l'affaire » retombe exactement sur la tuile */}
+          <strong style={{ fontSize: 16, color: "#a30000" }}>Taux de vente et marge projetée, par activité</strong>
           {(() => {
-            const pcCout = (taux: number | null) => (taux !== null && coutHoraire ? Math.round((taux / coutHoraire - 1) * 100) : null);
-            const tauxCellule = (taux: number | null, gras: boolean, plus: CSSProperties = {}) => {
-              if (taux === null) return <td style={{ ...tdN, ...plus }}>—</td>;
-              const pc = pcCout(taux);
+            const M = somme((c) => c.montant);
+            const F = somme((c) => c.facture);
+            const toutesLivrees = commandes.length > 0 && commandes.every((c) => /livr/i.test(c.statut));
+            const C = coutHoraire;
+            const planDe = (d: Discipline) => {
+              if (toutesLivrees || !planifieParActivite || !correspondance) return 0;
+              const ids = new Set(d.colonnes.map((c) => correspondance.get(c)).filter((x): x is string => Boolean(x)));
+              return [...ids].reduce((t, id) => t + (planifieParActivite.get(id) ?? 0), 0);
+            };
+            const pcCout = (taux: number | null) => (taux !== null && C ? Math.round((taux / C - 1) * 100) : null);
+            const taux = (t: number | null) => {
+              if (t === null) return <td style={tdN}>—</td>;
+              const pc = pcCout(t);
               return (
-                <td style={{ ...tdN, fontWeight: gras ? 800 : 600, ...plus }}>
-                  {euros(taux)} / h
+                <td style={{ ...tdN, fontWeight: 600 }}>
+                  {euros(t)} / h
                   {pc !== null && <span style={{ fontSize: 12, fontWeight: 700, color: pc < 0 ? "#b3261e" : pc < 15 ? "#8a4b00" : "#1b5e20" }}> {pc >= 0 ? "+" : ""}{pc} %</span>}
                 </td>
               );
             };
-            const margeCellule = (montant: number, h: number | null, gras: boolean, plus: CSSProperties = {}) => {
-              if (coutHoraire === null || !h || h <= 0.05 || montant <= 0.5) return <td style={{ ...tdN, ...plus }}>—</td>;
-              const m = montant - h * coutHoraire;
-              return (
-                <td style={{ ...tdN, fontWeight: gras ? 800 : 700, color: m < 0 ? "#b3261e" : "#1b5e20", ...plus }}>
-                  {euros(m)}
-                  <span style={{ fontSize: 12, fontWeight: 600 }}> · {Math.round((m / montant) * 100)} %</span>
-                </td>
-              );
-            };
-            const etudes = disciplines.filter((d) => d.cle !== "negoce");
-            const mE = etudes.reduce((t, d) => t + d.montant, 0);
-            const hE = etudes.reduce((t, d) => t + (d.heures ?? 0), 0);
-            const psE = etudes.map(pointeDe);
-            const pE = psE.every((x) => x === null) ? null : psE.reduce<number>((t, x) => t + (x ?? 0), 0);
+            const marge = (m: number, base: number, gras = false, plus: CSSProperties = {}) => (
+              <td style={{ ...tdN, fontWeight: gras ? 800 : 700, color: m < 0 ? "#b3261e" : "#1b5e20", ...plus }}>
+                {m >= 0 ? "+ " : "− "}
+                {euros(Math.abs(m))}
+                {base > 0.5 && <span style={{ fontSize: 12, fontWeight: 600 }}> · {Math.round((m / base) * 100)} %</span>}
+              </td>
+            );
+            if (C === null) return <p style={{ color: gris, margin: "6px 0" }}>Coût de structure non saisi dans les Finances : pas de marge calculable.</p>;
+            const etudes = disciplines.filter((d) => d.cle !== "negoce" && (d.montant > 0.5 || (d.heures ?? 0) > 0.05 || (pointeDe(d) ?? 0) > 0.05));
+            const lignes = etudes.map((d) => {
+              const h = (pointeDe(d) ?? 0) + planDe(d);
+              return { d, h, m: d.montant - h * C };
+            });
+            const hNeg = heuresNegoce + (toutesLivrees ? 0 : planifieNegoce);
+            const avecNegoce = vendu > 0.5 || achete > 0.5 || hNeg > 0.05;
+            const mNeg = vendu - achete - hNeg * C;
+            const hTotal = pointeTotal + (toutesLivrees ? 0 : planifie);
+            const hAutres = hTotal - lignes.reduce((t, x) => t + x.h, 0) - (avecNegoce ? hNeg : 0);
+            const nonVentile = M - lignes.reduce((t, x) => t + x.d.montant, 0) - (avecNegoce ? vendu : 0);
+            const ecartFacture = toutesLivrees ? F - M : 0;
+            const total = lignes.reduce((t, x) => t + x.m, 0) + (avecNegoce ? mNeg : 0) - (Math.abs(hAutres) > 0.05 ? hAutres * C : 0) + (Math.abs(nonVentile) > 0.5 ? nonVentile : 0) + ecartFacture;
+            const recette = toutesLivrees ? F : M;
             const bord: CSSProperties = { borderTop: "2px solid #d5d9de" };
             return (
               <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 6 }}>
@@ -629,48 +667,76 @@ export default function BilanFinancierAffaire({
                     <th style={thN}>Montant commandé</th>
                     <th style={thN}>Heures commandées</th>
                     <th style={thN} title="Montant ÷ heures commandées, et écart au coût de structure">Taux de vente</th>
-                    <th style={thN} title="Montant − heures commandées × coût de structure">Marge prévue</th>
-                    <th style={thN}>Heures pointées</th>
-                    <th style={thN} title="Montant ÷ heures pointées, et écart au coût de structure">Taux obtenu</th>
-                    <th style={thN} title="Montant − heures pointées × coût de structure">Marge sur le pointé</th>
+                    <th style={thN}>{toutesLivrees ? "Heures pointées" : "Pointé + planifié"}</th>
+                    <th style={thN} title="Montant ÷ (pointé + planifié)">Taux obtenu</th>
+                    <th style={thN} title="Montant − (pointé + planifié) × coût de structure">{toutesLivrees ? "Marge réelle" : "Marge projetée"}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {disciplines
-                    .filter((d) => d.montant > 0.5 || (d.heures ?? 0) > 0.05)
-                    .map((d) => {
-                      const p = pointeDe(d);
-                      const vendu = d.heures && d.heures > 0.05 ? d.montant / d.heures : null;
-                      const obtenu = p && p > 0.05 ? d.montant / p : null;
-                      return (
-                        <tr key={d.cle}>
-                          <td style={{ ...td, fontWeight: 800 }}>{d.libelle}</td>
-                          <td style={{ ...tdN, fontWeight: 800 }}>{d.montant > 0.5 ? euros(d.montant) : "—"}</td>
-                          <td style={tdN}>{d.heures && d.heures > 0.05 ? heures(d.heures) : "—"}</td>
-                          {tauxCellule(vendu, false)}
-                          {margeCellule(d.montant, d.heures, false)}
-                          <td style={tdN}>{p !== null && p > 0.05 ? heures(p) : "—"}</td>
-                          {tauxCellule(obtenu, false)}
-                          {margeCellule(d.montant, p, false)}
-                        </tr>
-                      );
-                    })}
+                  {lignes.map(({ d, h, m }) => (
+                    <tr key={d.cle}>
+                      <td style={{ ...td, fontWeight: 800 }}>{d.libelle}</td>
+                      <td style={{ ...tdN, fontWeight: 800 }}>{d.montant > 0.5 ? euros(d.montant) : "—"}</td>
+                      <td style={tdN}>{d.heures && d.heures > 0.05 ? heures(d.heures) : "—"}</td>
+                      {taux(d.heures && d.heures > 0.05 ? d.montant / d.heures : null)}
+                      <td style={tdN}>{h > 0.05 ? heures(h) : "—"}</td>
+                      {taux(h > 0.05 && d.montant > 0.5 ? d.montant / h : null)}
+                      {marge(m, d.montant)}
+                    </tr>
+                  ))}
+                  {avecNegoce && (
+                    <tr>
+                      <td style={{ ...td, fontWeight: 800 }}>
+                        Négoce <span style={{ fontSize: 12, fontWeight: 400, color: gris }}>vendu − achats − temps</span>
+                      </td>
+                      <td style={{ ...tdN, fontWeight: 800 }}>{vendu > 0.5 ? euros(vendu) : "—"}</td>
+                      <td style={tdN}>—</td>
+                      <td style={tdN}>{achete > 0.5 ? <span style={{ color: "#7a3e00" }}>achats − {euros(achete)}</span> : "—"}</td>
+                      <td style={tdN}>{hNeg > 0.05 ? heures(hNeg) : "—"}</td>
+                      <td style={tdN}>—</td>
+                      {marge(mNeg, vendu)}
+                    </tr>
+                  )}
+                  {Math.abs(hAutres) > 0.05 && (
+                    <tr>
+                      <td style={{ ...td, color: gris }} colSpan={4}>
+                        Temps hors de ces activités (pointé ou planifié sans activité chiffrée)
+                      </td>
+                      <td style={tdN}>{heures(hAutres)}</td>
+                      <td style={tdN} />
+                      {marge(-hAutres * C, 0)}
+                    </tr>
+                  )}
+                  {Math.abs(nonVentile) > 0.5 && (
+                    <tr>
+                      <td style={{ ...td, color: gris }} colSpan={6}>
+                        Montant de la commande non ventilé par activité au Suivi d’affaire
+                      </td>
+                      {marge(nonVentile, 0)}
+                    </tr>
+                  )}
+                  {Math.abs(ecartFacture) > 0.5 && (
+                    <tr>
+                      <td style={{ ...td, color: gris }} colSpan={6}>
+                        Écart entre facturé et commandé
+                      </td>
+                      {marge(ecartFacture, 0)}
+                    </tr>
+                  )}
                   <tr>
-                    <td style={{ ...td, ...bord, fontWeight: 800 }}>Total des études</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(mE)}</td>
-                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{hE > 0.05 ? heures(hE) : "—"}</td>
-                    {tauxCellule(hE > 0.05 ? mE / hE : null, true, bord)}
-                    {margeCellule(mE, hE, true, bord)}
-                    <td style={{ ...tdN, ...bord }}>{pE !== null && pE > 0.05 ? heures(pE) : "—"}</td>
-                    {tauxCellule(pE !== null && pE > 0.05 ? mE / pE : null, true, bord)}
-                    {margeCellule(mE, pE, true, bord)}
+                    <td style={{ ...td, ...bord, fontWeight: 800 }}>Toute l’affaire</td>
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{euros(recette)}</td>
+                    <td style={{ ...tdN, ...bord }} colSpan={2} />
+                    <td style={{ ...tdN, ...bord, fontWeight: 800 }}>{heures(hTotal)}</td>
+                    <td style={{ ...tdN, ...bord }} />
+                    {marge(total, recette, true, bord)}
                   </tr>
                 </tbody>
               </table>
             );
           })()}
           <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
-            Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ heures pointées ; le % à côté du taux = écart au coût de structure (rouge en dessous, orange moins de 15 % au-dessus). Marge = montant − heures × coût de structure ; tant que l’affaire n’est pas finie, la marge sur le pointé baisse à mesure qu’on pointe.
+            Taux de vente = montant ÷ heures commandées ; taux obtenu = montant ÷ (pointé + planifié) ; le % à côté du taux = écart au coût de structure. La marge de chaque ligne = montant − (pointé + planifié) × coût de structure : le total « Toute l’affaire » est la marge de la grande case en haut.
           </p>
         </div>
       )}
