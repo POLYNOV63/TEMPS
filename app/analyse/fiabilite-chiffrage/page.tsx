@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "reac
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, Message, Tuile, page } from "@/components/pilotage/ui";
 import { supabase } from "@/lib/supabase";
 import { chargerAffaires, chargerCharges, chargerRealise, type AffaireP } from "@/lib/pilotageDonnees";
@@ -117,8 +118,11 @@ function FiabiliteContenu() {
     const imputationBase = new Map<string, string | null>();
     for (const a of affaires) if (a.type === "CBE" && /^\d+$/.test(a.numero)) imputationBase.set(baseDe(a.numero), a.imputation);
     for (const a of affaires) {
-      if (a.type !== "CBE" || a.imputation === "PE" || a.imputation === "PI" || a.statut === "ABANDONNEE") continue;
+      if (a.type !== "CBE" || a.statut === "ABANDONNEE") continue;
       const b = baseDe(a.numero);
+      // FAMILLE_PEPI : la nature de la famille est celle de sa commande de base
+      const impFamille = imputationBase.get(b) ?? a.imputation;
+      if (impFamille === "PE" || impFamille === "PI" || a.imputation === "PE" || a.imputation === "PI") continue;
       familles.set(b, [...(familles.get(b) ?? []), a]);
     }
     const negoce: LigneAffaire[] = [];
@@ -243,6 +247,7 @@ function FiabiliteContenu() {
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse" />
+      <OngletsPilotage actif="fiabilite" />
       <div style={{ ...page.contenu, maxWidth: 1300 }}>
         <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
           <div>
