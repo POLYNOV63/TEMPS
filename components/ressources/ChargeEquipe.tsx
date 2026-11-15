@@ -36,9 +36,9 @@ import {
    RESSOURCES - CHARGE DE L'ÉQUIPE (RESSOURCES_FUSION)
    Reprise de l'ancienne page « Charge par ressource », intégrée sous le
    planning de la page Ressources (droit « chargeRessources »). La semaine
-   analysée est pilotée par la page (clic sur un % du planning).
-   La grille « 12 semaines en % » est devenue la ligne de % sous chaque
-   personne du planning.
+   analysée est choisie ici (◀ ▶).
+   La grille « 12 semaines en % » a été retirée (le planning reste sans
+   pourcentage) ; la charge semaine par semaine se lit ici, flèches ◀ ▶.
 
    Capacité théorique, absences et fériés déduits, heures affectées,
    écart. Une surcharge n'est jamais bloquée : on peut déplacer des
@@ -482,7 +482,6 @@ export default function ChargeEquipe({ lundi, setLundi, onModifie }: { lundi: st
         <button type="button" style={{ ...page.btnSecondaire, border: "none", textDecoration: "underline" }} onClick={() => setLundi(lundiDe(aISO(new Date())))}>
           Cette semaine
         </button>
-        <span style={{ fontSize: 13, color: C.gris }}>astuce : cliquez sur un % du planning pour venir ici sur sa semaine</span>
       </div>
       {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}

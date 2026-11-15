@@ -80,6 +80,76 @@ function BarreEcart({ ecart }: { ecart: number }) {
   );
 }
 
+/* TRI_COLONNES : un clic sur un titre de colonne trie ; un second clic inverse le sens */
+type Tri = { cle: string; sens: 1 | -1 };
+function enTeteTri(libelle: string, cle: string, tri: Tri, setTri: (t: Tri) => void, style: CSSProperties, sensDefaut: 1 | -1 = 1, title?: string) {
+  const actif = tri.cle === cle;
+  return (
+    <th
+      style={{ ...style, cursor: "pointer", userSelect: "none", color: actif ? C.rougeFonce : style.color }}
+      title={title ?? "Cliquer pour trier"}
+      aria-sort={actif ? (tri.sens === 1 ? "ascending" : "descending") : undefined}
+      onClick={() => setTri(actif ? { cle, sens: tri.sens === 1 ? -1 : 1 } : { cle, sens: sensDefaut })}
+    >
+      {libelle} <span style={{ fontSize: 11, opacity: actif ? 1 : 0.35 }}>{actif ? (tri.sens === 1 ? "▲" : "▼") : "↕"}</span>
+    </th>
+  );
+}
+const comparer = (a: string | number, b: string | number) => (typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b), "fr", { numeric: true }));
+
+function TableauAffaires({ lignes, clients, negoce = false }: { lignes: LigneAffaire[]; clients: Map<string, string>; negoce?: boolean }) {
+  const [tri, setTri] = useState<Tri>(negoce ? { cle: "realise", sens: -1 } : { cle: "ecart", sens: -1 });
+  const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px", textAlign: "center" };
+  const td: CSSProperties = { ...page.td, padding: "8px", fontSize: 13 };
+  const tdN: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
+  const ecartDe = (a: LigneAffaire) => (a.chiffre > 0 ? (a.realise - a.chiffre) / a.chiffre : 0);
+  const valeur = (a: LigneAffaire): string | number =>
+    tri.cle === "affaire" ? a.base : tri.cle === "client" ? clients.get(a.base) ?? "" : tri.cle === "descriptif" ? a.designation : tri.cle === "fin" ? a.fin : tri.cle === "chiffre" ? a.chiffre : tri.cle === "realise" ? a.realise : tri.cle === "heures" ? a.realise - a.chiffre : ecartDe(a);
+  const triees = [...lignes].sort((x, y) => comparer(valeur(x), valeur(y)) * tri.sens);
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+      <thead>
+        <tr>
+          {enTeteTri("Affaire", "affaire", tri, setTri, { ...th, textAlign: "left" })}
+          {enTeteTri("Client", "client", tri, setTri, { ...th, textAlign: "left" })}
+          {enTeteTri("Descriptif", "descriptif", tri, setTri, { ...th, textAlign: "left" })}
+          {enTeteTri("Livrée le", "fin", tri, setTri, th, -1)}
+          {enTeteTri("Chiffré", "chiffre", tri, setTri, th, -1)}
+          {enTeteTri(negoce ? "Heures passées" : "Réalisé", "realise", tri, setTri, th, -1)}
+          {!negoce && enTeteTri("Écart", "ecart", tri, setTri, th, -1, "Trier par écart en % (un second clic : l’autre sens)")}
+          {!negoce && enTeteTri("en heures", "heures", tri, setTri, th, -1, "Trier par écart en heures")}
+        </tr>
+      </thead>
+      <tbody>
+        {triees.map((a) => {
+          const e = ecartDe(a);
+          return (
+            <tr key={a.base}>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>
+                <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                  CBE {a.base}
+                </Link>
+              </td>
+              <td style={{ ...td, whiteSpace: "nowrap", fontWeight: 700 }}>{clients.get(a.base) ?? "—"}</td>
+              <td style={td}>{a.designation}</td>
+              <td style={{ ...tdN, textAlign: "center" }}>{formatDate(a.fin)}</td>
+              <td style={tdN}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
+              <td style={{ ...tdN, fontWeight: negoce ? 800 : 400 }}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
+              {!negoce && <td style={{ ...tdN, fontWeight: 800, color: couleurEcart(e) }}>{pctSigne(e)}</td>}
+              {!negoce && (
+                <td style={{ ...tdN, fontWeight: 600, color: C.gris }}>
+                  {a.realise >= a.chiffre ? "+" : "−"}
+                  {formatHeures(Math.abs(a.realise - a.chiffre))}
+                </td>
+              )}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function FiabiliteContenu() {
   const [exercice, setExercice] = useState(exerciceCourant);
   const [affaires, setAffaires] = useState<AffaireP[]>([]);
@@ -89,6 +159,38 @@ function FiabiliteContenu() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState("");
   const [ouverte, setOuverte] = useState<string | null>(null);
+  const [clients, setClients] = useState<Map<string, string>>(new Map());
+  const [triAct, setTriAct] = useState<Tri>({ cle: "ordre", sens: 1 });
+
+  // CLIENTS_FIABILITE : le client de chaque affaire, d'après la ligne de base du Suivi d'affaire BE
+  useEffect(() => {
+    let actif = true;
+    (async () => {
+      const { data: cl } = await supabase.from("suivi_clients").select("id,nom_abrege");
+      const nomClient = new Map(((cl ?? []) as { id: string; nom_abrege: string }[]).map((c) => [c.id, c.nom_abrege]));
+      const m = new Map<string, string>();
+      for (let debut = 0; ; debut += 1000) {
+        const { data, error } = await supabase
+          .from("suivi_lignes")
+          .select("id,base_affaire,client_id")
+          .eq("genre", "BASE")
+          .not("client_id", "is", null)
+          .order("id", { ascending: true })
+          .range(debut, debut + 999);
+        if (error) break;
+        for (const l of (data ?? []) as { base_affaire: string | null; client_id: string }[]) {
+          const b = String(l.base_affaire ?? "").replace(/^0+/, "");
+          const n = nomClient.get(l.client_id);
+          if (b && n) m.set(b, n);
+        }
+        if ((data ?? []).length < 1000) break;
+      }
+      if (actif) setClients(m);
+    })();
+    return () => {
+      actif = false;
+    };
+  }, []);
 
   useEffect(() => {
     let actif = true;
@@ -208,42 +310,6 @@ function FiabiliteContenu() {
   const tdN: CSSProperties = { ...td, textAlign: "right", whiteSpace: "nowrap" };
   const ecartGlobal = vue.totalCh > 0 ? (vue.totalRe - vue.totalCh) / vue.totalCh : 0;
 
-  const tableauAffaires = (lignes: LigneAffaire[]) => (
-    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-      <thead>
-        <tr>
-          <th style={{ ...th, textAlign: "left" }}>Affaire</th>
-          <th style={{ ...th, textAlign: "left" }}>Descriptif</th>
-          <th style={th}>Livrée le</th>
-          <th style={th}>Chiffré</th>
-          <th style={th}>Réalisé</th>
-          <th style={th}>Écart</th>
-        </tr>
-      </thead>
-      <tbody>
-        {lignes.map((a) => {
-          const e = (a.realise - a.chiffre) / a.chiffre;
-          return (
-            <tr key={a.base}>
-              <td style={{ ...td, fontSize: 13, whiteSpace: "nowrap" }}>
-                <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
-                  CBE {a.base}
-                </Link>
-              </td>
-              <td style={{ ...td, fontSize: 13 }}>{a.designation}</td>
-              <td style={{ ...tdN, fontSize: 13, textAlign: "center" }}>{formatDate(a.fin)}</td>
-              <td style={{ ...tdN, fontSize: 13 }}>{formatHeures(a.chiffre)}</td>
-              <td style={{ ...tdN, fontSize: 13 }}>{formatHeures(a.realise)}</td>
-              <td style={{ ...tdN, fontSize: 13, fontWeight: 800, color: couleurEcart(e) }}>
-                {pctSigne(e)} <span style={{ fontWeight: 600, color: C.gris }}>({a.realise >= a.chiffre ? "+" : "−"}{formatHeures(Math.abs(a.realise - a.chiffre))})</span>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-
   return (
     <main style={page.fond}>
       <EnTetePage section="Analyse" />
@@ -295,23 +361,28 @@ function FiabiliteContenu() {
                 <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
                   <span style={{ color: "#c62828", fontWeight: 800 }}>Rouge</span> : plus de 10 % au-delà du chiffré (chiffrage trop court) ·{" "}
                   <span style={{ color: "#2e7d32", fontWeight: 800 }}>vert</span> : à ±10 % · <span style={{ color: "#1f6feb", fontWeight: 800 }}>bleu</span> :
-                  plus de 10 % en deçà (chiffrage large). Cliquez sur une activité pour voir ses affaires, de la plus dépassée à la moins dépassée.
+                  plus de 10 % en deçà (chiffrage large). Cliquez sur une activité pour voir ses affaires ; cliquez sur un titre de colonne pour trier.
                 </p>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
                     <thead>
                       <tr>
-                        <th style={{ ...th, textAlign: "left" }}>Activité</th>
-                        <th style={th}>Affaires</th>
-                        <th style={th}>Chiffré</th>
-                        <th style={th}>Réalisé</th>
-                        <th style={th}>Écart</th>
+                        {enTeteTri("Activité", "ordre", triAct, setTriAct, { ...th, textAlign: "left" })}
+                        {enTeteTri("Affaires", "nb", triAct, setTriAct, th, -1)}
+                        {enTeteTri("Chiffré", "chiffre", triAct, setTriAct, th, -1)}
+                        {enTeteTri("Réalisé", "realise", triAct, setTriAct, th, -1)}
+                        {enTeteTri("Écart", "ecart", triAct, setTriAct, th, -1)}
                         <th style={th}>Affaires : en deçà · justes · au-delà</th>
-                        <th style={th} title="Heures passées dans cette activité sur des affaires où elle n’avait pas été chiffrée">Réalisé non chiffré</th>
+                        {enTeteTri("Réalisé non chiffré", "nonChiffre", triAct, setTriAct, th, -1, "Heures passées dans cette activité sur des affaires où elle n’avait pas été chiffrée")}
                       </tr>
                     </thead>
                     <tbody>
-                      {vue.liste.map((s) => {
+                      {[...vue.liste]
+                        .sort((x, y) => {
+                          const v = (a: StatAct): number => (triAct.cle === "nb" ? a.nb : triAct.cle === "chiffre" ? a.chiffre : triAct.cle === "realise" ? a.realise : triAct.cle === "ecart" ? (a.chiffre > 0 ? (a.realise - a.chiffre) / a.chiffre : -Infinity) : triAct.cle === "nonChiffre" ? a.nonChiffre : a.ordre);
+                          return (v(x) - v(y) || x.nom.localeCompare(y.nom, "fr")) * triAct.sens;
+                        })
+                        .map((s) => {
                         const e = s.chiffre > 0 ? (s.realise - s.chiffre) / s.chiffre : 0;
                         const ouv = ouverte === s.id;
                         return (
@@ -356,7 +427,7 @@ function FiabiliteContenu() {
                             {ouv && s.nb > 0 && (
                               <tr>
                                 <td colSpan={7} style={{ ...td, background: "#fafbfc", padding: "8px 16px 14px 30px" }}>
-                                  {tableauAffaires(s.affaires)}
+                                  <TableauAffaires lignes={s.affaires} clients={clients} />
                                 </td>
                               </tr>
                             )}
@@ -385,32 +456,9 @@ function FiabiliteContenu() {
                       Les affaires de négoce et de scan, vendues au montant, ne comptent pas dans le tableau par activité : leurs heures ne sont en général
                       pas chiffrées, elles sont couvertes par le prix. Les voici, pour mesurer ce qu’elles coûtent vraiment.
                     </p>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-                      <thead>
-                        <tr>
-                          <th style={{ ...th, textAlign: "left" }}>Affaire</th>
-                          <th style={{ ...th, textAlign: "left" }}>Descriptif</th>
-                          <th style={th}>Livrée le</th>
-                          <th style={th}>Chiffré</th>
-                          <th style={th}>Heures passées</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vue.negoce.map((a) => (
-                          <tr key={a.base}>
-                            <td style={{ ...td, fontSize: 13, whiteSpace: "nowrap" }}>
-                              <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
-                                CBE {a.base}
-                              </Link>
-                            </td>
-                            <td style={{ ...td, fontSize: 13 }}>{a.designation}</td>
-                            <td style={{ ...tdN, fontSize: 13, textAlign: "center" }}>{formatDate(a.fin)}</td>
-                            <td style={{ ...tdN, fontSize: 13 }}>{a.chiffre > 0 ? formatHeures(a.chiffre) : "—"}</td>
-                            <td style={{ ...tdN, fontSize: 13, fontWeight: 800 }}>{a.realise > 0 ? formatHeures(a.realise) : "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div style={{ overflowX: "auto" }}>
+                      <TableauAffaires lignes={vue.negoce} clients={clients} negoce />
+                    </div>
                   </details>
                 );
               })()}
@@ -418,7 +466,9 @@ function FiabiliteContenu() {
             {vue.parAffaire.length > 0 && (
               <details style={{ ...page.carte, padding: 16, marginBottom: 14 }}>
                 <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 16 }}>Toutes les affaires analysées ({vue.parAffaire.length}), toutes activités</summary>
-                <div style={{ marginTop: 10 }}>{tableauAffaires(vue.parAffaire)}</div>
+                <div style={{ marginTop: 10, overflowX: "auto" }}>
+                  <TableauAffaires lignes={vue.parAffaire} clients={clients} />
+                </div>
               </details>
             )}
 

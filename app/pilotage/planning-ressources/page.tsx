@@ -21,9 +21,8 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
    Cartographie de l'équipe (en dessous).
    - Tout le monde (droit voirPlanning) : le planning, comme avant,
      sans aucun pourcentage.
-   - Droit « chargeRessources » (ADMIN, Direction) : sous chaque personne,
-     sa charge en % semaine par semaine (un clic ouvre la semaine dans
-     « Charge de l'équipe », avec Déplacer…), puis la charge de l'équipe,
+   - Droit « chargeRessources » (ADMIN, Direction) : sous le planning
+     (qui reste sans pourcentage), la charge de l'équipe (avec Déplacer…),
      la répartition CBE / DBE / Divers et les disponibilités par activité.
    - Droit « indicateurs » : la composition de l'équipe (ex-Cartographie).
    Les anciennes adresses (/pilotage/ressources, /analyse/charge-activites,
@@ -83,7 +82,7 @@ function PlanningRessourcesContenu() {
       .catch(() => undefined)
       .finally(() => setRoleConnu(true));
   }, []);
-  // semaine analysée par les blocs du bas (cette semaine au départ ; un clic sur un % du planning la change)
+  // semaine analysée par les blocs du bas (cette semaine au départ)
   const [semaineAnalyse, setSemaineAnalyse] = useState(() => lundiDe(aujourdhuiISO()));
   const [rechargePlanning, setRechargePlanning] = useState(0);
   const [lundi, setLundi] = useState(() => ajouterJours(lundiDe(aujourdhui), -7));
@@ -574,8 +573,8 @@ function PlanningRessourcesContenu() {
                     </>
                   );
                 })()}
-                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)${voirCharge ? " 20px" : ""}` /* HAUTEUR_PAR_PERSONNE ; CHARGE_PAR_SEMAINE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.actif === false || (l.collab.date_sortie && l.collab.date_sortie < aujourdhui) ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
-                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies) + (voirCharge ? 1 : 0)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.actif === false || (l.collab.date_sortie && l.collab.date_sortie < aujourdhui) ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
+                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
                     <strong style={{ fontSize: 15, color: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? C.gris : undefined }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                     {l.collab.date_sortie && (
@@ -700,54 +699,8 @@ function PlanningRessourcesContenu() {
                   })}
 
 
-                  {/* CHARGE_PAR_SEMAINE : la charge de la personne en %, semaine par semaine (droit chargeRessources) */}
-                  {voirCharge &&
-                    colonnes.map((j, i) => {
-                      if (i % 5 !== 0) return null;
-                      const fin5 = Math.min(colonnes.length, i + 5);
-                      let aff = 0;
-                      let net = 0;
-                      for (let k = i; k < fin5; k++) {
-                        aff += l.charge[k];
-                        net += l.nets[k];
-                      }
-                      if (net <= 0 && aff <= 0.01) return null;
-                      const pc = net > 0 ? Math.round((aff / net) * 100) : 999;
-                      const sur = pc > 100;
-                      const lundiSem = lundiDe(j);
-                      const choisie = voirCharge && lundiSem === semaineAnalyse;
-                      return (
-                        <button
-                          key={`pc-${j}`}
-                          type="button"
-                          title={`S${numeroSemaine(j)} : ${formatHeures(aff)} ${j < lundiActuel && passe === "REALISE" ? "pointées" : "affectées"} pour ${formatHeures(net)} disponibles\nCliquer : le détail de la semaine${sur ? " (et Déplacer…)" : ""}`}
-                          onClick={() => {
-                            setSemaineAnalyse(lundiSem);
-                            window.setTimeout(() => document.getElementById("charge")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-                          }}
-                          style={{
-                            gridColumn: `${col(i)} / ${col(fin5 - 1) + 1}`,
-                            gridRow: Math.max(2, l.voies) + 1,
-                            margin: "1px 2px 0",
-                            border: choisie ? `1.5px solid ${C.rougeFonce}` : "none",
-                            borderRadius: 4,
-                            padding: 0,
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                            fontSize: 11,
-                            fontWeight: 800,
-                            zIndex: 2,
-                            background: sur ? "repeating-linear-gradient(45deg,#fde1e1,#fde1e1 5px,#f5b5b0 5px,#f5b5b0 10px)" : pc >= 80 ? "#cfe0f3" : pc > 0 ? "#e6eef8" : "#f4f5f7",
-                            color: sur ? "#8f1010" : pc > 0 ? "#10263d" : "#9aa0a6",
-                          }}
-                        >
-                          {pc === 0 ? "0 %" : sur ? `▲ ${pc === 999 ? "!" : pc} %` : `${pc} %`}
-                        </button>
-                      );
-                    })}
-
                   {cadre && <div aria-hidden="true" style={{ ...cadre, margin: "-6px 0" }} />}
-                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies) + (voirCharge ? 1 : 0)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
+                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
                     <span style={{ color: C.gris }} title={`${formatHeures(l.totalAffecte)} affectées pour ${formatHeures(l.totalNet)} disponibles sur la période`}>
                       {formatHeures(l.totalAffecte)} / {formatHeures(l.totalNet)}
                     </span>
@@ -757,12 +710,6 @@ function PlanningRessourcesContenu() {
               );
             })}
             {lignes.length === 0 && <p style={{ color: C.gris, padding: 8 }}>Personne à afficher.</p>}
-            {voirCharge && (
-              <p style={{ margin: "8px 4px 0", fontSize: 12, color: C.gris }}>
-                Sous chaque personne : sa charge de la semaine (heures affectées ÷ heures disponibles, congés et fériés déduits ; semaines passées : le pointé
-                si « réalisé »). Cliquez sur un % pour voir la semaine dans « Charge de l’équipe », plus bas, et y déplacer des heures.
-              </p>
-            )}
           </section>
         )}
         </div>
