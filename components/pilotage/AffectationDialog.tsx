@@ -458,9 +458,9 @@ export default function AffectationDialog({
   /* ------------------------------ rendu ------------------------------ */
 
   const chip = (actif: boolean): CSSProperties => ({
-    background: actif ? "#e8e3f5" : "#ffffff",
-    color: actif ? "#2b1d63" : "#3b4046",
-    border: `1.5px solid ${actif ? "#6b58a8" : "#b9bec5"}`,
+    background: actif ? "#fbeeee" : "#ffffff",
+    color: actif ? "#8f0000" : "#3b4046",
+    border: `1.5px solid ${actif ? "#c00000" : "#b9bec5"}`,
     minHeight: 44,
     minWidth: 64,
     padding: "0 14px",

@@ -1,3 +1,4 @@
+import { COULEURS_METIERS } from "@/lib/couleurs";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { chargerAffectations, chargerAnnuaire, chargerCapacitesAbsences } from "@/lib/pilotageDonnees";
@@ -16,9 +17,9 @@ import { num, type Collab } from "@/lib/pilotageCalculs";
 ================================================================ */
 
 export const ACTIVITES_SUIVIES = [
-  { cle: "meca", libelle: "Méca", couleur: "#c00000" },
-  { cle: "elec", libelle: "Elec", couleur: "#34506b" },
-  { cle: "calcul", libelle: "Calcul", couleur: "#6b58a8" },
+  { cle: "meca", libelle: "Méca", couleur: COULEURS_METIERS.meca },
+  { cle: "elec", libelle: "Elec", couleur: COULEURS_METIERS.elec },
+  { cle: "calcul", libelle: "Calcul", couleur: COULEURS_METIERS.calcul },
 ];
 
 /* niveaux : du plus clair au plus foncé */

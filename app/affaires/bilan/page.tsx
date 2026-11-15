@@ -1,4 +1,5 @@
 "use client";
+import { couleurMetier } from "@/lib/couleurs";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
@@ -185,14 +186,7 @@ const normNom = (t: string) =>
     .trim();
 
 /* COULEURS_COMMUNES : comme les Disponibilités par activité et les Finances */
-const COULEURS_ACTIVITES: [RegExp, string][] = [
-  [/^meca|mecanique/, "#c00000"],
-  [/^elec|electri|pneu/, "#34506b"],
-  [/^calcul/, "#6b58a8"],
-  [/^scan/, "#e08a1e"],
-  [/^negoce/, "#8d6e63"],
-];
-const couleurActivite = (nom: string) => COULEURS_ACTIVITES.find(([m]) => m.test(normNom(nom).replace(/ /g, "")))?.[1] ?? "#5b6168";
+const couleurActivite = (nom: string) => couleurMetier(nom, "#5b6168"); // lib/couleurs.ts
 
 /* BARRES_DERIVE : une barre = fait (plein) + prévu (hachuré) face à une cible (trait noir) ; le surplus en rouge */
 function BarreDerive({ fait, prevu, cible, couleur, haute = false }: { fait: number; prevu: number; cible: number; couleur: string; haute?: boolean }) {

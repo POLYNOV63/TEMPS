@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS, COULEURS_TRAVAIL, metierDe } from "@/lib/couleurs";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
@@ -88,19 +89,10 @@ const HEURES_LEGALES_HEBDO = 35;
 /* Sous ce taux d'imputation sur des activités, l'écart est signalé en orange. */
 const SEUIL_FAIBLE_IMPUTATION = 50;
 
-const COULEUR_CBE = "#c00000";
-const COULEUR_DBE = "#dc4f84";
-
-/* COULEURS_COMMUNES : les mêmes couleurs que les Disponibilités par activité et les Finances */
-const COULEURS_CONNUES: [RegExp, string][] = [
-  [/^meca|mecanique/, "#c00000"],
-  [/^elec|electri/, "#34506b"],
-  [/^calcul/, "#6b58a8"],
-  [/^scan/, "#e08a1e"],
-  [/^negoce/, "#8d6e63"],
-];
-const COULEUR_ABSENCE = "#1f9d8b"; // comme « Divers d'absences » dans l'Analyse de capacité
-const sansAccents = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+/* COULEURS_COMMUNES : lib/couleurs.ts (les mêmes sur toutes les pages) */
+const COULEUR_CBE = COULEURS_TRAVAIL.CBE;
+const COULEUR_DBE = COULEURS_TRAVAIL.DBE;
+const COULEUR_ABSENCE = COULEURS_TRAVAIL.ABSENCE;
 
 const PALETTE_ACTIVITES = [
   "#2f6db5",
@@ -110,7 +102,7 @@ const PALETTE_ACTIVITES = [
   "#9a6b4f",
   "#5c6f82",
   "#b5a642",
-  "#8d5fd3",
+  "#5f7f3a",
   "#4a9d5b",
 ];
 
@@ -690,10 +682,10 @@ export default function BilanActivites({ integre = false }: { integre?: boolean 
   );
 
   const couleurActivite = (id: string) => {
-    const connue = (x: Activite) => COULEURS_CONNUES.find(([motif]) => motif.test(sansAccents(x.code ?? "")) || motif.test(sansAccents(x.nom ?? "")));
+    const connue = (x: Activite) => metierDe(x.code) ?? metierDe(x.nom);
     const a = activites.find(x => x.id === id);
-    const trouvee = a ? connue(a) : undefined;
-    if (trouvee) return trouvee[1];
+    const trouvee = a ? connue(a) : null;
+    if (trouvee) return COULEURS_METIERS[trouvee];
     const autres = activitesAffichees.filter(x => !connue(x));
     const index = autres.findIndex(activite => activite.id === id);
     return PALETTE_ACTIVITES[(index < 0 ? 0 : index) % PALETTE_ACTIVITES.length];

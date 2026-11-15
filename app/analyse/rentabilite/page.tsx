@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
@@ -65,7 +66,7 @@ type LigneRenta = {
 };
 type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
 /* RENTABILITE_ACTIVITE : couleurs des activités (celles des Indicateurs commerciaux) */
-const COULEUR_ACTIVITE: Record<string, string> = { "Méca": "#c00000", Calcul: "#6b58a8", "Elec / Pneu": "#34506b", Scan: "#e08a1e", "Négoce": "#8d6e63", Autre: "#9aa0a6", "Non ventilé": "#9aa0a6" };
+const COULEUR_ACTIVITE: Record<string, string> = { "Méca": COULEURS_METIERS.meca, Calcul: COULEURS_METIERS.calcul, "Elec / Pneu": COULEURS_METIERS.elec, Scan: COULEURS_METIERS.scan, "Négoce": COULEURS_METIERS.negoce, Autre: COULEURS_METIERS.autre, "Non ventilé": COULEURS_METIERS.autre };
 type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string> };
 
 const tauxVendu = (l: LigneRenta) => (!l.auMontant && l.hc > 0 ? (l.ca - l.achats) / l.hc : null);

@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_TRAVAIL } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
@@ -45,15 +46,16 @@ type Donnees = {
   imputations: ImputationNouvelle[];
 };
 
+// COULEURS_COMMUNES : lib/couleurs.ts (les mêmes que l’Analyse de capacité)
 const COULEURS = {
-  CBE: "#c00000",
-  DBE: "#f2bfd0",
-  CN: "#85ef57",
-  PRODUCTION: "#f700cd",
-  FORMATION: "#8b6bb1",
-  AUTRES: "#d59b2a",
-  NI: "#414040",
-  NON_EXPLIQUE: "#e3e5e8",
+  CBE: COULEURS_TRAVAIL.CBE,
+  DBE: COULEURS_TRAVAIL.DBE,
+  CN: COULEURS_TRAVAIL.CN,
+  PRODUCTION: COULEURS_TRAVAIL.PRODUCTION,
+  FORMATION: COULEURS_TRAVAIL.FORMATION,
+  AUTRES: COULEURS_TRAVAIL.AUTRES,
+  NI: COULEURS_TRAVAIL.NI,
+  NON_EXPLIQUE: COULEURS_TRAVAIL.NON_EXPLIQUE,
 };
 
 const SEGMENTS = [

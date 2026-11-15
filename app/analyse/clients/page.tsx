@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS, COULEURS_PE, COULEURS_PI, couleurMetier } from "@/lib/couleurs";
 
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
@@ -79,19 +80,12 @@ const euros = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} €`;
 const pc = (v: number) => `${Math.round(v * 100)} %`;
 const sansAccents = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 
-const COULEURS_ACTIVITES: [RegExp, string][] = [
-  [/^meca|mecanique/, "#c00000"],
-  [/^elec|electri|pneu/, "#34506b"],
-  [/^calcul/, "#6b58a8"],
-  [/^scan/, "#e08a1e"],
-  [/^negoce/, "#8d6e63"],
-];
-const couleurAct = (nom: string) => COULEURS_ACTIVITES.find(([m]) => m.test(sansAccents(nom).replace(/ /g, "")))?.[1] ?? "#5b6168";
+const couleurAct = (nom: string) => couleurMetier(nom, "#5b6168"); // lib/couleurs.ts
 /* METHODES_VENTE : PE, PI, BE (forfait), Négoce, Scan. Sur un forfait, le négoce et le scan se reconnaissent
    à l'activité des heures et aux montants négoce / scan de la commande ; une affaire imputée « Négoce » ou « Scan »
    compte en entier dans sa méthode. */
 const METHODES = ["PE", "PI", "BE", "Négoce", "Scan"] as const;
-const COULEURS_METHODES: Record<string, string> = { PE: "#1f4e99", PI: "#2e7d6b", BE: "#c00000", Négoce: "#8d6e63", Scan: "#e08a1e" };
+const COULEURS_METHODES: Record<string, string> = { PE: COULEURS_PE.fond, PI: COULEURS_PI.fond, BE: "#c00000", Négoce: COULEURS_METIERS.negoce, Scan: COULEURS_METIERS.scan };
 
 function methodeDe(imp: string | null | undefined): "PE" | "PI" | "BE" | "Négoce" | "Scan" {
   const i = sansAccents(imp ?? "");

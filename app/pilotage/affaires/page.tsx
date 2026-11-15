@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_PE, COULEURS_PI } from "@/lib/couleurs";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as MouseReact, type PointerEvent as PointerReact, type ReactNode } from "react";
 import Link from "next/link";
@@ -1404,7 +1405,7 @@ function PlanningAffairesContenu() {
     const manquants = joursSansCapacite(colonnes[bornes.i], colonnes[bornes.f], cap);
     const nb = bornes.f - bornes.i + 1;
     const prevision = Boolean(b.affectation.previsionnel);
-    const fond = prevision ? "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)" : libre ? "#7b8189" : pe ? "#6f8fb3" : pi ? "#6b58a8" : affaire?.type === "DBE" ? "#f2bfd0" : C.rouge;
+    const fond = prevision ? "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)" : libre ? "#7b8189" : pe ? COULEURS_PE.fond : pi ? COULEURS_PI.fond : affaire?.type === "DBE" ? "#f2bfd0" : C.rouge;
     const encre = affaire?.type === "DBE" && !pe && !pi ? "#4a0f28" : "#ffffff";
     const net = (j: string) => cap?.get(j)?.net ?? 0;
     const part = Math.round(ratioDuBloc(b.jours, net) * 100);
@@ -1453,7 +1454,7 @@ function PlanningAffairesContenu() {
               ? "2px dashed #1f2328"
               : choisi
                 ? "3px solid #1f2328"
-                : `1.5px ${prevision ? "dashed" : "solid"} ${libre ? "#4b5057" : pe ? "#34506b" : pi ? "#4a3a85" : affaire?.type === "DBE" ? "#d98aa6" : C.rouge}`,
+                : `1.5px ${prevision ? "dashed" : "solid"} ${libre ? "#4b5057" : pe ? COULEURS_PE.bord : pi ? COULEURS_PI.bord : affaire?.type === "DBE" ? "#d98aa6" : C.rouge}`,
             boxShadow: choisi ? "0 0 0 3px #ffd54a" : suivi ? "0 0 0 3px #1f6feb" : "none",
             opacity: estompe ? 0.22 : 1,
             boxSizing: "border-box",
@@ -1519,7 +1520,7 @@ function PlanningAffairesContenu() {
         <button
           type="button"
           onClick={() => setFicheAffaire(affaire)}
-          style={{ gridColumn: `2 / ${colonnes.length + 2}`, gridRow: 1, alignSelf: "center", justifySelf: "start", margin: "0 8px", minHeight: 34, padding: "0 14px", border: "1.5px dashed #6f8fb3", background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: "#34506b", cursor: "pointer", fontFamily: "inherit" }}
+          style={{ gridColumn: `2 / ${colonnes.length + 2}`, gridRow: 1, alignSelf: "center", justifySelf: "start", margin: "0 8px", minHeight: 34, padding: "0 14px", border: `1.5px dashed ${COULEURS_PE.consomme}`, background: "#ffffff", borderRadius: 8, fontWeight: 700, fontSize: 13, color: COULEURS_PE.bord, cursor: "pointer", fontFamily: "inherit" }}
         >
           Définir le début et la fin de la prestation
         </button>
@@ -1546,9 +1547,9 @@ function PlanningAffairesContenu() {
       ? Math.min(100, (env.consomme / env.commande) * 100)
       : rp && rp.chiffre > 0 ? Math.min(100, (rp.pointe / rp.chiffre) * 100) : 0;
     const couvert = !env && (rp ? rp.chiffre > 0 && rp.chiffre - rp.pointe - rp.planifie <= tolerance(rp.chiffre) : chiffre > 0 && chiffre - affecte <= tolerance(chiffre));
-    const couleurBord = prestation ? (pi ? "#6b58a8" : "#34506b") : affaire.type === "DBE" ? "#d98aa6" : C.rouge;
-    const fondBarre = prestation ? (pi ? "#f1eef9" : "#eaf1fa") : affaire.type === "DBE" ? "#fdf1f5" : "#fbeeee";
-    const fondRempli = couvert ? "#bfe3c6" : prestation ? (pi ? "#cfc6ea" : "#bcd0e8") : affaire.type === "DBE" ? "#f2bfd0" : "#f0b9b9";
+    const couleurBord = prestation ? (pi ? COULEURS_PI.bord : COULEURS_PE.bord) : affaire.type === "DBE" ? "#d98aa6" : C.rouge;
+    const fondBarre = prestation ? (pi ? COULEURS_PI.pale : COULEURS_PE.pale) : affaire.type === "DBE" ? "#fdf1f5" : "#fbeeee";
+    const fondRempli = couvert ? "#bfe3c6" : prestation ? (pi ? COULEURS_PI.rempli : COULEURS_PE.rempli) : affaire.type === "DBE" ? "#f2bfd0" : "#f0b9b9";
 
     const libelle = env
       ? env.commande > 0
@@ -1625,7 +1626,7 @@ function PlanningAffairesContenu() {
           )}
           {/* la partie déjà consommée (pointée dans les feuilles d'heures), plus foncée */}
           {partConsommee > 0 && (
-            <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${partConsommee}%`, background: prestation ? (pi ? "#a99bd6" : "#8fb0d6") : affaire.type === "DBE" ? "#d98aa6" : "#d46a6a", pointerEvents: "none" }} />
+            <span aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${partConsommee}%`, background: prestation ? (pi ? COULEURS_PI.consomme : COULEURS_PE.consomme) : affaire.type === "DBE" ? "#d98aa6" : "#d46a6a", pointerEvents: "none" }} />
           )}
           {prestation && <span aria-hidden="true" style={poignee("debut", piste.coupeGauche)} onPointerDown={(e) => demarrerDragAffaire(e, affaire, "debut")} />}
           <span style={{ position: "relative", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2674,8 +2675,8 @@ function PlanningAffairesContenu() {
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#8e9aa8,#8e9aa8 5px,#c3cad3 5px,#c3cad3 10px)", border: "1px dashed #4b5057" }} />prévisionnel (non confirmé)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 30, height: 12, background: "linear-gradient(to right,#f0b9b9 60%,#fbeeee 60%)", border: "2px solid #c00000", boxSizing: "border-box" }} />affaire : partie foncée = déjà pointé, claire = planifié à venir ; verte quand il reste au plus 6 h à planifier (« Tout est planifié »)</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "repeating-linear-gradient(45deg,#cfd4da,#cfd4da 4px,#eceef1 4px,#eceef1 8px)", border: "1px solid #6b6f75" }} />congé ou jour férié dans un bloc</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6f8fb3", border: "1px solid #34506b" }} />PE : chez le client</span>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: "#6b58a8", border: "1px solid #4a3a85" }} />PI</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: COULEURS_PE.fond, border: `1px solid ${COULEURS_PE.bord}` }} />PE : chez le client</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: COULEURS_PI.fond, border: `1px solid ${COULEURS_PI.bord}` }} />PI</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><i style={{ display: "inline-block", width: 20, height: 12, background: ROUGE_HACHURE, border: "1px solid #b3261e" }} />la ressource dépasse la prestation</span>
             </div>
           </section>

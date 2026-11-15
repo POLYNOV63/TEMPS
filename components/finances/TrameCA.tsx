@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS, COULEURS_PE, COULEURS_TRAVAIL } from "@/lib/couleurs";
 
 /* ===============================================================
    FINANCES - TRAME CA (TRAME_CA_V9 ; inclut TRAME_CA_V2, TRAME_CA_V3, TRAME_CA_V4, TRAME_CA_V5, TRAME_CA_V6, TRAME_CA_V7, TRAME_CA_V8)
@@ -332,7 +333,7 @@ export default function TrameCA(props: {
         cle: "CUMULS",
         titre: "Cumuls depuis novembre",
         aide: "où en est-on par rapport à l’objectif annuel",
-        couleur: "#34506b",
+        couleur: "#3b4046", // neutre (le bleu ardoise est l'Elec)
         repliable: false,
         lignes: [
           { kind: "valeurs", libelle: "TOTAL CUMULÉ (réalisé)", valeurs: jusquA(cumul), total: cumulADate, style: "sous-total" },
@@ -384,7 +385,7 @@ export default function TrameCA(props: {
         cle: "BE",
         titre: "BE, IG, PI",
         aide: "par activité",
-        couleur: "#6b58a8",
+        couleur: COULEURS_TRAVAIL.CBE, // BE en rouge, comme l'Analyse par client (le violet est le Calcul)
         repliable: true,
         serie: somme(r.be_meca, r.be_calcul, r.be_elec, r.ig_meca, r.ig_calcul, r.ig_elec, r.pi_meca, r.pi_calcul, r.pi_elec, r.autre),
         serieAttendu: somme(ra.be_meca, ra.be_calcul, ra.be_elec, ra.ig_meca, ra.ig_calcul, ra.ig_elec, ra.pi_meca, ra.pi_calcul, ra.pi_elec, ra.autre),
@@ -407,7 +408,7 @@ export default function TrameCA(props: {
       {
         cle: "SCAN",
         titre: "Scan",
-        couleur: "#e08a1e",
+        couleur: COULEURS_METIERS.scan,
         repliable: true,
         serie: r.scan,
         serieAttendu: ra.scan,
@@ -417,7 +418,7 @@ export default function TrameCA(props: {
         cle: "NEGOCE",
         titre: "Négoce",
         aide: "CA BE sans achats, et en dessous avec achats déduits",
-        couleur: "#8d6e63",
+        couleur: COULEURS_METIERS.negoce,
         repliable: true,
         serie: caBE,
         serie2: caBEnet,
@@ -432,7 +433,7 @@ export default function TrameCA(props: {
       {
         cle: "PE",
         titre: "PE — prestation externe",
-        couleur: "#2e7d6b",
+        couleur: COULEURS_PE.fond,
         repliable: true,
         serie: caPE,
         serieAttendu: caPEa,

@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_TRAVAIL } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
@@ -247,7 +248,7 @@ function FeuilleDeRouteContenu() {
         {chargement && !erreur && <Message genre="info">Chargement…</Message>}
 
         {!chargement && !erreur && devis.length > 0 && (
-          <section style={{ ...page.carte, padding: 14, marginBottom: 14, borderLeft: "5px solid #dc4f84" }}>
+          <section style={{ ...page.carte, padding: 14, marginBottom: 14, borderLeft: `5px solid ${COULEURS_TRAVAIL.DBE_TRAIT}` }}>
             <strong style={{ fontSize: 17 }}>📝 Devis à rédiger</strong>
             <span style={{ marginLeft: 8, fontSize: 13, color: C.gris }}>jusqu’à l’envoi du devis</span>
             <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0, display: "grid", gap: 6 }}>

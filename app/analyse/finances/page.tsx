@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS } from "@/lib/couleurs";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as XLSX from "xlsx";
@@ -1331,7 +1332,7 @@ function FinancesContenu() {
     const achatsAtt = attMois.reduce((s, x) => s + x.achats, 0);
     const objectif = vue.prevu[i];
     const echelle = Math.max(objectif, cur.fait + Math.max(0, attenduM), n1.fait, n2.fait, 1);
-    const ROUGES: Record<string, string> = { "Méca": "#8e0000", Calcul: "#b3261e", "Elec / Pneu": "#d9534f", Scan: "#e57f7a", "Négoce": "#efa29d", Autre: "#f4c3bf", "Non ventilé": "#f6d6d3" };
+    const ROUGES: Record<string, string> = { "Méca": COULEURS_METIERS.meca, Calcul: COULEURS_METIERS.calcul, "Elec / Pneu": COULEURS_METIERS.elec, Scan: COULEURS_METIERS.scan, "Négoce": COULEURS_METIERS.negoce, Autre: COULEURS_METIERS.autre, "Non ventilé": COULEURS_METIERS.autre }; // COULEURS_COMMUNES (lib/couleurs.ts)
     const nomLong = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
     const nomCourt = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
     const aller = (sens: 1 | -1) => {
@@ -1351,7 +1352,7 @@ function FinancesContenu() {
     const barreDe = (s: ReturnType<typeof stats>, hauteur: number, principale: boolean) => (
       <div style={{ position: "relative", height: hauteur, background: "#f3f4f6", borderRadius: 6, overflow: "hidden", display: "flex", opacity: principale ? 1 : 0.55 }}>
         {s.parAct.map(({ g, v }) => (
-          <div key={g} title={`${g} : ${euros(v)}`} style={{ width: `${(v / echelle) * 100}%`, background: ROUGES[g] ?? "#d9534f", borderRight: "1px solid #ffffff" }} />
+          <div key={g} title={`${g} : ${euros(v)}`} style={{ width: `${(v / echelle) * 100}%`, background: ROUGES[g] ?? COULEURS_METIERS.autre, borderRight: "1px solid #ffffff" }} />
         ))}
         {principale && attenduM > 0.5 && (
           <div title={`Encore attendu : ${euros(attenduM)}`} style={{ width: `${(attenduM / echelle) * 100}%`, background: "repeating-linear-gradient(45deg,#f4c2c2,#f4c2c2 5px,#fbe6e6 5px,#fbe6e6 10px)" }} />
@@ -1416,7 +1417,7 @@ function FinancesContenu() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, marginTop: 4, color: "#3b4046" }}>
           {cur.parAct.map(({ g, v }) => (
             <span key={g}>
-              {pastille(ROUGES[g] ?? "#d9534f")}
+              {pastille(ROUGES[g] ?? COULEURS_METIERS.autre)}
               {g} <strong>{keuros(v)}</strong>
             </span>
           ))}
@@ -1573,7 +1574,7 @@ function FinancesContenu() {
             {/* FINANCES_GRAPHIQUE : CA mois par mois, par activité, avec N-1 et N-2 ; un clic choisit le mois */}
             {(() => {
               // FINANCES_GRAPHIQUE_V3 : couleurs des activités des Indicateurs commerciaux
-              const ROUGES: Record<string, string> = { "Méca": "#c00000", Calcul: "#6b58a8", "Elec / Pneu": "#34506b", Scan: "#e08a1e", "Négoce": "#8d6e63", Autre: "#9aa0a6", "Non ventilé": "#9aa0a6" };
+              const ROUGES: Record<string, string> = { "Méca": COULEURS_METIERS.meca, Calcul: COULEURS_METIERS.calcul, "Elec / Pneu": COULEURS_METIERS.elec, Scan: COULEURS_METIERS.scan, "Négoce": COULEURS_METIERS.negoce, Autre: COULEURS_METIERS.autre, "Non ventilé": COULEURS_METIERS.autre };
               const anMoins = (m: string, n: number) => `${Number(m.slice(0, 4)) - n}${m.slice(4)}`;
               const sommeMois = (m: string) => mouvements.filter((x) => x.date.startsWith(m)).reduce((s, x) => s + x.montant, 0);
               const parAct = mois.map((m) => {

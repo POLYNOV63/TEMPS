@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_TRAVAIL } from "@/lib/couleurs";
 export const dynamic = "force-dynamic";
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -240,13 +241,13 @@ const CODES_EXCLUS_ANALYSE = ["CP", "EC"];
 
 const COULEURS = {
   rouge: "#c00000",
-  roseDevis: "#f2bfd0",
+  roseDevis: COULEURS_TRAVAIL.DBE,
   gris: "#414040",
-  bleuCN: "#85ef57",
-  violet: "#8b6bb1",
-  turquoiseAbsence: "#1f9d8b",
-  vertProduction: "#f700cd",
-  ambre: "#d59b2a",
+  bleuCN: COULEURS_TRAVAIL.CN, // CN : vert foncé (était vert fluo)
+  violet: COULEURS_TRAVAIL.FORMATION, // formation : bleu (le violet est réservé au Calcul)
+  turquoiseAbsence: COULEURS_TRAVAIL.ABSENCE,
+  vertProduction: COULEURS_TRAVAIL.PRODUCTION, // divers de production : gris (était rose fluo)
+  ambre: COULEURS_TRAVAIL.AUTRES,
   grisClair: "#cfcfcf",
   blanc: "#ffffff",
   fond: "#f5f6f8",
@@ -4263,7 +4264,7 @@ function ChargeTimelineBrut({
           />
 
           <Legend
-            color="#f2bfd0"
+            color={COULEURS_TRAVAIL.DBE}
             label="DBE / devis"
           />
 
@@ -4452,7 +4453,7 @@ function ChargeTimelineBrut({
                             pct={
                               dbePct
                             }
-                            color="#f2bfd0"
+                            color={COULEURS_TRAVAIL.DBE}
                           />
 
                           <BarSegment
@@ -4650,7 +4651,7 @@ function CourbeCBEDevis({
   const pourcent = (valeur: number) =>
     `${valeur.toFixed(1).replace(".", ",")} %`;
 
-  const couleurDevis = "#dc4f84";
+  const couleurDevis = COULEURS_TRAVAIL.DBE_TRAIT;
 
   const entete = (
     <div style={styles.cardHeader}>

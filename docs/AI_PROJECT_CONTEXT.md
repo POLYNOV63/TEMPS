@@ -51,8 +51,12 @@ Mis à jour le 15/11/2026 (sessions 11 et 12 : fiche affaire, page Ressources, a
 - **Exercice** : du 1er novembre au 31 octobre ; il porte l'année de novembre.
 - **Capacité** : 35 h par semaine pour tout le monde dans les analyses ; quelqu'un à 37,5 h produit plus, c'est normal
   (les % peuvent dépasser 100 %).
-- **Couleurs des activités, communes à toutes les pages** : Méca `#c00000`, Elec `#34506b`, Calcul `#6b58a8`,
-  Scan `#e08a1e`, Négoce `#8d6e63` ; absences `#1f9d8b`. Niveaux N1 `#c8e6c9`, N2 `#66bb6a`, N3 `#2e7d32`.
+- **Couleurs communes à toutes les pages : un seul fichier, `lib/couleurs.ts`** (jamais de couleur de métier écrite en dur
+  dans une page). Métiers (`COULEURS_METIERS`, `couleurMetier(nom)`) : Méca `#c00000`, Elec `#34506b`, Calcul `#6b58a8`
+  (violet **réservé au Calcul**), Scan `#e08a1e`, Négoce `#8d6e63`, autre `#9aa0a6`. PE bleu marine `#1f4e99`, PI bleu
+  ciel `#1d7aa3` (`COULEURS_PE` / `COULEURS_PI`, avec leurs nuances pour le planning). Type de travail (`COULEURS_TRAVAIL`) :
+  CBE rouge, DBE rose `#f2bfd0` (traits `#c2477a`), CN vert foncé, divers de production gris, formation bleu `#3f8fc6`,
+  autres ambre, NI gris foncé ; absences `#1f9d8b`. Niveaux N1 `#c8e6c9`, N2 `#66bb6a`, N3 `#2e7d32`.
 - **PE / PI** : unité (jour ou heure) et base horaire viennent du relevé (`prestation_lignes`) ; une PE / PI se reconnaît à
   l'imputation de sa commande de base (toute la famille suit).
 

@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_TRAVAIL } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
@@ -199,7 +200,7 @@ export default function FeuilleDeRouteDashboard({ collaborateurId }: { collabora
       {!chargement && !erreur && moiId && (
         <>
           {devis.length > 0 && (
-            <div style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: "5px solid #dc4f84" }}>
+            <div style={{ ...page.carte, padding: "10px 14px", marginBottom: 10, borderLeft: `5px solid ${COULEURS_TRAVAIL.DBE_TRAIT}` }}>
               <strong>📝 Devis à rédiger</strong>
               <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
                 {devis.map((d) => {

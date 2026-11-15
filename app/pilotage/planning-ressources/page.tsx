@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_PE, COULEURS_PI } from "@/lib/couleurs";
 
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
@@ -61,8 +62,8 @@ const HAUTEUR_VOIE = 24;
 
 function couleurs(affaire: AffaireP | undefined): { fond: string; encre: string } {
   if (!affaire) return { fond: "#7b8189", encre: "#ffffff" }; // hors affaire
-  if (affaire.imputation === "PE") return { fond: "#6f8fb3", encre: "#ffffff" };
-  if (affaire.imputation === "PI") return { fond: "#6b58a8", encre: "#ffffff" };
+  if (affaire.imputation === "PE") return { fond: COULEURS_PE.fond, encre: "#ffffff" };
+  if (affaire.imputation === "PI") return { fond: COULEURS_PI.fond, encre: "#ffffff" };
   if (affaire.type === "DBE") return { fond: "#f2bfd0", encre: "#4a0f28" };
   return { fond: C.rouge, encre: "#ffffff" };
 }
@@ -275,7 +276,7 @@ function PlanningRessourcesContenu() {
     // REALISE_PASSE : barres du réalisé (couleurs foncées), jours consécutifs regroupés
     if (passe === "REALISE" && realise.length > 0) {
       const sombre = (fond: string) =>
-        fond === C.rouge ? "#6d0000" : fond === "#6f8fb3" ? "#2f4b6b" : fond === "#6b58a8" ? "#3a2d6b" : fond === "#f2bfd0" ? "#a24f73" : "#3b4046";
+        fond === C.rouge ? "#6d0000" : fond === COULEURS_PE.fond ? COULEURS_PE.sombre : fond === COULEURS_PI.fond ? COULEURS_PI.sombre : fond === "#f2bfd0" ? "#a24f73" : "#3b4046";
       const parBase = new Map<string, AffaireP>();
       for (const a of affaires) {
         const k = `${a.type}|${(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, "")}`;

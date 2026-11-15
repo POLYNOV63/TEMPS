@@ -1,4 +1,5 @@
 "use client";
+import { COULEURS_METIERS } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import * as XLSX from "xlsx";
@@ -32,12 +33,12 @@ import { categorieDevis } from "@/lib/suiviDevis";
 type Discipline = "meca" | "calcul" | "elec" | "scan" | "negoce" | "autre";
 const DISCIPLINES: Discipline[] = ["meca", "calcul", "elec", "scan", "negoce", "autre"];
 const ACTIVITES: Record<Discipline, { nom: string; couleur: string }> = {
-  meca: { nom: "Méca", couleur: "#c00000" },
-  calcul: { nom: "Calcul", couleur: "#6b58a8" },
-  elec: { nom: "Elec / Pneu", couleur: "#34506b" },
-  scan: { nom: "Scan", couleur: "#e08a1e" },
-  negoce: { nom: "Négoce", couleur: "#8d6e63" },
-  autre: { nom: "Non ventilé", couleur: "#9aa0a6" }, // NEGOCE_INTERGROUPE
+  meca: { nom: "Méca", couleur: COULEURS_METIERS.meca },
+  calcul: { nom: "Calcul", couleur: COULEURS_METIERS.calcul },
+  elec: { nom: "Elec / Pneu", couleur: COULEURS_METIERS.elec },
+  scan: { nom: "Scan", couleur: COULEURS_METIERS.scan },
+  negoce: { nom: "Négoce", couleur: COULEURS_METIERS.negoce },
+  autre: { nom: "Non ventilé", couleur: COULEURS_METIERS.autre }, // NEGOCE_INTERGROUPE
 };
 type Detail = Record<Discipline, number>;
 const sansAccents = (t: string | null) => (t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
