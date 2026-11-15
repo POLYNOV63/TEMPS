@@ -6,12 +6,30 @@ import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, Message, page } from "@/components/pilotage/ui";
-import { chargerAffaires, chargerAnnuaire, chargerCapacitesAbsences, chargerPlanifie, type AffaireP } from "@/lib/pilotageDonnees";
+import ChargeEquipe from "@/components/ressources/ChargeEquipe";
+import DisponibilitesActivites from "@/components/ressources/DisponibilitesActivites";
+import CompositionEquipe from "@/components/ressources/CompositionEquipe";
+import { peut } from "@/lib/droits";
+import { chargerAffaires, chargerAnnuaire, chargerCapacitesAbsences, chargerMoi, chargerPlanifie, type AffaireP } from "@/lib/pilotageDonnees";
 import { ajouterJours, construireCapacites, estFerie, estWeekend, lundiDe, numeroSemaine, type Affectation, type Capacites, type JourRow } from "@/lib/pilotagePlanning";
 import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
 
 /* ===============================================================
-   PILOTAGE BE - PLANNING PAR RESSOURCE (essai, consultation)
+   PILOTAGE BE - RESSOURCES (RESSOURCES_FUSION)
+   Regroupe l'ancien Planning par ressource (en haut, pour tous), la
+   Charge par ressource, les Disponibilités par activité et la
+   Cartographie de l'équipe (en dessous).
+   - Tout le monde (droit voirPlanning) : le planning, comme avant,
+     sans aucun pourcentage.
+   - Droit « chargeRessources » (ADMIN, Direction) : sous chaque personne,
+     sa charge en % semaine par semaine (un clic ouvre la semaine dans
+     « Charge de l'équipe », avec Déplacer…), puis la charge de l'équipe,
+     la répartition CBE / DBE / Divers et les disponibilités par activité.
+   - Droit « indicateurs » : la composition de l'équipe (ex-Cartographie).
+   Les anciennes adresses (/pilotage/ressources, /analyse/charge-activites,
+   /analyse/effectifs) renvoient ici, sur le bon bloc.
+
+   Ancien en-tête (planning par ressource) :
 
    Une ligne par personne ; dans chaque ligne, les barres des affaires sur
    lesquelles elle est affectée (numéro et heures), empilées si elles se
@@ -52,6 +70,22 @@ function couleurs(affaire: AffaireP | undefined): { fond: string; encre: string 
 
 function PlanningRessourcesContenu() {
   const aujourdhui = aujourdhuiISO();
+  /* RESSOURCES_FUSION : ce que le rôle voit en plus du planning */
+  const [voirCharge, setVoirCharge] = useState(false);
+  const [voirEquipe, setVoirEquipe] = useState(false);
+  const [roleConnu, setRoleConnu] = useState(false);
+  useEffect(() => {
+    chargerMoi()
+      .then((m) => {
+        setVoirCharge(peut(m?.role ?? null, "chargeRessources"));
+        setVoirEquipe(peut(m?.role ?? null, "indicateurs"));
+      })
+      .catch(() => undefined)
+      .finally(() => setRoleConnu(true));
+  }, []);
+  // semaine analysée par les blocs du bas (cette semaine au départ ; un clic sur un % du planning la change)
+  const [semaineAnalyse, setSemaineAnalyse] = useState(() => lundiDe(aujourdhuiISO()));
+  const [rechargePlanning, setRechargePlanning] = useState(0);
   const [lundi, setLundi] = useState(() => ajouterJours(lundiDe(aujourdhui), -7));
   const [nbSemaines, setNbSemaines] = useState(8);
   const [chargement, setChargement] = useState(true);
@@ -144,7 +178,22 @@ function PlanningRessourcesContenu() {
     return () => {
       actif = false;
     };
-  }, [debut, fin]);
+  }, [debut, fin, rechargePlanning]);
+
+  /* ANCRES : arrivée depuis une ancienne adresse (#charge, #disponibilites, #composition) */
+  const [ancreFaite, setAncreFaite] = useState(false);
+  useEffect(() => {
+    if (ancreFaite || chargement || !roleConnu) return;
+    setAncreFaite(true);
+    const id = window.location.hash.replace("#", "");
+    if (!id) return;
+    window.setTimeout(() => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el instanceof HTMLDetailsElement) el.open = true;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 400);
+  }, [ancreFaite, chargement, roleConnu]);
 
   const affairesParId = useMemo(() => new Map(affaires.map((a) => [a.id, a])), [affaires]);
 
@@ -407,10 +456,36 @@ function PlanningRessourcesContenu() {
       <OngletsPilotage actif="ressources-planning" />
       <div style={{ ...page.contenu, maxWidth: "none" }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <h1 style={{ ...page.titre, margin: 0 }}>Planning par ressource</h1>
-          <span style={{ fontSize: 13, color: C.gris }}>essai · consultation : on affecte toujours depuis le planning des affaires</span>
+          <h1 style={{ ...page.titre, margin: 0 }}>Ressources</h1>
+          <span style={{ fontSize: 13, color: C.gris }}>consultation : on affecte toujours depuis le planning des affaires</span>
+          {voirCharge && (
+            <span style={{ display: "inline-flex", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
+              {(
+                [
+                  ["charge", "Charge de l’équipe"],
+                  ["disponibilites", "Disponibilités"],
+                  ...(voirEquipe ? [["composition", "Composition"]] : []),
+                ] as [string, string][]
+              ).map(([id, lib]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById(id);
+                    if (el instanceof HTMLDetailsElement) el.open = true;
+                    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  style={{ border: `1.5px solid ${C.rouge}`, background: "#ffffff", color: C.rougeFonce, borderRadius: 999, padding: "3px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}
+                >
+                  ↓ {lib}
+                </button>
+              ))}
+            </span>
+          )}
         </div>
 
+        {/* le bandeau figé ne reste en haut que pendant le planning (pas sur les blocs du bas) */}
+        <div>
         <div style={{ ...page.carte, padding: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12, position: "sticky", top: "var(--hauteur-nav, 50px)", zIndex: 20 }}>
           <button type="button" style={btn} onClick={() => setLundi(ajouterJours(lundi, -7))} aria-label="Semaine précédente">◀</button>
           <strong>
@@ -499,8 +574,8 @@ function PlanningRessourcesContenu() {
                     </>
                   );
                 })()}
-                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)` /* HAUTEUR_PAR_PERSONNE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.actif === false || (l.collab.date_sortie && l.collab.date_sortie < aujourdhui) ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
-                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: gabarit, gridTemplateRows: `repeat(${Math.max(2, l.voies)}, ${HAUTEUR_VOIE}px)${voirCharge ? " 20px" : ""}` /* HAUTEUR_PAR_PERSONNE ; CHARGE_PAR_SEMAINE */, rowGap: 2, padding: "6px 0", borderBottom: `1px solid ${C.ligne}`, opacity: l.collab.actif === false || (l.collab.date_sortie && l.collab.date_sortie < aujourdhui) ? 0.5 : 1 /* RESSOURCE_SORTIE */ }}>
+                  <div style={{ position: "sticky", left: 0, zIndex: 4, background: "#ffffff", gridColumn: 1, gridRow: `1 / span ${Math.max(2, l.voies) + (voirCharge ? 1 : 0)}`, display: "flex", flexDirection: "column", justifyContent: "center", paddingLeft: 4, boxShadow: "4px 0 6px -5px rgba(0,0,0,.25)" }}>
                     <strong style={{ fontSize: 15, color: l.collab.date_sortie && l.collab.date_sortie < aujourdhui ? C.gris : undefined }}>{nomCollab(l.collab)}</strong>
                     <span style={{ fontSize: 11, color: C.gris, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${l.collab.prenom ?? ""} ${l.collab.nom ?? ""}`.trim()}</span>
                     {l.collab.date_sortie && (
@@ -625,8 +700,54 @@ function PlanningRessourcesContenu() {
                   })}
 
 
+                  {/* CHARGE_PAR_SEMAINE : la charge de la personne en %, semaine par semaine (droit chargeRessources) */}
+                  {voirCharge &&
+                    colonnes.map((j, i) => {
+                      if (i % 5 !== 0) return null;
+                      const fin5 = Math.min(colonnes.length, i + 5);
+                      let aff = 0;
+                      let net = 0;
+                      for (let k = i; k < fin5; k++) {
+                        aff += l.charge[k];
+                        net += l.nets[k];
+                      }
+                      if (net <= 0 && aff <= 0.01) return null;
+                      const pc = net > 0 ? Math.round((aff / net) * 100) : 999;
+                      const sur = pc > 100;
+                      const lundiSem = lundiDe(j);
+                      const choisie = voirCharge && lundiSem === semaineAnalyse;
+                      return (
+                        <button
+                          key={`pc-${j}`}
+                          type="button"
+                          title={`S${numeroSemaine(j)} : ${formatHeures(aff)} ${j < lundiActuel && passe === "REALISE" ? "pointées" : "affectées"} pour ${formatHeures(net)} disponibles\nCliquer : le détail de la semaine${sur ? " (et Déplacer…)" : ""}`}
+                          onClick={() => {
+                            setSemaineAnalyse(lundiSem);
+                            window.setTimeout(() => document.getElementById("charge")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                          }}
+                          style={{
+                            gridColumn: `${col(i)} / ${col(fin5 - 1) + 1}`,
+                            gridRow: Math.max(2, l.voies) + 1,
+                            margin: "1px 2px 0",
+                            border: choisie ? `1.5px solid ${C.rougeFonce}` : "none",
+                            borderRadius: 4,
+                            padding: 0,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            fontSize: 11,
+                            fontWeight: 800,
+                            zIndex: 2,
+                            background: sur ? "repeating-linear-gradient(45deg,#fde1e1,#fde1e1 5px,#f5b5b0 5px,#f5b5b0 10px)" : pc >= 80 ? "#cfe0f3" : pc > 0 ? "#e6eef8" : "#f4f5f7",
+                            color: sur ? "#8f1010" : pc > 0 ? "#10263d" : "#9aa0a6",
+                          }}
+                        >
+                          {pc === 0 ? "0 %" : sur ? `▲ ${pc === 999 ? "!" : pc} %` : `${pc} %`}
+                        </button>
+                      );
+                    })}
+
                   {cadre && <div aria-hidden="true" style={{ ...cadre, margin: "-6px 0" }} />}
-                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
+                  <div style={{ gridColumn: colonnes.length + 2, gridRow: `1 / span ${Math.max(2, l.voies) + (voirCharge ? 1 : 0)}`, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-end", paddingRight: 6, fontSize: 12 }}>
                     <span style={{ color: C.gris }} title={`${formatHeures(l.totalAffecte)} affectées pour ${formatHeures(l.totalNet)} disponibles sur la période`}>
                       {formatHeures(l.totalAffecte)} / {formatHeures(l.totalNet)}
                     </span>
@@ -636,7 +757,27 @@ function PlanningRessourcesContenu() {
               );
             })}
             {lignes.length === 0 && <p style={{ color: C.gris, padding: 8 }}>Personne à afficher.</p>}
+            {voirCharge && (
+              <p style={{ margin: "8px 4px 0", fontSize: 12, color: C.gris }}>
+                Sous chaque personne : sa charge de la semaine (heures affectées ÷ heures disponibles, congés et fériés déduits ; semaines passées : le pointé
+                si « réalisé »). Cliquez sur un % pour voir la semaine dans « Charge de l’équipe », plus bas, et y déplacer des heures.
+              </p>
+            )}
           </section>
+        )}
+        </div>
+
+        {/* RESSOURCES_FUSION : charge, disponibilités et composition, sous le planning */}
+        {voirCharge && (
+          <div style={{ marginTop: 28, paddingTop: 8, borderTop: `3px solid ${C.rouge}`, maxWidth: 1500 }}>
+            <ChargeEquipe lundi={semaineAnalyse} setLundi={setSemaineAnalyse} onModifie={() => setRechargePlanning((n) => n + 1)} />
+            <DisponibilitesActivites lundi={semaineAnalyse} />
+          </div>
+        )}
+        {voirEquipe && (
+          <div style={{ marginTop: voirCharge ? 8 : 28, paddingTop: 8, borderTop: voirCharge ? undefined : `3px solid ${C.rouge}`, maxWidth: 1500 }}>
+            <CompositionEquipe />
+          </div>
         )}
       </div>
     </main>

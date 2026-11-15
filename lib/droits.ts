@@ -100,16 +100,13 @@ export const PAGES: PageApp[] = [
   { href: "/pilotage/devis", libelle: "Suivi des devis", groupe: "Pilotage", droit: "suiviDevis" },
   { href: "/pilotage/affaires", libelle: "Planning des affaires", groupe: "Pilotage", droit: "voirPlanning" },
   { href: "/pilotage/prestations", libelle: "Relevé PE / PI", groupe: "Pilotage", droit: "relevePrestations" },
-  { href: "/pilotage/planning-ressources", libelle: "Planning par ressource", groupe: "Pilotage", droit: "voirPlanning" },
+  { href: "/pilotage/planning-ressources", libelle: "Ressources (planning, charge, équipe)", groupe: "Pilotage", droit: "voirPlanning" },
   { href: "/affaires/bilan", libelle: "Fiche affaire (bilan d’affaire)", groupe: "Pilotage", droit: "voirPlanning" },
 
   { href: "/analyse/facturation", libelle: "Facturation du mois", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/finances", libelle: "Finances", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/rentabilite", libelle: "Rentabilité", groupe: "Analyse", droit: "indicateurs" },
-  { href: "/analyse/effectifs", libelle: "Cartographie de l’équipe", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/fiabilite-chiffrage", libelle: "Fiabilité du chiffrage", groupe: "Analyse", droit: "indicateurs" },
-  { href: "/pilotage/ressources", libelle: "Charge par ressource", groupe: "Analyse", droit: "chargeRessources" },
-  { href: "/analyse/charge-activites", libelle: "Disponibilités par activité", groupe: "Analyse", droit: "chargeRessources" },
   { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "administration" },
   { href: "/analyse/clients", libelle: "Analyse par client", groupe: "Analyse", droit: "administration" },
 

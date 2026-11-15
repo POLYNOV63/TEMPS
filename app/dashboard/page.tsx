@@ -870,7 +870,7 @@ function TuilesDomaines({
   // DROITS_ROLES : chaque tuile ouvre la première page de son domaine ouverte à ce rôle ; sans page ouverte, pas de tuile
   useDroitsRoles();
   const premiere = (liste: string[]) => liste.find((u) => pageAutorisee(role, u)) ?? null;
-  const uPilotage = premiere(["/pilotage", "/pilotage/devis", "/pilotage/affaires", "/pilotage/prestations", "/pilotage/planning-ressources", "/pilotage/ressources", "/analyse/charge-activites"]);
+  const uPilotage = premiere(["/pilotage", "/pilotage/devis", "/pilotage/affaires", "/pilotage/prestations", "/pilotage/planning-ressources"]);
   const uRH = premiere(["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"]);
   const uFinance = premiere(["/analyse/finances", "/analyse/facturation", "/analyse/rentabilite"]);
   const uExports = premiere(["/admin/export-excel", "/admin/bilan-rh"]);
@@ -891,7 +891,7 @@ function TuilesDomaines({
           ["Suivi des affaires", "/pilotage"],
           ["Suivi des devis", "/pilotage/devis"],
           ["Planning des affaires", "/pilotage/affaires"],
-          ["Planning par ressource", "/pilotage/planning-ressources"],
+          ["Ressources", "/pilotage/planning-ressources"],
           ["Relevé PE / PI", "/pilotage/prestations"],
           ["Fiche affaire", "/affaires/bilan"],
         ])}
@@ -955,30 +955,30 @@ function TuilesDomaines({
         ])}
       />
     );
-  /* TUILE_ANALYSES : ADMIN et DIRECTION ; la Direction n'y a que la charge par ressource et les disponibilités */
+  /* TUILE_ANALYSES : ADMIN et DIRECTION ; la Direction n'y a que la charge de l'équipe et les disponibilités (blocs de la page Ressources) */
   if (role === "ADMIN" || role === "DIRECTION") {
     const pagesAnalyse =
       role === "ADMIN"
         ? [
-            { libelle: "Charge par ressource", url: "/pilotage/ressources" },
-            { libelle: "Disponibilités", url: "/analyse/charge-activites" },
+            { libelle: "Charge de l’équipe", url: "/pilotage/planning-ressources#charge" },
+            { libelle: "Disponibilités", url: "/pilotage/planning-ressources#disponibilites" },
+            { libelle: "Composition de l’équipe", url: "/pilotage/planning-ressources#composition" },
             { libelle: "Capacité", url: "/admin/bilans" },
-            { libelle: "Cartographie", url: "/analyse/effectifs" },
             { libelle: "Fiabilité du chiffrage", url: "/analyse/fiabilite-chiffrage" },
             { libelle: "Par client", url: "/analyse/clients" },
           ]
         : [
-            { libelle: "Charge par ressource", url: "/pilotage/ressources" },
-            { libelle: "Disponibilités", url: "/analyse/charge-activites" },
+            { libelle: "Charge de l’équipe", url: "/pilotage/planning-ressources#charge" },
+            { libelle: "Disponibilités", url: "/pilotage/planning-ressources#disponibilites" },
           ];
-    const ouvertes = pagesAnalyse.filter((x) => role === "ADMIN" || pageAutorisee(role, x.url));
+    const ouvertes = pagesAnalyse.filter((x) => role === "ADMIN" || pageAutorisee(role, x.url.split("#")[0]));
     if (ouvertes.length > 0)
       tuiles.push(
         <TuileDomaine
           key="analyses"
           icone="📊"
           titre="Analyses"
-          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage, clients" : "Charge par ressource et disponibilités par activité"}
+          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage, clients" : "Charge de l’équipe et disponibilités par activité"}
           url={ouvertes[0].url}
           aller={aller}
           raccourcis={ouvertes}
@@ -1008,7 +1008,7 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
         <h2 style={stylesV2.groupeTitre}>🧭 Disponibilités par activité</h2>
         <span style={stylesV2.groupeDescription}>capacité, occupé et disponible sur les 12 semaines à venir</span>
-        <button type="button" onClick={() => aller("/analyse/charge-activites")} style={{ ...stylesV2.lienTexte, marginLeft: "auto" }}>
+        <button type="button" onClick={() => aller("/pilotage/planning-ressources#disponibilites")} style={{ ...stylesV2.lienTexte, marginLeft: "auto" }}>
           Le détail →
         </button>
       </div>
@@ -1022,7 +1022,7 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
             semaines={semaines}
             lundiActuel={lundi}
             hauteur={120}
-            onBarre={() => aller("/analyse/charge-activites")}
+            onBarre={() => aller("/pilotage/planning-ressources#disponibilites")}
             aide="Cliquez sur une barre pour le détail par personne."
           />
         )

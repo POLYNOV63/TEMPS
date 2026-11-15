@@ -27,18 +27,15 @@ const ONGLETS = [
   { cle: "devis", groupe: 1, court: "Suivi des devis", libelle: "Suivi des devis", href: "/pilotage/devis", droit: "suiviDevis" }, // SUIVI_DEVIS
   { cle: "affaires", groupe: 1, court: "Planning affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
   { cle: "prestations", groupe: 1, court: "Relevé PE / PI", libelle: "Relevé PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
-  { cle: "ressources-planning", groupe: 1, court: "Planning ressources", libelle: "Planning par ressource", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
+  { cle: "ressources-planning", groupe: 1, court: "Ressources", libelle: "Ressources : planning, charge, équipe", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
   // la facturation et les chiffres
   { cle: "facturation", groupe: 2, court: "Facturation", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
   { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
   { cle: "bilan", groupe: 2, court: "Fiche affaire", libelle: "Fiche affaire", href: "/affaires/bilan", droit: "voirPlanning" },
   // la charge
-  { cle: "ressources", groupe: 3, court: "Charge ressources", libelle: "Charge par ressource", href: "/pilotage/ressources", droit: "chargeRessources" },
-  { cle: "charge-activites", groupe: 3, court: "Disponibilités", libelle: "Disponibilités par activité", href: "/analyse/charge-activites", droit: "chargeRessources" },
   { cle: "feuilles-route", groupe: 3, court: "Feuilles de route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
   // en dernier : l'équipe et la capacité
-  { cle: "effectifs", groupe: 4, court: "Équipe", libelle: "Cartographie de l’équipe", href: "/analyse/effectifs", droit: "indicateurs" },
   { cle: "capacite", groupe: 4, court: "Capacité", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
   { cle: "clients", groupe: 4, court: "Clients", libelle: "Analyse par client", href: "/analyse/clients", droit: "administration" },
   { cle: "fiabilite", groupe: 4, court: "Fiabilité chiffrage", libelle: "Fiabilité du chiffrage", href: "/analyse/fiabilite-chiffrage", droit: "indicateurs" },
