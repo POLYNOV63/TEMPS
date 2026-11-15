@@ -658,7 +658,16 @@ export default function TrameCA(props: {
           {toutOuvert ? "▴ Tout replier" : "▾ Tout déplier"}
         </button>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-          <input type="checkbox" checked={afficherPct} onChange={(e) => setAfficherPct(e.target.checked)} /> Afficher les %
+          <input
+            type="checkbox"
+            checked={afficherPct}
+            onChange={(e) => {
+              setAfficherPct(e.target.checked);
+              // POURCENT_ACTIVITES : les % de CA se lisent d'abord par activité : on déplie ce bloc
+              if (e.target.checked) setOuverts((s) => new Set([...s, "ACTIVITES"]));
+            }}
+          />{" "}
+          Afficher les % du CA
         </label>
         <button type="button" style={page.btnSecondaire} onClick={() => void exporter()}>
           Exporter la trame en Excel
@@ -730,9 +739,11 @@ export default function TrameCA(props: {
                       const somme1 = serie.reduce((t, x) => t + x, 0);
                       const somme2 = b.serie2?.reduce((t, x) => t + x, 0);
                       const sommeAtt = b.serieAttendu?.reduce((t, x) => t + x, 0) ?? 0;
-                      const cellule = (v: number, v2: number | undefined, att: number | undefined, extra?: CSSProperties) => (
+                      const avecPct = afficherPct && b.cle !== "ACTIVITES";
+                      const cellule = (v: number, v2: number | undefined, att: number | undefined, extra?: CSSProperties, base?: number) => (
                         <>
                           <span>{Math.abs(v) >= 0.5 ? nombre(v) : "—"}</span>
+                          {avecPct && base !== undefined && base > 0.5 && Math.abs(v) >= 0.5 && <div style={{ ...tdPct, border: "none", padding: 0 }}>{pourcent(v / base)}</div>}
                           {v2 !== undefined && Math.abs(v2) >= 0.5 && <div style={{ fontSize: 11, fontWeight: 600, color: "#5b6168", ...extra }}>{nombre(v2)}</div>}
                           {att !== undefined && Math.abs(att) >= 0.5 && <div style={styleAttendu}>+ {nombre(att)}</div>}
                         </>
@@ -771,11 +782,11 @@ export default function TrameCA(props: {
                               key={i}
                               style={{ ...td, background: mois[i] === moisCourant ? `linear-gradient(${teinte}, ${teinte}), #fff6f6` : teinte, fontWeight: 800, color: "#3b4046", borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}
                             >
-                              {cellule(v, b.serie2?.[i], b.serieAttendu?.[i])}
+                              {cellule(v, b.serie2?.[i], b.serieAttendu?.[i], undefined, trame.total[i])}
                             </td>
                           ))}
                           <td style={{ ...td, background: teinte, fontWeight: 800, color: b.couleur, borderLeft: `2px solid ${C.ligne}`, borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}>
-                            {cellule(somme1, somme2, sommeAtt)}
+                            {cellule(somme1, somme2, sommeAtt, undefined, trame.totalAnnuel)}
                           </td>
                           <td style={{ ...td, background: teinte, color: C.gris, borderBottom: ouvert ? `1px solid ${C.ligne}` : "none" }}>
                             {(() => {
