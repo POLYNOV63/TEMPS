@@ -277,9 +277,9 @@ bilan d'affaire et de suivi de dérive.
 ## À venir / en suspens
 
 - Agent serveur : synchronisation du Suivi d'affaire toutes les 5 min et sauvegarde nocturne.
-- Regroupements de pages encore possibles : onglets
-  Collaborateurs et Par activité de l'Analyse de capacité ; doublon onglet « Feuilles de route » / feuille de route du
-  tableau de bord. Rentabilité et Analyse par client restent séparées (questions différentes).
+- Regroupements de pages encore possibles : doublon onglet « Feuilles de route » / feuille de route du tableau de bord.
+  Restent séparées (décision de PLG) : Rentabilité et Analyse par client (questions différentes) ; les onglets de
+  l'Analyse de capacité (refonte en page unique proposée en maquette le 15/11/2026, refusée).
 - Heures de négoce : la synchro du Suivi est peut-être à adapter (« Heures autre » devenue « Heures négoce ») ; colonnes
   « Unité de vente » / « Base horaire » du Suivi ; éventuelle colonne « Date d'intention ».
 - Téléphone sur toutes les pages ; règles non écrites (paiement des heures sup, liste officielle des codes d'absence).
