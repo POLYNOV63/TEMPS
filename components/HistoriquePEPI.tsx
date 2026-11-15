@@ -58,6 +58,173 @@ const libMois = (m: string) => `${NOMS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 
 const BASE_CHIFFRAGE = 7;
 const moisSuivant = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
 
+/* COMMANDES_PEPI : la famille d'une PE / PI, commande par commande, mois par mois (facturé, à facturer, prévu),
+   en heures et en euros. Partagé par l'en-tête de la Fiche affaire, le Financier et l'historique. */
+export type CommandePEPI = Commande;
+export type MoisPEPI = Mois;
+export type EtatPEPI = Etat;
+export async function chargerCommandesPEPI(base: string): Promise<{ commandes: Commande[]; message: string }> {
+  const b = base.match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
+  if (!b) return { commandes: [], message: "" };
+    const { data: afs } = await supabase
+      .from("pilotage_affaires")
+      .select("id,numero,statut,prestation_quantite,prestation_unite,releve_unite,releve_base_horaire")
+      .eq("type", "CBE");
+    type AffP = { id: string; numero: string; statut: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
+    const famille = ((afs ?? []) as AffP[])
+      .filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === b)
+      .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+    if (famille.length === 0) return { commandes: [], message: "" };
+
+    const { data: pl, error: ep } = await supabase.from("prestation_lignes").select("id,affaire_id,unite,taux,base_horaire,actif").in("affaire_id", famille.map((a) => a.id));
+    if (ep) return { commandes: [], message: "Le relevé PE / PI de cette affaire ne vous est pas ouvert." };
+    const lignes = ((pl ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).map(
+      (l): LigneP => ({ id: l.id, affaire_id: l.affaire_id, unite: l.unite, taux: l.taux === null ? null : n(l.taux), base_horaire: n(l.base_horaire) || null, actif: l.actif !== false })
+    );
+    if (lignes.length === 0) return { commandes: [], message: "Aucune ligne au relevé PE / PI pour cette affaire." };
+    const ids = lignes.map((l) => l.id);
+
+    const [pm, sa, sl] = await Promise.all([
+      chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; heures_fige: number | string | null; montant_fige: number | string | null }>((x, y) =>
+        supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige,montant_fige").in("ligne_id", ids).order("mois").range(x, y)
+      ),
+      chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((x, y) =>
+        supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).order("jour").range(x, y)
+      ),
+      supabase.from("suivi_lignes").select("id,numero_affaire,genre,statut,heures_total,date_reception_commande").eq("base_affaire", b).in("genre", ["BASE", "AVENANT"]),
+    ]);
+    const etats = new Map(pm.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));
+    const suivi = (sl.data ?? []) as { id: string; numero_affaire: string | null; genre: string; statut: string | null; heures_total: number | string | null; date_reception_commande: string | null }[];
+    // le montant commandé sert à la quantité commandée (montant ÷ taux) ; il n'est AFFICHÉ qu'avec le droit aux montants
+    const montants = new Map<string, number>();
+    if (suivi.length > 0) {
+      const { data: mts } = await supabase.from("suivi_lignes_montants").select("ligne_id,montant").in("ligne_id", suivi.map((s) => s.id));
+      for (const m of (mts ?? []) as { ligne_id: string; montant: number | string | null }[]) montants.set(m.ligne_id, n(m.montant));
+    }
+
+    const moisCourant = new Date().toISOString().slice(0, 7);
+    const auj = new Date().toISOString().slice(0, 10);
+    const saisi = new Map<string, number>();
+    const saisiPrevu = new Map<string, number>(); // PREVU_JOUR_PAR_JOUR : la part après aujourd'hui
+    const dernier = new Map<string, string>();
+    const affaireDe = new Map(lignes.map((l) => [l.id, l.affaire_id]));
+    for (const s of sa) {
+      const h = n(s.heures);
+      if (h <= 0) continue;
+      const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
+      saisi.set(k, (saisi.get(k) ?? 0) + h);
+      if (s.jour > auj) saisiPrevu.set(k, (saisiPrevu.get(k) ?? 0) + h);
+      const a = affaireDe.get(s.ligne_id) ?? "";
+      if (s.jour >= auj && s.jour > (dernier.get(a) ?? "")) dernier.set(a, s.jour);
+    }
+    const cles = new Set<string>([...saisi.keys(), ...etats.keys()]);
+
+    /* BASE_HORAIRE : la journée d'une commande (7 h, 7,5 h…) :
+       1. celle réglée au relevé pour la commande (« Journée de ») ;
+       2. sinon la plus fréquente des lignes actives qui ont des heures, puis des lignes actives ;
+       3. sinon 7 h. */
+    const plusFrequente = (vals: number[]) => {
+      const c = new Map<number, number>();
+      for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
+      return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
+    };
+    const baseDe = (affaireId: string): number => {
+      const a = famille.find((x) => x.id === affaireId);
+      if (!a) return 7;
+      if (n(a.releve_base_horaire) > 0) return n(a.releve_base_horaire);
+      const ls = lignes.filter((l) => l.affaire_id === affaireId && l.base_horaire);
+      const avecHeures = ls.filter((l) => l.actif && [...saisi.keys()].some((k) => k.startsWith(`${l.id}|`)));
+      const propre = plusFrequente(avecHeures.map((l) => l.base_horaire as number)) ?? plusFrequente(ls.filter((l) => l.actif).map((l) => l.base_horaire as number)) ?? plusFrequente(ls.map((l) => l.base_horaire as number));
+      if (propre) return propre;
+      // un avenant sans réglage ni ligne propre prend la journée du reste de la famille
+      const reglee = famille.map((x) => n(x.releve_base_horaire)).find((v) => v > 0);
+      return reglee ?? plusFrequente(lignes.filter((l) => l.actif && l.base_horaire).map((l) => l.base_horaire as number)) ?? 7;
+    };
+
+    const res: Commande[] = famille.map((a) => {
+      const ls = lignes.filter((l) => l.affaire_id === a.id);
+      const mois = new Map<string, Mois>();
+      for (const cle of cles) {
+        const [lid, m] = cle.split("|");
+        const l = ls.find((x) => x.id === lid);
+        if (!l) continue;
+        const e = etats.get(cle);
+        const tauxH = l.taux === null ? 0 : l.unite === "JOUR" ? l.taux / (l.base_horaire ?? baseDe(a.id)) : l.taux;
+        const valide = Boolean(e?.valide);
+        /* un mois clôturé est facturé en entier ; sinon, comme la fiche d'information : jusqu'à aujourd'hui
+           « à facturer », après aujourd'hui « prévu » (le mois en cours est donc coupé en deux) */
+        const parts: [Etat, number, number][] = [];
+        if (valide) {
+          const h = e?.heures_fige !== null && e?.heures_fige !== undefined ? n(e.heures_fige) : saisi.get(cle) ?? 0;
+          parts.push(["FACTURE", h, e?.montant_fige !== null && e?.montant_fige !== undefined ? n(e.montant_fige) : h * tauxH]);
+        } else {
+          const tout = saisi.get(cle) ?? 0;
+          const apres = m > moisCourant ? tout : saisiPrevu.get(cle) ?? 0;
+          if (tout - apres > 0.001) parts.push(["A_FACTURER", tout - apres, (tout - apres) * tauxH]);
+          if (apres > 0.001) parts.push(["PREVU", apres, apres * tauxH]);
+        }
+        for (const [etat, h, mt] of parts) {
+          if (h <= 0.001 && mt <= 0.5) continue;
+          const k = `${m}|${etat}`;
+          const c = mois.get(k) ?? { heures: 0, montant: 0, etat };
+          c.heures += h;
+          c.montant += mt;
+          mois.set(k, c);
+        }
+      }
+      const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
+      const montant = s ? montants.get(s.id) ?? 0 : 0;
+      const l0 = ls.find((l) => l.taux !== null && l.actif) ?? ls.find((l) => l.taux !== null);
+      const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / (l0.base_horaire ?? baseDe(a.id)) : l0.taux) : null;
+      /* UNITE_FACTUREE : jours ou heures, d'après la façon dont on FACTURE : le réglage de vente du relevé pour
+         la commande, sinon l'unité des lignes actives, sinon l'unité vendue au Suivi d'affaire */
+      const actives = ls.filter((l) => l.actif);
+      const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
+      const uniteLignes = actives.length > 0 ? (actives.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : null;
+      const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
+      const unite: "JOUR" | "HEURE" = uniteReleve ?? uniteLignes ?? uniteVendue ?? (ls[0]?.unite ?? "HEURE");
+      const baseH = baseDe(a.id);
+      /* HEURES_COMMANDEES : facturée au jour, la commande vaut JOURS vendus × journée de la commande (7,5 h…).
+         Les jours vendus : la quantité vendue si elle est en jours ; sinon montant ÷ taux au jour ; sinon les
+         heures du Suivi d'affaire ÷ 7 h (le classeur compte ses jours à 7 h : 371 h = 53 j). Facturée à
+         l'heure : la quantité vendue, sinon les heures du Suivi d'affaire, sinon montant ÷ taux. */
+      const qte = n(a.prestation_quantite);
+      const hSuivi = n(s?.heures_total);
+      const lJour = actives.find((l) => l.unite === "JOUR" && l.taux) ?? ls.find((l) => l.unite === "JOUR" && l.taux);
+      let joursVendus: number | null = null;
+      if (unite === "JOUR") {
+        if (qte > 0 && a.prestation_unite === "JOURS") joursVendus = qte;
+        else if (montant > 0 && lJour?.taux) joursVendus = montant / lJour.taux;
+        else if (qte > 0 && a.prestation_unite === "HEURES") joursVendus = qte / BASE_CHIFFRAGE;
+        else if (hSuivi > 0) joursVendus = hSuivi / BASE_CHIFFRAGE;
+      }
+      const heuresCmd =
+        unite === "JOUR" && joursVendus !== null
+          ? joursVendus * baseH
+          : qte > 0 && a.prestation_unite !== "JOURS"
+            ? qte
+            : hSuivi > 0
+              ? hSuivi
+              : montant > 0 && tauxH0
+                ? montant / tauxH0
+                : null;
+      const premierMois = [...mois.keys()].sort()[0]?.slice(0, 7) ?? null;
+      return {
+        id: a.id,
+        numero: a.numero,
+        statut: s?.statut ?? a.statut,
+        recue: s?.date_reception_commande ? String(s.date_reception_commande).slice(0, 7) : premierMois,
+        montant,
+        heuresCmd,
+        unite,
+        base: baseH,
+        mois,
+        finPrevue: dernier.get(a.id) ?? null,
+      };
+    });
+    return { commandes: res.filter((c) => c.mois.size > 0 || (c.heuresCmd ?? 0) > 0), message: "" };
+}
+
 export default function HistoriquePEPI({ base, pointeParMois, montants: avecMontants = true }: { base: string; pointeParMois: Map<string, number>; montants?: boolean }) {
   const [commandes, setCommandes] = useState<Commande[] | null>(null);
   const [voitMontants, setVoitMontants] = useState(false);
@@ -67,8 +234,6 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
     let actif = true;
     setCommandes(null);
     setMessage("");
-    const b = base.match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? "";
-    if (!b) return;
     (async () => {
       const {
         data: { user },
@@ -77,164 +242,10 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
       const [{ data: moi }] = await Promise.all([supabase.from("collaborateurs").select("role").eq("auth_user_id", user.id).maybeSingle(), chargerDroitsRoles()]);
       if (actif) setVoitMontants(avecMontants && peut(moi?.role ?? null, "montantsAffaires")); // HEURES_REGROUPEES : jamais d'euros dans l'onglet des heures
 
-      const { data: afs } = await supabase
-        .from("pilotage_affaires")
-        .select("id,numero,statut,prestation_quantite,prestation_unite,releve_unite,releve_base_horaire")
-        .eq("type", "CBE");
-      type AffP = { id: string; numero: string; statut: string; prestation_quantite: number | string | null; prestation_unite: string | null; releve_unite: string | null; releve_base_horaire: number | string | null };
-      const famille = ((afs ?? []) as AffP[])
-        .filter((a) => (a.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "") === b)
-        .sort((x, y) => x.numero.localeCompare(y.numero, "fr", { numeric: true }));
-      if (famille.length === 0) return;
-
-      const { data: pl, error: ep } = await supabase.from("prestation_lignes").select("id,affaire_id,unite,taux,base_horaire,actif").in("affaire_id", famille.map((a) => a.id));
-      if (ep) return actif && setMessage("Le relevé PE / PI de cette affaire ne vous est pas ouvert.");
-      const lignes = ((pl ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).map(
-        (l): LigneP => ({ id: l.id, affaire_id: l.affaire_id, unite: l.unite, taux: l.taux === null ? null : n(l.taux), base_horaire: n(l.base_horaire) || null, actif: l.actif !== false })
-      );
-      if (lignes.length === 0) return actif && setMessage("Aucune ligne au relevé PE / PI pour cette affaire.");
-      const ids = lignes.map((l) => l.id);
-
-      const [pm, sa, sl] = await Promise.all([
-        chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; heures_fige: number | string | null; montant_fige: number | string | null }>((x, y) =>
-          supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige,montant_fige").in("ligne_id", ids).order("mois").range(x, y)
-        ),
-        chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((x, y) =>
-          supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).order("jour").range(x, y)
-        ),
-        supabase.from("suivi_lignes").select("id,numero_affaire,genre,statut,heures_total,date_reception_commande").eq("base_affaire", b).in("genre", ["BASE", "AVENANT"]),
-      ]);
-      const etats = new Map(pm.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));
-      const suivi = (sl.data ?? []) as { id: string; numero_affaire: string | null; genre: string; statut: string | null; heures_total: number | string | null; date_reception_commande: string | null }[];
-      // le montant commandé sert à la quantité commandée (montant ÷ taux) ; il n'est AFFICHÉ qu'avec le droit aux montants
-      const montants = new Map<string, number>();
-      if (suivi.length > 0) {
-        const { data: mts } = await supabase.from("suivi_lignes_montants").select("ligne_id,montant").in("ligne_id", suivi.map((s) => s.id));
-        for (const m of (mts ?? []) as { ligne_id: string; montant: number | string | null }[]) montants.set(m.ligne_id, n(m.montant));
-      }
-
-      const moisCourant = new Date().toISOString().slice(0, 7);
-      const auj = new Date().toISOString().slice(0, 10);
-      const saisi = new Map<string, number>();
-      const saisiPrevu = new Map<string, number>(); // PREVU_JOUR_PAR_JOUR : la part après aujourd'hui
-      const dernier = new Map<string, string>();
-      const affaireDe = new Map(lignes.map((l) => [l.id, l.affaire_id]));
-      for (const s of sa) {
-        const h = n(s.heures);
-        if (h <= 0) continue;
-        const k = `${s.ligne_id}|${s.jour.slice(0, 7)}`;
-        saisi.set(k, (saisi.get(k) ?? 0) + h);
-        if (s.jour > auj) saisiPrevu.set(k, (saisiPrevu.get(k) ?? 0) + h);
-        const a = affaireDe.get(s.ligne_id) ?? "";
-        if (s.jour >= auj && s.jour > (dernier.get(a) ?? "")) dernier.set(a, s.jour);
-      }
-      const cles = new Set<string>([...saisi.keys(), ...etats.keys()]);
-
-      /* BASE_HORAIRE : la journée d'une commande (7 h, 7,5 h…) :
-         1. celle réglée au relevé pour la commande (« Journée de ») ;
-         2. sinon la plus fréquente des lignes actives qui ont des heures, puis des lignes actives ;
-         3. sinon 7 h. */
-      const plusFrequente = (vals: number[]) => {
-        const c = new Map<number, number>();
-        for (const v of vals) c.set(v, (c.get(v) ?? 0) + 1);
-        return [...c.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null;
-      };
-      const baseDe = (affaireId: string): number => {
-        const a = famille.find((x) => x.id === affaireId);
-        if (!a) return 7;
-        if (n(a.releve_base_horaire) > 0) return n(a.releve_base_horaire);
-        const ls = lignes.filter((l) => l.affaire_id === affaireId && l.base_horaire);
-        const avecHeures = ls.filter((l) => l.actif && [...saisi.keys()].some((k) => k.startsWith(`${l.id}|`)));
-        const propre = plusFrequente(avecHeures.map((l) => l.base_horaire as number)) ?? plusFrequente(ls.filter((l) => l.actif).map((l) => l.base_horaire as number)) ?? plusFrequente(ls.map((l) => l.base_horaire as number));
-        if (propre) return propre;
-        // un avenant sans réglage ni ligne propre prend la journée du reste de la famille
-        const reglee = famille.map((x) => n(x.releve_base_horaire)).find((v) => v > 0);
-        return reglee ?? plusFrequente(lignes.filter((l) => l.actif && l.base_horaire).map((l) => l.base_horaire as number)) ?? 7;
-      };
-
-      const res: Commande[] = famille.map((a) => {
-        const ls = lignes.filter((l) => l.affaire_id === a.id);
-        const mois = new Map<string, Mois>();
-        for (const cle of cles) {
-          const [lid, m] = cle.split("|");
-          const l = ls.find((x) => x.id === lid);
-          if (!l) continue;
-          const e = etats.get(cle);
-          const tauxH = l.taux === null ? 0 : l.unite === "JOUR" ? l.taux / (l.base_horaire ?? baseDe(a.id)) : l.taux;
-          const valide = Boolean(e?.valide);
-          /* un mois clôturé est facturé en entier ; sinon, comme la fiche d'information : jusqu'à aujourd'hui
-             « à facturer », après aujourd'hui « prévu » (le mois en cours est donc coupé en deux) */
-          const parts: [Etat, number, number][] = [];
-          if (valide) {
-            const h = e?.heures_fige !== null && e?.heures_fige !== undefined ? n(e.heures_fige) : saisi.get(cle) ?? 0;
-            parts.push(["FACTURE", h, e?.montant_fige !== null && e?.montant_fige !== undefined ? n(e.montant_fige) : h * tauxH]);
-          } else {
-            const tout = saisi.get(cle) ?? 0;
-            const apres = m > moisCourant ? tout : saisiPrevu.get(cle) ?? 0;
-            if (tout - apres > 0.001) parts.push(["A_FACTURER", tout - apres, (tout - apres) * tauxH]);
-            if (apres > 0.001) parts.push(["PREVU", apres, apres * tauxH]);
-          }
-          for (const [etat, h, mt] of parts) {
-            if (h <= 0.001 && mt <= 0.5) continue;
-            const k = `${m}|${etat}`;
-            const c = mois.get(k) ?? { heures: 0, montant: 0, etat };
-            c.heures += h;
-            c.montant += mt;
-            mois.set(k, c);
-          }
-        }
-        const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
-        const montant = s ? montants.get(s.id) ?? 0 : 0;
-        const l0 = ls.find((l) => l.taux !== null && l.actif) ?? ls.find((l) => l.taux !== null);
-        const tauxH0 = l0 && l0.taux !== null ? (l0.unite === "JOUR" ? l0.taux / (l0.base_horaire ?? baseDe(a.id)) : l0.taux) : null;
-        /* UNITE_FACTUREE : jours ou heures, d'après la façon dont on FACTURE : le réglage de vente du relevé pour
-           la commande, sinon l'unité des lignes actives, sinon l'unité vendue au Suivi d'affaire */
-        const actives = ls.filter((l) => l.actif);
-        const uniteReleve = a.releve_unite === "JOUR" || a.releve_unite === "HEURE" ? a.releve_unite : null;
-        const uniteLignes = actives.length > 0 ? (actives.some((l) => l.unite === "JOUR") ? "JOUR" : "HEURE") : null;
-        const uniteVendue = a.prestation_unite === "JOURS" ? "JOUR" : a.prestation_unite === "HEURES" ? "HEURE" : null;
-        const unite: "JOUR" | "HEURE" = uniteReleve ?? uniteLignes ?? uniteVendue ?? (ls[0]?.unite ?? "HEURE");
-        const baseH = baseDe(a.id);
-        /* HEURES_COMMANDEES : facturée au jour, la commande vaut JOURS vendus × journée de la commande (7,5 h…).
-           Les jours vendus : la quantité vendue si elle est en jours ; sinon montant ÷ taux au jour ; sinon les
-           heures du Suivi d'affaire ÷ 7 h (le classeur compte ses jours à 7 h : 371 h = 53 j). Facturée à
-           l'heure : la quantité vendue, sinon les heures du Suivi d'affaire, sinon montant ÷ taux. */
-        const qte = n(a.prestation_quantite);
-        const hSuivi = n(s?.heures_total);
-        const lJour = actives.find((l) => l.unite === "JOUR" && l.taux) ?? ls.find((l) => l.unite === "JOUR" && l.taux);
-        let joursVendus: number | null = null;
-        if (unite === "JOUR") {
-          if (qte > 0 && a.prestation_unite === "JOURS") joursVendus = qte;
-          else if (montant > 0 && lJour?.taux) joursVendus = montant / lJour.taux;
-          else if (qte > 0 && a.prestation_unite === "HEURES") joursVendus = qte / BASE_CHIFFRAGE;
-          else if (hSuivi > 0) joursVendus = hSuivi / BASE_CHIFFRAGE;
-        }
-        const heuresCmd =
-          unite === "JOUR" && joursVendus !== null
-            ? joursVendus * baseH
-            : qte > 0 && a.prestation_unite !== "JOURS"
-              ? qte
-              : hSuivi > 0
-                ? hSuivi
-                : montant > 0 && tauxH0
-                  ? montant / tauxH0
-                  : null;
-        const premierMois = [...mois.keys()].sort()[0]?.slice(0, 7) ?? null;
-        return {
-          id: a.id,
-          numero: a.numero,
-          statut: s?.statut ?? a.statut,
-          recue: s?.date_reception_commande ? String(s.date_reception_commande).slice(0, 7) : premierMois,
-          montant,
-          heuresCmd,
-          unite,
-          base: baseH,
-          mois,
-          finPrevue: dernier.get(a.id) ?? null,
-        };
-      });
+      const r = await chargerCommandesPEPI(base);
       if (!actif) return;
-      setCommandes(res.filter((c) => c.mois.size > 0 || (c.heuresCmd ?? 0) > 0));
+      if (r.message) setMessage(r.message);
+      setCommandes(r.commandes);
     })().catch(() => undefined);
     return () => {
       actif = false;

@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase";
 import { peut } from "@/lib/droits";
 import { chargerDroitsRoles } from "@/lib/droitsRoles";
+import type { CommandePEPI } from "@/components/HistoriquePEPI";
 
 /* ===============================================================
    FICHE AFFAIRE - LES MONTANTS (MONTANTS_FICHE_AFFAIRE)
@@ -104,6 +105,8 @@ export default function BilanFinancierAffaire({
   pointeTotal = 0,
   planifie = 0,
   chiffre = 0,
+  pointeParMois,
+  pepi = null,
 }: {
   type: string;
   numero: string;
@@ -122,6 +125,8 @@ export default function BilanFinancierAffaire({
   /* MARGES_DETAIL : heures planifiées à venir, mois par mois ; PE / PI ou forfait */
   planifieParMois?: Map<string, number>;
   prestation?: boolean;
+  /* PE / PI : le relevé commande par commande, mois par mois (FACTURE_PEPI) */
+  pepi?: CommandePEPI[] | null;
 }) {
   const [autorise, setAutorise] = useState(false);
   const [message, setMessage] = useState("");
@@ -360,8 +365,157 @@ export default function BilanFinancierAffaire({
         D’après le Suivi d’affaire BE (commande et avenants) et, pour les PE / PI, les mois clôturés du relevé. Visible selon la fonction « Montants des affaires » (Droits d’accès).
       </p>
 
-      {/* RYTHME_FACTURATION : chaque commande, échéance ou lot : reçue le, facturée le, en combien de jours */}
+      {/* MARGE_PROJETEE : où va la marge, en € et en %, avec le pointé et le planifié */}
       {(() => {
+        const M = somme((c) => c.montant);
+        const A = achete;
+        const toutesLivrees = commandes.length > 0 && commandes.every((c) => /livr/i.test(c.statut));
+        const F = somme((c) => c.facture);
+        const recette = toutesLivrees ? F : M;
+        const engage = coutHoraire !== null ? pointeTotal * coutHoraire : null;
+        const aEngager = coutHoraire !== null ? (toutesLivrees ? 0 : planifie * coutHoraire) : null;
+        const marge = engage !== null && aEngager !== null && recette > 0.5 ? recette - engage - aEngager - A : null;
+        const reste = !toutesLivrees && chiffre > pointeTotal + planifie + 0.5 ? chiffre - pointeTotal - planifie : 0;
+        const siChiffre = marge !== null && reste > 0 && coutHoraire !== null ? marge - reste * coutHoraire : null;
+        const couleur = marge === null ? gris : marge < 0 ? "#b3261e" : "#1b5e20";
+        const tuile = (titre: string, valeur: string, sousT: string) => (
+          <div style={{ flex: "1 1 160px", border: "1px solid #e3e6ea", borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: gris }}>{titre}</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{valeur}</div>
+            <div style={{ fontSize: 12, color: gris }}>{sousT}</div>
+          </div>
+        );
+        return (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <div style={{ flex: "1 1 260px", border: `1px solid ${couleur}55`, borderLeft: `6px solid ${couleur}`, borderRadius: 10, padding: "10px 14px", background: marge !== null && marge < 0 ? "#fdecec" : "#f3faf3" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: couleur }}>{toutesLivrees ? "Marge réelle (affaire livrée)" : "Marge projetée à la fin"}</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: couleur }}>
+                  {marge === null ? "—" : `${marge >= 0 ? "+ " : "− "}${euros(Math.abs(marge))}`}
+                  {marge !== null && recette > 0.5 && <span style={{ fontSize: 20 }}> · {Math.round((marge / recette) * 100)} %</span>}
+                </div>
+                <div style={{ fontSize: 12.5, color: gris }}>
+                  {coutHoraire === null ? "coût de structure non saisi dans les Finances" : toutesLivrees ? "facturé − pointé × coût − achats" : "commandé − (pointé + planifié) × coût − achats"}
+                </div>
+              </div>
+              {tuile(toutesLivrees ? "Facturé" : "Commandé", euros(recette), `${commandes.length} commande${commandes.length > 1 ? "s" : ""}`)}
+              {tuile("Déjà engagé", engage !== null ? euros(engage) : "—", `${heures(pointeTotal)} pointées${coutHoraire !== null ? ` × ${euros(coutHoraire)}` : ""}`)}
+              {!toutesLivrees && tuile("Encore à engager", aEngager !== null ? euros(aEngager) : "—", `${heures(planifie)} planifiées`)}
+              {A > 0.5 && tuile("Achats", euros(A), "scan, négoce")}
+            </div>
+            {siChiffre !== null && (
+              <p style={{ fontSize: 13, color: "#8a4b00", margin: "8px 0 0" }}>
+                Si le chiffré pas encore planifié est aussi consommé ({heures(reste)}) : {siChiffre >= 0 ? "+ " : "− "}
+                {euros(Math.abs(siChiffre))}
+                {recette > 0.5 ? ` · ${Math.round((siChiffre / recette) * 100)} %` : ""}.
+              </p>
+            )}
+            <p style={{ fontSize: 12, color: gris, margin: "6px 0 0" }}>
+              Coût de structure {coutHoraire !== null ? `${euros(coutHoraire)} / h${coutAnnee ? ` (exercice ${coutAnnee}-${coutAnnee + 1})` : ""}` : "non saisi"}. La marge projetée baisse dès qu’on pointe ou planifie au-delà du chiffré.
+            </p>
+          </div>
+        );
+      })()}
+
+      {/* FACTURE_PEPI : PE / PI : chaque mois, ce qui est facturé (ou à facturer, ou prévu) sur chaque commande ; face au pointé */}
+      {pepi && pepi.length > 0 && (() => {
+        const enJours = pepi.every((c) => c.unite === "JOUR");
+        const bj = pepi[0].base || 7;
+        const q = (h: number, c?: CommandePEPI) => (enJours ? `${(Math.round((h / (c?.base || bj)) * 10) / 10).toLocaleString("fr-FR")} j` : heures(h));
+        const tousMois = [...new Set(pepi.flatMap((c) => [...c.mois.keys()].map((k) => k.slice(0, 7))))].sort();
+        const cellule = (c: CommandePEPI, m: string) => {
+          const xs = [...c.mois.entries()].filter(([k]) => k.startsWith(m)).map(([, x]) => x);
+          return { h: xs.reduce((t, x) => t + x.heures, 0), e: xs.reduce((t, x) => t + x.montant, 0) };
+        };
+        let cumPt = 0;
+        let cumFait = 0;
+        let cumE = 0;
+        const totalCmdE = pepi.reduce((t, c) => t + c.montant, 0);
+        return (
+          <>
+            <strong style={{ fontSize: 16, color: "#a30000" }}>Facturation, mois par mois</strong>
+            <span style={{ fontSize: 13, color: gris }}> · avenant par avenant, face au pointé</span>
+            <div style={{ overflowX: "auto", marginTop: 6 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Mois</th>
+                    {pepi.map((c) => (
+                      <th key={c.id} style={thN}>
+                        CBE{c.numero}
+                      </th>
+                    ))}
+                    <th style={thN}>Total</th>
+                    <th style={th}>État</th>
+                    <th style={thN}>Pointé</th>
+                    <th style={th} title="Pointé − relevé, en cumul, sans le prévu">Écart pointé / relevé</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tousMois.map((m) => {
+                    const cs = pepi.map((c) => ({ c, ...cellule(c, m) }));
+                    const totE = cs.reduce((t, x) => t + x.e, 0);
+                    const etats = new Set(pepi.flatMap((c) => [...c.mois.entries()].filter(([k]) => k.startsWith(m)).map(([, x]) => x.etat)));
+                    const fait = pepi.reduce((t, c) => t + [...c.mois.entries()].filter(([k, x]) => k.startsWith(m) && x.etat !== "PREVU").reduce((u, [, x]) => u + x.heures, 0), 0);
+                    const pt = pointeParMois?.get(m) ?? 0;
+                    const futur = etats.size === 1 && etats.has("PREVU");
+                    cumPt += pt;
+                    cumFait += fait;
+                    cumE += totE;
+                    const ecart = cumPt - cumFait;
+                    const tol = bj * 0.05;
+                    return (
+                      <tr key={m} style={{ fontStyle: futur ? "italic" : undefined, background: futur ? "#fbfbfc" : undefined }}>
+                        <td style={{ ...td, fontWeight: 700, whiteSpace: "nowrap" }}>{new Date(`${m}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })}</td>
+                        {cs.map(({ c, h, e }) => (
+                          <td key={c.id} style={tdN}>
+                            {h > 0.05 ? (
+                              <>
+                                {q(h, c)}
+                                {e > 0.5 && <span style={{ color: gris }}> · {euros(e)}</span>}
+                              </>
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                        ))}
+                        <td style={{ ...tdN, fontWeight: 800 }}>{totE > 0.5 ? euros(totE) : "—"}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap", fontWeight: 700, color: futur ? gris : etats.has("A_FACTURER") ? "#8a6500" : "#1b5e20" }}>
+                          {futur ? "prévu" : etats.has("A_FACTURER") ? (etats.has("PREVU") ? "à facturer + prévu" : "à facturer") : "facturé"}
+                        </td>
+                        <td style={tdN}>{pt > 0.05 ? q(pt) : futur ? "" : "—"}</td>
+                        <td style={{ ...td, whiteSpace: "nowrap", color: Math.abs(ecart) <= tol ? "#1b5e20" : ecart > 0 ? "#b3261e" : "#7a3e00" }}>
+                          {futur ? "" : Math.abs(ecart) <= tol ? "= à jour" : ecart > 0 ? `+ ${q(ecart)} pointés en plus` : `− ${q(-ecart)} pointés en moins`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td style={{ ...td, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>Commandé</td>
+                    {pepi.map((c) => (
+                      <td key={c.id} style={{ ...tdN, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>
+                        {c.heuresCmd !== null ? q(c.heuresCmd, c) : "—"}
+                        {c.montant > 0.5 && <span style={{ color: gris, fontWeight: 600 }}> · {euros(c.montant)}</span>}
+                      </td>
+                    ))}
+                    <td style={{ ...tdN, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>{euros(totalCmdE)}</td>
+                    <td colSpan={3} style={{ ...td, borderTop: "2px solid #d5d9de", color: gris, fontSize: 13 }}>
+                      relevé, prévu compris : {euros(cumE)}
+                      {Math.abs(totalCmdE - cumE) > 0.5 ? (totalCmdE > cumE ? ` · ${euros(totalCmdE - cumE)} pas encore au relevé` : ` · ${euros(cumE - totalCmdE)} au-delà du commandé`) : " · raccord ✓"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p style={{ fontSize: 12, color: gris, margin: "6px 0 16px" }}>
+              En italique, le prévu au relevé (mois à venir). Mois non clôturés : montants estimés (heures × taux de la ligne). Écart pointé / relevé : + on a pointé plus que ce qui est facturé ou à facturer ; − moins.
+            </p>
+          </>
+        );
+      })()}
+
+      {/* RYTHME_FACTURATION : chaque commande, échéance ou lot : reçue le, facturée le, en combien de jours */}
+      {!(pepi && pepi.length > 0) && (() => {
         const M = somme((c) => c.montant);
         const F = somme((c) => c.facture);
         const jours = (a: string | null | undefined, b: string | null | undefined) =>
@@ -431,46 +585,6 @@ export default function BilanFinancierAffaire({
               </table>
             </div>
           </>
-        );
-      })()}
-
-      {/* RENTABILITE : commandé face au coût du temps passé et prévu */}
-      {(() => {
-        const M = somme((c) => c.montant);
-        const F = somme((c) => c.facture);
-        const A = achete;
-        const toutesLivrees = commandes.length > 0 && commandes.every((c) => /livr/i.test(c.statut));
-        const hFin = toutesLivrees ? pointeTotal : pointeTotal + planifie;
-        const recette = toutesLivrees ? F : M;
-        const cout = coutHoraire !== null ? hFin * coutHoraire : null;
-        const marge = cout !== null && recette > 0.5 ? recette - cout - A : null;
-        const siChiffre = !toutesLivrees && coutHoraire !== null && chiffre > hFin + 0.5 && M > 0.5 ? M - chiffre * coutHoraire - A : null;
-        const tuile = (titre: string, valeur: string, sous: string, couleur = "#1f2328") => (
-          <div style={{ flex: "1 1 190px", border: "1px solid #e3e6ea", borderLeft: `4px solid ${couleur}`, borderRadius: 10, padding: "8px 12px", background: "#fcfcfd" }}>
-            <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: gris }}>{titre}</div>
-            <div style={{ fontSize: 21, fontWeight: 800, color: couleur }}>{valeur}</div>
-            <div style={{ fontSize: 12, color: gris }}>{sous}</div>
-          </div>
-        );
-        return (
-          <div style={{ marginTop: 18 }}>
-            <strong style={{ fontSize: 16, color: "#a30000" }}>Rentabilité</strong>
-            <span style={{ fontSize: 13, color: gris }}>
-              {" "}
-              · coût de structure {coutHoraire !== null ? `${euros(coutHoraire)} / h${coutAnnee ? ` (exercice ${coutAnnee}-${coutAnnee + 1})` : ""}` : "non saisi dans les Finances"}
-            </span>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 6 }}>
-              {tuile(toutesLivrees ? "Facturé" : "Commandé", euros(recette), A > 0.5 ? `dont achats ${euros(A)}` : `${commandes.length} commande${commandes.length > 1 ? "s" : ""}`)}
-              {tuile("Coût du temps", cout !== null ? euros(cout) : "—", `${heures(hFin)} ${toutesLivrees ? "pointées" : "pointées + planifiées"}`)}
-              {tuile(
-                toutesLivrees ? "Marge réelle" : "Marge prévue",
-                marge !== null ? euros(marge) : "—",
-                marge !== null && recette > 0.5 ? `${Math.round((marge / recette) * 100)} %${toutesLivrees ? " · affaire livrée" : " · avec le planifié"}` : "—",
-                marge === null ? gris : marge < 0 ? "#b3261e" : "#1b5e20"
-              )}
-              {siChiffre !== null && tuile("Si tout le chiffré est consommé", euros(siChiffre), `${heures(chiffre)} au lieu de ${heures(hFin)}`, siChiffre < 0 ? "#b3261e" : "#8a6500")}
-            </div>
-          </div>
         );
       })()}
 

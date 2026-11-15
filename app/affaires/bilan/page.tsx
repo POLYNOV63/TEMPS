@@ -6,7 +6,7 @@ import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
-import HistoriquePEPI from "@/components/HistoriquePEPI";
+import { chargerCommandesPEPI, type CommandePEPI } from "@/components/HistoriquePEPI";
 import SousDossiersAffaire from "@/components/SousDossiersAffaire";
 import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
 import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
@@ -184,6 +184,46 @@ const normNom = (t: string) =>
     .replace(/[^a-z]+/g, " ")
     .trim();
 
+/* COULEURS_COMMUNES : comme les Disponibilités par activité et les Finances */
+const COULEURS_ACTIVITES: [RegExp, string][] = [
+  [/^meca|mecanique/, "#c00000"],
+  [/^elec|electri|pneu/, "#34506b"],
+  [/^calcul/, "#6b58a8"],
+  [/^scan/, "#e08a1e"],
+  [/^negoce/, "#8d6e63"],
+];
+const couleurActivite = (nom: string) => COULEURS_ACTIVITES.find(([m]) => m.test(normNom(nom).replace(/ /g, "")))?.[1] ?? "#5b6168";
+
+/* BARRES_DERIVE : une barre = fait (plein) + prévu (hachuré) face à une cible (trait noir) ; le surplus en rouge */
+function BarreDerive({ fait, prevu, cible, couleur, haute = false }: { fait: number; prevu: number; cible: number; couleur: string; haute?: boolean }) {
+  const echelle = Math.max(cible, fait + prevu, 0.01);
+  const pc = (v: number) => `${Math.max(0, Math.min(100, (v / echelle) * 100))}%`;
+  const faitDans = cible > 0 ? Math.min(fait, cible) : fait;
+  const prevuDans = cible > 0 ? Math.max(0, Math.min(fait + prevu, cible) - faitDans) : prevu;
+  const trop = cible > 0 ? Math.max(0, fait + prevu - cible) : 0;
+  return (
+    <div style={{ position: "relative", height: haute ? 22 : 18, background: "#eef0f2", borderRadius: 6 }}>
+      <div style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: pc(faitDans), background: couleur, borderRadius: "6px 0 0 6px" }} />
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: pc(faitDans),
+          width: pc(prevuDans),
+          background: couleur,
+          opacity: 0.45,
+          backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,.6) 0 4px, transparent 4px 8px)",
+        }}
+      />
+      {trop > 0.01 && (
+        <div style={{ position: "absolute", top: 0, bottom: 0, left: pc(cible), width: pc(trop), background: "repeating-linear-gradient(45deg, #b3261e 0 4px, #f3b4b0 4px 8px)", borderRadius: "0 6px 6px 0" }} />
+      )}
+      {cible > 0 && <div style={{ position: "absolute", top: -4, bottom: -4, left: `calc(${pc(cible)} - 1.5px)`, width: 3, background: "#1f2328", borderRadius: 2 }} />}
+    </div>
+  );
+}
+
 /* STATUT_JAUNE : une intention de commande se voit en jaune, comme au Suivi d'affaire */
 function PastilleStatut({ statut, children }: { statut: string | null | undefined; children: ReactNode }) {
   if (statut === "Intention de commande")
@@ -193,6 +233,10 @@ function PastilleStatut({ statut, children }: { statut: string | null | undefine
       </span>
     );
   return <Pastille genre="info">{children}</Pastille>;
+}
+
+function FragmentLigne({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }
 
 function TitrePartie({ numero, titre, aide }: { numero: string; titre: string; aide?: string }) {
@@ -233,16 +277,18 @@ function BilanContenu() {
   const [onglet, setOnglet] = useState<"PERSONNE" | "MOIS" | "CODE" | "SOUS_DOSSIER" | "SEMAINE">("PERSONNE");
   /* ONGLETS_FICHE : onglet de la fiche (retenu dans l'adresse : ?vue=pepi, ?vue=financier) */
   /* TROIS_VOCATIONS : administratif (par défaut) · production (?vue=production, l'ancien « pepi » y mène) · financier */
-  const [ongletFiche, setOngletFiche] = useState<"ADMIN" | "AFFAIRE" | "ARGENT">(() => {
-    if (typeof window === "undefined") return "ADMIN";
+  /* FICHE_BILAN : l'en-tête porte l'affaire, ses commandes et sa dérive ; deux onglets : production · financier
+     (?vue=financier ; l'ancien « pepi » y mène aussi) */
+  const [ongletFiche, setOngletFiche] = useState<"AFFAIRE" | "ARGENT">(() => {
+    if (typeof window === "undefined") return "AFFAIRE";
     const v = new URLSearchParams(window.location.search).get("vue");
-    return v === "financier" ? "ARGENT" : v === "production" || v === "pepi" ? "AFFAIRE" : "ADMIN";
+    return v === "financier" || v === "pepi" ? "ARGENT" : "AFFAIRE";
   });
-  const changerOnglet = (o: "ADMIN" | "AFFAIRE" | "ARGENT") => {
+  const changerOnglet = (o: "AFFAIRE" | "ARGENT") => {
     setOngletFiche(o);
     const u = new URL(window.location.href);
-    if (o === "ADMIN") u.searchParams.delete("vue");
-    else u.searchParams.set("vue", o === "AFFAIRE" ? "production" : "financier");
+    if (o === "AFFAIRE") u.searchParams.delete("vue");
+    else u.searchParams.set("vue", "financier");
     window.history.replaceState(null, "", u.toString());
   };
   const [voitMontants, setVoitMontants] = useState(false);
@@ -628,6 +674,22 @@ function BilanContenu() {
     return [...m.values()].sort((a, b) => b.semaine.localeCompare(a.semaine) || a.personne.localeCompare(b.personne));
   }, [imputations, filtrePersonne, nomActivite]);
 
+  /* COMMANDES_PEPI : pour une PE / PI, le relevé commande par commande (en-tête et Financier) */
+  const [pepi, setPepi] = useState<CommandePEPI[] | null>(null);
+  const numeroPepi = affaire?.type === "CBE" ? affaire.numero : "";
+  const estPepi = Boolean(numeroPepi) && lignesExcel.some((l) => l.genre === "BASE" && (l.imputation === "PE" || l.imputation === "PI"));
+  useEffect(() => {
+    let actif = true;
+    setPepi(null);
+    if (!estPepi) return;
+    chargerCommandesPEPI(numeroPepi)
+      .then((r) => actif && setPepi(r.commandes))
+      .catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, [numeroPepi, estPepi]);
+
   /* ------------------------------ rendu ------------------------------ */
 
   const base = lignesExcel.find((l) => l.genre === "BASE") ?? lignesExcel[0] ?? null;
@@ -649,6 +711,7 @@ function BilanContenu() {
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
   const prestation = affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI");
+  const ongletVu: "AFFAIRE" | "ARGENT" = ongletFiche === "ARGENT" && voitMontants && affaire?.type === "CBE" ? "ARGENT" : "AFFAIRE";
 
   // planifié à venir
   const planifieTotal = aVenir.reduce((s, x) => s + x.heures, 0);
@@ -879,22 +942,98 @@ function BilanContenu() {
                     )}
                   </div>
 
-                  {/* PILOTAGE_COUP_D_OEIL */}
-                  {affaire.type === "CBE" && (bilan.totalChiffre > 0 || bilan.totalRealise > 0) && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "stretch", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
-                      {chiffre("Chiffré", bilan.totalChiffre > 0 ? formatHeures(bilan.totalChiffre) : "—")}
-                      {chiffre("Pointé", formatHeures(bilan.totalRealise))}
-                      {chiffre("Planifié", planifieTotal > 0.01 ? formatHeures(planifieTotal) : "—")}
-                      {etatTotal && chiffre("Pointé + planifié", formatHeures(pointe + planifieTotal), etatTotal.texte, etatTotal)}
-                      {avancement !== null && chiffre("Avancement estimé", `${Math.round(avancement)} %`, consommePct !== null ? `pour ${Math.round(consommePct)} % consommé` : undefined)}
-                      {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
-                        <div style={{ flex: "1 1 200px", display: "flex", alignItems: "center", paddingLeft: 6 }}>
-                          <Jauge chiffre={bilan.totalChiffre} pointe={pointe} prevu={planifieTotal} large={220} />
+                  {/* BARRES_DERIVE : où on en est, pointé et planifié face au chiffré (ou au commandé) */}
+                  {(() => {
+                    const grille: CSSProperties = { display: "grid", gridTemplateColumns: "minmax(70px, 120px) minmax(0, 1fr) minmax(220px, 360px)", gap: "7px 12px", alignItems: "center" };
+                    const sous: CSSProperties = { fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gris, marginBottom: 8 };
+                    const etatTxt = (c: number, f: number, p: number, u: (v: number) => string) => {
+                      if (c <= 0.01) return <span style={{ color: C.gris }}>sans chiffré : temps passé</span>;
+                      const e = f + p - c;
+                      const tol = Math.max(0.5, c * 0.02);
+                      if (Math.abs(e) <= tol) return <strong style={{ color: "#1b5e20" }}>raccord ✓</strong>;
+                      return e < 0 ? <strong style={{ color: "#8a4b00" }}>{u(-e)} à planifier</strong> : <strong style={{ color: "#b3261e" }}>+{u(e)} au-delà</strong>;
+                    };
+                    if (prestation && pepi && pepi.length > 0) {
+                      // PE / PI : en jours (ou en heures), le relevé et le pointé face au commandé
+                      const enJours = pepi.every((c) => c.unite === "JOUR");
+                      const bj = pepi[0].base || 7;
+                      const u = (h: number) => (enJours ? `${(Math.round((h / bj) * 10) / 10).toLocaleString("fr-FR")} j` : formatHeures(h));
+                      const tot = (f: (c: CommandePEPI) => number) => pepi.reduce((t, c) => t + f(c), 0);
+                      const etatH = (c: CommandePEPI, ...e: string[]) => [...c.mois.values()].filter((x) => e.includes(x.etat)).reduce((t, x) => t + x.heures, 0);
+                      const commande = tot((c) => c.heuresCmd ?? 0);
+                      const auReleve = tot((c) => etatH(c, "FACTURE", "A_FACTURER"));
+                      const prevuR = tot((c) => etatH(c, "PREVU"));
+                      const ecart = pointe - auReleve;
+                      return (
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                          <div style={sous}>Où on en est : {enJours ? `en jours de ${bj.toLocaleString("fr-FR")} h` : "en heures"}, face au commandé</div>
+                          <div style={grille}>
+                            <strong>Relevé</strong>
+                            <BarreDerive fait={auReleve} prevu={prevuR} cible={commande} couleur="#1b5e20" />
+                            <span style={{ fontSize: 13 }}>
+                              <strong>{u(auReleve)}</strong> facturés ou à facturer + <strong>{u(prevuR)}</strong> prévus / {u(commande)} · {etatTxt(commande, auReleve, prevuR, u)}
+                            </span>
+                            <strong>Pointé</strong>
+                            <BarreDerive fait={pointe} prevu={planifieTotal} cible={commande} couleur="#3b4046" />
+                            <span style={{ fontSize: 13 }}>
+                              <strong>{u(pointe)}</strong> pointés + <strong>{u(planifieTotal)}</strong> planifiés / {u(commande)} ·{" "}
+                              {Math.abs(ecart) < 0.5 ? (
+                                <strong style={{ color: "#1b5e20" }}>comme le relevé ✓</strong>
+                              ) : ecart > 0 ? (
+                                <strong style={{ color: "#b3261e" }}>{u(ecart)} de plus que le relevé</strong>
+                              ) : (
+                                <strong style={{ color: "#8a4b00" }}>{u(-ecart)} de moins que le relevé</strong>
+                              )}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, color: C.gris, marginTop: 8 }}>
+                            <span>plein : au relevé (facturé ou à facturer) / pointé</span>
+                            <span>hachuré : prévu au relevé / planifié</span>
+                            <span>trait noir : commandé</span>
+                          </div>
                         </div>
-                      )}
-                      {bilan.toutAuMontant && <span style={{ fontSize: 13, color: C.gris, paddingBottom: 4 }}>vendu au montant : temps passé, sans comparaison au chiffré</span>}
-                    </div>
-                  )}
+                      );
+                    }
+                    if (affaire.type !== "CBE" || (bilan.totalChiffre <= 0 && bilan.totalRealise <= 0 && planifieTotal <= 0)) return null;
+                    const lignesA = bilan.parActivite
+                      .map((a) => ({ ...a, planifie: planifieParActivite.get(a.id) ?? 0 }))
+                      .filter((a) => a.chiffre > 0.01 || a.realise > 0.01 || a.planifie > 0.01);
+                    return (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}` }}>
+                        <div style={sous}>Où on en est : pointé et planifié face au chiffré</div>
+                        <div style={grille}>
+                          {lignesA.map((a) => (
+                            <FragmentLigne key={a.id}>
+                              <strong style={{ color: couleurActivite(a.nom) }}>{a.nom}</strong>
+                              <BarreDerive fait={a.realise} prevu={a.planifie} cible={a.chiffre} couleur={couleurActivite(a.nom)} />
+                              <span style={{ fontSize: 13 }}>
+                                <strong>{formatHeures(a.realise)}</strong> pointées{a.planifie > 0.01 ? <> + <strong>{formatHeures(a.planifie)}</strong> planifiées</> : ""}
+                                {a.chiffre > 0.01 ? ` / ${formatHeures(a.chiffre)}` : ""} · {etatTxt(a.chiffre, a.realise, a.planifie, formatHeures)}
+                              </span>
+                            </FragmentLigne>
+                          ))}
+                          {!bilan.toutAuMontant && bilan.totalChiffre > 0 && (
+                            <>
+                              <strong style={{ borderTop: `2px solid ${C.ligne}`, paddingTop: 6 }}>Total</strong>
+                              <div style={{ borderTop: `2px solid ${C.ligne}`, paddingTop: 6 }}>
+                                <BarreDerive fait={pointe} prevu={planifieTotal} cible={bilan.totalChiffre} couleur="#3b4046" haute />
+                              </div>
+                              <span style={{ fontSize: 13, borderTop: `2px solid ${C.ligne}`, paddingTop: 6 }}>
+                                <strong>{formatHeures(pointe)}</strong> + <strong>{formatHeures(planifieTotal)}</strong> / {formatHeures(bilan.totalChiffre)} · {etatTxt(bilan.totalChiffre, pointe, planifieTotal, formatHeures)}
+                                {avancement !== null && <span style={{ color: C.gris }}> · avancement estimé {Math.round(avancement)} %</span>}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", fontSize: 12.5, color: C.gris, marginTop: 8 }}>
+                          <span>plein : pointé (feuilles d’heures)</span>
+                          <span>hachuré : planifié (planning des affaires, à partir de demain)</span>
+                          <span>trait noir : chiffré</span>
+                          <span style={{ color: "#b3261e" }}>rayé rouge : au-delà du chiffré</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {attention.length > 0 && (
                     <ul style={{ margin: "10px 0 0", paddingLeft: 0, listStyle: "none", display: "grid", gap: 3 }}>
                       {attention.map((a) => (
@@ -904,6 +1043,129 @@ function BilanContenu() {
                       ))}
                     </ul>
                   )}
+
+                  {/* COMMANDES_EN_TETE : le devis d'origine, les commandes, avenants, échéances : statuts, dates, quantités */}
+            {/* ADMINISTRATIF : le devis d'origine, puis les commandes, avenants, échéances : statuts et dates */}
+                  {(() => {
+                const ordre = [...lignesExcel].filter((l) => !l.disparue).sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
+                const meres = ordre.filter((l) => l.genre === "BASE" || l.genre === "AVENANT");
+                const numL = (l: LigneExcel) => String(l.numero_affaire ?? l.cle).toUpperCase();
+                const filles = (l: LigneExcel) =>
+                  ordre.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && numL(d).startsWith(numL(l)) && !meres.some((m) => m !== l && numL(m).length > numL(l).length && numL(d).startsWith(numL(m))));
+                const intentions = meres.filter((l) => l.statut === "Intention de commande").length;
+                const livrees = meres.filter((l) => l.date_livraison || /livr/i.test(l.statut ?? "")).length;
+                const perdues = meres.filter((l) => INACTIFS.includes(l.statut ?? "")).length;
+                const recues = meres.length - intentions - livrees - perdues;
+                const nbDecoupes = ordre.filter((l) => l.genre === "LOT" || l.genre === "ECHEANCE").length;
+                const compte = (nb: number, mot: string) => (nb > 0 ? `${nb} ${mot}${nb > 1 ? "s" : ""}` : null);
+                const cleNum = (v: string) => v.toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "");
+                const pepiDe = (l: LigneExcel) => (pepi ?? []).find((c) => cleNum(c.numero) === cleNum(String(l.numero_affaire ?? l.cle)));
+                const enJours = Boolean(pepi && pepi.length > 0 && pepi.every((c) => c.unite === "JOUR"));
+                const q = (h: number, c?: CommandePEPI) => (enJours ? `${(Math.round((h / (c?.base || pepi?.[0]?.base || 7)) * 10) / 10).toLocaleString("fr-FR")} j` : formatHeures(h));
+                const colsPepi = Boolean(prestation && pepi && pepi.length > 0);
+                const ligneA = (l: LigneExcel, fille: boolean) => {
+                  const intention = l.statut === "Intention de commande";
+                  const livree = Boolean(l.date_livraison) || /livr/i.test(l.statut ?? "");
+                  return (
+                    <tr key={l.cle} style={{ background: fille ? undefined : "#fafbfc" }}>
+                      <td style={{ ...td, whiteSpace: "nowrap", paddingLeft: fille ? 26 : 8 }}>
+                        {fille ? "↳ " : ""}
+                        <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce }}>{fille ? l.numero_affaire ?? l.cle : `CBE${String(l.numero_affaire ?? l.cle).replace(/^CBE\s*/i, "")}`}</span>
+                        <span style={{ fontSize: 12, color: C.gris }}> {nature(l)}</span>
+                      </td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        <span style={intention ? { background: "#ffe58a", color: "#5c4300", fontWeight: 800, borderRadius: 999, padding: "2px 10px" } : livree ? { color: "#1b5e20", fontWeight: 700 } : undefined}>{l.statut ?? "—"}</span>
+                      </td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{fille ? "" : formatDate(l.date_reception_commande)}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap", fontWeight: 700 }}>{formatDate(l.date_livraison_estimee)}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{formatDate(l.delai)}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined, fontWeight: l.date_livraison ? 700 : 400 }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
+                      {colsPepi ? (
+                        (() => {
+                          const c = fille ? undefined : pepiDe(l);
+                          if (!c) return <td colSpan={4} style={td} />;
+                          const h = (...e: string[]) => [...c.mois.values()].filter((x) => e.includes(x.etat)).reduce((t, x) => t + x.heures, 0);
+                          const fait = h("FACTURE", "A_FACTURER");
+                          const prevu = h("PREVU");
+                          const reste = c.heuresCmd !== null ? c.heuresCmd - fait - prevu : null;
+                          const tol = (c.base || 7) * 0.05;
+                          return (
+                            <>
+                              <td style={tdN}>{c.heuresCmd !== null ? q(c.heuresCmd, c) : "—"}</td>
+                              <td style={tdN}>{fait > 0.05 ? q(fait, c) : "—"}</td>
+                              <td style={{ ...tdN, color: C.gris }}>{prevu > 0.05 ? q(prevu, c) : "—"}</td>
+                              <td style={{ ...td, whiteSpace: "nowrap", fontWeight: 800, color: reste === null ? C.gris : reste < -tol ? "#b3261e" : reste > tol ? "#8a4b00" : "#1b5e20" }}>
+                                {reste === null
+                                  ? "—"
+                                  : livree
+                                    ? Math.abs(reste) <= tol
+                                      ? "✓ soldé"
+                                      : reste > 0
+                                        ? `livrée · ${q(reste, c)} non facturés`
+                                        : `livrée · ${q(-reste, c)} au-delà`
+                                    : reste < -tol
+                                      ? `${q(-reste, c)} prévus au-delà`
+                                      : reste > tol
+                                        ? `${q(reste, c)} à planifier`
+                                        : "= commandé, raccord ✓"}
+                              </td>
+                            </>
+                          );
+                        })()
+                      ) : (
+                        <td style={{ ...tdN, fontWeight: 700 }}>{fille || !(l.heures_total > 0) ? "" : formatHeures(l.heures_total)}</td>
+                      )}
+                    </tr>
+                  );
+                };
+                return (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.ligne}`, overflowX: "auto" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
+                      {meres.length} commande{meres.length > 1 ? "s" : ""}
+                      <span style={{ fontSize: 14, fontWeight: 600, color: C.gris }}>
+                        {" "}
+                        {[compte(intentions, "intention"), compte(recues, "reçue"), compte(livrees, "livrée"), compte(perdues, "perdue ou annulée"), nbDecoupes > 0 ? `${nbDecoupes} échéance${nbDecoupes > 1 ? "s" : ""} ou lot${nbDecoupes > 1 ? "s" : ""}` : null]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </div>
+                    {devis && (
+                      <p style={{ margin: "0 0 10px", fontSize: 14 }}>
+                        <span style={{ color: C.gris }}>Devis d’origine</span> <strong>{devis}</strong>
+                        {base?.date_ouverture && <span style={{ color: C.gris }}> · ouvert le {formatDate(base.date_ouverture)}</span>}
+                        {base?.redacteur && <span style={{ color: C.gris }}> · rédigé par {base.redacteur}</span>}
+                      </p>
+                    )}
+                    {meres.length === 0 ? (
+                      <p style={{ margin: 0, color: C.gris }}>Pas de commande au Suivi d’affaire BE.</p>
+                    ) : (
+                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
+                        <thead>
+                          <tr>
+                            <th style={th}>N°</th>
+                            <th style={th}>Statut</th>
+                            <th style={th}>Reçue le</th>
+                            <th style={th} title="Date de livraison estimée (Suivi d’affaire) : fait foi">Délai estimé</th>
+                            <th style={th} title="Délai demandé par le client, pour mémoire">Délai client</th>
+                            <th style={th}>Livrée le</th>
+                            {colsPepi ? (
+                              <>
+                                <th style={{ ...th, textAlign: "right" }}>Commandé</th>
+                                <th style={{ ...th, textAlign: "right" }} title="Facturé ou à facturer">Au relevé</th>
+                                <th style={{ ...th, textAlign: "right" }}>Prévu</th>
+                                <th style={th}>Face au commandé</th>
+                              </>
+                            ) : (
+                              <th style={{ ...th, textAlign: "right" }}>Chiffré</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>{meres.flatMap((l) => [ligneA(l, false), ...filles(l).map((d) => ligneA(d, true))])}</tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+                  })()}
 
                 </section>
               );
@@ -924,17 +1186,14 @@ function BilanContenu() {
             {/* ONGLETS_FICHE : l'affaire et les heures · l'historique PE / PI · le financier */}
             {(() => {
               /* HEURES_REGROUPEES : un onglet des heures (sans euros), un onglet Financier */
-              const onglets: [typeof ongletFiche, string][] = [
-                ["ADMIN", "Administratif"],
-                ["AFFAIRE", "Production"],
-              ];
+              const onglets: [typeof ongletFiche, string][] = [["AFFAIRE", "Production"]];
               if (voitMontants && affaire.type === "CBE") onglets.push(["ARGENT", "Financier"]);
               if (onglets.length < 2) return null;
               return (
                 <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "6px 0 16px", padding: 6, background: "#e4e7eb", borderRadius: 12 }}>
                   {onglets.map(([cle, libelle]) => {
-                    const actifO = ongletFiche === cle;
-                    const icone = cle === "ADMIN" ? "📋" : cle === "AFFAIRE" ? "🛠" : "💶";
+                    const actifO = ongletVu === cle;
+                    const icone = cle === "AFFAIRE" ? "🛠" : "💶";
                     return (
                       <button
                         key={cle}
@@ -966,81 +1225,7 @@ function BilanContenu() {
               );
             })()}
 
-            {/* ADMINISTRATIF : le devis d'origine, puis les commandes, avenants, échéances : statuts et dates */}
-            {ongletFiche === "ADMIN" &&
-              (() => {
-                const ordre = [...lignesExcel].filter((l) => !l.disparue).sort((a, b) => (a.numero_affaire ?? a.cle).localeCompare(b.numero_affaire ?? b.cle, "fr", { numeric: true }));
-                const meres = ordre.filter((l) => l.genre === "BASE" || l.genre === "AVENANT");
-                const numL = (l: LigneExcel) => String(l.numero_affaire ?? l.cle).toUpperCase();
-                const filles = (l: LigneExcel) =>
-                  ordre.filter((d) => (d.genre === "LOT" || d.genre === "ECHEANCE") && numL(d).startsWith(numL(l)) && !meres.some((m) => m !== l && numL(m).length > numL(l).length && numL(d).startsWith(numL(m))));
-                const intentions = meres.filter((l) => l.statut === "Intention de commande").length;
-                const livrees = meres.filter((l) => l.date_livraison || /livr/i.test(l.statut ?? "")).length;
-                const perdues = meres.filter((l) => INACTIFS.includes(l.statut ?? "")).length;
-                const recues = meres.length - intentions - livrees - perdues;
-                const nbDecoupes = ordre.filter((l) => l.genre === "LOT" || l.genre === "ECHEANCE").length;
-                const compte = (nb: number, mot: string) => (nb > 0 ? `${nb} ${mot}${nb > 1 ? "s" : ""}` : null);
-                const ligneA = (l: LigneExcel, fille: boolean) => {
-                  const intention = l.statut === "Intention de commande";
-                  const livree = Boolean(l.date_livraison) || /livr/i.test(l.statut ?? "");
-                  return (
-                    <tr key={l.cle} style={{ background: fille ? undefined : "#fafbfc" }}>
-                      <td style={{ ...td, whiteSpace: "nowrap", paddingLeft: fille ? 26 : 8 }}>
-                        {fille ? "↳ " : ""}
-                        <span style={{ fontWeight: fille ? 600 : 800, color: C.rougeFonce }}>{fille ? l.numero_affaire ?? l.cle : `CBE${String(l.numero_affaire ?? l.cle).replace(/^CBE\s*/i, "")}`}</span>
-                        <span style={{ fontSize: 12, color: C.gris }}> {nature(l)}</span>
-                      </td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>
-                        <span style={intention ? { background: "#ffe58a", color: "#5c4300", fontWeight: 800, borderRadius: 999, padding: "2px 10px" } : livree ? { color: "#1b5e20", fontWeight: 700 } : undefined}>{l.statut ?? "—"}</span>
-                      </td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{fille ? "" : formatDate(l.date_reception_commande)}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap", fontWeight: 700 }}>{formatDate(l.date_livraison_estimee)}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap", color: C.gris }}>{formatDate(l.delai)}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap", color: l.date_livraison ? "#1b5e20" : undefined, fontWeight: l.date_livraison ? 700 : 400 }}>{l.date_livraison ? `✓ ${formatDate(l.date_livraison)}` : "—"}</td>
-                    </tr>
-                  );
-                };
-                return (
-                  <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
-                    <h2 style={{ margin: "0 0 4px", fontSize: 20, color: "#a30000" }}>
-                      {meres.length} commande{meres.length > 1 ? "s" : ""}
-                      <span style={{ fontSize: 15, fontWeight: 600, color: C.gris }}>
-                        {" "}
-                        {[compte(intentions, "intention"), compte(recues, "reçue"), compte(livrees, "livrée"), compte(perdues, "perdue ou annulée"), nbDecoupes > 0 ? `${nbDecoupes} échéance${nbDecoupes > 1 ? "s" : ""} ou lot${nbDecoupes > 1 ? "s" : ""}` : null]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    </h2>
-                    {devis && (
-                      <p style={{ margin: "0 0 10px", fontSize: 14 }}>
-                        <span style={{ color: C.gris }}>Devis d’origine</span> <strong>{devis}</strong>
-                        {base?.date_ouverture && <span style={{ color: C.gris }}> · ouvert le {formatDate(base.date_ouverture)}</span>}
-                        {base?.redacteur && <span style={{ color: C.gris }}> · rédigé par {base.redacteur}</span>}
-                      </p>
-                    )}
-                    {meres.length === 0 ? (
-                      <p style={{ margin: 0, color: C.gris }}>Pas de commande au Suivi d’affaire BE.</p>
-                    ) : (
-                      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
-                        <thead>
-                          <tr>
-                            <th style={th}>N°</th>
-                            <th style={th}>Statut</th>
-                            <th style={th}>Reçue le</th>
-                            <th style={th} title="Date de livraison estimée (Suivi d’affaire) : fait foi">Délai estimé</th>
-                            <th style={th} title="Délai demandé par le client, pour mémoire">Délai client</th>
-                            <th style={th}>Livrée le</th>
-                          </tr>
-                        </thead>
-                        <tbody>{meres.flatMap((l) => [ligneA(l, false), ...filles(l).map((d) => ligneA(d, true))])}</tbody>
-                      </table>
-                    )}
-                    <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>D’après le Suivi d’affaire BE : les dates et les statuts se modifient dans le classeur.</p>
-                  </section>
-                );
-              })()}
-
-            {ongletFiche === "AFFAIRE" && (
+            {ongletVu === "AFFAIRE" && (
             <>
             <TitrePartie numero="" titre="Le bilan des heures" aide="prévu, consommé, planifié" />
             <section style={{ ...page.carte, padding: 16, marginBottom: 16, overflowX: "auto" }}>
@@ -1370,13 +1555,8 @@ function BilanContenu() {
             </>
             )}
 
-            {/* HISTORIQUE_PEPI : dans l'onglet des heures, sans aucun montant (HEURES_REGROUPEES) */}
-            {ongletFiche === "AFFAIRE" && prestation && (
-              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} montants={false} />
-            )}
-
             {/* FINANCIER (fonction « Montants des affaires ») */}
-            {ongletFiche === "ARGENT" && voitMontants && affaire.type === "CBE" && (
+            {ongletVu === "ARGENT" && (
               <BilanFinancierAffaire
                 type={affaire.type}
                 numero={affaire.numero}
@@ -1390,6 +1570,7 @@ function BilanContenu() {
                 chiffre={bilan.toutAuMontant ? 0 : bilan.totalChiffre}
                 planifieParMois={planifieMois}
                 prestation={prestation}
+                pepi={prestation ? pepi : null}
               />
             )}
           </>
