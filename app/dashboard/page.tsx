@@ -855,7 +855,7 @@ function TuileDomaine({
 }
 
 /* Les tuiles de chaque rôle (DASHBOARD_4_TUILES) :
-   ADMIN : Pilotage, RH, Finance, Exports ; DIRECTION : Pilotage, Finance ;
+   ADMIN : Pilotage, RH, Finance, Exports, Analyses ; DIRECTION : Pilotage, Finance, Analyses ;
    RESPONSABLE : Pilotage, et RH / Exports selon ses droits */
 function TuilesDomaines({
   aller,
@@ -917,6 +917,35 @@ function TuilesDomaines({
     tuiles.push(<TuileDomaine key="finance" icone="💶" titre="Finance" description="CA de l’exercice, attendu, atterrissage face au prévisionnel" url={uFinance} aller={aller} />);
   if (uExports)
     tuiles.push(<TuileDomaine key="exports" icone="📤" titre="Exports" description="Fin de mois : bilan RH, récapitulatif d’heures, facturation" url={uExports} aller={aller} />);
+  /* TUILE_ANALYSES : ADMIN et DIRECTION ; la Direction n'y a que la charge par ressource et les disponibilités */
+  if (role === "ADMIN" || role === "DIRECTION") {
+    const pagesAnalyse =
+      role === "ADMIN"
+        ? [
+            { libelle: "Charge par ressource", url: "/pilotage/ressources" },
+            { libelle: "Disponibilités", url: "/analyse/charge-activites" },
+            { libelle: "Capacité", url: "/admin/bilans" },
+            { libelle: "Cartographie", url: "/analyse/effectifs" },
+            { libelle: "Fiabilité du chiffrage", url: "/analyse/fiabilite-chiffrage" },
+          ]
+        : [
+            { libelle: "Charge par ressource", url: "/pilotage/ressources" },
+            { libelle: "Disponibilités", url: "/analyse/charge-activites" },
+          ];
+    const ouvertes = pagesAnalyse.filter((x) => role === "ADMIN" || pageAutorisee(role, x.url));
+    if (ouvertes.length > 0)
+      tuiles.push(
+        <TuileDomaine
+          key="analyses"
+          icone="📊"
+          titre="Analyses"
+          description={role === "ADMIN" ? "Charge, disponibilités, capacité, équipe, chiffrage" : "Charge par ressource et disponibilités par activité"}
+          url={ouvertes[0].url}
+          aller={aller}
+          raccourcis={ouvertes}
+        />
+      );
+  }
   return <div style={stylesV2.grilleTuiles}>{tuiles}</div>;
 }
 
@@ -1459,8 +1488,8 @@ const stylesV2: Record<string, CSSProperties> = {
   groupeTitre: { margin: 0, fontSize: 18, fontWeight: 800, color: "#222222" },
   groupeDescription: { color: "#777777", fontSize: 13 },
   boutonGroupe: { marginLeft: "auto", background: "#333333", color: "#ffffff", borderRadius: 8, padding: "8px 16px", fontWeight: 800, fontSize: 14, whiteSpace: "nowrap" },
-  grilleTuiles: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14, marginBottom: 16 },
-  tuileDomaine: { background: "#ffffff", borderRadius: 14, borderTop: "5px solid #c00000", padding: "16px 18px", minHeight: 150, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", transition: "all 0.15s ease", outline: "none" },
+  grilleTuiles: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 16 }, // TUILES_UNE_LIGNE
+  tuileDomaine: { background: "#ffffff", borderRadius: 14, borderTop: "5px solid #c00000", padding: "14px 14px", minHeight: 150, minWidth: 0, display: "flex", flexDirection: "column", gap: 6, cursor: "pointer", transition: "all 0.15s ease", outline: "none" },
   tuileIcone: { width: 46, height: 46, borderRadius: 12, background: "#c00000", color: "#ffffff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 2 },
   raccourci: { border: "1.5px solid #e3b7b7", background: "#fff6f6", color: "#a30000", borderRadius: 999, padding: "4px 10px", fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" },
   apercuChoix: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 18 },
