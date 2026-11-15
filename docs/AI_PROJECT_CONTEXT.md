@@ -93,7 +93,8 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
   Ressources `#disponibilites` ; `/analyse/effectifs` → Ressources `#composition` ; `/admin/export-excel` → Bilan RH
   `#export` ; `/analyse/pointage` → Suivi des affaires ; `/pilotage/indicateurs` → Suivi des devis (onglet Statistiques) ;
   `/admin/bilan-activites` → Analyse de capacité ; `/pilotage/planning` → Planning des affaires ; `/pilotage/affaire/[id]`
-  → Fiche affaire ; `/admin/compteurs` (ex-« Récupérations », doublon) → Absences et compteurs.
+  → Fiche affaire ; `/admin/compteurs` (ex-« Récupérations », doublon) → Absences et compteurs ; `/admin/notes-frais`
+  → Suivi des notes de frais `#reglages`.
 
 ## Feuille de temps (Ma semaine)
 
@@ -153,8 +154,9 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
   des feuilles ; export Excel du bilan ; « bilan envoyé » (`rh_bilans_envoyes`, rappel). **En bas de la même page** (ancre
   `#export`, droit `exporterExcel`) : le **récapitulatif d'heures d'une semaine** (`components/rh/ExportHebdoExcel.tsx`,
   gabarit `public/Recuperation heures pour export.xlsx`), ex-page Export Excel.
-- **Notes de frais** (SQL 84 et 85) : `/notes-frais` (collaborateur), `/admin/notes-frais` (paramètres),
-  `/admin/suivi-notes-frais` (suivi). « Transmettre » envoie directement au service RH (`nf_parametres.email_rh`) avec le
+- **Notes de frais** (SQL 84 et 85) : `/notes-frais` (collaborateur), `/admin/suivi-notes-frais` (suivi,
+  avec en bas le bloc replié « Réglages » `#reglages` : barème kilométrique et destinataires,
+  `components/rh/ReglagesNotesFrais.tsx` ; l'ex-page `/admin/notes-frais` y redirige). « Transmettre » envoie directement au service RH (`nf_parametres.email_rh`) avec le
   gabarit `public/gabarits/note-de-frais.xlsx` rempli et les justificatifs ; fonction Edge `envoyer-note-frais`.
 - **Collaborateurs** : fiche, activités principales et d'appoint (`collaborateurs_predominances`), niveau N1 / N2 / N3
   (`collaborateurs_niveaux`, SQL 86 ; jamais affiché nominativement hors ADMIN), « inclus dans les statistiques »

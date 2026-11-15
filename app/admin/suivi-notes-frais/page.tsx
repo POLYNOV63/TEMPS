@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "reac
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import { page } from "@/components/pilotage/ui";
+import ReglagesNotesFrais from "@/components/rh/ReglagesNotesFrais";
 
 /* ===============================================================
    SUIVI DES NOTES DE FRAIS (administrateurs)
@@ -319,8 +320,8 @@ export default function SuiviNotesFrais() {
                 ))}
               </select>
               <span style={{ flex: 1 }} />
-              <a href="/admin/notes-frais" style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
-                ⚙ Destinataires et barème
+              <a href="#reglages" onClick={(e) => { e.preventDefault(); const d = document.getElementById("reglages") as HTMLDetailsElement | null; if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); } }} style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
+                ⚙ Barème et destinataires ↓
               </a>
             </div>
 
@@ -443,6 +444,9 @@ export default function SuiviNotesFrais() {
                 )}
               </>
             )}
+
+            {/* REGLAGES_NOTES_FRAIS : barème kilométrique et destinataires (ex-page Paramètres) */}
+            <ReglagesNotesFrais />
           </>
         )}
       </div>

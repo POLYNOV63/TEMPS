@@ -123,7 +123,6 @@ export const PAGES: PageApp[] = [
   { href: "/admin/Gestion-activites", libelle: "Activités", groupe: "Paramétrage", droit: "administration" },
   { href: "/admin/imputations-pilotage", libelle: "Imputations des affaires", groupe: "Paramétrage", droit: "administration" },
   { href: "/admin/profils-horaires", libelle: "Rythmes horaires", groupe: "Paramétrage", droit: "administration" },
-  { href: "/admin/notes-frais", libelle: "Notes de frais (destinataires et barème)", groupe: "Paramétrage", droit: "administration" },
   { href: "/admin/synchro-suivi-affaires", libelle: "Synchronisation Suivi d’affaire", groupe: "Paramétrage", droit: "administration" },
   { href: "/admin/import-prestations", libelle: "Import des prestations", groupe: "Paramétrage", droit: "administration" },
   { href: "/import-historique-v2", libelle: "Import de l’historique", groupe: "Paramétrage", droit: "administration" },

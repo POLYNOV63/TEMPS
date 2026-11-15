@@ -387,8 +387,8 @@ export default function NotesDeFraisPage() {
 
       {String(moi?.role ?? "").toUpperCase() === "ADMIN" && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-          <a href="/admin/notes-frais" style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
-            ⚙ Paramètres des notes de frais (destinataires, barème)
+          <a href="/admin/suivi-notes-frais#reglages" style={{ border: "1px solid #c9cdd2", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#252525", fontWeight: 800, textDecoration: "none" }}>
+            ⚙ Barème et destinataires des notes de frais
           </a>
         </div>
       )}
