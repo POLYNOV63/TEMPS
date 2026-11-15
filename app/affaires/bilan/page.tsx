@@ -224,6 +224,7 @@ function BilanContenu() {
   const [filtrePersonne, setFiltrePersonne] = useState("");
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
+  const [planifieMois, setPlanifieMois] = useState<Map<string, number>>(new Map());
   const [noteJours, setNoteJours] = useState(""); // JOURS_VENDUS
   /* FACTURATION_ENTETE : PE / PI facturée au jour (journée de …) ou à l'heure, d'après le relevé */
   const [facturation, setFacturation] = useState<{ unite: "JOUR" | "HEURE"; bases: number[]; jours: number; heures: number } | null>(null);
@@ -469,11 +470,13 @@ function BilanContenu() {
       }
       const pl = await chargerPlanifie(a0);
       const res: AVenir[] = [];
+      const parMois = new Map<string, number>(); // MARGES_DETAIL : le planifié mois par mois
       for (const a of pl.affectations) {
         if (!a.affaire_id || !famille.has(a.affaire_id)) continue;
         // A_VENIR_DEMAIN : aujourd'hui compte déjà dans le pointé (feuille d'heures du jour) : le planifié commence demain
         const js = pl.jours.filter((j) => j.affectation_id === a.id && j.jour > a0 && (Number(j.heures) || 0) > 0);
         if (js.length === 0) continue;
+        for (const j of js) parMois.set(j.jour.slice(0, 7), (parMois.get(j.jour.slice(0, 7)) ?? 0) + (Number(j.heures) || 0));
         const dates = js.map((j) => j.jour).sort();
         const x = a as unknown as { collaborateur_id?: string | null; activite_id?: string | null };
         res.push({
@@ -488,7 +491,10 @@ function BilanContenu() {
         });
       }
       res.sort((p, q) => p.du.localeCompare(q.du) || p.personne.localeCompare(q.personne, "fr"));
-      if (actif) setAVenir(res);
+      if (actif) {
+        setAVenir(res);
+        setPlanifieMois(parMois);
+      }
     })().catch(() => undefined);
     return () => {
       actif = false;
@@ -1394,6 +1400,8 @@ function BilanContenu() {
                 pointeTotal={bilan.totalRealise}
                 planifie={planifieTotal}
                 chiffre={bilan.toutAuMontant ? 0 : bilan.totalChiffre}
+                planifieParMois={planifieMois}
+                prestation={prestation}
               />
             )}
           </>

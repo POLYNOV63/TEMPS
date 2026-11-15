@@ -356,8 +356,9 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
   const tdG: CSSProperties = { ...td, textAlign: "left" };
   const ecartTexte = (pt: number, rel: number) => {
     const e = pt - rel;
-    if (Math.abs(e) < 0.5) return { texte: "à jour", couleur: VERT };
-    return e > 0 ? { texte: `${q(e)} pointées pas au relevé`, couleur: ROUGE } : { texte: `${q(-e)} au relevé de plus que pointé`, couleur: "#7a3e00" };
+    // ECART_POINTE : le delta, signé, entre ce qu'on a pointé et ce qui est au relevé
+    if (Math.abs(e) < 0.5) return { texte: "= à jour", couleur: VERT };
+    return e > 0 ? { texte: `+ ${q(e)} pointés en plus (non facturés)`, couleur: ROUGE } : { texte: `− ${q(-e)} pointés en moins que facturé`, couleur: "#7a3e00" };
   };
 
   return (
@@ -465,7 +466,7 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
             {voitMontants && <th style={th}>Montant</th>}
             <th style={th}>Cumul pointé</th>
             <th style={th} title="Facturé + à facturer + prévu">Cumul relevé</th>
-            <th style={thG}>Pointé face au relevé</th>
+            <th style={thG} title="Pointé − relevé, en cumul, sans le prévu">Écart pointé / relevé</th>
             <th style={th}>Reste de la commande</th>
           </tr>
         </thead>
@@ -520,7 +521,7 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
         </tbody>
       </table>
       <p style={{ fontSize: 12, color: gris, margin: "6px 0 14px" }}>
-        « Pointé face au relevé », en cumul et hors prévu : <span style={{ color: ROUGE }}>en rouge, du travail pointé qui n’est pas (encore) au relevé</span> ; <span style={{ color: "#7a3e00" }}>en ocre, plus au relevé que pointé</span>. Les heures
+        « Écart pointé / relevé » = pointé − relevé, en cumul, sans le prévu : <span style={{ color: ROUGE }}>+ on a pointé plus que ce qui est facturé ou à facturer (travail non facturé)</span> ; <span style={{ color: "#7a3e00" }}>− on a pointé moins que ce qui est facturé ou à facturer</span>. Les heures
         sont pointées sur le n° de base : la comparaison se fait pour toute la famille.
       </p>
 
@@ -535,7 +536,7 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
             <th style={th}>Facturé</th>
             <th style={th}>À facturer</th>
             <th style={th}>Prévu</th>
-            <th style={th}>Reste après le prévu</th>
+            <th style={th} title="Commandé − facturé − à facturer − prévu ; « soldé » seulement une fois la commande livrée">Reste face au commandé</th>
             <th style={th}>Fin du prévu</th>
           </tr>
         </thead>
@@ -566,8 +567,21 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
                 {cel(s("FACTURE"), sE("FACTURE"), VERT)}
                 {cel(s("A_FACTURER"), sE("A_FACTURER"), "#8a6500")}
                 {cel(s("PREVU"), sE("PREVU"), gris)}
-                <td style={{ ...td, fontWeight: 800, color: reste === null ? gris : reste < -0.05 ? ROUGE : VERT }}>
-                  {reste === null ? "—" : reste < -0.05 ? `dépassé de ${qc(c, -reste)}` : reste <= 0.05 ? "✓ soldé" : qc(c, reste)}
+                {/* SOLDE_SI_LIVREE : « soldé » seulement pour une commande livrée ; sinon, la cohérence du prévu avec le commandé */}
+                <td style={{ ...td, fontWeight: 800, color: reste === null ? gris : reste < -0.05 ? ROUGE : reste > 0.05 ? "#8a4b00" : VERT }}>
+                  {reste === null
+                    ? "—"
+                    : /livr/i.test(c.statut)
+                      ? Math.abs(reste) <= 0.05
+                        ? "✓ soldé"
+                        : reste > 0
+                          ? `livrée · ${qc(c, reste)} non facturés`
+                          : `livrée · ${qc(c, -reste)} au-delà`
+                      : reste < -0.05
+                        ? `${qc(c, -reste)} prévus au-delà`
+                        : reste > 0.05
+                          ? `${qc(c, reste)} à planifier`
+                          : "= commandé, raccord ✓"}
                   {voitMontants && c.montant > 0.5 && Math.abs(resteE) > 0.5 && <span style={{ fontSize: 12, fontWeight: 400, color: gris }}> · {resteE < 0 ? `− ${euros(-resteE)}` : euros(resteE)}</span>}
                 </td>
                 <td style={td}>{c.finPrevue ? new Date(`${c.finPrevue}T00:00:00`).toLocaleDateString("fr-FR") : "—"}</td>
