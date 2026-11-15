@@ -2867,6 +2867,11 @@ feuilles.forEach((f) => {
               improductif… et de ce qui reste
               à expliquer.
             </p>
+
+            {/* LIEN_PASSE_AVENIR : ici le passé (pointé) ; l’avenir (planifié) se lit dans Ressources */}
+            <a href="/pilotage/planning-ressources" style={{ display: "inline-block", marginTop: 8, fontSize: 14, fontWeight: 800, color: "#8f0000", textDecoration: "none" }}>
+              📅 Voir l’avenir : Ressources (planning, charge, disponibilités) →
+            </a>
           </div>
 
           <div

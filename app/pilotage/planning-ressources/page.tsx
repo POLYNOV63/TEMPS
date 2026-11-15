@@ -9,7 +9,7 @@ import { C, Message, page } from "@/components/pilotage/ui";
 import ChargeEquipe from "@/components/ressources/ChargeEquipe";
 import DisponibilitesActivites from "@/components/ressources/DisponibilitesActivites";
 import CompositionEquipe from "@/components/ressources/CompositionEquipe";
-import { peut } from "@/lib/droits";
+import { pageAutorisee, peut } from "@/lib/droits";
 import { chargerAffaires, chargerAnnuaire, chargerCapacitesAbsences, chargerMoi, chargerPlanifie, type AffaireP } from "@/lib/pilotageDonnees";
 import { ajouterJours, construireCapacites, estFerie, estWeekend, lundiDe, numeroSemaine, type Affectation, type Capacites, type JourRow } from "@/lib/pilotagePlanning";
 import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pilotageCalculs";
@@ -72,12 +72,14 @@ function PlanningRessourcesContenu() {
   /* RESSOURCES_FUSION : ce que le rôle voit en plus du planning */
   const [voirCharge, setVoirCharge] = useState(false);
   const [voirEquipe, setVoirEquipe] = useState(false);
+  const [voirPasse, setVoirPasse] = useState(false); // LIEN_PASSE_AVENIR : accès à l’Analyse de capacité
   const [roleConnu, setRoleConnu] = useState(false);
   useEffect(() => {
     chargerMoi()
       .then((m) => {
         setVoirCharge(peut(m?.role ?? null, "chargeRessources"));
         setVoirEquipe(peut(m?.role ?? null, "indicateurs"));
+        setVoirPasse(pageAutorisee(m?.role ?? null, "/admin/bilans"));
       })
       .catch(() => undefined)
       .finally(() => setRoleConnu(true));
@@ -480,6 +482,12 @@ function PlanningRessourcesContenu() {
                 </button>
               ))}
             </span>
+          )}
+          {/* LIEN_PASSE_AVENIR : ici l’avenir (planifié) ; le passé (pointé) se lit dans l’Analyse de capacité */}
+          {voirPasse && (
+            <a href="/admin/bilans" style={{ marginLeft: voirCharge ? 0 : "auto", fontSize: 13, fontWeight: 800, color: C.rougeFonce, textDecoration: "none", whiteSpace: "nowrap" }}>
+              📊 Voir le passé : Analyse de capacité →
+            </a>
           )}
         </div>
 
