@@ -794,9 +794,8 @@ function BilansPageContenu() {
         throw codesRes.error;
       }
 
-      const feuillesChargees =
-        (feuillesRes.data ??
-          []) as FeuilleHeures[];
+      // SANS_BROUILLONS : une feuille en brouillon (semaine en cours de saisie) n’est pas comptée : ni sa capacité, ni ses heures
+      const feuillesChargees = ((feuillesRes.data ?? []) as FeuilleHeures[]).filter((f) => f.statut !== "BROUILLON");
 
       setCollaborateurs(
         (collaborateursRes.data ??
