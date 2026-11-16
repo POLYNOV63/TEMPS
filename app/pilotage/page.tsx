@@ -39,6 +39,7 @@ import {
   type Totaux,
 } from "@/lib/pilotageCalculs";
 import { chargerDormantes, libelleDormance, type Dormance } from "@/lib/dormantes";
+import { correspondRecherche, texteRecherche } from "@/lib/rechercheAffaires";
 import * as XLSX from "xlsx";
 import { peut } from "@/lib/droits";
 import { chargerDroitsRoles } from "@/lib/droitsRoles";
@@ -132,6 +133,7 @@ function PortefeuilleContenu() {
   /* DELAI_ESTIME : délai estimé et délai client de chaque commande (Suivi d'affaire BE), par n° (« 1604R2 ») */
   const [delaisSuivi, setDelaisSuivi] = useState<Map<string, { estime: string | null; client: string | null; statut?: string | null }>>(new Map());
   const [statutsDevis, setStatutsDevis] = useState<Map<string, string>>(new Map()); // STATUT_SURLIGNE
+  const [redacteurs, setRedacteurs] = useState<Map<string, string>>(new Map()); // RECHERCHE_AFFAIRES : « CBE1604 » → id du rédacteur du devis
   const [toutesAlertes, setToutesAlertes] = useState(false);
 
   /* MONTANTS_AFFAIRES : droit « Suivi des affaires avec les montants » (Paramétrage › Droits d'accès) :
@@ -332,8 +334,8 @@ function PortefeuilleContenu() {
         // Client (nom abrégé) : vient du Suivi d'affaire BE. Absent si la synchro n'a jamais tourné.
         try {
           const [sl, sc] = await Promise.all([
-            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string; numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null; statut: string | null }>((de, a) =>
-              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id,numero_affaire,delai,date_livraison_estimee,statut").order("cle").range(de, a)
+            chargerTout<{ base_affaire: string | null; base_devis: string | null; genre: string; client_id: string; numero_affaire: string | null; delai: string | null; date_livraison_estimee: string | null; statut: string | null; redacteur_id: string | null }>((de, a) =>
+              supabase.from("suivi_lignes").select("base_affaire,base_devis,genre,client_id,numero_affaire,delai,date_livraison_estimee,statut,redacteur_id").order("cle").range(de, a)
             ),
             chargerTout<{ id: string; nom_abrege: string }>((de, a) =>
               supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(de, a)
@@ -356,6 +358,13 @@ function PortefeuilleContenu() {
           const devisStatuts = new Map<string, string>();
           for (const l of sl) if (l.genre === "DEVIS" && l.base_devis && l.statut) devisStatuts.set(String(l.base_devis).replace(/^DBE/i, "").replace(/^0+/, ""), l.statut);
           setStatutsDevis(devisStatuts);
+          const red = new Map<string, string>();
+          for (const l of sl) {
+            if (!l.redacteur_id) continue;
+            if (l.genre === "DEVIS" && l.base_devis) red.set(`DBE${String(l.base_devis).replace(/^DBE/i, "").replace(/^0+/, "")}`, l.redacteur_id);
+            if (l.genre === "BASE" && l.base_affaire) red.set(`CBE${l.base_affaire.replace(/^0+/, "")}`, l.redacteur_id);
+          }
+          setRedacteurs(red);
           for (const l of sl)
             if (l.numero_affaire && (l.genre === "BASE" || l.genre === "AVENANT"))
               delais.set(l.numero_affaire.toUpperCase().replace(/^\s*CBE\s*/, "").replace(/^0+/, ""), { estime: l.date_livraison_estimee?.slice(0, 10) ?? null, client: l.delai?.slice(0, 10) ?? null, statut: l.statut });
@@ -538,7 +547,7 @@ function PortefeuilleContenu() {
 
   // Filtres communs aux deux tableaux (actives et inactives)
   const filtrees = useMemo(() => {
-    const q = normaliser(recherche.trim());
+    const q = recherche.trim();
 
     return lignes.filter((ligneF) => {
       const { affaire, totaux, client, famille } = ligneF;
@@ -547,7 +556,20 @@ function PortefeuilleContenu() {
       if (!q && (filtreType === "DBE" ? affaire.type !== "DBE" : affaire.type !== "CBE" || (filtreType === "PEPI") !== prestation)) return false;
       // RECHERCHE_DEVIS : on retrouve une commande par son n° de devis d'origine (DBE2835 ou 2835)
       const devisNum = affaire.type === "CBE" ? devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) : undefined;
-      if (q && !normaliser(`${affaire.numero} ${famille?.numeros.join(" ") ?? ""} ${devisNum ? `dbe${devisNum} ${devisNum}` : ""} ${affaire.designation} ${client ?? ""}`).includes(q)) return false;
+      // RECHERCHE_AFFAIRES : la même recherche que la Fiche affaire (plusieurs mots, trigramme du responsable ou du rédacteur)
+      if (q) {
+        const base = (affaire.numero.match(/^d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
+        const texte = texteRecherche({
+          type: affaire.type,
+          numero: affaire.numero,
+          autresNumeros: famille?.numeros,
+          devis: devisNum,
+          designation: affaire.designation,
+          client,
+          trigrammes: [collabs.get(affaire.responsable_id)?.trigramme, collabs.get(redacteurs.get(`${affaire.type}${base}`) ?? "")?.trigramme],
+        });
+        if (!correspondRecherche(texte, q)) return false;
+      }
       if (filtreImputation && (affaire.imputation ?? "") !== filtreImputation) return false;
       if (filtreClient && (client ?? "") !== filtreClient) return false;
       if (filtreResp && affaire.responsable_id !== filtreResp) return false;
@@ -557,7 +579,7 @@ function PortefeuilleContenu() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lignes, filtreType, recherche, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes, devisParCbe, activiteFiltre, seulementPeriode, surPeriode, bornes?.du]);
+  }, [lignes, filtreType, recherche, collabs, redacteurs, filtreImputation, filtreClient, filtreResp, filtrePlanning, depassementSeul, dormantesSeules, dormantes, devisParCbe, activiteFiltre, seulementPeriode, surPeriode, bornes?.du]);
 
   const trier = useCallback(
     (liste: Ligne[]) => {
@@ -1367,10 +1389,10 @@ function PortefeuilleContenu() {
                 <input
                   type="search"
                   aria-label="Rechercher une affaire"
-                  placeholder="Rechercher : n° de commande ou de devis (DBE), descriptif, client…"
+                  placeholder="Rechercher : n° d’affaire ou de devis, client, descriptif, trigramme…"
                   value={recherche}
                   onChange={(e) => setRecherche(e.target.value)}
-                  style={{ ...page.entrees, maxWidth: 380, minHeight: 44 }}
+                  style={{ ...page.entrees, maxWidth: 440, minHeight: 44 }}
                 />
                 {recherche && (
                   <button type="button" onClick={() => setRecherche("")} style={{ ...page.btnSecondaire, minHeight: 40, fontSize: 14 }}>

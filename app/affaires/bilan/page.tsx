@@ -1,7 +1,9 @@
 "use client";
 import { couleurMetier } from "@/lib/couleurs";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import RechercheAffaire from "@/components/RechercheAffaire";
+import type { EntreeAffaire } from "@/lib/rechercheAffaires";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -258,7 +260,6 @@ function BilanContenu() {
   const [noms, setNoms] = useState<Map<string, string>>(new Map());
   /* REDACTEUR_TRIGRAMME : « Amélie MAUBERT » (Suivi d'affaire) → son trigramme */
   const [trigrammes, setTrigrammes] = useState<Map<string, string>>(new Map());
-  const [suggestions, setSuggestions] = useState<{ cle: string; libelle: string }[]>([]);
   const [filtrePersonne, setFiltrePersonne] = useState("");
   const [libellesCodes, setLibellesCodes] = useState<Map<string, string>>(new Map());
   const [aVenir, setAVenir] = useState<AVenir[]>([]);
@@ -311,18 +312,14 @@ function BilanContenu() {
   /* Référentiels + liste des affaires pour la saisie assistée */
   useEffect(() => {
     (async () => {
-      const [act, cor, sug, col] = await Promise.all([
+      const [act, cor, col] = await Promise.all([
         supabase.from("activites").select("id,nom,ordre_affichage"),
         supabase.from("suivi_correspondance_activites").select("colonne_excel,activite_id"),
-        supabase.from("suivi_lignes").select("numero_affaire,designation").eq("genre", "BASE").order("numero_affaire", { ascending: false }).limit(1000),
         supabase.from("collaborateurs").select("id,prenom,nom,trigramme"),
       ]);
       setActivites(new Map(((act.data ?? []) as { id: string; nom: string; ordre_affichage: number }[]).map((a) => [a.id, { nom: a.nom, ordre: a.ordre_affichage }])));
       setCorrespondance(
         new Map(((cor.data ?? []) as { colonne_excel: string; activite_id: string | null }[]).filter((c) => c.activite_id).map((c) => [c.colonne_excel, c.activite_id as string]))
-      );
-      setSuggestions(
-        ((sug.data ?? []) as { numero_affaire: string | null; designation: string | null }[]).filter((s) => s.numero_affaire).map((s) => ({ cle: s.numero_affaire as string, libelle: s.designation ?? "" }))
       );
       const collabs = (col.data ?? []) as { id: string; prenom: string | null; nom: string | null; trigramme: string | null }[];
       setNoms(new Map(collabs.map((c) => [c.id, c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim()])));
@@ -541,17 +538,21 @@ function BilanContenu() {
     };
   }, [affaire, noms, activites]);
 
-  function rechercher(e: FormEvent) {
-    e.preventDefault();
-    const m = saisie.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
-    if (!m) {
-      setErreur("Saisissez un numéro d’affaire, par exemple 1533 ou CBE1533.");
-      return;
-    }
-    const cible = { type: ((m[1] as TypeAffaire) || type) as TypeAffaire, numero: m[2] };
+  /* RECHERCHE_AFFAIRES : ouvrir l'affaire choisie dans la liste, ou un numéro tapé (Entrée) */
+  function ouvrir(cible: { type: TypeAffaire; numero: string }) {
+    setErreur("");
+    setSaisie(cible.numero);
     setType(cible.type);
     setAffaire(cible);
     window.history.replaceState(null, "", `?affaire=${cible.type}${cible.numero}`);
+  }
+  function ouvrirSaisie(texte: string) {
+    const m = texte.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?0*(\d+)$/);
+    if (!m) {
+      setErreur("Aucune affaire ne correspond. Choisissez-en une dans la liste, ou tapez un numéro (ex. 1533, CBE1533, DBE2835).");
+      return;
+    }
+    ouvrir({ type: ((m[1] as TypeAffaire) || "CBE") as TypeAffaire, numero: m[2] });
   }
 
   /* ------------------------------ calculs ------------------------------ */
@@ -778,43 +779,16 @@ function BilanContenu() {
           <h1 style={page.titre}>Fiche affaire</h1>
         </div>
 
-        <form onSubmit={rechercher} style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
-          {(["CBE", "DBE"] as TypeAffaire[]).map((t) => (
-            <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(t)} style={{ ...bascule(type === t), minHeight: 44, borderRadius: 8, fontSize: 15 }}>
-              {t}
-            </button>
-          ))}
-          <input
-            list="bilan-affaires"
-            aria-label="Numéro d’affaire"
-            placeholder="N° d’affaire, ex. 1533"
-            value={saisie}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSaisie(v);
-              if (suggestions.some((s) => s.cle === v)) {
-                const m = v.toUpperCase().replace(/\s/g, "").match(/^(CBE|DBE)?(\d+)/);
-                if (m) {
-                  const cible = { type: ((m[1] as TypeAffaire) || type) as TypeAffaire, numero: m[2] };
-                  setType(cible.type);
-                  setAffaire(cible);
-                  window.history.replaceState(null, "", `?affaire=${cible.type}${cible.numero}`);
-                }
-              }
-            }}
-            style={{ ...page.entrees, maxWidth: 260 }}
-          />
-          <datalist id="bilan-affaires">
-            {suggestions.map((s) => (
-              <option key={s.cle} value={s.cle}>
-                {s.libelle}
-              </option>
-            ))}
-          </datalist>
-          <button type="submit" style={page.btnPrimaire} disabled={chargement}>
-            {chargement ? "Chargement…" : affaire ? "Ouvrir une autre affaire" : "Ouvrir"}
-          </button>
-        </form>
+        {/* RECHERCHE_AFFAIRES : la même recherche que le Suivi des affaires (n°, devis, client, descriptif, trigramme) */}
+        <div style={{ ...page.carte, padding: 14, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 16 }}>
+          <RechercheAffaire onChoisir={(e: EntreeAffaire) => ouvrir({ type: e.type, numero: e.numero })} onSaisieLibre={ouvrirSaisie} />
+          {chargement && <span style={{ color: C.gris }}>Chargement…</span>}
+          {affaire && !chargement && (
+            <span style={{ fontSize: 14, color: C.gris }}>
+              Affichée : <strong style={{ color: C.encre }}>{affaire.type} {saisie || affaire.numero}</strong>
+            </span>
+          )}
+        </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
 

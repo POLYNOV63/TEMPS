@@ -217,6 +217,10 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
 
 ## Fiche affaire (`/affaires/bilan?affaire=CBE1604`)
 
+**Recherche commune** (Fiche affaire et Suivi des affaires ; `lib/rechercheAffaires.ts`, champ `components/RechercheAffaire.tsx`
+avec liste de résultats) : n° de commande ou de devis (devis d'origine compris), client, descriptif, trigramme du
+responsable ou du rédacteur ; plusieurs mots = tous doivent se trouver (« michelin mmo »).
+
 Trois vocations : information administrative, information de production, information financière ; elle sert aussi de
 bilan d'affaire et de suivi de dérive.
 
