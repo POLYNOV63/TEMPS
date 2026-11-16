@@ -159,7 +159,9 @@ export function construireDevis(
     const envois = ls.map((x) => x.date_envoi).filter((d): d is string => Boolean(d)).sort();
     const ouverture = ouvertures[0]?.slice(0, 10) ?? null;
     const envoi = (l.date_envoi ?? envois[0] ?? null)?.slice(0, 10) ?? null;
-    const categorie = categorieDevis(l.statut, l.genre, Boolean(envoi));
+    // DEVIS_NON_CHIFFRES : un « Devis perdu » jamais chiffré (ni montant, ni heures) est annulé, pas perdu
+    const chiffre = ls.some((x) => (montants.get(x.id) ?? 0) > 0 || (Number(x.heures_total) || 0) > 0);
+    const categorie = categorieDevis(l.statut, l.genre, Boolean(envoi) && chiffre);
 
     const toutes = relancesPar.get(numero) ?? [];
     const faites = toutes

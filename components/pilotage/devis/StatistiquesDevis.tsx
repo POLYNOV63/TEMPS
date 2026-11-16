@@ -206,7 +206,11 @@ export default function StatistiquesDevis() {
       const principale: Discipline = DISCIPLINES.reduce((a, d) => (base[d] > base[a] ? d : a), DISCIPLINES[0]);
       // AVENANT_COMME_DEVIS : même règle que l'onglet Liste (le statut du classeur), avenants compris
       const envoye = ls.some((x) => Boolean(x.date_envoi)); // DEVIS_ANNULES : perdu sans date d'envoi = annulé
-      const cat = categorieDevis(l.statut, l.genre, envoye);
+      /* DEVIS_NON_CHIFFRES (PLG, 16/11/2026) : un « Devis perdu » sans aucun chiffrage (ni montant, ni heures) n'a jamais été
+         rédigé : clos avant qu'on ait eu le temps de le faire. C'est une consultation ANNULÉE, pas perdue, même si une
+         date d'envoi a été remplie au classement. */
+      const chiffre = ls.some((x) => x.montant > 0 || x.heures_total > 0 || sommeD(detailMontants.get(x.id) ?? { meca: 0, calcul: 0, elec: 0, scan: 0, negoce: 0, autre: 0 }) > 0);
+      const cat = categorieDevis(l.statut, l.genre, envoye && chiffre);
       const issue: Consultation["issue"] =
         cat === "REMPORTE" ? "GAGNE" : cat === "PERDU" ? "PERDU" : cat === "ANNULE" ? "FERME" : cat === "INTENTION" ? "INTENTION" : "ATTENTE";
       res.push({ numero, l, ouverture, issue, principale, parts, source });
@@ -293,7 +297,7 @@ export default function StatistiquesDevis() {
 
   function exporter() {
     const wb = XLSX.utils.book_new();
-    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse", FERME: "Annulé (jamais envoyé)" } as const;
+    const issueTexte = { GAGNE: "Remporté", PERDU: "Perdu", INTENTION: "Intention de commande", ATTENTE: "Sans réponse", FERME: "Annulé (pas chiffré ou jamais envoyé)" } as const;
     XLSX.utils.book_append_sheet(
       wb,
       XLSX.utils.json_to_sheet(
@@ -335,7 +339,7 @@ export default function StatistiquesDevis() {
         <th style={thD}>Remportées</th>
         <th style={thD}>Perdues</th>
         <th style={thD}>Sans réponse</th>
-        <th style={thD} title="Classées « Devis perdu » sans date d’envoi : jamais envoyées">Annulées</th>
+        <th style={thD} title="Classées « Devis perdu » sans avoir été chiffrées (ni montant, ni heures) ou jamais envoyées">Annulées</th>
         <th style={thD} title="Taux de transformation en nombre : remportées ÷ (remportées + perdues). Les consultations sans réponse ne comptent pas.">Transformées</th>
         <th style={thD}>{montantsVisibles ? "Chiffré" : "Heures chiffrées"}</th>
         <th style={thD}>{montantsVisibles ? "Remporté" : "Heures remportées"}</th>
@@ -483,7 +487,7 @@ export default function StatistiquesDevis() {
               {vue.mois.some((m) => m.fermes > 0) && (
                 <span>
                   {pastille("#dfe2e6")}
-                  annulées (jamais envoyées)
+                  annulées (pas chiffrées ou jamais envoyées)
                 </span>
               )}
             </div>
@@ -665,8 +669,8 @@ export default function StatistiquesDevis() {
                 comme un devis à part entière, avec son propre statut.
               </li>
               <li>
-                <strong>Annulée</strong> : classée « Devis perdu » sans date d’envoi (le devis n’a jamais été envoyé) ; elle compte dans les consultations,
-                mais pas dans le taux de transformation.
+                <strong>Annulée</strong> : classée « Devis perdu » sans avoir été chiffrée (ni montant, ni heures : pas eu le temps de la rédiger), ou
+                sans date d’envoi (jamais envoyée) ; elle compte dans les consultations, mais pas dans le taux de transformation.
               </li>
               <li>
                 <strong>Taux de transformation</strong> = remportées ÷ (remportées + perdues), en nombre (« 3/4 » = 3 remportées sur 4 dont l’issue est
