@@ -10,7 +10,7 @@ import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import BilanFinancierAffaire from "@/components/BilanFinancierAffaire";
-import { chargerCommandesPEPI, type CommandePEPI } from "@/components/HistoriquePEPI";
+import HistoriquePEPI, { chargerCommandesPEPI, type CommandePEPI } from "@/components/HistoriquePEPI";
 import SousDossiersAffaire from "@/components/SousDossiersAffaire";
 import PanneauPilotageAffaire from "@/components/pilotage/PanneauPilotageAffaire";
 import { BadgeType, C, Message, Pastille, page } from "@/components/pilotage/ui";
@@ -1545,6 +1545,12 @@ function BilanContenu() {
             </section>
 
             </>
+            )}
+
+            {/* HISTORIQUE_PEPI (rétabli le 16/11/2026) : commandes et leur cadence en heures, face au relevé et au pointé,
+                mois par mois ; dans l'onglet Production, sans aucun montant */}
+            {ongletVu === "AFFAIRE" && prestation && (
+              <HistoriquePEPI base={affaire.numero} pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))} montants={false} />
             )}
 
             {/* FINANCIER (fonction « Montants des affaires ») */}
