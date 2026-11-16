@@ -196,7 +196,7 @@ export default function CompositionEquipe() {
   const fragiles = vue.parActivite.filter((x) => x.attention.some((t) => t.startsWith("repose") || t.startsWith("aucun") || t.startsWith("un seul")));
 
   return (
-    <details id="composition" style={{ marginBottom: 20, scrollMarginTop: "calc(var(--hauteur-nav, 50px) + 12px)" }}>
+    <details id="composition" open /* DEPLIE_PAR_DEFAUT */ style={{ marginBottom: 20, scrollMarginTop: "calc(var(--hauteur-nav, 50px) + 12px)" }}>
       <summary style={{ cursor: "pointer", fontSize: 22, fontWeight: 800, minHeight: 36, margin: "8px 0 12px" }}>
         Composition de l’équipe <span style={{ fontSize: 13, fontWeight: 600, color: C.gris }}>· activités, niveaux, relève, polyvalence (ex-Cartographie)</span>
       </summary>

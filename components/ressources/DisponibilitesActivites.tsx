@@ -254,7 +254,7 @@ ${formatDate(l)}`, cle: `s${w}`, largeur: 11, format: "nombre" as const })),
 
         {/* ---------- tableau récapitulatif ---------- */}
         {/* RECAP_PAR_ACTIVITE : un bloc par activité, bien séparés (titre de couleur, son propre tableau) */}
-        <details style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
+        <details open /* DEPLIE_PAR_DEFAUT */ style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
           <summary style={{ cursor: "pointer", fontSize: 18, fontWeight: 800, minHeight: 32 }}>Récapitulatif, en heures</summary>
           <div style={{ display: "flex", justifyContent: "flex-end", margin: "4px 0 12px" }}>
             <button
