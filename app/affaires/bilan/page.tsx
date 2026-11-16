@@ -3,6 +3,7 @@ import { couleurMetier } from "@/lib/couleurs";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import RechercheAffaire from "@/components/RechercheAffaire";
+import { estTrajet } from "@/lib/trajets";
 import type { EntreeAffaire } from "@/lib/rechercheAffaires";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
@@ -582,8 +583,14 @@ function BilanContenu() {
       for (const c of chiffrePilotage) chiffre.set(c.activite_id, (chiffre.get(c.activite_id) ?? 0) + c.heures);
     }
 
+    // TRAJETS_A_PART : les heures de trajet (code HT) restent dans le pointé total, mais hors comparaison au chiffré
     const realise = new Map<string, number>();
+    let trajets = 0;
     for (const i of imputations) {
+      if (estTrajet(i.code)) {
+        trajets += i.heures;
+        continue;
+      }
       const k = i.activite_id ?? SANS_ACTIVITE;
       realise.set(k, (realise.get(k) ?? 0) + i.heures);
     }
@@ -601,7 +608,7 @@ function BilanContenu() {
 
     const totalChiffre = [...chiffre.values()].reduce((t, v) => t + v, 0) + chiffreNonRattache;
     const totalRealise = imputations.reduce((t, i) => t + i.heures, 0);
-    const codesSans = [...new Set(imputations.filter((i) => !i.activite_id).map((i) => i.code))].sort();
+    const codesSans = [...new Set(imputations.filter((i) => !i.activite_id && !estTrajet(i.code)).map((i) => i.code))].sort();
 
     const parPersonne = new Map<string, { nom: string; heures: number; premiere: string; derniere: string; parActivite: Map<string, number> }>();
     for (const i of imputations) {
@@ -637,7 +644,8 @@ function BilanContenu() {
       toutAuMontant,
       auMontant,
       horsComparaison,
-      realiseCompare: totalRealise - horsComparaison,
+      realiseCompare: totalRealise - horsComparaison - trajets,
+      trajets,
       sourceChiffre,
       parActivite,
       chiffreNonRattache,
@@ -990,6 +998,7 @@ function BilanContenu() {
                               <span style={{ fontSize: 13, borderTop: `2px solid ${C.ligne}`, paddingTop: 6 }}>
                                 <strong>{formatHeures(pointe)}</strong> + <strong>{formatHeures(planifieTotal)}</strong> / {formatHeures(bilan.totalChiffre)} · {etatTxt(bilan.totalChiffre, pointe, planifieTotal, formatHeures)}
                                 {avancement !== null && <span style={{ color: C.gris }}> · avancement estimé {Math.round(avancement)} %</span>}
+                                {bilan.trajets > 0.01 && <span style={{ color: C.gris }}> · hors {formatHeures(bilan.trajets)} de trajet</span>}
                               </span>
                             </>
                           )}
@@ -1257,6 +1266,17 @@ function BilanContenu() {
                           </tr>
                         );
                       })}
+                  {vue === "ACTIVITE" && bilan.trajets > 0.01 && (
+                    <tr>
+                      <td style={td}>
+                        <strong>Trajets</strong>
+                        <div style={{ fontSize: 12, color: C.gris }}>code HT : coût de l’affaire, hors comparaison au chiffré</div>
+                      </td>
+                      <td style={tdN}>—</td>
+                      <td style={tdN}>{formatHeures(bilan.trajets)}</td>
+                      <td colSpan={4} style={td} />
+                    </tr>
+                  )}
                   {vue === "ACTIVITE" && bilan.chiffreNonRattache > 0.01 && (
                     <tr>
                       <td style={td}>
@@ -1279,6 +1299,9 @@ function BilanContenu() {
                 </tbody>
               </table>
               {vue === "COMMANDE" && <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Les heures sont pointées sur la commande de base : elles remplissent d’abord la commande, puis chaque avenant dans l’ordre ; le dernier porte le dépassement éventuel.</p>}
+              {bilan.trajets > 0.01 && !bilan.toutAuMontant && (
+                <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Dont {formatHeures(bilan.trajets)} de trajet (code HT) : comptées dans le pointé et dans le coût de l’affaire, hors comparaison au chiffré.</p>
+              )}
               {bilan.horsComparaison > 0.01 && !bilan.toutAuMontant && (
                 <p style={{ fontSize: 12.5, color: C.gris, margin: "8px 0 0" }}>Dont {formatHeures(bilan.horsComparaison)} de scan / négoce non chiffrées (vendues au montant) : comptées dans le pointé, hors comparaison au chiffré.</p>
               )}
@@ -1535,6 +1558,7 @@ function BilanContenu() {
                 depassementPrevu={depassementPrevu}
                 pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))}
                 pointeTotal={bilan.totalRealise}
+                heuresTrajets={bilan.trajets}
                 planifie={planifieTotal}
                 chiffre={bilan.toutAuMontant ? 0 : bilan.totalChiffre}
                 planifieParMois={planifieMois}

@@ -101,6 +101,7 @@ export default function BilanFinancierAffaire({
   realiseParActivite,
   correspondance,
   heuresNegoce = 0,
+  heuresTrajets = 0,
 
   pointeTotal = 0,
   planifie = 0,
@@ -117,6 +118,7 @@ export default function BilanFinancierAffaire({
   correspondance?: Map<string, string>;
   /* heures pointées sur le négoce (activité Négoce), pour la marge résiduelle */
   heuresNegoce?: number;
+  heuresTrajets?: number; // TRAJETS_A_PART : heures de trajet (code HT), comprises dans pointeTotal
   /* heures de dépassement prévu (pointé + planifié − chiffré), pour en chiffrer le coût */
   depassementPrevu?: number;
   /* MARGES_FICHE : heures pointées mois par mois (« 2026-11 »), au total, planifiées à venir, chiffrées */
@@ -653,10 +655,11 @@ export default function BilanFinancierAffaire({
             const avecNegoce = vendu > 0.5 || achete > 0.5 || hNeg > 0.05;
             const mNeg = vendu - achete - hNeg * C;
             const hTotal = pointeTotal + (toutesLivrees ? 0 : planifie);
-            const hAutres = hTotal - lignes.reduce((t, x) => t + x.h, 0) - (avecNegoce ? hNeg : 0);
+            const hTrajets = heuresTrajets > 0.05 ? heuresTrajets : 0;
+            const hAutres = hTotal - lignes.reduce((t, x) => t + x.h, 0) - (avecNegoce ? hNeg : 0) - hTrajets;
             const nonVentile = M - lignes.reduce((t, x) => t + x.d.montant, 0) - (avecNegoce ? vendu : 0);
             const ecartFacture = toutesLivrees ? F - M : 0;
-            const total = lignes.reduce((t, x) => t + x.m, 0) + (avecNegoce ? mNeg : 0) - (Math.abs(hAutres) > 0.05 ? hAutres * C : 0) + (Math.abs(nonVentile) > 0.5 ? nonVentile : 0) + ecartFacture;
+            const total = lignes.reduce((t, x) => t + x.m, 0) + (avecNegoce ? mNeg : 0) - hTrajets * C - (Math.abs(hAutres) > 0.05 ? hAutres * C : 0) + (Math.abs(nonVentile) > 0.5 ? nonVentile : 0) + ecartFacture;
             const recette = toutesLivrees ? F : M;
             const bord: CSSProperties = { borderTop: "2px solid #d5d9de" };
             return (
@@ -695,6 +698,16 @@ export default function BilanFinancierAffaire({
                       <td style={tdN}>{hNeg > 0.05 ? heures(hNeg) : "—"}</td>
                       <td style={tdN}>—</td>
                       {marge(mNeg, vendu)}
+                    </tr>
+                  )}
+                  {hTrajets > 0 && (
+                    <tr>
+                      <td style={{ ...td, fontWeight: 800 }} colSpan={4}>
+                        Trajets <span style={{ fontSize: 12, fontWeight: 400, color: gris }}>code HT : coût de l’affaire, non vendu en heures</span>
+                      </td>
+                      <td style={tdN}>{heures(hTrajets)}</td>
+                      <td style={tdN} />
+                      {marge(-hTrajets * C, 0)}
                     </tr>
                   )}
                   {Math.abs(hAutres) > 0.05 && (

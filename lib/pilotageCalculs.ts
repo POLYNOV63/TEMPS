@@ -1,3 +1,4 @@
+import { estTrajet } from "@/lib/trajets";
 /* ===============================================================
    PILOTAGE BE - TYPES ET CALCULS (sans dépendance : ni React ni Supabase)
 
@@ -151,7 +152,8 @@ export type Totaux = {
 export function totauxAffaire(charges: Charge[], realiseLignes: Realise[]): Totaux {
   const chiffre = charges.reduce((t, c) => t + num(c.heures), 0);
   const initial = charges.reduce((t, c) => t + num(c.realise_initial), 0);
-  const realise = realiseLignes.reduce((t, r) => t + num(r.heures), 0) + initial;
+  // TRAJETS_A_PART : les heures de trajet (code HT) ne consomment pas le chiffré
+  const realise = realiseLignes.reduce((t, r) => t + (estTrajet(r.code) ? 0 : num(r.heures)), 0) + initial;
 
   return {
     chiffre: arrondir(chiffre),
@@ -366,6 +368,7 @@ export function detailActivites(
   }
 
   for (const r of realiseLignes) {
+    if (estTrajet(r.code)) continue; // TRAJETS_A_PART
     obtenir(r.activite_id).realise += num(r.heures);
   }
 

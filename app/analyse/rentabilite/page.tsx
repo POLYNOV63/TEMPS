@@ -1,4 +1,5 @@
 "use client";
+import { estTrajet } from "@/lib/trajets";
 import { COULEURS_METIERS } from "@/lib/couleurs";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -63,6 +64,7 @@ type LigneRenta = {
   hr: number;
   cout: number | null;
   auMontant: boolean;
+  trajets?: number; // TRAJETS_A_PART : heures de trajet (code HT), dans le coût mais pas dans « heures passées »
 };
 type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
 /* RENTABILITE_ACTIVITE : couleurs des activités (celles des Indicateurs commerciaux) */
@@ -77,6 +79,7 @@ function RentabiliteContenu() {
   const [exercice, setExercice] = useState(exerciceCourant);
   const [lignesFin, setLignesFin] = useState<LigneFin[]>([]);
   const [realiseParBase, setRealiseParBase] = useState<Map<string, ParGroupe>>(new Map());
+  const [trajetsParBase, setTrajetsParBase] = useState<Map<string, number>>(new Map());
   const [couts, setCouts] = useState<Map<number, number>>(new Map());
   const [estAdmin, setEstAdmin] = useState(false);
   const [coutSaisi, setCoutSaisi] = useState("");
@@ -170,14 +173,21 @@ function RentabiliteContenu() {
       }
       for (const a of (acts.data ?? []) as { id: string; nom: string }[]) if (/^negoce/.test(sansAccents(a.nom))) groupeActivite.set(a.id, "Négoce");
       const rb = new Map<string, ParGroupe>();
+      const tb = new Map<string, number>();
       for (const x of realise) {
         if (x.type_affaire !== "CBE") continue;
         const k = String(x.numero).replace(/^0+/, "");
+        // TRAJETS_A_PART : les trajets (code HT) sur une ligne à part, comptés dans le coût
+        if (estTrajet(x.code)) {
+          tb.set(k, (tb.get(k) ?? 0) + (Number(x.heures) || 0));
+          continue;
+        }
         const g = rb.get(k) ?? groupesVides();
         g[(x.activite_id && groupeActivite.get(x.activite_id)) || "Autre"] += Number(x.heures) || 0;
         rb.set(k, g);
       }
       setRealiseParBase(rb);
+      setTrajetsParBase(tb);
       setCouts(new Map(((co.data ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => [c.annee, Number(c.cout_horaire)])));
       setEstAdmin(Boolean(moi?.estAdmin));
 
@@ -297,6 +307,7 @@ function RentabiliteContenu() {
       const hr = GROUPES.reduce((t, g) => t + rg[g], 0);
       const hc = GROUPES.reduce((t, g) => t + a.heuresChiffrees[g], 0);
       const c = coutHoraire(couts, a.date_fin);
+      const tr = trajetsParBase.get(base) ?? 0;
       // RENTABILITE_NEGOCE : une affaire de négoce / scan qui a des heures chiffrées se compare comme les autres
       const montant = venteAuMontant(a.imputation) && hc <= 0.01;
       const hcNegoce = a.heuresChiffrees["Négoce"];
@@ -340,10 +351,12 @@ function RentabiliteContenu() {
         achats: a.achats,
         hc,
         hr,
-        cout: c === null ? null : a.achats + hr * c,
+        cout: c === null ? null : a.achats + (hr + tr) * c,
         auMontant: montant,
         nonVentile,
+        trajets: tr,
       });
+      if (tr > 0.01) ajouter("Trajets", 0, 0, 0, tr, c === null ? null : tr * c, false);
       if (montant) {
         // négoce / scan pur : l'affaire entière dans sa ligne, heures passées comprises
         ajouter(/^scan/.test(sansAccents(a.imputation)) ? "Scan" : "Négoce au montant", a.montant, a.achats, 0, hr, c === null ? null : a.achats + hr * c, true);
@@ -384,7 +397,7 @@ function RentabiliteContenu() {
       return mx / (x.ca || 1) - my / (y.ca || 1);
     });
 
-    const ordre = [...GROUPES, "Négoce au montant", "Scan", "PE", "PI"];
+    const ordre = [...GROUPES, "Négoce au montant", "Scan", "PE", "PI", "Trajets"];
     const groupes = [...parGroupe.values()].sort((x, y) => ordre.indexOf(x.cle) - ordre.indexOf(y.cle));
     const tout: LigneRenta[] = [...affaires, ...prestationsEx];
     const total: LigneRenta = {
@@ -394,6 +407,7 @@ function RentabiliteContenu() {
       achats: tout.reduce((t, a) => t + a.achats, 0),
       hc: tout.filter((a) => !a.auMontant).reduce((t, a) => t + a.hc, 0),
       hr: tout.reduce((t, a) => t + a.hr, 0),
+      trajets: tout.reduce((t, a) => t + (a.trajets ?? 0), 0),
       cout: tout.some((a) => a.cout === null) ? null : tout.reduce((t, a) => t + (a.cout ?? 0), 0),
       auMontant: false,
     };
@@ -448,7 +462,7 @@ function RentabiliteContenu() {
     };
 
     return { affaires, groupes, total, prestationsEx, enAttente, rapprochement };
-  }, [lignesFin, realiseParBase, couts, exercice, prestations, pointeExercice, pilotageCBE]);
+  }, [lignesFin, realiseParBase, trajetsParBase, couts, exercice, prestations, pointeExercice, pilotageCBE]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 6px", textAlign: "center" };
   const td: CSSProperties = { ...page.td, padding: "7px 6px", fontSize: 13, textAlign: "right", whiteSpace: "nowrap" };
@@ -471,9 +485,12 @@ function RentabiliteContenu() {
         <td style={{ ...td, fontWeight: gras ? 800 : 400 }}>{euros(l.ca)}</td>
         <td style={td}>{l.achats ? euros(l.achats) : "—"}</td>
         <td style={td}>{l.hc > 0 ? formatHeures(l.hc) : "—"}</td>
-        <td style={td}>{l.hr > 0 ? formatHeures(l.hr) : "—"}</td>
-        <td style={{ ...td, color: C.gris }}>{l.auMontant ? <span style={{ fontSize: 11 }}>au montant</span> : parHeure(tauxVendu(l))}</td>
-        <td style={{ ...td, fontWeight: 800, color: couleurObtenu(l, coutRef) }}>{parHeure(tauxObtenu(l))}</td>
+        <td style={td}>
+          {l.hr > 0 ? formatHeures(l.hr) : "—"}
+          {(l.trajets ?? 0) > 0.01 && l.cle !== "Trajets" && <div style={{ fontSize: 11, color: C.gris }}>+ {formatHeures(l.trajets ?? 0)} de trajet</div>}
+        </td>
+        <td style={{ ...td, color: C.gris }}>{l.cle === "Trajets" ? <span style={{ fontSize: 11 }}>code HT</span> : l.auMontant ? <span style={{ fontSize: 11 }}>au montant</span> : parHeure(tauxVendu(l))}</td>
+        <td style={{ ...td, fontWeight: 800, color: l.cle === "Trajets" ? undefined : couleurObtenu(l, coutRef) }}>{l.cle === "Trajets" ? "—" : parHeure(tauxObtenu(l))}</td>
         <td style={td}>{l.cout === null ? "—" : euros(l.cout)}</td>
         <td style={{ ...td, fontWeight: 800, color: m !== null && m < 0 ? C.rougeTexte : undefined }}>{m === null ? "—" : euros(m)}</td>
         <td style={td}>{m === null || l.ca === 0 ? "—" : pct(m / l.ca)}</td>
