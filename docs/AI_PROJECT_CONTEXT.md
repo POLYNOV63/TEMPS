@@ -261,7 +261,7 @@ bilan d'affaire et de suivi de dérive.
   par `#disponibilites` ou `#composition`, cibles de /analyse/charge-activites, /analyse/effectifs et du tableau de bord) :
   sa propre semaine de départ ◀ ▶, puis **Disponibilités par activité** (`components/ressources/DisponibilitesActivites.tsx` :
   composition, graphiques Méca / Elec / Calcul sur 12 semaines, détail d'une semaine, **Récapitulatif en heures** replié
-  avec bouton **« Exporter en Excel »** via `exporterExcelPolynov`) et **Composition de l'équipe** (`CompositionEquipe.tsx`).
+  avec bouton **« Exporter en Excel »** via `exporterExcelPolynov` ; composant commun `components/analyse/RecapDisponibilites.tsx`, aussi affiché sous les graphiques du tableau de bord Direction) et **Composition de l'équipe** (`CompositionEquipe.tsx`).
 
 ## Import historique (classeur « Récupération heures »)
 

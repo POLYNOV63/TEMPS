@@ -8,6 +8,7 @@ import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
 import VignetteFacturation from "@/components/dashboard/VignetteFacturation";
 import GraphiquesDisponibilites from "@/components/analyse/GraphiquesDisponibilites";
 import { useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
+import RecapDisponibilites from "@/components/analyse/RecapDisponibilites";
 import { aISO, lundiDe } from "@/lib/pilotagePlanning";
 import { rappelBilanRH } from "@/lib/clotureMensuelle";
 import { useDroitsRoles } from "@/lib/droitsRoles";
@@ -976,10 +977,10 @@ function BlocDirection({ aller }: { aller: (url: string) => void }) {
   );
 }
 
-/* les 3 graphiques de disponibilité par activité, sur 12 semaines (même calcul que la page) */
+/* les 3 graphiques de disponibilité par activité, sur 12 semaines (même calcul que la page), puis le récapitulatif en heures exportable */
 function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
   const lundi = useMemo(() => lundiDe(aISO(new Date())), []);
-  const { donnees, semaines, chargement, erreur } = useDisponibilitesActivites(lundi, 12);
+  const { donnees, semaines, fenetreFin, chargement, erreur } = useDisponibilitesActivites(lundi, 12);
   return (
     <section aria-label="Disponibilités par activité" style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
@@ -1003,6 +1004,12 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
             aide="Cliquez sur une barre pour le détail par personne."
           />
         )
+      )}
+      {/* RECAP_PARTAGE : le récapitulatif en heures et son export Excel, comme dans l’Analyse de capacité */}
+      {!chargement && !erreur && (
+        <div style={{ marginTop: 12 }}>
+          <RecapDisponibilites donnees={donnees} semaines={semaines} lundi={lundi} fenetreFin={fenetreFin} lundiActuel={lundi} />
+        </div>
       )}
     </section>
   );
