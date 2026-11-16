@@ -6,9 +6,13 @@ import { C, Message, page } from "@/components/pilotage/ui";
 import { aISO, ajouterJours, lundiDe, numeroSemaine } from "@/lib/pilotagePlanning";
 import { formatDate, formatHeures, nomCollab } from "@/lib/pilotageCalculs";
 import { NIVEAUX, useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
+import { exporterExcelPolynov, type ColonneExcel } from "@/lib/excelPolynov";
 
 /* ===============================================================
    RESSOURCES - DISPONIBILITÉS PAR ACTIVITÉ (RESSOURCES_FUSION)
+   CAPACITE_DISPOS : affiché dans l'Analyse de capacité, onglet
+   « Disponibilités à venir » ; le récapitulatif en heures s'exporte en
+   Excel (une ligne par activité et par mesure, une colonne par semaine).
    Reprise de l'ancienne page « Disponibilités par activité », intégrée
    sous la charge de l'équipe dans la page Ressources. Les 12 semaines
    partent de la semaine analysée (pilotée par la page). Au-dessus des
@@ -73,6 +77,53 @@ export default function DisponibilitesActivites({ lundi }: { lundi: string }) {
 
   const somme = (v: number[]) => v.reduce((t, x) => t + x, 0);
   const h = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} h`;
+
+  /* EXPORT_RECAP : le récapitulatif en heures, tel qu'il est affiché (mêmes lignes, valeurs arrondies à l'heure) */
+  const [exportEnCours, setExportEnCours] = useState(false);
+  async function exporterRecap() {
+    setExportEnCours(true);
+    try {
+      const colonnes: ColonneExcel[] = [
+        { titre: "Activité", cle: "activite", largeur: 14 },
+        { titre: "Mesure", cle: "mesure", largeur: 34 },
+        ...semaines.map((l, w) => ({ titre: `S${numeroSemaine(l)}
+${formatDate(l)}`, cle: `s${w}`, largeur: 11, format: "nombre" as const })),
+        { titre: `${semaines.length} sem.`, cle: "total", largeur: 11, format: "nombre" as const, formule: `SUM([s0]:[s${semaines.length - 1}])` },
+      ];
+      const lignes: Record<string, string | number | null>[] = [];
+      for (const d of donnees) {
+        const ajouter = (mesure: string, v: number[], style?: "groupe" | "detail") => {
+          const l: Record<string, string | number | null> = { activite: d.libelle, mesure, total: Math.round(somme(v)) };
+          v.forEach((x, w) => (l[`s${w}`] = Math.round(x)));
+          if (style) l._style = style;
+          lignes.push(l);
+        };
+        ajouter("Capacité", d.capa);
+        ajouter("Occupées", d.occ);
+        if (d.prev.some((x) => x >= 0.5)) ajouter("dont prévisionnel (non confirmé)", d.prev, "detail");
+        ajouter("Disponibles", d.dispo, "groupe");
+        NIVEAUX.forEach((nv, i) => {
+          if (nv.n > 0 || d.parNiveau[i].some((x) => x >= 0.5))
+            ajouter(`dont ${nv.libelle.replace("Niveau non renseigné", "non renseigné").toLowerCase()}`, d.parNiveau[i], "detail");
+        });
+      }
+      await exporterExcelPolynov(`Disponibilites_S${numeroSemaine(lundi)}_${lundi}`, [
+        {
+          nom: "Récapitulatif",
+          titre: `Disponibilités par activité · S${numeroSemaine(lundi)} → S${numeroSemaine(semaines[semaines.length - 1] ?? lundi)}`,
+          sousTitre: `Récapitulatif en heures, ${formatDate(lundi)} → ${formatDate(ajouterJours(fenetreFin, -2))} · extrait le ${formatDate(aISO(new Date()))}`,
+          colonnes,
+          lignes,
+          notes: [
+            "Chaque activité regroupe les personnes dont c’est une activité principale (fiche collaborateur), encadrement exclu ; une personne qui a plusieurs activités principales compte dans chacune : les activités ne s’additionnent pas entre elles.",
+            "Occupées : tout ce qui est planifié (affaires, PE / PI, hors affaire, prévisionnel). Disponibles : heures libres de chacun, détaillées par niveau ; une valeur négative signale une surcharge.",
+          ],
+        },
+      ]);
+    } finally {
+      setExportEnCours(false);
+    }
+  }
 
   return (
     <div>
@@ -205,7 +256,16 @@ export default function DisponibilitesActivites({ lundi }: { lundi: string }) {
         {/* RECAP_PAR_ACTIVITE : un bloc par activité, bien séparés (titre de couleur, son propre tableau) */}
         <details style={{ ...page.carte, padding: 16, marginBottom: 16 }}>
           <summary style={{ cursor: "pointer", fontSize: 18, fontWeight: 800, minHeight: 32 }}>Récapitulatif, en heures</summary>
-          <div style={{ height: 12 }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", margin: "4px 0 12px" }}>
+            <button
+              type="button"
+              onClick={() => void exporterRecap()}
+              disabled={exportEnCours || chargement || donnees.length === 0}
+              style={{ minHeight: 36, border: `1.5px solid ${C.rouge}`, background: "#ffffff", color: C.rougeFonce, borderRadius: 8, padding: "0 14px", fontWeight: 800, fontFamily: "inherit", cursor: exportEnCours ? "wait" : "pointer" }}
+            >
+              {exportEnCours ? "Export…" : "⬇ Exporter en Excel"}
+            </button>
+          </div>
           {donnees.map((d, ia) => (
             <div
               key={d.cle}

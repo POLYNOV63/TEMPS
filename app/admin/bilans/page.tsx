@@ -8,6 +8,9 @@ import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import GardeAcces from "@/components/GardeAcces";
 import OngletsCharge from "@/components/analyse/OngletsCharge";
 import BilanActivites from "@/components/analyse/BilanActivites";
+import DisponibilitesAVenir from "@/components/analyse/DisponibilitesAVenir";
+import { peut } from "@/lib/droits";
+import { chargerMoi } from "@/lib/pilotageDonnees";
 
 /* =========================================================
    TYPES
@@ -656,8 +659,14 @@ function BilansPageContenu() {
 
   const [onglet, setOnglet] =
     useState<
-      "PILOTAGE" | "NON_EXPLIQUE" | "COLLABORATEURS" | "ACTIVITES" // CAPACITE_ACTIVITES
+      "PILOTAGE" | "NON_EXPLIQUE" | "COLLABORATEURS" | "ACTIVITES" | "DISPONIBILITES" // CAPACITE_ACTIVITES, CAPACITE_DISPOS
     >("PILOTAGE");
+
+  /* CAPACITE_DISPOS : arrivée par #disponibilites ou #composition (anciennes adresses, tableau de bord) */
+  useEffect(() => {
+    const id = window.location.hash.replace("#", "");
+    if (id === "disponibilites" || id === "composition") setOnglet("DISPONIBILITES");
+  }, []);
 
   const [codeDetailFiltre, setCodeDetailFiltre] =
     useState<string | null>(null);
@@ -2871,7 +2880,7 @@ feuilles.forEach((f) => {
 
             {/* LIEN_PASSE_AVENIR : ici le passé (pointé) ; l’avenir (planifié) se lit dans Ressources */}
             <a href="/pilotage/planning-ressources" style={{ display: "inline-block", marginTop: 8, fontSize: 14, fontWeight: 800, color: "#8f0000", textDecoration: "none" }}>
-              📅 Voir l’avenir : Ressources (planning, charge, disponibilités) →
+              📅 Voir l’avenir par personne : Ressources (planning, charge) →
             </a>
           </div>
 
@@ -3450,7 +3459,20 @@ feuilles.forEach((f) => {
           >
             🧩 Par activité
           </button>
+
+          <button
+            style={{
+              ...styles.tab,
+              ...(onglet === "DISPONIBILITES" ? styles.tabActive : {}),
+            }}
+            onClick={() => setOnglet("DISPONIBILITES")}
+          >
+            🧭 Disponibilités à venir
+          </button>
         </div>
+
+        {/* CAPACITE_DISPOS : disponibilités par activité (12 semaines à venir) et composition de l'équipe, venues de Ressources */}
+        {onglet === "DISPONIBILITES" && <DisponibilitesAVenir />}
 
         {/* CAPACITE_ACTIVITES : l'ancien « Bilan activités » (heures CBE / DBE par activité, feuilles du nouveau système) */}
         {onglet === "ACTIVITES" && <BilanActivites integre />}
@@ -6186,10 +6208,40 @@ if (
   }
 }
 
+/* CAPACITE_DIRECTION : la page est ouverte au droit « chargeRessources » (ADMIN et Direction).
+   Qui a le droit « administration » voit toute l'analyse ; les autres (la Direction) arrivent
+   directement sur les disponibilités à venir (graphiques, récapitulatif, composition), sans
+   charger l'historique des heures. */
+function BilansSelonRole() {
+  const [complet, setComplet] = useState<boolean | null>(null);
+  useEffect(() => {
+    chargerMoi()
+      .then((m) => setComplet(peut(m?.role ?? null, "administration")))
+      .catch(() => setComplet(false));
+  }, []);
+  if (complet === null) return null;
+  if (complet) return <BilansPageContenu />;
+  return (
+    <div style={styles.page}>
+      <EnTetePage section="Bilans & pilotage" />
+      <OngletsPilotage actif="capacite" />
+      <main style={styles.main}>
+        <section style={styles.hero}>
+          <div>
+            <h1 style={styles.heroTitle}>Disponibilités à venir</h1>
+            <p style={styles.heroSubtitle}>Méca, Elec et Calcul sur 12 semaines : capacité, heures occupées et heures disponibles, puis la composition de l’équipe.</p>
+          </div>
+        </section>
+        <DisponibilitesAVenir />
+      </main>
+    </div>
+  );
+}
+
 export default function BilansPage() {
   return (
-    <GardeAcces droit={"administration"}>
-      <BilansPageContenu />
+    <GardeAcces droit={"chargeRessources"}>
+      <BilansSelonRole />
     </GardeAcces>
   );
 }

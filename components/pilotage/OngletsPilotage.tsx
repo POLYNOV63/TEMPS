@@ -36,7 +36,7 @@ const ONGLETS = [
   // la charge
   { cle: "feuilles-route", groupe: 3, court: "Feuilles de route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
   // en dernier : l'équipe et la capacité
-  { cle: "capacite", groupe: 4, court: "Capacité", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "administration" },
+  { cle: "capacite", groupe: 4, court: "Capacité", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "chargeRessources" }, // CAPACITE_DIRECTION
   { cle: "clients", groupe: 4, court: "Clients", libelle: "Analyse par client", href: "/analyse/clients", droit: "administration" },
   { cle: "fiabilite", groupe: 4, court: "Fiabilité chiffrage", libelle: "Fiabilité du chiffrage", href: "/analyse/fiabilite-chiffrage", droit: "indicateurs" },
 ] as const satisfies readonly { cle: string; groupe: number; court: string; libelle: string; href: string; droit: Droit }[];

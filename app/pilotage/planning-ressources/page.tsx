@@ -8,8 +8,6 @@ import GardeAcces from "@/components/GardeAcces";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, Message, page } from "@/components/pilotage/ui";
 import ChargeEquipe from "@/components/ressources/ChargeEquipe";
-import DisponibilitesActivites from "@/components/ressources/DisponibilitesActivites";
-import CompositionEquipe from "@/components/ressources/CompositionEquipe";
 import { pageAutorisee, peut } from "@/lib/droits";
 import { chargerAffaires, chargerAnnuaire, chargerCapacitesAbsences, chargerMoi, chargerPlanifie, type AffaireP } from "@/lib/pilotageDonnees";
 import { ajouterJours, construireCapacites, estFerie, estWeekend, lundiDe, numeroSemaine, type Affectation, type Capacites, type JourRow } from "@/lib/pilotagePlanning";
@@ -18,16 +16,15 @@ import { formatDate, formatHeures, nomCollab, num, type Collab } from "@/lib/pil
 /* ===============================================================
    PILOTAGE BE - RESSOURCES (RESSOURCES_FUSION)
    Regroupe l'ancien Planning par ressource (en haut, pour tous), la
-   Charge par ressource, les Disponibilités par activité et la
-   Cartographie de l'équipe (en dessous).
+   Charge par ressource (en dessous).
+   CAPACITE_DISPOS : les Disponibilités par activité (avec le
+   récapitulatif en heures) et la Composition de l'équipe sont passées
+   dans l'Analyse de capacité, onglet « Disponibilités à venir ».
    - Tout le monde (droit voirPlanning) : le planning, comme avant,
      sans aucun pourcentage.
    - Droit « chargeRessources » (ADMIN, Direction) : sous le planning
-     (qui reste sans pourcentage), la charge de l'équipe (avec Déplacer…),
-     et les disponibilités par activité.
-   - Droit « indicateurs » : la composition de l'équipe (ex-Cartographie).
-   Les anciennes adresses (/pilotage/ressources, /analyse/charge-activites,
-   /analyse/effectifs) renvoient ici, sur le bon bloc.
+     (qui reste sans pourcentage), la charge de l'équipe (avec Déplacer…).
+   L'ancienne adresse /pilotage/ressources renvoie ici (#charge).
 
    Ancien en-tête (planning par ressource) :
 
@@ -72,15 +69,15 @@ function PlanningRessourcesContenu() {
   const aujourdhui = aujourdhuiISO();
   /* RESSOURCES_FUSION : ce que le rôle voit en plus du planning */
   const [voirCharge, setVoirCharge] = useState(false);
-  const [voirEquipe, setVoirEquipe] = useState(false);
   const [voirPasse, setVoirPasse] = useState(false); // LIEN_PASSE_AVENIR : accès à l’Analyse de capacité
+  const [capaciteComplete, setCapaciteComplete] = useState(false); // CAPACITE_DIRECTION : la Direction n’y voit que les disponibilités
   const [roleConnu, setRoleConnu] = useState(false);
   useEffect(() => {
     chargerMoi()
       .then((m) => {
         setVoirCharge(peut(m?.role ?? null, "chargeRessources"));
-        setVoirEquipe(peut(m?.role ?? null, "indicateurs"));
         setVoirPasse(pageAutorisee(m?.role ?? null, "/admin/bilans"));
+        setCapaciteComplete(peut(m?.role ?? null, "administration"));
       })
       .catch(() => undefined)
       .finally(() => setRoleConnu(true));
@@ -182,13 +179,18 @@ function PlanningRessourcesContenu() {
     };
   }, [debut, fin, rechargePlanning]);
 
-  /* ANCRES : arrivée depuis une ancienne adresse (#charge, #disponibilites, #composition) */
+  /* ANCRES : arrivée depuis une ancienne adresse (#charge) */
   const [ancreFaite, setAncreFaite] = useState(false);
   useEffect(() => {
     if (ancreFaite || chargement || !roleConnu) return;
     setAncreFaite(true);
     const id = window.location.hash.replace("#", "");
     if (!id) return;
+    // CAPACITE_DISPOS : ces blocs sont désormais dans l'Analyse de capacité
+    if (id === "disponibilites" || id === "composition") {
+      window.location.replace(`/admin/bilans#${id}`);
+      return;
+    }
     window.setTimeout(() => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -462,13 +464,7 @@ function PlanningRessourcesContenu() {
           <span style={{ fontSize: 13, color: C.gris }}>consultation : on affecte toujours depuis le planning des affaires</span>
           {voirCharge && (
             <span style={{ display: "inline-flex", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
-              {(
-                [
-                  ["charge", "Charge de l’équipe"],
-                  ["disponibilites", "Disponibilités"],
-                  ...(voirEquipe ? [["composition", "Composition"]] : []),
-                ] as [string, string][]
-              ).map(([id, lib]) => (
+              {([["charge", "Charge de l’équipe"]] as [string, string][]).map(([id, lib]) => (
                 <button
                   key={id}
                   type="button"
@@ -487,7 +483,7 @@ function PlanningRessourcesContenu() {
           {/* LIEN_PASSE_AVENIR : ici l’avenir (planifié) ; le passé (pointé) se lit dans l’Analyse de capacité */}
           {voirPasse && (
             <a href="/admin/bilans" style={{ marginLeft: voirCharge ? 0 : "auto", fontSize: 13, fontWeight: 800, color: C.rougeFonce, textDecoration: "none", whiteSpace: "nowrap" }}>
-              📊 Voir le passé : Analyse de capacité →
+              {capaciteComplete ? "📊 Analyse de capacité : le passé, les disponibilités à venir →" : "🧭 Disponibilités à venir par activité →"}
             </a>
           )}
         </div>
@@ -723,16 +719,10 @@ function PlanningRessourcesContenu() {
         )}
         </div>
 
-        {/* RESSOURCES_FUSION : charge, disponibilités et composition, sous le planning */}
+        {/* RESSOURCES_FUSION : la charge de l'équipe, sous le planning (CAPACITE_DISPOS : disponibilités et composition dans l'Analyse de capacité) */}
         {voirCharge && (
           <div style={{ marginTop: 28, paddingTop: 8, borderTop: `3px solid ${C.rouge}`, maxWidth: 1500 }}>
             <ChargeEquipe lundi={semaineAnalyse} setLundi={setSemaineAnalyse} onModifie={() => setRechargePlanning((n) => n + 1)} />
-            <DisponibilitesActivites lundi={semaineAnalyse} />
-          </div>
-        )}
-        {voirEquipe && (
-          <div style={{ marginTop: voirCharge ? 8 : 28, paddingTop: 8, borderTop: voirCharge ? undefined : `3px solid ${C.rouge}`, maxWidth: 1500 }}>
-            <CompositionEquipe />
           </div>
         )}
       </div>

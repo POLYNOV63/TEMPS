@@ -208,13 +208,10 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
      passées ; aucun pourcentage. Un clic sur une barre ouvre l'affaire au planning.
   2. Pour le droit `chargeRessources` : **Charge de l'équipe** (`components/ressources/ChargeEquipe.tsx`, ancre `#charge`) :
      bandeau de la semaine (affecté / capacité, charge, disponible par niveau, surcharges), détail par personne avec
-     **« Déplacer… »** des heures vers une autre semaine (le tableau « Répartition du temps, par activité » a été retiré) ;
-     **Disponibilités par activité** (`DisponibilitesActivites.tsx`, `#disponibilites`) : Méca, Elec, Calcul, composition
-     (personnes et niveaux) puis graphiques capacité / occupé / disponible, récapitulatif replié.
-  3. Pour le droit `indicateurs` : **Composition de l'équipe** (`CompositionEquipe.tsx`, `#composition`, repliée ; ex-
-     Cartographie) : activités, niveaux, relève, polyvalence, PE / PI / BE, fiches à compléter.
-  La semaine analysée des blocs du bas se choisit par ◀ ▶ dans « Charge de l'équipe ». Le passé se lit dans l'Analyse de
-  capacité.
+     **« Déplacer… »** des heures vers une autre semaine (le tableau « Répartition du temps, par activité » a été retiré).
+  La semaine analysée se choisit par ◀ ▶ dans « Charge de l'équipe ». Les Disponibilités par activité et la Composition
+  de l'équipe sont dans l'Analyse de capacité (onglet « Disponibilités à venir », 16/11/2026) ; `#disponibilites` et
+  `#composition` sur Ressources y renvoient.
 - **Ma feuille de route** (`/ma-feuille-de-route`, SQL 60 et 61) : ce que le planning prévoit pour la personne, devis à
   rédiger ; responsables et ADMIN choisissent un collègue.
 
@@ -256,11 +253,15 @@ bilan d'affaire et de suivi de dérive.
   contrôle `rh_est_admin()`) : par exercice et par client regroupé : devis, transformation, commandes reçues, CA facturé,
   heures, marge ; détail d'un client : heures par activité, répartition **PE / PI / BE / Négoce / Scan** en heures et en CA,
   temps de devis à part, liste de ses affaires.
-- **Analyse de capacité** (`/admin/bilans`, ADMIN ; `components/analyse/BilanActivites.tsx`) : le passé. Taux d'occupation
+- **Analyse de capacité** (`/admin/bilans`, droit `chargeRessources` ; analyse complète pour le droit `administration`, la Direction n’y voit que les « Disponibilités à venir », sans l’historique — CAPACITE_DIRECTION ; `components/analyse/BilanActivites.tsx`) : le passé. Taux d'occupation
   et heures improductives ; capacité à **35 h** (`total_theorique × 35 / horaire du profil`) ; **« CBE produit »** (produit,
   pas forcément vendu) ; DBE ; Divers de production ; CN (commercial) compté dans le travaillé et mesuré à part ; NI = sans
   charge ; CP et EC sortis de l'analyse. Onglets Collaborateurs (avec la part des **absences**, turquoise) et Par activité ;
-  lecture complète, paginée.
+  lecture complète, paginée. Onglet **« Disponibilités à venir »** (`components/analyse/DisponibilitesAVenir.tsx`, ouvert
+  par `#disponibilites` ou `#composition`, cibles de /analyse/charge-activites, /analyse/effectifs et du tableau de bord) :
+  sa propre semaine de départ ◀ ▶, puis **Disponibilités par activité** (`components/ressources/DisponibilitesActivites.tsx` :
+  composition, graphiques Méca / Elec / Calcul sur 12 semaines, détail d'une semaine, **Récapitulatif en heures** replié
+  avec bouton **« Exporter en Excel »** via `exporterExcelPolynov`) et **Composition de l'équipe** (`CompositionEquipe.tsx`).
 
 ## Import historique (classeur « Récupération heures »)
 

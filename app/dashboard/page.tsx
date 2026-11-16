@@ -985,7 +985,7 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
       <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: 10, marginBottom: 8 }}>
         <h2 style={stylesV2.groupeTitre}>🧭 Disponibilités par activité</h2>
         <span style={stylesV2.groupeDescription}>capacité, occupé et disponible sur les 12 semaines à venir</span>
-        <button type="button" onClick={() => aller("/pilotage/planning-ressources#disponibilites")} style={{ ...stylesV2.lienTexte, marginLeft: "auto" }}>
+        <button type="button" onClick={() => aller("/admin/bilans#disponibilites")} style={{ ...stylesV2.lienTexte, marginLeft: "auto" }}>
           Le détail →
         </button>
       </div>
@@ -999,7 +999,7 @@ function DisponibilitesDirection({ aller }: { aller: (url: string) => void }) {
             semaines={semaines}
             lundiActuel={lundi}
             hauteur={120}
-            onBarre={() => aller("/pilotage/planning-ressources#disponibilites")}
+            onBarre={() => aller("/admin/bilans#disponibilites")}
             aide="Cliquez sur une barre pour le détail par personne."
           />
         )

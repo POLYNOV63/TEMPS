@@ -107,7 +107,7 @@ export const PAGES: PageApp[] = [
   { href: "/analyse/finances", libelle: "Finances", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/rentabilite", libelle: "Rentabilité", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/fiabilite-chiffrage", libelle: "Fiabilité du chiffrage", groupe: "Analyse", droit: "indicateurs" },
-  { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "administration" },
+  { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "chargeRessources" }, // CAPACITE_DIRECTION : la Direction n'y voit que les disponibilités à venir
   { href: "/analyse/clients", libelle: "Analyse par client", groupe: "Analyse", droit: "administration" },
 
   { href: "/admin/feuilles", libelle: "Feuilles d’heures", groupe: "RH", droit: "voirFeuillesEquipe" },

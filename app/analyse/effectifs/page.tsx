@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/* RESSOURCES_FUSION : l'ancienne page « Cartographie de l’équipe » est désormais un bloc de la page Ressources */
+/* RESSOURCES_FUSION : l'ancienne page « Cartographie de l’équipe » est désormais dans l’Analyse de capacité, onglet « Disponibilités à venir » (CAPACITE_DISPOS) */
 export default function AncienneAdresse() {
-  redirect("/pilotage/planning-ressources#composition");
+  redirect("/admin/bilans#composition");
 }
