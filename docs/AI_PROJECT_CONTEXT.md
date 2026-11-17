@@ -21,7 +21,7 @@ Mis à jour le 15/11/2026 (sessions 11 et 12 : fiche affaire, page Ressources, a
 - **Moins de pages** : PLG préfère de vraies fusions de pages (blocs les uns sous les autres) aux menus à onglets ; une
   ancienne adresse fusionnée devient une page de redirection (`redirect(...)`), souvent vers une ancre (`#bloc`).
 - **SQL** : scripts numérotés `supabase/NN_objet.sql`, lancés à la main dans Supabase › SQL Editor, relançables sans risque
-  (`create or replace`, `if not exists`). **Installés : 1 à 100** (101 écrit le 17/11/2026, à lancer). Toujours dire l'ordre : SQL avant le code qui en dépend.
+  (`create or replace`, `if not exists`). **Installés : 1 à 100** (101 et 102 écrits le 17/11/2026, à lancer dans l'ordre). Toujours dire l'ordre : SQL avant le code qui en dépend.
 - **Fonctions Edge** : code complet, collé dans Supabase › Edge Functions › Code, puis Deploy.
 - **Export IA** (`/admin/Export-IA`, `lib/exportIA.ts`, route `app/api/Export-IA`) : produit ce contexte (léger ≈ 230 Ko,
   complet ≈ 1 Mo). Ce fichier `docs/AI_PROJECT_CONTEXT.md` en est la partie « règles métier » : le tenir à jour.
@@ -266,7 +266,9 @@ bilan d'affaire et de suivi de dérive.
   PE / PI ensemble. Cadran à aiguille : coût d'une heure vendue face
   au taux de vente et au coût de structure saisi. Salaire chargé, fees, location,
   autres frais : table `simulateur_parametres` (SQL 101), saisis dans la console, « Enregistrer comme valeurs de départ »
-  (ADMIN). Bouton MUTE pour sortir la CBE 1678 (liste `AFFAIRES_EXCLUABLES`).
+  (ADMIN). Bouton MUTE pour sortir la CBE 1678 (liste `AFFAIRES_EXCLUABLES`). **Deux taux de vente** face aux
+  compétences principales (`collaborateurs_predominances`) : productifs Calcul × taux Calcul, autres × taux autres ;
+  chaque taux a un **plafond marché** (SQL 102) au-delà duquel le CA est écrêté (voyant CLIP).
 - **Fiabilité du chiffrage** (`/analyse/fiabilite-chiffrage`) : chiffré face au pointé des forfaits ; PE / PI exclues
   d'après l'imputation de la commande de base ; colonnes triables, colonne Client.
 - **Analyse par client** (`/analyse/clients`, ADMIN, SQL 100 `analyse_heures_clients(p_debut, p_fin)` security definer,

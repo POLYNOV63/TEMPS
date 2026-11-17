@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Chakra_Petch, Permanent_Marker, Share_Tech_Mono } from "next/font/google";
 import s from "./ConsoleRentabilite.module.css";
-import { BUS, LEVIERS, PAR_CLE, calcul, type Cle, type Depart, type Levier, type Leviers } from "@/lib/simulateur";
+import { BUS, LEVIERS, PAR_CLE, PLAFONDS, calcul, type Cle, type Depart, type Levier, type Leviers } from "@/lib/simulateur";
 
 /* ===============================================================
    CONSOLE DE RENTABILITÉ (SIMULATEUR_RENTA)
@@ -34,7 +34,7 @@ const egal = (a: number, b: number) => Math.abs(a - b) < 1e-9;
 const SCENES: { cle: string; libelle: string; vers: (d: Leviers) => Leviers }[] = [
   { cle: "type", libelle: "Nos chiffres", vers: (d) => ({ ...d }) },
   { cle: "embauche", libelle: "+2 embauches", vers: (d) => ({ ...d, prod: d.prod + 2 }) },
-  { cle: "taux", libelle: "Taux +5 €/h", vers: (d) => ({ ...d, taux: d.taux + 5 }) },
+  { cle: "taux", libelle: "Taux +5 €/h", vers: (d) => ({ ...d, tcalc: d.tcalc + 5, taux: d.taux + 5 }) },
   { cle: "derive", libelle: "Dérive 10 %", vers: (d) => ({ ...d, eff: Math.round(d.eff * 0.9) }) },
   { cle: "fees", libelle: "Fees 8 %", vers: (d) => ({ ...d, fees: 8 }) },
 ];
@@ -49,6 +49,8 @@ function Tranche({
   reel,
   source,
   onChange,
+  plafond,
+  onPlafond,
 }: {
   l: Levier;
   numero: number;
@@ -58,7 +60,11 @@ function Tranche({
   reel: boolean;
   source: string;
   onChange: (x: number) => void;
+  plafond?: number; // DEUX_TAUX : plafond marché (voyant CLIP au-delà)
+  onPlafond?: (x: number) => void;
 }) {
+  const [saisiePlafond, setSaisiePlafond] = useState<string | null>(null);
+  const clip = plafond !== undefined && valeur > plafond + 1e-9;
   const fader = useRef<HTMLDivElement>(null);
   const [saisie, setSaisie] = useState<string | null>(null);
   const derniere = useRef({ valeur, onChange });
@@ -98,6 +104,11 @@ function Tranche({
       <div className={s.num}>
         CH {String(numero).padStart(2, "0")}
         <span className={`${s.led} ${Math.abs(ecart) > 1e-9 ? s.ledOn : ""}`} aria-hidden="true" />
+        {plafond !== undefined && (
+          <span className={`${s.clip} ${clip ? s.clipOn : ""}`} title={clip ? "CLIP : au-delà du plafond marché, le CA est écrêté" : "Sous le plafond marché"}>
+            CLIP
+          </span>
+        )}
       </div>
       <div style={{ display: "grid", gap: 5, justifyItems: "center", width: "100%" }}>
         <input
@@ -161,11 +172,34 @@ function Tranche({
             <i key={i} style={{ bottom: `${i * 10}%` }} />
           ))}
           <i className={s.ref} style={{ bottom: `calc(${rr * 100}% - 1px)` }} />
+          {plafond !== undefined && plafond >= l.min && plafond <= l.max && <i className={s.plafond} style={{ bottom: `calc(${ratio(l, plafond) * 100}% - 1px)` }} />}
         </div>
         <div className={s.capuchon} style={{ bottom: `calc(${PAD}px + ${r} * (100% - ${2 * PAD}px))` }} />
       </div>
       <div style={{ display: "grid", gap: 2, justifyItems: "center" }}>
         <div className={s.nom}>{l.nom}</div>
+        {plafond !== undefined && onPlafond && (
+          <label className={s.plafondSaisie} title="Plafond marché : au-delà, le client ne suit pas ; le CA est écrêté">
+            plafond
+            <input
+              className={s.lcd}
+              style={{ fontSize: 12, padding: "2px", color: "#ff8a7a" }}
+              inputMode="decimal"
+              aria-label={`Plafond marché, ${l.nom} (€ / h)`}
+              value={saisiePlafond ?? fmt(plafond, 1)}
+              onFocus={() => setSaisiePlafond(fmt(plafond, 1))}
+              onChange={(e) => setSaisiePlafond(e.target.value)}
+              onBlur={() => {
+                const x = Number((saisiePlafond ?? "").replace(/\s/g, "").replace(",", "."));
+                if (saisiePlafond !== null && Number.isFinite(x) && x > 0) onPlafond(x);
+                setSaisiePlafond(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+            />
+          </label>
+        )}
         <div className={s.delta} style={{ color: Math.abs(ecart) > 1e-9 ? "var(--lcd)" : undefined }}>
           {Math.abs(ecart) > 1e-9 ? signe(ecart, (a) => fmt(a, l.dec)) : ""}
         </div>
@@ -315,7 +349,7 @@ export default function ConsoleRentabilite({
     const pas = (t: number) => {
       const p = duree ? Math.min(1, (t - t0) / duree) : 1;
       const e = 1 - Math.pow(1 - p, 3);
-      const x = { ...debut };
+      const x = { ...cible, ...debut, ptc: cible.ptc, pt: cible.pt };
       for (const l of LEVIERS) x[l.k] = p < 1 ? debut[l.k] + (cible[l.k] - debut[l.k]) * e : cible[l.k];
       setV(x);
       if (p < 1) anim.current = requestAnimationFrame(pas);
@@ -347,6 +381,10 @@ export default function ConsoleRentabilite({
     ["Chiffre d’affaires", keur(a.ca), <Delta key="d" delta={a.ca - r.ca} f={keur} />],
     ["dont production", keur(a.caProd), <Delta key="d" delta={a.caProd - r.caProd} f={keur} />],
     ["dont scan", keur(a.caScan), <Delta key="d" delta={a.caScan - r.caScan} f={keur} />],
+    ["Taux de vente moyen", `${fmt(a.tauxMoyen, 1)} €/h`, <Delta key="d" delta={(a.tauxMoyen - r.tauxMoyen) * 10} f={(x) => `${fmt(x / 10, 1)} €`} />],
+    ...(a.caEcrete > 0.5
+      ? ([["CA écrêté (CLIP)", `−${keur(a.caEcrete)}`, <span key="d" className={`${s.d} ${s.dm}`}>au-delà des plafonds</span>]] as [string, string, ReactNode][])
+      : []),
     ["Heures vendues", `${fmt(a.hVendues)} h`, <Delta key="d" delta={a.hVendues - r.hVendues} f={(x) => `${fmt(x)} h`} />],
     ["CA par personne", keur(a.caParPers), <Delta key="d" delta={a.caParPers - r.caParPers} f={keur} />],
     ["Salaires", keur(a.salaires), <Delta key="d" delta={a.salaires - r.salaires} f={keur} inverse />],
@@ -373,8 +411,10 @@ export default function ConsoleRentabilite({
 
   const crans = (
     [
-      ["prod", 1, "1 productif de plus"],
-      ["taux", 1, "Taux de vente +1 €/h"],
+      ["calc", 1, "1 productif Calcul de plus"],
+      ["prod", 1, "1 autre productif de plus"],
+      ["tcalc", 1, "Taux Calcul +1 €/h"],
+      ["taux", 1, "Taux autres +1 €/h"],
       ["occ", 1, "Occupation +1 point"],
       ["eff", 1, "Efficience +1 point"],
       ["sal", 1, "Salaire chargé +1 k€ / pers."],
@@ -389,7 +429,7 @@ export default function ConsoleRentabilite({
     .sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]));
   const maxAbs = Math.max(...crans.map((c) => Math.abs(c[1])), 1);
 
-  const parametresModifies = (["sal", "fees", "loyer", "autres"] as Cle[]).some((k) => !egal(v[k], depart.valeurs[k]));
+  const parametresModifies = (["sal", "fees", "loyer", "autres", "ptc", "pt"] as Cle[]).some((k) => !egal(v[k], depart.valeurs[k]));
 
   return (
     <div className={`${s.fond} ${fUi.variable} ${fLcd.variable} ${fTape.variable}`}>
@@ -447,6 +487,8 @@ export default function ConsoleRentabilite({
                           reel={depart.sources[l.k]?.reel ?? false}
                           source={depart.sources[l.k]?.texte ?? ""}
                           onChange={(x) => regler(l.k, x)}
+                          plafond={PLAFONDS[l.k] ? v[PLAFONDS[l.k]!] : undefined}
+                          onPlafond={PLAFONDS[l.k] ? (x) => setV((p) => ({ ...p, [PLAFONDS[l.k]!]: Math.round(x * 2) / 2 })) : undefined}
                         />
                       );
                     })}
@@ -474,7 +516,7 @@ export default function ConsoleRentabilite({
               </div>
             </div>
             {/* CADRAN_COUT : le coût d’une heure vendue face au taux de vente et au coût de structure saisi */}
-            <Cadran cout={a.coutHeure} taux={v.taux} structure={depart.coutStructure} echelleSur={Math.max(ref.taux, r.coutHeure, 1)} />
+            <Cadran cout={a.coutHeure} taux={a.tauxMoyen} structure={depart.coutStructure} echelleSur={Math.max(r.tauxMoyen, r.coutHeure, 1)} />
             <div className={s.vus}>
               <div className={s.vu}>
                 <div className={s.vuTitre}>
@@ -538,13 +580,13 @@ export default function ConsoleRentabilite({
                     setRetour(null);
                     const err = await onEnregistrer(v);
                     setEnCours(false);
-                    setRetour(err ? { ok: false, texte: err } : { ok: true, texte: "Salaire, fees, location et autres frais enregistrés comme valeurs de départ de l’exercice." });
+                    setRetour(err ? { ok: false, texte: err } : { ok: true, texte: "Salaire, fees, location, autres frais et plafonds enregistrés comme valeurs de départ de l’exercice." });
                   }}
                 >
                   ⬇ Enregistrer comme valeurs de départ
                 </button>
                 <span style={{ fontSize: 11, color: "var(--ink-dim)" }}>
-                  ADMIN : enregistre les 4 tranches Salaire chargé, Mgmt fees, Location, Autres frais{parametresModifies ? " (modifiées)" : ""}.
+                  ADMIN : enregistre Salaire chargé, Mgmt fees, Location, Autres frais et les deux plafonds de taux{parametresModifies ? " (modifiés)" : ""}.
                 </span>
                 {retour && <div className={`${s.message} ${retour.ok ? "" : s.erreur}`}>{retour.texte}</div>}
               </div>
@@ -604,7 +646,7 @@ export default function ConsoleRentabilite({
           <h3 style={{ marginBottom: 8 }}>D’où viennent les chiffres de départ</h3>
           <table className={s.sources}>
             <tbody>
-              {LEVIERS.map((l) => (
+              {[...LEVIERS, { k: "ptc" as Cle, nom: "Plafond Calcul", u: "€ / h", dec: 1 }, { k: "pt" as Cle, nom: "Plafond autres", u: "€ / h", dec: 1 }].map((l) => (
                 <tr key={l.k}>
                   <td>
                     <span className={depart.sources[l.k]?.reel ? s.reel : s.exemple} style={{ marginRight: 6 }} />
@@ -625,7 +667,7 @@ export default function ConsoleRentabilite({
           <Fragment>
             <b>Heures payées</b> = productifs × heures annuelles (1 607 h = 35 h). <b>Heures passées sur affaires</b> = heures payées × taux d’occupation (le reste :
             devis, commercial, formation, NI…). <b>Heures vendues</b> = heures passées × efficience (au-dessus de 100 % : on fait mieux que le chiffré ; en dessous :
-            dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA négoce</b> dont on garde la marge, + <b>CA scan</b> (scan pur, net d’achats), dont les <b>heures</b> sont retirées des heures de production. <b>Salaires</b> = (productifs + structure) ×
+            dérive). <b>CA production</b> = heures vendues des productifs Calcul × taux Calcul + celles des autres × taux autres, chaque taux écrêté à son <b>plafond marché</b> (voyant CLIP), + <b>CA négoce</b> dont on garde la marge, + <b>CA scan</b> (scan pur, net d’achats), dont les <b>heures</b> sont retirées des heures de production. <b>Salaires</b> = (productifs + structure) ×
             salaire chargé moyen. <b>Management fees</b> = % du CA total. <b>Résultat</b> = CA − achats négoce − salaires − fees − loyer − autres frais.{" "}
             <b>Coût d’une heure vendue</b> = (salaires + loyer + autres frais) ÷ heures vendues, + la part de fees. <b>Taux point mort</b> = taux de vente qui donne un
             résultat nul, tout le reste égal.

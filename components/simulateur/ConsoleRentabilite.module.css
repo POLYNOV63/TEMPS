@@ -165,3 +165,9 @@
 .sources td:first-child { white-space: nowrap; color: var(--ink); font-weight: 700; }
 .sources td:nth-child(2) { white-space: nowrap; font-family: var(--f-lcd), monospace; color: var(--lcd); text-align: right; }
 @media (prefers-reduced-motion: reduce) { .cascade > div { transition: none; } }
+
+/* DEUX_TAUX : voyant CLIP et plafond marché */
+.clip { font-family: var(--f-lcd), monospace; font-size: 9px; letter-spacing: 0.05em; color: #5a2a26; background: #1d1414; border: 1px solid #3a2020; border-radius: 3px; padding: 0 3px; margin-left: 3px; }
+.clipOn { color: #fff; background: #e02424; border-color: #ff6b6b; box-shadow: 0 0 10px #ff3b30; }
+.grad i.plafond { background: linear-gradient(90deg, #ff5a4f 0 13px, transparent 13px calc(100% - 13px), #ff5a4f calc(100% - 13px)); height: 2px; }
+.plafondSaisie { display: grid; gap: 2px; justify-items: center; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #ff8a7a; width: 100%; }

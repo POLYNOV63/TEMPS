@@ -25,14 +25,22 @@ import { calculerRentabilite, type DonneesRentabilite } from "@/lib/rentabilite"
                           l'Analyse de capacité ; feuilles en brouillon exclues)
        efficience ....... heures chiffrées ÷ heures passées des forfaits livrés
                           (lib/rentabilite.ts, comme la page Rentabilité)
-       taux de vente .... prix ÷ heures chiffrées (forfaits) et facturées (PE / PI),
-                          sans le négoce ni le scan pur au montant
+       taux de vente .... DEUX TAUX (PLG) face aux compétences principales :
+                          Calcul et « autres ». Mesurés : prix ÷ heures chiffrées de
+                          la part Calcul des forfaits ; le reste (forfaits hors Calcul
+                          et PE / PI) pour « autres » ; sans négoce ni scan pur.
+                          Chaque taux a un PLAFOND marché : au-delà, le CA est écrêté
+                          (voyant CLIP) : le client ne suit pas.
        négoce ........... lignes Négoce de la Rentabilité (vendu, achats)
        salaire, fees, location, autres frais : table simulateur_parametres
                           (SQL 101), sinon les valeurs d'exemple de la maquette.
 ================================================================ */
 
-export type Cle = "prod" | "struct" | "sal" | "heures" | "occ" | "eff" | "taux" | "neg" | "mneg" | "scan" | "hscan" | "fees" | "loyer" | "autres";
+export type Cle = "calc" | "prod" | "struct" | "sal" | "heures" | "occ" | "eff" | "tcalc" | "taux" | "neg" | "mneg" | "scan" | "hscan" | "fees" | "loyer" | "autres" | "ptc" | "pt";
+/* DEUX_TAUX : « calc » = productifs dont la compétence principale est le Calcul, « prod » = les autres productifs ;
+   « tcalc » / « taux » = leurs taux de vente ; « ptc » / « pt » = les plafonds marché (pas des faders : réglés dans
+   l'afficheur « plafond » de la tranche du taux). */
+export const PLAFONDS: Partial<Record<Cle, Cle>> = { tcalc: "ptc", taux: "pt" };
 export type Leviers = Record<Cle, number>;
 
 export type Levier = { k: Cle; nom: string; u: string; min: number; max: number; pas: number; dec: number; aide?: string };
@@ -43,7 +51,8 @@ export const BUS: Bus[] = [
     nom: "Équipe",
     c: "var(--bus-equipe)",
     leviers: [
-      { k: "prod", nom: "Productifs", u: "pers.", min: 0, max: 40, pas: 1, dec: 0 },
+      { k: "calc", nom: "Calcul", u: "productifs", min: 0, max: 15, pas: 1, dec: 0, aide: "Productifs dont la compétence principale est le Calcul (fiche collaborateur) : vendus au taux Calcul" },
+      { k: "prod", nom: "Autres", u: "productifs", min: 0, max: 40, pas: 1, dec: 0, aide: "Les autres productifs (Méca, Elec…) : vendus au taux « autres »" },
       { k: "struct", nom: "Structure", u: "pers.", min: 0, max: 10, pas: 1, dec: 0, aide: "Encadrement, administratif : payés mais pas sur les affaires" },
       { k: "sal", nom: "Salaire chargé", u: "k€ / an", min: 35, max: 90, pas: 0.5, dec: 1 },
       { k: "heures", nom: "Heures payées", u: "h / an", min: 1450, max: 1800, pas: 7, dec: 0 },
@@ -55,7 +64,8 @@ export const BUS: Bus[] = [
     leviers: [
       { k: "occ", nom: "Occupation", u: "% sur affaires", min: 20, max: 100, pas: 1, dec: 0 },
       { k: "eff", nom: "Efficience", u: "% vendu / passé", min: 40, max: 160, pas: 1, dec: 0 },
-      { k: "taux", nom: "Taux de vente", u: "€ / h", min: 30, max: 130, pas: 0.5, dec: 1 },
+      { k: "tcalc", nom: "Taux Calcul", u: "€ / h", min: 30, max: 150, pas: 0.5, dec: 1, aide: "Taux de vente des heures des productifs Calcul. Au-delà du plafond, le CA est écrêté (CLIP)" },
+      { k: "taux", nom: "Taux autres", u: "€ / h", min: 30, max: 150, pas: 0.5, dec: 1, aide: "Taux de vente des heures des autres productifs. Au-delà du plafond, le CA est écrêté (CLIP)" },
     ],
   },
   {
@@ -91,59 +101,92 @@ export const LEVIERS: (Levier & { c: string })[] = BUS.flatMap((b) => b.leviers.
 export const PAR_CLE = Object.fromEntries(LEVIERS.map((l) => [l.k, l])) as Record<Cle, Levier & { c: string }>;
 
 /* Valeurs d'exemple de la maquette : ce qui ne vient pas de nos chiffres tant que rien n'est saisi */
-export const EXEMPLE: Leviers = { prod: 14, struct: 3, sal: 52, heures: 1607, occ: 78, eff: 92, taux: 72, neg: 150, mneg: 20, scan: 0, hscan: 0, fees: 4, loyer: 72, autres: 140 };
+export const EXEMPLE: Leviers = { calc: 3, prod: 11, tcalc: 80, ptc: 95, pt: 85, struct: 3, sal: 52, heures: 1607, occ: 78, eff: 92, taux: 72, neg: 150, mneg: 20, scan: 0, hscan: 0, fees: 4, loyer: 72, autres: 140 };
 export const HEURES_PAYEES = 1607;
 
 /* ---------------- la formule de la console (identique à la maquette) ---------------- */
 export function calcul(x: Leviers) {
-  const hPayees = x.prod * x.heures;
-  const hAffaires = (hPayees * x.occ) / 100;
-  // SCAN_PUR : les heures de scan au montant ne se vendent pas à l'heure
-  const hProduction = Math.max(0, hAffaires - x.hscan);
-  const hVendues = (hProduction * x.eff) / 100;
-  const caProd = hVendues * x.taux;
+  const hPayees = (x.calc + x.prod) * x.heures;
+  const hAffCalc = (x.calc * x.heures * x.occ) / 100;
+  const hAffAutres = (x.prod * x.heures * x.occ) / 100;
+  const hAffaires = hAffCalc + hAffAutres;
+  // SCAN_PUR : les heures de scan au montant ne se vendent pas à l'heure (prises sur les « autres »)
+  const hProdAutres = Math.max(0, hAffAutres - x.hscan);
+  const hProduction = hAffCalc + hProdAutres;
+  const hvCalc = (hAffCalc * x.eff) / 100;
+  const hvAutres = (hProdAutres * x.eff) / 100;
+  const hVendues = hvCalc + hvAutres;
+  // DEUX_TAUX + CLIP : au-delà du plafond marché, l'euro de plus ne se vend pas (écrêtage)
+  const tEffCalc = Math.min(x.tcalc, x.ptc);
+  const tEffAutres = Math.min(x.taux, x.pt);
+  const clipCalc = x.tcalc > x.ptc + 1e-9;
+  const clipAutres = x.taux > x.pt + 1e-9;
+  const caProd = hvCalc * tEffCalc + hvAutres * tEffAutres;
+  const caEcrete = hvCalc * (x.tcalc - tEffCalc) + hvAutres * (x.taux - tEffAutres);
+  const tauxMoyen = hVendues > 0 ? caProd / hVendues : 0;
   const caNeg = x.neg * 1000;
   const caScan = x.scan * 1000;
   const ca = caProd + caNeg + caScan;
   const achats = caNeg * (1 - x.mneg / 100);
-  const salaires = (x.prod + x.struct) * x.sal * 1000;
+  const salaires = (x.calc + x.prod + x.struct) * x.sal * 1000;
   const fees = (ca * x.fees) / 100;
   const loyer = x.loyer * 1000;
   const autres = x.autres * 1000;
   const resultat = ca - achats - salaires - fees - loyer - autres;
   const fixes = salaires + loyer + autres;
   const f = x.fees / 100;
-  const coutHeure = hVendues > 0 ? fixes / hVendues + x.taux * f : 0;
+  const coutHeure = hVendues > 0 ? fixes / hVendues + tauxMoyen * f : 0;
   const tauxPM = hVendues > 0 && f < 1 ? (fixes + f * (caNeg + caScan) - (caNeg * x.mneg) / 100 - caScan) / (hVendues * (1 - f)) : NaN;
   const margeVar = ca > 0 ? (ca - achats - fees) / ca : 0;
   const caPM = margeVar > 0 ? fixes / margeVar : NaN;
-  const parProductif = ((((x.heures * x.occ) / 100) * x.eff) / 100) * x.taux * (1 - f) - x.sal * 1000;
+  const parProductif = ((((x.heures * x.occ) / 100) * x.eff) / 100) * tEffAutres * (1 - f) - x.sal * 1000; // un productif « autres » de plus
   return {
-    hPayees, hAffaires, hProduction, hVendues, caProd, caNeg, caScan, ca, achats, salaires, fees, loyer, autres, resultat, coutHeure, tauxPM, caPM, parProductif,
+    hPayees, hAffaires, hProduction, hVendues, hvCalc, hvAutres, tauxMoyen, clipCalc, clipAutres, caEcrete, caProd, caNeg, caScan, ca, achats, salaires, fees, loyer, autres, resultat, coutHeure, tauxPM, caPM, parProductif,
     marge: ca > 0 ? resultat / ca : 0,
     masseCA: ca > 0 ? salaires / ca : 0,
-    caParPers: ca / Math.max(1, x.prod + x.struct),
+    caParPers: ca / Math.max(1, x.calc + x.prod + x.struct),
   };
 }
 
 /* ---------------- valeurs de départ ---------------- */
 
 export type Source = { texte: string; reel: boolean }; // reel = vient de nos chiffres
-export type Parametres = { salaire_charge_k: number; fees_pct: number; location_k: number; autres_frais_k: number; modifie_le: string | null };
+export type Parametres = {
+  salaire_charge_k: number;
+  fees_pct: number;
+  location_k: number;
+  autres_frais_k: number;
+  plafond_taux_calcul: number | null; // SQL 102
+  plafond_taux_autres: number | null;
+  modifie_le: string | null;
+};
 export type Depart = { valeurs: Leviers; sources: Record<Cle, Source>; coutStructure: number | null; parametres: Parametres | null };
 
-type Effectifs = { productifs: { id: string; nom: string }[]; structure: { id: string; nom: string }[] };
+type Personne = { id: string; nom: string };
+type Effectifs = { productifs: Personne[]; calcul: Personne[]; autres: Personne[]; structure: Personne[] };
 
 export async function chargerEffectifs(): Promise<Effectifs> {
   const lignes = await chargerTout<{ id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null; actif: boolean | null; inclus_statistiques: boolean | null }>((a, b) =>
     supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques").order("id").range(a, b)
   );
-  const res: Effectifs = { productifs: [], structure: [] };
+  const res: Effectifs = { productifs: [], calcul: [], autres: [], structure: [] };
+  // DEUX_TAUX : compétence(s) principale(s) de chacun (fiche collaborateur) ; Calcul si l'une d'elles est le Calcul
+  const [pred, acts] = await Promise.all([
+    chargerTout<{ collaborateur_id: string; activite_id: string }>((a, b) =>
+      supabase.from("collaborateurs_predominances").select("collaborateur_id,activite_id").eq("niveau", "PRINCIPALE").order("collaborateur_id").range(a, b)
+    ).catch(() => []),
+    supabase.from("activites").select("id,nom"),
+  ]);
+  const idsCalcul = new Set(((acts.data ?? []) as { id: string; nom: string }[]).filter((x) => /^calcul/i.test(x.nom.trim())).map((x) => x.id));
+  const estCalcul = new Set(pred.filter((p) => idsCalcul.has(p.activite_id)).map((p) => p.collaborateur_id));
   for (const c of lignes) {
     const role = String(c.role ?? "").toUpperCase();
     if (c.actif === false || role === "DIRECTION") continue; // la Direction ne compte pas (visiteurs de l'application)
     const nom = c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim();
-    if (c.inclus_statistiques === true && role !== "ADMIN") res.productifs.push({ id: c.id, nom });
+    if (c.inclus_statistiques === true && role !== "ADMIN") {
+      res.productifs.push({ id: c.id, nom });
+      (estCalcul.has(c.id) ? res.calcul : res.autres).push({ id: c.id, nom });
+    }
     else res.structure.push({ id: c.id, nom }); // ADMIN et non inclus dans les statistiques : non productifs
   }
   return res;
@@ -230,18 +273,34 @@ export async function chargerOccupation(exercice: number, ids: string[]): Promis
 }
 
 export async function chargerParametres(exercice: number): Promise<Parametres | null> {
-  const { data, error } = await supabase.from("simulateur_parametres").select("salaire_charge_k,fees_pct,location_k,autres_frais_k,modifie_le").eq("exercice", exercice).maybeSingle();
-  if (error || !data) return null; // table pas encore créée (SQL 101) ou rien d'enregistré
+  const base = "salaire_charge_k,fees_pct,location_k,autres_frais_k,modifie_le";
+  let r = await supabase.from("simulateur_parametres").select(`${base},plafond_taux_calcul,plafond_taux_autres`).eq("exercice", exercice).maybeSingle();
+  if (r.error) r = await supabase.from("simulateur_parametres").select(base).eq("exercice", exercice).maybeSingle(); // SQL 102 pas encore lancé
+  const data = r.data as Record<string, unknown> | null;
+  if (r.error || !data) return null; // table pas encore créée (SQL 101) ou rien d'enregistré
   const n = (v: unknown) => Number(v) || 0;
-  return { salaire_charge_k: n(data.salaire_charge_k), fees_pct: n(data.fees_pct), location_k: n(data.location_k), autres_frais_k: n(data.autres_frais_k), modifie_le: data.modifie_le ?? null };
+  const nn = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return {
+    salaire_charge_k: n(data.salaire_charge_k),
+    fees_pct: n(data.fees_pct),
+    location_k: n(data.location_k),
+    autres_frais_k: n(data.autres_frais_k),
+    plafond_taux_calcul: nn(data.plafond_taux_calcul),
+    plafond_taux_autres: nn(data.plafond_taux_autres),
+    modifie_le: (data.modifie_le as string | null) ?? null,
+  };
 }
 
 export async function enregistrerParametres(exercice: number, v: Leviers, moiId: string | null): Promise<string | null> {
-  const { error } = await supabase.from("simulateur_parametres").upsert(
-    { exercice, salaire_charge_k: v.sal, fees_pct: v.fees, location_k: v.loyer, autres_frais_k: v.autres, modifie_le: new Date().toISOString(), modifie_par: moiId },
-    { onConflict: "exercice" }
-  );
-  return error ? error.message : null;
+  const ligne = { exercice, salaire_charge_k: v.sal, fees_pct: v.fees, location_k: v.loyer, autres_frais_k: v.autres, modifie_le: new Date().toISOString(), modifie_par: moiId };
+  const { error } = await supabase.from("simulateur_parametres").upsert({ ...ligne, plafond_taux_calcul: v.ptc, plafond_taux_autres: v.pt }, { onConflict: "exercice" });
+  if (!error) return null;
+  if (/plafond_taux/.test(error.message)) {
+    // SQL 102 pas encore lancé : on enregistre au moins le reste
+    const r = await supabase.from("simulateur_parametres").upsert(ligne, { onConflict: "exercice" });
+    return r.error ? r.error.message : "Salaire, fees, location et autres frais enregistrés ; les plafonds de taux non (lancer le script SQL 102).";
+  }
+  return error.message;
 }
 
 /* Les chiffres que donne la Rentabilité pour l'exercice : efficience, taux de vente, négoce */
@@ -268,6 +327,10 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const scanPur = r.affaires.filter((a) => a.auMontant && a.activite === "Scan").reduce((t, a) => t + a.ca, 0);
   const caProd = lignesProd.reduce((t, g) => t + g.ca, 0) - scanPur;
   const hcProd = lignesProd.reduce((t, g) => t + g.hc, 0);
+  // DEUX_TAUX : la part Calcul des forfaits d'un côté, tout le reste (dont PE / PI) de l'autre
+  const lCalcul = r.groupes.find((g) => g.cle === "Calcul");
+  const caCalcul = lCalcul?.ca ?? 0;
+  const hcCalcul = lCalcul?.hc ?? 0;
   return {
     nbForfaits: forfaits.length,
     nbPrestations: r.prestationsEx.length,
@@ -279,6 +342,10 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
     taux: hcProd > 0 ? caProd / hcProd : null,
     caProd,
     hcProd,
+    tauxCalcul: hcCalcul > 0 ? caCalcul / hcCalcul : null,
+    caCalcul,
+    hcCalcul,
+    tauxAutres: hcProd - hcCalcul > 0 ? (caProd - caCalcul) / (hcProd - hcCalcul) : null,
     caNegoce,
     caScanPur,
     achatsScanPur,
@@ -302,8 +369,10 @@ export function construireDepart(
   const s = {} as Record<Cle, Source>;
   const ex = `${exercice}-${exercice + 1}`;
 
-  v.prod = effectifs.productifs.length;
-  s.prod = { reel: true, texte: `Actifs inclus dans les statistiques, hors ADMIN et Direction : ${effectifs.productifs.map((p) => p.nom).join(", ") || "aucun"}` };
+  v.calc = effectifs.calcul.length;
+  s.calc = { reel: true, texte: `Productifs (actifs inclus dans les statistiques, hors ADMIN et Direction) de compétence principale Calcul : ${effectifs.calcul.map((p) => p.nom).join(", ") || "aucun"}` };
+  v.prod = effectifs.autres.length;
+  s.prod = { reel: true, texte: `Les autres productifs : ${effectifs.autres.map((p) => p.nom).join(", ") || "aucun"}` };
   v.struct = effectifs.structure.length;
   s.struct = { reel: true, texte: `Autres actifs hors Direction (dont les ADMIN) : ${effectifs.structure.map((p) => p.nom).join(", ") || "aucun"}` };
   v.heures = HEURES_PAYEES;
@@ -325,9 +394,16 @@ export function construireDepart(
     };
   } else s.eff = { reel: false, texte: `Aucun forfait livré ni mois de PE / PI facturé en ${ex} : valeur d’exemple` };
 
-  if (renta.taux !== null) {
-    v.taux = Math.round(renta.taux * 2) / 2;
-    s.taux = { reel: true, texte: `${fr(renta.caProd)} € ÷ ${fr(renta.hcProd)} h vendues (forfaits et ${renta.nbPrestations} PE / PI), sans négoce ni scan pur` };
+  if (renta.tauxCalcul !== null) {
+    v.tcalc = Math.round(renta.tauxCalcul * 2) / 2;
+    s.tcalc = { reel: true, texte: `Part Calcul des forfaits livrés en ${ex} : ${fr(renta.caCalcul)} € ÷ ${fr(renta.hcCalcul)} h chiffrées` };
+  } else s.tcalc = { reel: false, texte: "Pas de Calcul vendu sur l’exercice : valeur d’exemple" };
+  if (renta.tauxAutres !== null) {
+    v.taux = Math.round(renta.tauxAutres * 2) / 2;
+    s.taux = {
+      reel: true,
+      texte: `Le reste : ${fr(renta.caProd - renta.caCalcul)} € ÷ ${fr(renta.hcProd - renta.hcCalcul)} h vendues (forfaits hors Calcul et ${renta.nbPrestations} PE / PI), sans négoce ni scan pur`,
+    };
   } else s.taux = { reel: false, texte: "Pas d’heures vendues sur l’exercice : valeur d’exemple" };
 
   v.neg = Math.round(renta.caNegoce / 1000 / 5) * 5;
@@ -349,6 +425,12 @@ export function construireDepart(
     v.loyer = parametres.location_k;
     v.autres = parametres.autres_frais_k;
   }
+  // plafonds marché des deux taux : enregistrés (SQL 102), sinon taux de départ + 10 €/h, à régler
+  const plafondDefaut = (t: number) => Math.ceil((t + 10) / 5) * 5;
+  v.ptc = parametres?.plafond_taux_calcul ?? plafondDefaut(v.tcalc);
+  v.pt = parametres?.plafond_taux_autres ?? plafondDefaut(v.taux);
+  s.ptc = parametres?.plafond_taux_calcul != null ? { reel: true, texte: `Plafond marché ${saisi}` } : { reel: false, texte: "À régler (par défaut : taux Calcul + 10 €/h) dans l’afficheur « plafond » de la tranche" };
+  s.pt = parametres?.plafond_taux_autres != null ? { reel: true, texte: `Plafond marché ${saisi}` } : { reel: false, texte: "À régler (par défaut : taux autres + 10 €/h) dans l’afficheur « plafond » de la tranche" };
   for (const k of ["sal", "fees", "loyer", "autres"] as Cle[])
     s[k] = parametres ? { reel: true, texte: `Valeur de départ ${saisi}` } : { reel: false, texte: "À saisir (valeur d’exemple) : tapez la valeur dans l’afficheur, puis « Enregistrer comme valeurs de départ »" };
 
