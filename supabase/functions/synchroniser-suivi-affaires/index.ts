@@ -158,7 +158,9 @@ type Champ =
   | "date_livraison_estimee" | "date_envoi" | "numero_offre" | "date_reception_commande"
   | "delai" | "date_livraison" | "livre_par" | "format_livraison" | "numero_client"
   | "numero_arc_louxor"
-  | "intergroupe"; // NEGOCE_INTERGROUPE
+  | "intergroupe" // NEGOCE_INTERGROUPE
+  // PRESTA_SCAN : colonnes « Heures presta scan » et « Montant Presta Scan » (et leurs « DEVIS PERDU »), comptées avec Scan
+  | "h_presta_scan" | "hp_presta_scan" | "m_presta_scan" | "mp_presta_scan";
 
 /** Titre normalisé -> champ. Le titre Excel est comparé sans accents, espaces ni ponctuation. */
 const COLONNES: Record<string, Champ> = {
@@ -187,6 +189,9 @@ const COLONNES: Record<string, Champ> = {
   negoce: "ind_autre", heuresnegoce: "h_autre", montantheuresnegoce: "m_autre",
   heuresnegocedevisperdu: "hp_autre", montantheurenegocedevisperdu: "mp_autre", montantheuresnegocedevisperdu: "mp_autre",
   intergroupe: "intergroupe",
+  // PRESTA_SCAN
+  heuresprestascan: "h_presta_scan", heuresprestascandevisperdu: "hp_presta_scan",
+  montantprestascan: "m_presta_scan", montantprestascandevisperdu: "mp_presta_scan",
 };
 
 /** Colonnes sans lesquelles on refuse le classeur. */
@@ -504,7 +509,7 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
     const h = {
       meca: lireP("h_meca", "hp_meca", "Heures méca"), calcul: lireP("h_calcul", "hp_calcul", "Heures calcul"),
       elec: lireP("h_elec", "hp_elec", "Heures élec"), pneu: lireP("h_pneu", "hp_pneu", "Heures pneu"),
-      scan: lireP("h_scan", "hp_scan", "Heures scan"), autre: lireP("h_autre", "hp_autre", "Heures négoce"),
+      scan: arrondi(lireP("h_scan", "hp_scan", "Heures scan") + lireP("h_presta_scan", "hp_presta_scan", "Heures presta scan")) /* PRESTA_SCAN */, autre: lireP("h_autre", "hp_autre", "Heures négoce"),
     };
     const detailH = arrondi(DISCIPLINES.reduce((s, d) => s + h[d], 0));
     const vTotal = perdu && !lireNombre(v.h_total).valeur ? v.hp_total : v.h_total;
@@ -535,7 +540,7 @@ export function analyserSuivi(brutes: LigneBrute[], options: OptionsAnalyse = {}
     const m = {
       montant: lireP("m_montant", "mp_montant", "Montant"), montant_echeances: lireN("m_echeances", "Montant échéances"),
       montant_meca: lireP("m_meca", "mp_meca", "Montant méca"), montant_calcul: lireP("m_calcul", "mp_calcul", "Montant calcul"),
-      montant_elec_pneu: lireP("m_elec_pneu", "mp_elec_pneu", "Montant Elec/pneu"), montant_scan: lireP("m_scan", "mp_scan", "Montant Scan"),
+      montant_elec_pneu: lireP("m_elec_pneu", "mp_elec_pneu", "Montant Elec/pneu"), montant_scan: arrondi(lireP("m_scan", "mp_scan", "Montant Scan") + lireP("m_presta_scan", "mp_presta_scan", "Montant Presta Scan")), // PRESTA_SCAN
       montant_autre: lireP("m_autre", "mp_autre", "Montant heures négoce"), montant_achats: lireP("m_achats", "mp_achats", "Montant achats"),
       montant_negoce: lireP("m_negoce", "mp_negoce", "Montant négoce"),
     };
