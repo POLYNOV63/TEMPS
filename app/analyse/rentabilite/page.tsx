@@ -759,7 +759,7 @@ function RentabiliteContenu() {
                   </h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
                     Regroupées par activité principale (celle qui porte le plus de montant) : en tête de chaque activité, le cumul des marges positives et
-                    celui des marges négatives. Dans chaque activité, les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.
+                    celui des marges négatives, en euros et en % du prix des affaires concernées. Dans chaque activité, les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.
                   </p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Affaire", ["Activité", "Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
@@ -773,15 +773,17 @@ function RentabiliteContenu() {
                         const groupes = new Map<string, typeof liste>();
                         for (const a of liste) groupes.set(a.activite, [...(groupes.get(a.activite) ?? []), a]);
                         const cumul = (ls: typeof liste) => {
-                          const c = { pos: 0, neg: 0, nPos: 0, nNeg: 0, sansCout: 0 };
+                          const c = { pos: 0, neg: 0, nPos: 0, nNeg: 0, sansCout: 0, caPos: 0, caNeg: 0 }; // ca… : prix des affaires concernées (pour le % de marge)
                           for (const a of ls) {
                             const m = marge(a);
                             if (m === null) c.sansCout++;
                             else if (m >= 0) {
                               c.pos += m;
+                              c.caPos += a.ca;
                               c.nPos++;
                             } else {
                               c.neg += m;
+                              c.caNeg += a.ca;
                               c.nNeg++;
                             }
                           }
@@ -798,12 +800,14 @@ function RentabiliteContenu() {
                                     {ls.length} affaire{ls.length > 1 ? "s" : ""}
                                   </span>
                                   <span style={{ color: "#1b5e20", fontWeight: 800 }}>
-                                    Marges positives : + {euros(c.pos)} <span style={{ fontWeight: 400 }}>({c.nPos})</span>
+                                    Marges positives : + {euros(c.pos)}{c.caPos > 0 && <> · {pct(c.pos / c.caPos)}</>} <span style={{ fontWeight: 400 }}>({c.nPos})</span>
                                   </span>
                                   <span style={{ color: C.rougeTexte, fontWeight: 800 }}>
-                                    Marges négatives : − {euros(-c.neg)} <span style={{ fontWeight: 400 }}>({c.nNeg})</span>
+                                    Marges négatives : − {euros(-c.neg)}{c.caNeg > 0 && <> · {pct(c.neg / c.caNeg)}</>} <span style={{ fontWeight: 400 }}>({c.nNeg})</span>
                                   </span>
-                                  <span style={{ fontWeight: 800 }}>Net : {euros(c.pos + c.neg)}</span>
+                                  <span style={{ fontWeight: 800 }} title="Marge nette ÷ prix de toutes les affaires du groupe qui ont une marge">
+                                    Net : {euros(c.pos + c.neg)}{c.caPos + c.caNeg > 0 && <> · {pct((c.pos + c.neg) / (c.caPos + c.caNeg))}</>}
+                                  </span>
                                   {c.sansCout > 0 && <span style={{ color: C.gris, fontSize: 12 }}>{c.sansCout} sans coût de structure</span>}
                                 </div>
                               </td>
