@@ -187,6 +187,92 @@ function Vu({ valeur, min, max, couleurDe }: { valeur: number; min: number; max:
   );
 }
 
+/* ---------------- cadran à aiguille (CADRAN_COUT) ----------------
+   L'aiguille = le coût d'une heure vendue (résultat de la console) ; le repère orange = le taux de vente ;
+   à gauche du taux, zone verte (on vend l'heure plus cher qu'elle ne coûte), à droite, zone rouge (on perd).
+   Le trait pointillé = le coût de structure saisi dans Rentabilité. L'échelle suit la référence (elle ne bouge pas
+   pendant qu'on joue avec les faders). */
+function Cadran({ cout, taux, structure, echelleSur }: { cout: number; taux: number; structure: number | null; echelleSur: number }) {
+  const min = Math.max(0, Math.floor((echelleSur * 0.4) / 10) * 10);
+  const max = Math.ceil((echelleSur * 1.6) / 10) * 10;
+  const W = 300;
+  const cx = 150;
+  const cy = 150;
+  const R = 118;
+  const t = (x: number) => Math.max(0, Math.min(1, (x - min) / (max - min)));
+  const pt = (x: number, r: number) => {
+    const a = Math.PI * (1 - t(x));
+    return [cx + r * Math.cos(a), cy - r * Math.sin(a)] as const;
+  };
+  const arc = (de: number, a: number, r: number) => {
+    const [x1, y1] = pt(de, r);
+    const [x2, y2] = pt(a, r);
+    return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
+  };
+  const graduations = Array.from({ length: 9 }, (_, i) => min + ((max - min) * i) / 8);
+  const angle = -90 + 180 * t(cout);
+  const margeH = taux - cout;
+  const [tx1, ty1] = pt(taux, R - 16);
+  const [tx2, ty2] = pt(taux, R + 10);
+  const [lx, ly] = pt(taux, R + 22);
+  return (
+    <div className={s.vu} style={{ padding: "8px 8px 10px" }}>
+      <div className={s.vuTitre}>
+        <span>Coût d’une heure vendue</span>
+        <span style={{ color: margeH >= 0 ? "var(--vert)" : "var(--perte)" }}>{margeH >= 0 ? "on gagne" : "on perd"}</span>
+      </div>
+      <svg viewBox={`0 0 ${W} 172`} style={{ width: "100%", height: "auto", display: "block" }} role="img"
+        aria-label={`Une heure vendue coûte ${fmt(cout, 1)} € et se vend ${fmt(taux, 1)} € : ${margeH >= 0 ? "marge" : "perte"} de ${fmt(Math.abs(margeH), 1)} € par heure`}>
+        <path d={arc(min, Math.min(taux, max), R)} fill="none" stroke="var(--vert)" strokeWidth={14} opacity={0.75} />
+        <path d={arc(Math.max(taux, min), max, R)} fill="none" stroke="var(--perte)" strokeWidth={14} opacity={0.75} />
+        {graduations.map((g, i) => {
+          const [x1, y1] = pt(g, R - 12);
+          const [x2, y2] = pt(g, R - 22);
+          const [xl, yl] = pt(g, R - 36);
+          return (
+            <g key={i}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#9aa1a8" strokeWidth={1.5} />
+              {i % 2 === 0 && (
+                <text x={xl} y={yl + 4} fill="#9aa1a8" fontSize={11} textAnchor="middle" style={{ fontFamily: "var(--f-lcd), monospace" }}>
+                  {fmt(g)}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        {structure !== null && structure >= min && structure <= max && (() => {
+          const [a1, b1] = pt(structure, R - 9);
+          const [a2, b2] = pt(structure, R + 9);
+          return <line x1={a1} y1={b1} x2={a2} y2={b2} stroke="#e9e6df" strokeWidth={2} strokeDasharray="3 2" />;
+        })()}
+        <line x1={tx1} y1={ty1} x2={tx2} y2={ty2} stroke="var(--lcd)" strokeWidth={3} />
+        <text x={lx} y={ly + 2} fill="var(--lcd)" fontSize={11} textAnchor="middle" style={{ fontFamily: "var(--f-lcd), monospace" }}>
+          taux {fmt(taux)}
+        </text>
+        <g style={{ transform: `rotate(${angle}deg)`, transformOrigin: `${cx}px ${cy}px`, transition: "transform .35s cubic-bezier(.3,1.4,.5,1)" }}>
+          <line x1={cx} y1={cy + 10} x2={cx} y2={cy - R + 6} stroke="#ff8a3d" strokeWidth={3} strokeLinecap="round" />
+        </g>
+        <circle cx={cx} cy={cy} r={9} fill="#2b3035" stroke="#5a6168" strokeWidth={2} />
+        <text x={cx} y={cy - 34} fill="var(--lcd)" fontSize={22} textAnchor="middle" style={{ fontFamily: "var(--f-lcd), monospace" }}>
+          {fmt(cout, 1)} €/h
+        </text>
+      </svg>
+      <div style={{ fontSize: 12, color: "var(--ink-dim)", lineHeight: 1.45 }}>
+        Une heure vendue coûte <b style={{ color: "var(--lcd)" }}>{fmt(cout, 1)} €</b>, elle se vend <b style={{ color: "var(--lcd)" }}>{fmt(taux, 1)} €</b> :{" "}
+        <b style={{ color: margeH >= 0 ? "var(--vert)" : "var(--perte)" }}>
+          {margeH >= 0 ? "+" : "−"}
+          {fmt(Math.abs(margeH), 1)} € par heure
+        </b>
+        .
+        <br />
+        <span style={{ display: "inline-block", width: 14, borderTop: "2px dashed #e9e6df", verticalAlign: "middle", marginRight: 5 }} />
+        coût de structure saisi (Rentabilité) : {structure !== null ? `${fmt(structure, 1)} €/h` : "non saisi"}
+        {structure !== null && <> · écart {signe(cout - structure, (x) => fmt(x, 1))} €</>}
+      </div>
+    </div>
+  );
+}
+
 const Delta = ({ delta, f, inverse }: { delta: number; f: (x: number) => string; inverse?: boolean }) => {
   const cls = Math.abs(delta) < 0.5 ? s.dz : delta > 0 !== Boolean(inverse) ? s.dp : s.dm;
   return <span className={`${s.d} ${cls}`}>{Math.abs(delta) < 0.5 ? "—" : signe(delta, f)}</span>;
@@ -274,7 +360,7 @@ export default function ConsoleRentabilite({
   ];
 
   const postes: [string, number, string][] = [
-    ["Achats négoce", a.achats, "var(--bus-negoce)"],
+    ["Achats (négoce, scan)", a.achats, "var(--bus-negoce)"],
     ["Salaires", a.salaires, "var(--bus-equipe)"],
     ["Mgmt fees", a.fees, "var(--bus-structure)"],
     ["Location", a.loyer, "#5d6670"],
@@ -293,7 +379,7 @@ export default function ConsoleRentabilite({
       ["sal", 1, "Salaire chargé +1 k€ / pers."],
       ["fees", 0.5, "Management fees +0,5 point"],
       ["loyer", 10, "Location +10 k€"],
-      ["mneg", 1, "Marge négoce +1 point"],
+      ["mneg", 1, "Marge au montant +1 point"],
       ["struct", 1, "1 personne de structure en plus"],
     ] as [Cle, number, string][]
   )
@@ -385,33 +471,8 @@ export default function ConsoleRentabilite({
                 {fmt(a.marge * 100, 1)} % du CA · {Math.abs(dR) < 500 ? "comme la référence" : `${signe(dR, keur)} face à la référence`}
               </div>
             </div>
-            {/* COUT_STRUCTURE : le coût d’une heure vendue (console) face au coût horaire de structure saisi dans Rentabilité */}
-            <div className={s.vus}>
-              <div className={s.vu} title="(salaires + location + autres frais) ÷ heures vendues, + la part des fees : calculé par la console">
-                <div className={s.vuTitre}>
-                  <span>Coût heure vendue</span>
-                </div>
-                <div className={s.vuVal}>{fmt(a.coutHeure, 1)} €/h</div>
-                <div className={s.echelle}>
-                  <span>calculé ici</span>
-                </div>
-              </div>
-              <div className={s.vu} title="Coût horaire de structure de l’exercice, saisi dans la page Rentabilité (utilisé pour les marges)">
-                <div className={s.vuTitre}>
-                  <span>Coût de structure</span>
-                </div>
-                <div className={s.vuVal}>{depart.coutStructure !== null ? `${fmt(depart.coutStructure, 1)} €/h` : "—"}</div>
-                <div className={s.echelle}>
-                  <span>
-                    {depart.coutStructure === null
-                      ? "non saisi (Rentabilité)"
-                      : Math.abs(a.coutHeure - depart.coutStructure) < 0.5
-                        ? "saisi : identique"
-                        : `saisi · écart ${signe(a.coutHeure - depart.coutStructure, (x) => fmt(x, 1))} €`}
-                  </span>
-                </div>
-              </div>
-            </div>
+            {/* CADRAN_COUT : le coût d’une heure vendue face au taux de vente et au coût de structure saisi */}
+            <Cadran cout={a.coutHeure} taux={v.taux} structure={depart.coutStructure} echelleSur={Math.max(ref.taux, r.coutHeure, 1)} />
             <div className={s.vus}>
               <div className={s.vu}>
                 <div className={s.vuTitre}>
@@ -562,7 +623,7 @@ export default function ConsoleRentabilite({
           <Fragment>
             <b>Heures payées</b> = productifs × heures annuelles (1 607 h = 35 h). <b>Heures passées sur affaires</b> = heures payées × taux d’occupation (le reste :
             devis, commercial, formation, NI…). <b>Heures vendues</b> = heures passées × efficience (au-dessus de 100 % : on fait mieux que le chiffré ; en dessous :
-            dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA négoce</b> dont on garde la marge. <b>Salaires</b> = (productifs + structure) ×
+            dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA vendu au montant</b> (négoce et scan pur) dont on garde la marge. <b>Salaires</b> = (productifs + structure) ×
             salaire chargé moyen. <b>Management fees</b> = % du CA total. <b>Résultat</b> = CA − achats négoce − salaires − fees − loyer − autres frais.{" "}
             <b>Coût d’une heure vendue</b> = (salaires + loyer + autres frais) ÷ heures vendues, + la part de fees. <b>Taux point mort</b> = taux de vente qui donne un
             résultat nul, tout le reste égal.

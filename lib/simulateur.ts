@@ -59,11 +59,11 @@ export const BUS: Bus[] = [
     ],
   },
   {
-    nom: "Négoce",
+    nom: "Vendu au montant",
     c: "var(--bus-negoce)",
     leviers: [
-      { k: "neg", nom: "CA négoce", u: "k€ / an", min: 0, max: 1000, pas: 5, dec: 0 },
-      { k: "mneg", nom: "Marge négoce", u: "% du négoce", min: 0, max: 60, pas: 1, dec: 0 },
+      { k: "neg", nom: "Négoce + scan", u: "k€ / an vendus", min: 0, max: 1000, pas: 5, dec: 0, aide: "Vendu au montant : le négoce et le scan pur (affaires imputées Scan, sans heures chiffrées)" },
+      { k: "mneg", nom: "Marge au montant", u: "% du vendu", min: 0, max: 100, pas: 1, dec: 0, aide: "(vendu − achats) ÷ vendu, sur le négoce et le scan pur" },
     ],
   },
   {
@@ -242,8 +242,12 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const hrPrest = r.prestationsEx.reduce((t, p) => t + p.hr, 0);
   const NEGOCE = new Set(["Négoce", "Négoce au montant"]);
   const lignesNegoce = r.groupes.filter((g) => NEGOCE.has(g.cle));
-  const caNegoce = lignesNegoce.reduce((t, g) => t + g.ca, 0);
-  const achatsNegoce = lignesNegoce.reduce((t, g) => t + g.achats, 0);
+  // VENDU_AU_MONTANT (PLG, 17/11/2026) : le scan pur (imputé Scan, sans heures chiffrées) rejoint le négoce
+  const scanPurAff = r.affaires.filter((a) => a.auMontant && a.activite === "Scan");
+  const caNegocePur = lignesNegoce.reduce((t, g) => t + g.ca, 0);
+  const caScanPur = scanPurAff.reduce((t, a) => t + a.ca, 0);
+  const caNegoce = caNegocePur + caScanPur;
+  const achatsNegoce = lignesNegoce.reduce((t, g) => t + g.achats, 0) + scanPurAff.reduce((t, a) => t + a.achats, 0);
   // production : tout sauf le négoce et les trajets, moins le scan pur vendu au montant (pas d'heures chiffrées)
   const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle) && g.cle !== "Trajets");
   const scanPur = r.affaires.filter((a) => a.auMontant && a.activite === "Scan").reduce((t, a) => t + a.ca, 0);
@@ -261,6 +265,9 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
     caProd,
     hcProd,
     caNegoce,
+    caNegocePur,
+    caScanPur,
+    nbScanPur: scanPurAff.length,
     margeNegoce: caNegoce > 0 ? ((caNegoce - achatsNegoce) / caNegoce) * 100 : null,
   };
 }
@@ -308,11 +315,11 @@ export function construireDepart(
   } else s.taux = { reel: false, texte: "Pas d’heures vendues sur l’exercice : valeur d’exemple" };
 
   v.neg = Math.round(renta.caNegoce / 1000 / 5) * 5;
-  s.neg = { reel: true, texte: `Négoce des forfaits livrés en ${ex} : ${fr(renta.caNegoce)} €` };
+  s.neg = { reel: true, texte: `Forfaits livrés en ${ex} : négoce ${fr(renta.caNegocePur)} € + scan pur ${fr(renta.caScanPur)} € (${renta.nbScanPur} affaire${renta.nbScanPur > 1 ? "s" : ""})` };
   if (renta.margeNegoce !== null) {
     v.mneg = Math.round(renta.margeNegoce);
-    s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, lignes Négoce de la Rentabilité" };
-  } else s.mneg = { reel: false, texte: "Pas de négoce sur l’exercice : valeur d’exemple" };
+    s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, négoce et scan pur de la Rentabilité" };
+  } else s.mneg = { reel: false, texte: "Rien de vendu au montant sur l’exercice : valeur d’exemple" };
 
   const saisi = parametres ? `enregistré le ${parametres.modifie_le ? new Date(parametres.modifie_le).toLocaleDateString("fr-FR") : "?"}` : null;
   if (parametres) {
