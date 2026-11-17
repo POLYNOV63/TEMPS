@@ -36,7 +36,6 @@ const SCENES: { cle: string; libelle: string; vers: (d: Leviers) => Leviers }[] 
   { cle: "embauche", libelle: "+2 embauches", vers: (d) => ({ ...d, prod: d.prod + 2 }) },
   { cle: "taux", libelle: "Taux +5 €/h", vers: (d) => ({ ...d, taux: d.taux + 5 }) },
   { cle: "derive", libelle: "Dérive 10 %", vers: (d) => ({ ...d, eff: Math.round(d.eff * 0.9) }) },
-  { cle: "locaux", libelle: "Nouveaux locaux", vers: (d) => ({ ...d, loyer: d.loyer + 48 }) },
   { cle: "fees", libelle: "Fees 8 %", vers: (d) => ({ ...d, fees: 8 }) },
 ];
 
@@ -266,13 +265,6 @@ export default function ConsoleRentabilite({
     ["Salaires", keur(a.salaires), <Delta key="d" delta={a.salaires - r.salaires} f={keur} inverse />],
     ["Coût d’une heure vendue", `${fmt(a.coutHeure, 1)} €/h`, <Delta key="d" delta={(a.coutHeure - r.coutHeure) * 10} f={(x) => `${fmt(x / 10, 1)} €`} inverse />],
     [
-      "Coût de structure saisi",
-      depart.coutStructure !== null ? `${fmt(depart.coutStructure, 1)} €/h` : "non saisi",
-      <span key="d" className={`${s.d} ${s.dz}`} title="Coût horaire de structure de l’exercice, saisi dans la page Rentabilité : à comparer au coût d’une heure vendue">
-        Rentabilité
-      </span>,
-    ],
-    [
       "Taux de vente point mort",
       Number.isFinite(a.tauxPM) ? `${fmt(a.tauxPM, 1)} €/h` : "—",
       Number.isFinite(a.tauxPM) && Number.isFinite(r.tauxPM) ? <Delta key="d" delta={(a.tauxPM - r.tauxPM) * 10} f={(x) => `${fmt(x / 10, 1)} €`} inverse /> : null,
@@ -391,6 +383,33 @@ export default function ConsoleRentabilite({
               </div>
               <div className={s.grandS}>
                 {fmt(a.marge * 100, 1)} % du CA · {Math.abs(dR) < 500 ? "comme la référence" : `${signe(dR, keur)} face à la référence`}
+              </div>
+            </div>
+            {/* COUT_STRUCTURE : le coût d’une heure vendue (console) face au coût horaire de structure saisi dans Rentabilité */}
+            <div className={s.vus}>
+              <div className={s.vu} title="(salaires + location + autres frais) ÷ heures vendues, + la part des fees : calculé par la console">
+                <div className={s.vuTitre}>
+                  <span>Coût heure vendue</span>
+                </div>
+                <div className={s.vuVal}>{fmt(a.coutHeure, 1)} €/h</div>
+                <div className={s.echelle}>
+                  <span>calculé ici</span>
+                </div>
+              </div>
+              <div className={s.vu} title="Coût horaire de structure de l’exercice, saisi dans la page Rentabilité (utilisé pour les marges)">
+                <div className={s.vuTitre}>
+                  <span>Coût de structure</span>
+                </div>
+                <div className={s.vuVal}>{depart.coutStructure !== null ? `${fmt(depart.coutStructure, 1)} €/h` : "—"}</div>
+                <div className={s.echelle}>
+                  <span>
+                    {depart.coutStructure === null
+                      ? "non saisi (Rentabilité)"
+                      : Math.abs(a.coutHeure - depart.coutStructure) < 0.5
+                        ? "saisi : identique"
+                        : `saisi · écart ${signe(a.coutHeure - depart.coutStructure, (x) => fmt(x, 1))} €`}
+                  </span>
+                </div>
               </div>
             </div>
             <div className={s.vus}>

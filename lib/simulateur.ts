@@ -72,7 +72,7 @@ export const BUS: Bus[] = [
     leviers: [
       { k: "fees", nom: "Mgmt fees", u: "% du CA", min: 0, max: 15, pas: 0.5, dec: 1 },
       { k: "loyer", nom: "Location", u: "k€ / an", min: 0, max: 250, pas: 1, dec: 0 },
-      { k: "autres", nom: "Autres frais", u: "k€ / an", min: 0, max: 500, pas: 5, dec: 0, aide: "Logiciels, véhicules, assurances, honoraires…" },
+      { k: "autres", nom: "Autres frais", u: "k€ / an", min: 0, max: 500, pas: 5, dec: 0, aide: "Tous les frais fixes de l’année hors salaires, location et management fees : logiciels et informatique, véhicules et carburant, assurances, honoraires (expert-comptable, avocat…), télécoms, fournitures, déplacements, formation externe, frais bancaires…" },
     ],
   },
 ];
@@ -236,6 +236,10 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const forfaits = r.affaires.filter((a) => !a.auMontant);
   const hc = forfaits.reduce((t, a) => t + a.hc, 0);
   const hr = forfaits.reduce((t, a) => t + a.hr, 0);
+  // EFFICIENCE_PEPI (PLG, 17/11/2026) : les PE / PI comptent aussi (heures facturées ÷ heures pointées des mois facturés),
+  // puisque la console applique l'efficience à toutes les heures passées sur affaires
+  const hcPrest = r.prestationsEx.reduce((t, p) => t + p.hc, 0);
+  const hrPrest = r.prestationsEx.reduce((t, p) => t + p.hr, 0);
   const NEGOCE = new Set(["Négoce", "Négoce au montant"]);
   const lignesNegoce = r.groupes.filter((g) => NEGOCE.has(g.cle));
   const caNegoce = lignesNegoce.reduce((t, g) => t + g.ca, 0);
@@ -248,9 +252,11 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   return {
     nbForfaits: forfaits.length,
     nbPrestations: r.prestationsEx.length,
-    efficience: hr > 0 ? (hc / hr) * 100 : null,
+    efficience: hr + hrPrest > 0 ? ((hc + hcPrest) / (hr + hrPrest)) * 100 : null,
     hc,
     hr,
+    hcPrest,
+    hrPrest,
     taux: hcProd > 0 ? caProd / hcProd : null,
     caProd,
     hcProd,
@@ -287,8 +293,14 @@ export function construireDepart(
 
   if (renta.efficience !== null) {
     v.eff = Math.round(renta.efficience);
-    s.eff = { reel: true, texte: `${fr(renta.hc)} h chiffrées ÷ ${fr(renta.hr)} h passées, ${renta.nbForfaits} forfaits livrés en ${ex}` };
-  } else s.eff = { reel: false, texte: `Aucun forfait livré en ${ex} : valeur d’exemple` };
+    const part = (num: number, den: number) => (den > 0 ? `${fr((num / den) * 100)} %` : "—");
+    s.eff = {
+      reel: true,
+      texte:
+        `(heures vendues ÷ heures passées) : forfaits ${part(renta.hc, renta.hr)} sur ${fr(renta.hr)} h (${renta.nbForfaits} livrés, ${fr(renta.hc)} h chiffrées)` +
+        ` · PE / PI ${part(renta.hcPrest, renta.hrPrest)} sur ${fr(renta.hrPrest)} h (${renta.nbPrestations}, ${fr(renta.hcPrest)} h facturées) → ${fr(renta.efficience)} %`,
+    };
+  } else s.eff = { reel: false, texte: `Aucun forfait livré ni mois de PE / PI facturé en ${ex} : valeur d’exemple` };
 
   if (renta.taux !== null) {
     v.taux = Math.round(renta.taux * 2) / 2;
