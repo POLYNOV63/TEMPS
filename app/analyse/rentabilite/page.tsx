@@ -73,6 +73,9 @@ type LigneRenta = {
 type Cumul = { pos: number; neg: number; caPos: number; caNeg: number; nPos: number; nNeg: number };
 const cumulVide = (): Cumul => ({ pos: 0, neg: 0, caPos: 0, caNeg: 0, nPos: 0, nNeg: 0 });
 const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).toLocaleString("fr-FR")} k€` : euros(n));
+/* AFFAIRES_EXCLUABLES (PLG, 17/11/2026) : affaires qu'on peut retirer de l'analyse d'un exercice par une coche
+   (affaire hors norme qui fausse la lecture). Pour en ajouter une : une ligne ici. */
+const AFFAIRES_EXCLUABLES: { exercice: number; base: string }[] = [{ exercice: 2025, base: "1678" }];
 const BLEU_GAIN = "#2f6db5"; // validés daltonisme (dataviz) : bleu = gains, orange = pertes
 const ORANGE_PERTE = "#c4501b";
 type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
@@ -96,6 +99,8 @@ function RentabiliteContenu() {
   const [erreur, setErreur] = useState("");
   const [info, setInfo] = useState("");
   const [seulementNonVentile, setSeulementNonVentile] = useState(false); // RENTABILITE_V3
+  const [retirees, setRetirees] = useState<Set<string>>(new Set()); // AFFAIRES_EXCLUABLES : « exercice:base » décochées
+  const excluablesEx = AFFAIRES_EXCLUABLES.filter((x) => x.exercice === exercice);
   /* RENTABILITE_V4 : affaires livrées au Pilotage, pour signaler celles que le Suivi d'affaire ne donne pas encore livrées */
   const [pilotageCBE, setPilotageCBE] = useState<{ numero: string; statut: string; date_livraison: string | null; imputation: string | null; designation: string | null }[]>([]);
   /* RENTABILITE_V2 : prestations PE / PI facturées (par affaire, par mois) et heures pointées sur l'exercice */
@@ -283,6 +288,7 @@ function RentabiliteContenu() {
   }
 
   const vue = useMemo(() => {
+    const exclues = new Set(AFFAIRES_EXCLUABLES.filter((x) => x.exercice === exercice && retirees.has(`${exercice}:${x.base}`)).map((x) => x.base));
     const debut = `${exercice}-11-01`;
     const fin = `${exercice + 1}-10-31`;
     const affaires: Affaire[] = [];
@@ -314,6 +320,7 @@ function RentabiliteContenu() {
     for (const a of affairesTerminees(lignesFin)) {
       if (a.date_fin < debut || a.date_fin > fin) continue;
       const base = a.base_affaire.replace(/^0+/, "");
+      if (exclues.has(base)) continue; // AFFAIRES_EXCLUABLES
       // HEURES_SANS_GROUPE : heures sans activité reconnue, réparties sur les activités de l'affaire
       // (au prorata de ses autres heures passées, à défaut de ses heures chiffrées)
       const rg: ParGroupe = { ...(realiseParBase.get(base) ?? groupesVides()) };
@@ -398,7 +405,7 @@ function RentabiliteContenu() {
     const moisEx = new Set(Array.from({ length: 12 }, (_, k) => new Date(Date.UTC(exercice, 10 + k, 1)).toISOString().slice(0, 7)));
     const parPrest = new Map<string, Prestation>();
     for (const p of prestations) {
-      if (!moisEx.has(p.mois)) continue;
+      if (!moisEx.has(p.mois) || exclues.has(p.base)) continue;
       const x = parPrest.get(p.base) ?? { base: p.base, imputation: p.imputation, designation: p.designation, ca: 0, hFact: 0, mois: new Set<string>() };
       x.ca += p.ca;
       x.hFact += p.hFact;
@@ -454,7 +461,7 @@ function RentabiliteContenu() {
     }
     const enAttente: { base: string; designation: string | null; livree: string; raison: string }[] = [];
     for (const [b, membres] of famillesPilotage) {
-      if (analysees.has(b) || !membres.every((m) => m.statut === "LIVREE")) continue;
+      if (analysees.has(b) || exclues.has(b) || !membres.every((m) => m.statut === "LIVREE")) continue;
       const livree = membres.map((m) => m.date_livraison ?? "").sort().slice(-1)[0];
       if (!livree || livree < debut || livree > fin) continue;
       const lignes = lignesFin.filter((l) => (l.base_affaire ?? "").replace(/^0+/, "") === b && (l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue);
@@ -473,7 +480,7 @@ function RentabiliteContenu() {
 
     /* RENTABILITE_V6 : rapprochement avec le CA de l'exercice (Finances), qui compte chaque livraison ou échéance à sa date */
     const sz = (b: string) => b.replace(/^0+/, "");
-    const mvts = mouvementsExcel(lignesFin, () => false).filter((m) => m.date >= debut && m.date <= fin);
+    const mvts = mouvementsExcel(lignesFin, () => false).filter((m) => m.date >= debut && m.date <= fin && !exclues.has(sz(m.base_affaire)));
     const caForfaits = mvts.reduce((t, m) => t + m.montant, 0);
     const caSurAnalysees = mvts.filter((m) => analysees.has(sz(m.base_affaire))).reduce((t, m) => t + m.montant, 0);
     const basesEnCours = new Set(mvts.filter((m) => !analysees.has(sz(m.base_affaire))).map((m) => sz(m.base_affaire)));
@@ -489,7 +496,7 @@ function RentabiliteContenu() {
     };
 
     return { affaires, groupes, total, prestationsEx, enAttente, rapprochement };
-  }, [lignesFin, realiseParBase, trajetsParBase, couts, exercice, prestations, pointeExercice, pilotageCBE]);
+  }, [lignesFin, realiseParBase, trajetsParBase, couts, exercice, prestations, pointeExercice, pilotageCBE, retirees]);
 
   const th: CSSProperties = { ...page.th, whiteSpace: "nowrap", padding: "8px 6px", textAlign: "center" };
   const td: CSSProperties = { ...page.td, padding: "7px 6px", fontSize: 13, textAlign: "right", whiteSpace: "nowrap" };
@@ -710,18 +717,47 @@ function RentabiliteContenu() {
               d’une heure (coût de structure).
             </p>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice - 1)} aria-label="Exercice précédent">◀</button>
             <strong style={{ fontSize: 18, minWidth: 110, textAlign: "center" }}>
               {exercice}-{exercice + 1}
             </strong>
             <button type="button" style={page.btnSecondaire} onClick={() => setExercice(exercice + 1)} aria-label="Exercice suivant">▶</button>
+            {/* AFFAIRES_EXCLUABLES : une coche par affaire qu'on peut retirer de cet exercice */}
+            {excluablesEx.map((x) => {
+              const cle = `${exercice}:${x.base}`;
+              const prise = !retirees.has(cle);
+              return (
+                <label key={cle} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8, minHeight: 44, fontSize: 14, cursor: "pointer", color: prise ? undefined : "#7a3e00", fontWeight: prise ? 400 : 700 }}>
+                  <input
+                    type="checkbox"
+                    checked={prise}
+                    onChange={() =>
+                      setRetirees((r) => {
+                        const n = new Set(r);
+                        if (n.has(cle)) n.delete(cle);
+                        else n.add(cle);
+                        return n;
+                      })
+                    }
+                    style={{ width: 18, height: 18 }}
+                  />
+                  Prendre en compte la CBE {x.base}
+                </label>
+              );
+            })}
           </div>
         </div>
 
         {erreur && <Message genre="erreur">{erreur}</Message>}
         {info && <Message genre="ok">{info}</Message>}
         {chargement && <Message genre="info">Chargement…</Message>}
+        {excluablesEx.some((x) => retirees.has(`${exercice}:${x.base}`)) && (
+          <Message genre="info">
+            Analyse sans la CBE {excluablesEx.filter((x) => retirees.has(`${exercice}:${x.base}`)).map((x) => x.base).join(", CBE ")} : tous les tableaux, le
+            graphique et les totaux de la page l’ignorent. Recochez la case pour la réintégrer.
+          </Message>
+        )}
 
         {!chargement && (
           <>
