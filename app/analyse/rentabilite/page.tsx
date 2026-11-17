@@ -2,7 +2,7 @@
 import { estTrajet } from "@/lib/trajets";
 import { COULEURS_METIERS } from "@/lib/couleurs";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
 import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
@@ -757,40 +757,110 @@ function RentabiliteContenu() {
                   <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
                     Forfaits livrés, affaire par affaire{seulementNonVentile ? " — montant non détaillé par activité" : ""}
                   </h2>
-                  <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>Les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.</p>
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
+                    Regroupées par activité principale (celle qui porte le plus de montant) : en tête de chaque activité, le cumul des marges positives et
+                    celui des marges négatives. Dans chaque activité, les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.
+                  </p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Affaire", ["Activité", "Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
                     <tbody>
-                      {trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF).map((a) => (
-                        <tr key={a.base}>
-                          <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
-                            <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
-                              CBE {a.base}
-                            </Link>{" "}
-                            {a.auMontant && <span style={{ fontSize: 11, fontWeight: 700, color: "#b35c00" }}>{a.imputation}</span>}
-                            {a.nonVentile && (
-                              <span
-                                title={
-                                  a.nonVentile === "AUCUN"
-                                    ? "Montant non détaillé par activité dans le Suivi d’affaire, et aucune heure : il reste en « Non ventilé »"
-                                    : `Montant non détaillé par activité dans le Suivi d’affaire : réparti au prorata des heures ${a.nonVentile === "CHIFFRE" ? "chiffrées" : "passées"}`
-                                }
-                                style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", background: "#fff4e5", borderRadius: 999, padding: "0 6px" }}
-                              >
-                                ⚠ non ventilé
-                              </span>
-                            )}
-                            <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
-                          </td>
-                          <td style={{ ...tdG, fontWeight: 700, whiteSpace: "nowrap" }}>
-                            <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[a.activite] ?? "#9aa0a6", marginRight: 6 }} />
-                            {a.activite}
-                          </td>
-                          <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
-                          <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.fin)}</td>
-                          {ligneTableau(a, false, coutHoraire(couts, a.fin))}
-                        </tr>
-                      ))}
+                      {/* RENTABILITE_PAR_ACTIVITE (PLG, 17/11/2026) : les affaires regroupées par activité principale ;
+                          en tête de chaque groupe, le cumul des marges positives et celui des marges négatives */}
+                      {(() => {
+                        const liste = trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF);
+                        const ordre = ["Méca", "Calcul", "Elec / Pneu", "Scan", "Négoce", "Autre", "Non ventilé"];
+                        const rang = (g: string) => (ordre.indexOf(g) < 0 ? 99 : ordre.indexOf(g));
+                        const groupes = new Map<string, typeof liste>();
+                        for (const a of liste) groupes.set(a.activite, [...(groupes.get(a.activite) ?? []), a]);
+                        const cumul = (ls: typeof liste) => {
+                          const c = { pos: 0, neg: 0, nPos: 0, nNeg: 0, sansCout: 0 };
+                          for (const a of ls) {
+                            const m = marge(a);
+                            if (m === null) c.sansCout++;
+                            else if (m >= 0) {
+                              c.pos += m;
+                              c.nPos++;
+                            } else {
+                              c.neg += m;
+                              c.nNeg++;
+                            }
+                          }
+                          return c;
+                        };
+                        const bandeau = (cle: string, titre: ReactNode, ls: typeof liste, total = false) => {
+                          const c = cumul(ls);
+                          return (
+                            <tr key={`bandeau-${cle}`}>
+                              <td colSpan={13} style={{ padding: "10px 8px 6px", background: total ? "#eceef1" : "#f6f7f8", borderTop: `2px solid ${C.ligne}`, textAlign: "left" }}>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 22px", alignItems: "baseline", fontSize: 14 }}>
+                                  <strong style={{ fontSize: 15 }}>{titre}</strong>
+                                  <span style={{ color: C.gris }}>
+                                    {ls.length} affaire{ls.length > 1 ? "s" : ""}
+                                  </span>
+                                  <span style={{ color: "#1b5e20", fontWeight: 800 }}>
+                                    Marges positives : + {euros(c.pos)} <span style={{ fontWeight: 400 }}>({c.nPos})</span>
+                                  </span>
+                                  <span style={{ color: C.rougeTexte, fontWeight: 800 }}>
+                                    Marges négatives : − {euros(-c.neg)} <span style={{ fontWeight: 400 }}>({c.nNeg})</span>
+                                  </span>
+                                  <span style={{ fontWeight: 800 }}>Net : {euros(c.pos + c.neg)}</span>
+                                  {c.sansCout > 0 && <span style={{ color: C.gris, fontSize: 12 }}>{c.sansCout} sans coût de structure</span>}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        };
+                        const ligneAffaire = (a: (typeof liste)[number]) => (
+                          <tr key={a.base}>
+                            <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
+                              <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                                CBE {a.base}
+                              </Link>{" "}
+                              {a.auMontant && <span style={{ fontSize: 11, fontWeight: 700, color: "#b35c00" }}>{a.imputation}</span>}
+                              {a.nonVentile && (
+                                <span
+                                  title={
+                                    a.nonVentile === "AUCUN"
+                                      ? "Montant non détaillé par activité dans le Suivi d’affaire, et aucune heure : il reste en « Non ventilé »"
+                                      : `Montant non détaillé par activité dans le Suivi d’affaire : réparti au prorata des heures ${a.nonVentile === "CHIFFRE" ? "chiffrées" : "passées"}`
+                                  }
+                                  style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", background: "#fff4e5", borderRadius: 999, padding: "0 6px" }}
+                                >
+                                  ⚠ non ventilé
+                                </span>
+                              )}
+                              <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
+                            </td>
+                            <td style={{ ...tdG, fontWeight: 700, whiteSpace: "nowrap" }}>
+                              <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[a.activite] ?? "#9aa0a6", marginRight: 6 }} />
+                              {a.activite}
+                            </td>
+                            <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
+                            <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.fin)}</td>
+                            {ligneTableau(a, false, coutHoraire(couts, a.fin))}
+                          </tr>
+                        );
+                        return (
+                          <>
+                            {[...groupes.entries()]
+                              .sort(([x], [y]) => rang(x) - rang(y) || x.localeCompare(y, "fr"))
+                              .map(([g, ls]) => (
+                                <Fragment key={g}>
+                                  {bandeau(
+                                    g,
+                                    <>
+                                      <i style={{ display: "inline-block", width: 11, height: 11, borderRadius: 3, background: COULEUR_ACTIVITE[g] ?? "#9aa0a6", marginRight: 7 }} />
+                                      {g}
+                                    </>,
+                                    ls
+                                  )}
+                                  {ls.map(ligneAffaire)}
+                                </Fragment>
+                              ))}
+                            {groupes.size > 1 && bandeau("total", "Toutes activités", liste, true)}
+                          </>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 </section>
