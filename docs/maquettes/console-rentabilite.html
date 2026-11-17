@@ -1,0 +1,520 @@
+<title>Console de rentabilité</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Share+Tech+Mono&family=Permanent+Marker&display=swap">
+<style>
+/* Concept : une console de mixage de studio, une tranche par levier, un bloc master pour le résultat.
+   Thème unique sombre, assumé (matériel de studio). */
+:root {
+  --chassis: #17191c;
+  --panel: #22262a;
+  --strip: #2b3035;
+  --strip-edge: #3a4047;
+  --ink: #e9e6df;
+  --ink-dim: #9aa1a8;
+  --lcd-bg: #1a1408;
+  --lcd: #ffb547;
+  --lcd-dim: #7a5a26;
+  --rouge: #d42a2a;
+  --vert: #3fcf6a;
+  --jaune: #f2c230;
+  --perte: #ff5a4f;
+  --bus-equipe: #4a78a8;
+  --bus-prod: #c00000;
+  --bus-negoce: #8d6e63;
+  --bus-structure: #7b68b8;
+  --tape: #efe6c8;
+  --tape-ink: #2a2620;
+  --f-ui: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --f-lcd: "Share Tech Mono", ui-monospace, "Consolas", monospace;
+  --f-tape: "Permanent Marker", "Comic Sans MS", cursive;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--chassis); color: var(--ink); }
+body {
+  font-family: var(--f-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+  background:
+    radial-gradient(ellipse at 50% -20%, #2a2f35 0%, transparent 60%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0 2px, transparent 2px 4px),
+    var(--chassis);
+  min-height: 100%;
+}
+.console { max-width: 1440px; margin: 0 auto; display: grid; gap: 14px; }
+
+/* ---------- en-tête ---------- */
+.tete { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; justify-content: space-between; }
+.marque { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.marque h1 { margin: 0; font-size: 22px; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; }
+.marque h1 b { color: var(--rouge); }
+.marque span { color: var(--ink-dim); font-size: 13px; letter-spacing: .06em; }
+.scenes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.scenes .lbl { font-size: 11px; letter-spacing: .16em; color: var(--ink-dim); text-transform: uppercase; margin-right: 4px; }
+.btn {
+  font-family: var(--f-ui); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink); background: linear-gradient(#3a4047, #2b3035); border: 1px solid #4b525a; border-bottom-color: #15171a;
+  border-radius: 5px; padding: 7px 10px; cursor: pointer; box-shadow: 0 2px 0 #0d0e10, inset 0 1px 0 rgba(255,255,255,.08);
+}
+.btn:hover { border-color: #6b737c; }
+.btn:active { transform: translateY(1px); box-shadow: 0 1px 0 #0d0e10; }
+.btn:focus-visible, .fader:focus-visible, .lcd:focus-visible { outline: 2px solid var(--lcd); outline-offset: 2px; }
+.btn.on { color: #1b1408; background: linear-gradient(#ffc766, #e09a2c); border-color: #ffcf7a; }
+.btn.rec { color: #fff; background: linear-gradient(#e03a3a, #a51d1d); border-color: #ff6b6b; }
+.note-ex { font-size: 12px; color: var(--ink-dim); }
+.note-ex b { color: var(--lcd); font-weight: 600; }
+
+/* ---------- table de mixage ---------- */
+.plateau { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 14px; align-items: start; }
+@media (max-width: 1050px) { .plateau { grid-template-columns: minmax(0, 1fr); } }
+.table {
+  background: linear-gradient(#262a2f, #1f2327); border: 1px solid #343a40; border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 30px rgba(0,0,0,.45);
+  overflow-x: auto; padding: 12px 10px 10px;
+}
+.bus-ligne { display: flex; gap: 8px; width: max-content; min-width: 100%; }
+.bus { display: flex; flex-direction: column; gap: 8px; }
+.ruban {
+  align-self: flex-start; font-family: var(--f-tape); color: var(--tape-ink); background: var(--tape); font-size: 15px;
+  padding: 2px 12px 0; transform: rotate(-1.2deg); box-shadow: 0 1px 2px rgba(0,0,0,.4);
+  clip-path: polygon(1% 6%, 99% 0, 100% 92%, 0 100%);
+}
+.bus:nth-child(even) .ruban { transform: rotate(1deg); }
+.tranches { display: flex; gap: 5px; padding: 5px; border-radius: 8px; border-top: 3px solid var(--c); background: rgba(0,0,0,.18); }
+.tranche {
+  width: 72px; display: grid; grid-template-rows: auto auto 1fr auto; justify-items: center; gap: 7px;
+  background: linear-gradient(var(--strip), #24282c); border: 1px solid var(--strip-edge); border-radius: 6px; padding: 8px 6px 9px;
+}
+.tranche .num { font-size: 10px; color: var(--ink-dim); letter-spacing: .1em; }
+.led { width: 8px; height: 8px; border-radius: 50%; background: #3a2b10; box-shadow: inset 0 1px 1px rgba(0,0,0,.6); display: inline-block; margin-left: 4px; vertical-align: 1px; }
+.led.on { background: var(--lcd); box-shadow: 0 0 8px var(--lcd); }
+.lcd {
+  width: 100%; font-family: var(--f-lcd); font-size: 14px; color: var(--lcd); background: var(--lcd-bg); text-align: center;
+  border: 1px solid #000; border-radius: 3px; padding: 4px 2px; box-shadow: inset 0 0 8px rgba(255,181,71,.12);
+  font-variant-numeric: tabular-nums; text-shadow: 0 0 6px rgba(255,181,71,.45);
+}
+.unite { font-family: var(--f-lcd); font-size: 10px; color: var(--lcd-dim); margin-top: -5px; min-height: 2.4em; text-align: center; line-height: 1.2; }
+.fader { position: relative; width: 52px; height: 210px; touch-action: none; cursor: ns-resize; }
+.fader .rail {
+  position: absolute; left: 50%; top: 10px; bottom: 10px; width: 6px; transform: translateX(-50%);
+  background: #0b0c0e; border-radius: 3px; box-shadow: inset 0 0 3px #000, 0 0 0 1px #3a4047;
+}
+.fader .rempli { position: absolute; left: 50%; bottom: 10px; width: 6px; transform: translateX(-50%); border-radius: 3px; background: var(--c); opacity: .85; }
+.fader .grad { position: absolute; left: 0; right: 0; top: 10px; bottom: 10px; pointer-events: none; }
+.fader .grad i { position: absolute; left: 4px; right: 4px; height: 1px; background: linear-gradient(90deg, #5a6168 0 9px, transparent 9px calc(100% - 9px), #5a6168 calc(100% - 9px)); }
+.fader .grad i.ref { background: linear-gradient(90deg, var(--lcd) 0 11px, transparent 11px calc(100% - 11px), var(--lcd) calc(100% - 11px)); height: 2px; }
+.fader .capuchon {
+  position: absolute; left: 50%; width: 44px; height: 26px; transform: translate(-50%, 50%); border-radius: 4px;
+  background: linear-gradient(#e8e8e8 0%, #bfc3c7 45%, #8d9298 50%, #bfc3c7 55%, #d9dbde 100%);
+  box-shadow: 0 4px 6px rgba(0,0,0,.6), inset 0 1px 0 #fff; border: 1px solid #555;
+}
+.fader .capuchon::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 2px; margin-top: -1px; background: var(--c); }
+.tranche .nom { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; text-align: center; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; }
+.tranche .delta { font-family: var(--f-lcd); font-size: 10px; min-height: 12px; color: var(--ink-dim); }
+
+/* ---------- master ---------- */
+.master {
+  background: linear-gradient(#2a2e33, #202428); border: 1px solid #3a4047; border-radius: 10px; padding: 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 10px 30px rgba(0,0,0,.45); display: grid; gap: 12px;
+}
+.master h2 { margin: 0; font-size: 13px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-dim); display: flex; justify-content: space-between; align-items: center; }
+.master h2 b { color: var(--rouge); }
+.vus { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vu { background: #0e0f11; border: 1px solid #000; border-radius: 6px; padding: 8px; display: grid; gap: 6px; }
+.vu .titre { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); display: flex; justify-content: space-between; }
+.leds { display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; height: 18px; }
+.leds i { border-radius: 2px; background: #1d1f22; }
+.leds i.on.v { background: var(--vert); box-shadow: 0 0 6px var(--vert); }
+.leds i.on.j { background: var(--jaune); box-shadow: 0 0 6px var(--jaune); }
+.leds i.on.r { background: var(--perte); box-shadow: 0 0 6px var(--perte); }
+.vu .val { font-family: var(--f-lcd); font-size: 20px; color: var(--lcd); text-shadow: 0 0 6px rgba(255,181,71,.4); font-variant-numeric: tabular-nums; }
+.vu .echelle { display: flex; justify-content: space-between; font-family: var(--f-lcd); font-size: 9px; color: var(--ink-dim); }
+.grand { background: var(--lcd-bg); border: 1px solid #000; border-radius: 6px; padding: 10px 12px; box-shadow: inset 0 0 14px rgba(255,181,71,.12); }
+.grand .l { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--lcd-dim); }
+.grand .v { font-family: var(--f-lcd); font-size: 34px; color: var(--lcd); text-shadow: 0 0 10px rgba(255,181,71,.5); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.grand .v.neg { color: var(--perte); text-shadow: 0 0 10px rgba(255,90,79,.5); }
+.grand .s { font-family: var(--f-lcd); font-size: 12px; color: var(--lcd-dim); }
+.lignes { display: grid; gap: 0; font-size: 13px; }
+.lignes div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #3a4047; align-items: baseline; }
+.lignes div:last-child { border-bottom: 0; }
+.lignes span:first-child { color: var(--ink-dim); }
+.lignes .n { font-family: var(--f-lcd); font-variant-numeric: tabular-nums; text-align: right; }
+.d { font-family: var(--f-lcd); font-size: 11px; min-width: 64px; text-align: right; }
+.d.p { color: var(--vert); } .d.m { color: var(--perte); } .d.z { color: #555c63; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- bas de console ---------- */
+.bas { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 900px) { .bas { grid-template-columns: minmax(0, 1fr); } }
+.module { background: var(--panel); border: 1px solid #343a40; border-radius: 10px; padding: 14px; min-width: 0; }
+.module h3 { margin: 0 0 4px; font-size: 13px; letter-spacing: .2em; text-transform: uppercase; }
+.module p.aide { margin: 0 0 12px; font-size: 13px; color: var(--ink-dim); max-width: 65ch; }
+.cascade { display: flex; height: 46px; border-radius: 5px; overflow: hidden; background: #0e0f11; border: 1px solid #000; }
+.cascade div { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; min-width: 0; transition: flex-basis .25s; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
+.legende { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; }
+.legende span { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-dim); }
+.legende i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+.legende b { color: var(--ink); font-family: var(--f-lcd); font-weight: 400; }
+.sens { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sens td { padding: 6px 4px; border-bottom: 1px dashed #3a4047; }
+.sens td:last-child { text-align: right; font-family: var(--f-lcd); white-space: nowrap; }
+.sens .barre { height: 6px; border-radius: 3px; background: var(--vert); margin-top: 4px; }
+.sens .barre.m { background: var(--perte); }
+.pied { font-size: 12px; color: var(--ink-dim); line-height: 1.55; }
+.pied b { color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .cascade div { transition: none; } }
+</style>
+
+<div class="console">
+  <header class="tete">
+    <div class="marque">
+      <h1><b>●</b> Console de rentabilité</h1>
+      <span>POLYNOV · bureau d’études · un exercice (nov. → oct.)</span>
+    </div>
+    <div class="scenes" role="group" aria-label="Scènes">
+      <span class="lbl">Scènes</span>
+      <button class="btn" data-scene="type">Situation type</button>
+      <button class="btn" data-scene="embauche">+2 embauches</button>
+      <button class="btn" data-scene="taux">Taux +5 €/h</button>
+      <button class="btn" data-scene="derive">Dérive 10 %</button>
+      <button class="btn" data-scene="locaux">Nouveaux locaux</button>
+      <button class="btn" data-scene="fees">Fees 8 %</button>
+    </div>
+  </header>
+  <p class="note-ex" id="note">Valeurs d’<b>exemple</b> : réglez chaque tranche sur vos chiffres (glisser le curseur, molette, flèches du clavier, ou taper la valeur dans l’afficheur). Le repère orange sur chaque rail = la <b>référence</b> mémorisée.</p>
+
+  <div class="plateau">
+    <section class="table" aria-label="Table de mixage des leviers">
+      <div class="bus-ligne" id="busLigne"></div>
+    </section>
+
+    <aside class="master" aria-label="Résultat">
+      <h2><span><b>■</b> Master</span><span id="etatRef" style="font-size:10px;letter-spacing:.12em">réf. : situation type</span></h2>
+      <div class="grand">
+        <div class="l">Résultat de l’exercice</div>
+        <div class="v" id="mResultat">—</div>
+        <div class="s" id="mResultatS">—</div>
+      </div>
+      <div class="vus">
+        <div class="vu">
+          <div class="titre"><span>Marge nette</span><span id="vuMargeD"></span></div>
+          <div class="leds" id="vuMarge"></div>
+          <div class="echelle"><span>-15%</span><span>0</span><span>+15%</span></div>
+          <div class="val" id="vuMargeV">—</div>
+        </div>
+        <div class="vu">
+          <div class="titre"><span>Salaires / CA</span><span id="vuMasseD"></span></div>
+          <div class="leds" id="vuMasse"></div>
+          <div class="echelle"><span>40%</span><span>70%</span><span>100%</span></div>
+          <div class="val" id="vuMasseV">—</div>
+        </div>
+      </div>
+      <div class="lignes" id="lignes"></div>
+      <div class="actions">
+        <button class="btn rec" id="memoriser" title="La position actuelle devient la référence (repères orange, écarts)">● Mémoriser la réf.</button>
+        <button class="btn" id="rappeler" title="Remettre tous les curseurs sur la référence">↺ Revenir à la réf.</button>
+      </div>
+    </aside>
+  </div>
+
+  <div class="bas">
+    <section class="module">
+      <h3>Où part chaque euro de CA</h3>
+      <p class="aide">Le chiffre d’affaires de gauche à droite : achats du négoce, salaires, management fees, loyer, autres frais, et ce qui reste. Si les coûts dépassent le CA, la partie rouge est la perte.</p>
+      <div class="cascade" id="cascade"></div>
+      <div class="legende" id="legende"></div>
+    </section>
+    <section class="module">
+      <h3>Ce que rapporte un cran</h3>
+      <p class="aide">Effet sur le résultat de l’exercice d’un petit mouvement de chaque curseur, à partir de la position actuelle. Les plus puissants en haut.</p>
+      <table class="sens" id="sens"></table>
+    </section>
+  </div>
+
+  <section class="module pied">
+    <h3 style="margin-bottom:8px">Comment la console calcule</h3>
+    <b>Heures payées</b> = productifs × heures annuelles (1 607 h = 35 h). <b>Heures passées sur affaires</b> = heures payées × taux d’occupation (le reste : devis, commercial, formation, NI…). <b>Heures vendues</b> = heures passées × efficience (au-dessus de 100 % : on fait mieux que le chiffré ; en dessous : dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA négoce</b> dont on garde la marge.
+    <b>Salaires</b> = (productifs + structure) × salaire chargé moyen. <b>Management fees</b> = % du CA total. <b>Résultat</b> = CA − achats négoce − salaires − fees − loyer − autres frais.
+    <b>Coût d’une heure vendue</b> = (salaires + loyer + autres frais) ÷ heures vendues, + la part de fees. <b>Taux point mort</b> = taux de vente qui donne un résultat nul, tout le reste égal.
+  </section>
+</div>
+
+<script>
+(() => {
+  const fmt = (n, d = 0) => n.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const keur = (n) => `${fmt(n / 1000)} k€`;
+  const signe = (n, f) => (Math.abs(n) < 1e-9 ? "±0" : (n > 0 ? "+" : "−") + f(Math.abs(n)));
+
+  /* ---------- leviers ---------- */
+  const BUS = [
+    { nom: "Équipe", c: "var(--bus-equipe)", leviers: [
+      { k: "prod", nom: "Productifs", u: "pers.", min: 5, max: 40, pas: 1, dec: 0, def: 14 },
+      { k: "struct", nom: "Structure", u: "pers.", min: 0, max: 10, pas: 1, dec: 0, def: 3, aide: "Encadrement, administratif : payés mais pas sur les affaires" },
+      { k: "sal", nom: "Salaire chargé", u: "k€ / an", min: 35, max: 90, pas: 0.5, dec: 1, def: 52 },
+      { k: "heures", nom: "Heures payées", u: "h / an", min: 1450, max: 1800, pas: 7, dec: 0, def: 1607 },
+    ]},
+    { nom: "Production", c: "var(--bus-prod)", leviers: [
+      { k: "occ", nom: "Occupation", u: "% sur affaires", min: 40, max: 100, pas: 1, dec: 0, def: 78 },
+      { k: "eff", nom: "Efficience", u: "% vendu / passé", min: 60, max: 130, pas: 1, dec: 0, def: 92 },
+      { k: "taux", nom: "Taux de vente", u: "€ / h", min: 40, max: 120, pas: 0.5, dec: 1, def: 72 },
+    ]},
+    { nom: "Négoce", c: "var(--bus-negoce)", leviers: [
+      { k: "neg", nom: "CA négoce", u: "k€ / an", min: 0, max: 800, pas: 5, dec: 0, def: 150 },
+      { k: "mneg", nom: "Marge négoce", u: "% du négoce", min: 0, max: 50, pas: 1, dec: 0, def: 20 },
+    ]},
+    { nom: "Structure", c: "var(--bus-structure)", leviers: [
+      { k: "fees", nom: "Mgmt fees", u: "% du CA", min: 0, max: 15, pas: 0.5, dec: 1, def: 4 },
+      { k: "loyer", nom: "Location", u: "k€ / an", min: 0, max: 250, pas: 1, dec: 0, def: 72 },
+      { k: "autres", nom: "Autres frais", u: "k€ / an", min: 0, max: 500, pas: 5, dec: 0, def: 140, aide: "Logiciels, véhicules, assurances, honoraires…" },
+    ]},
+  ];
+  const LEVIERS = BUS.flatMap((b) => b.leviers.map((l) => ({ ...l, c: b.c })));
+  const parCle = Object.fromEntries(LEVIERS.map((l) => [l.k, l]));
+  const DEFAUT = Object.fromEntries(LEVIERS.map((l) => [l.k, l.def]));
+
+  const SCENES = {
+    type: { ...DEFAUT },
+    embauche: { ...DEFAUT, prod: DEFAUT.prod + 2 },
+    taux: { ...DEFAUT, taux: DEFAUT.taux + 5 },
+    derive: { ...DEFAUT, eff: 83 },
+    locaux: { ...DEFAUT, loyer: 120 },
+    fees: { ...DEFAUT, fees: 8 },
+  };
+
+  let v = { ...DEFAUT };
+  let ref = { ...DEFAUT };
+  try {
+    const s = JSON.parse(localStorage.getItem("console-renta") || "null");
+    if (s && s.v && s.ref) { v = { ...DEFAUT, ...s.v }; ref = { ...DEFAUT, ...s.ref }; }
+  } catch (e) {}
+  const sauver = () => { try { localStorage.setItem("console-renta", JSON.stringify({ v, ref })); } catch (e) {} };
+
+  /* ---------- calcul ---------- */
+  function calcul(x) {
+    const hPayees = x.prod * x.heures;
+    const hAffaires = hPayees * x.occ / 100;
+    const hVendues = hAffaires * x.eff / 100;
+    const caProd = hVendues * x.taux;
+    const caNeg = x.neg * 1000;
+    const ca = caProd + caNeg;
+    const achats = caNeg * (1 - x.mneg / 100);
+    const salaires = (x.prod + x.struct) * x.sal * 1000;
+    const fees = ca * x.fees / 100;
+    const loyer = x.loyer * 1000, autres = x.autres * 1000;
+    const resultat = ca - achats - salaires - fees - loyer - autres;
+    const fixes = salaires + loyer + autres;
+    const f = x.fees / 100;
+    const coutHeure = hVendues > 0 ? fixes / hVendues + x.taux * f : 0;
+    const tauxPM = hVendues > 0 && f < 1 ? (fixes + f * caNeg - caNeg * x.mneg / 100) / (hVendues * (1 - f)) : NaN;
+    const margeVar = ca > 0 ? (ca - achats - fees) / ca : 0;
+    const caPM = margeVar > 0 ? fixes / margeVar : NaN;
+    const parProductif = x.heures * x.occ / 100 * x.eff / 100 * x.taux * (1 - f) - x.sal * 1000;
+    return { hPayees, hAffaires, hVendues, caProd, caNeg, ca, achats, salaires, fees, loyer, autres, resultat, coutHeure, tauxPM, caPM, parProductif,
+      marge: ca > 0 ? resultat / ca : 0, masseCA: ca > 0 ? salaires / ca : 0, caParPers: ca / Math.max(1, x.prod + x.struct) };
+  }
+
+  /* ---------- construction des tranches ---------- */
+  const ligne = document.getElementById("busLigne");
+  const els = {};
+  let n = 0;
+  for (const b of BUS) {
+    const bus = document.createElement("div");
+    bus.className = "bus";
+    bus.innerHTML = `<div class="ruban">${b.nom}</div><div class="tranches" style="--c:${b.c}"></div>`;
+    const tr = bus.querySelector(".tranches");
+    for (const l of b.leviers) {
+      n++;
+      const t = document.createElement("div");
+      t.className = "tranche";
+      t.style.setProperty("--c", b.c);
+      t.title = l.aide || "";
+      t.innerHTML = `
+        <div class="num">CH ${String(n).padStart(2, "0")}<span class="led" id="led-${l.k}"></span></div>
+        <div style="display:grid;gap:5px;justify-items:center;width:100%">
+          <input class="lcd" id="lcd-${l.k}" inputmode="decimal" aria-label="${l.nom} (${l.u})">
+          <div class="unite">${l.u}</div>
+        </div>
+        <div class="fader" id="f-${l.k}" role="slider" tabindex="0" aria-label="${l.nom}" aria-valuemin="${l.min}" aria-valuemax="${l.max}">
+          <div class="rail"></div><div class="rempli"></div><div class="grad"></div><div class="capuchon"></div>
+        </div>
+        <div style="display:grid;gap:2px;justify-items:center">
+          <div class="nom">${l.nom}</div>
+          <div class="delta" id="d-${l.k}"></div>
+        </div>`;
+      tr.appendChild(t);
+      els[l.k] = { fader: t.querySelector(".fader"), cap: t.querySelector(".capuchon"), rempli: t.querySelector(".rempli"), grad: t.querySelector(".grad"),
+        lcd: t.querySelector(".lcd"), led: t.querySelector(".led"), delta: t.querySelector(".delta") };
+    }
+    ligne.appendChild(bus);
+  }
+
+  const PAD = 10;
+  const ratio = (l, x) => (x - l.min) / (l.max - l.min);
+  const borner = (l, x) => {
+    const r = Math.round((Math.min(l.max, Math.max(l.min, x)) - l.min) / l.pas) * l.pas + l.min;
+    return Number(r.toFixed(4));
+  };
+
+  function dessinerTranche(k) {
+    const l = parCle[k], e = els[k];
+    const h = e.fader.clientHeight - 2 * PAD;
+    const r = ratio(l, v[k]);
+    e.cap.style.bottom = `${PAD + r * h}px`;
+    e.rempli.style.height = `${r * h}px`;
+    if (document.activeElement !== e.lcd) e.lcd.value = fmt(v[k], l.dec);
+    e.fader.setAttribute("aria-valuenow", v[k]);
+    e.fader.setAttribute("aria-valuetext", `${fmt(v[k], l.dec)} ${l.u}`);
+    const ecart = v[k] - ref[k];
+    e.led.classList.toggle("on", Math.abs(ecart) > 1e-9);
+    e.delta.textContent = Math.abs(ecart) > 1e-9 ? signe(ecart, (a) => fmt(a, l.dec)) : "";
+    e.delta.style.color = Math.abs(ecart) > 1e-9 ? "var(--lcd)" : "";
+    // graduations + repère de référence
+    const rr = ratio(l, ref[k]);
+    e.grad.innerHTML = Array.from({ length: 11 }, (_, i) => `<i style="bottom:${i * 10}%"></i>`).join("") + `<i class="ref" style="bottom:calc(${rr * 100}% - 1px)"></i>`;
+  }
+
+  function regler(k, x, sansRendu) {
+    v[k] = borner(parCle[k], x);
+    if (!sansRendu) { dessinerTranche(k); rendre(); }
+  }
+
+  /* glisser, molette, clavier, saisie */
+  for (const l of LEVIERS) {
+    const e = els[l.k];
+    const depuisY = (clientY) => {
+      const rect = e.fader.getBoundingClientRect();
+      const r = 1 - (clientY - rect.top - PAD) / (rect.height - 2 * PAD);
+      regler(l.k, l.min + r * (l.max - l.min));
+    };
+    e.fader.addEventListener("pointerdown", (ev) => { e.fader.setPointerCapture(ev.pointerId); depuisY(ev.clientY); e.fader.focus({ preventScroll: true }); });
+    e.fader.addEventListener("pointermove", (ev) => { if (e.fader.hasPointerCapture(ev.pointerId)) depuisY(ev.clientY); });
+    e.fader.addEventListener("wheel", (ev) => { ev.preventDefault(); regler(l.k, v[l.k] + (ev.deltaY < 0 ? l.pas : -l.pas)); }, { passive: false });
+    e.fader.addEventListener("keydown", (ev) => {
+      const gros = (l.max - l.min) / 10;
+      const m = { ArrowUp: l.pas, ArrowRight: l.pas, ArrowDown: -l.pas, ArrowLeft: -l.pas, PageUp: gros, PageDown: -gros }[ev.key];
+      if (m !== undefined) { ev.preventDefault(); regler(l.k, v[l.k] + m); }
+      if (ev.key === "Home") { ev.preventDefault(); regler(l.k, l.min); }
+      if (ev.key === "End") { ev.preventDefault(); regler(l.k, l.max); }
+    });
+    e.fader.addEventListener("dblclick", () => regler(l.k, ref[l.k]));
+    const valider = () => {
+      const x = Number(String(e.lcd.value).replace(/\s/g, "").replace(",", "."));
+      if (Number.isFinite(x)) regler(l.k, x); else dessinerTranche(l.k);
+    };
+    e.lcd.addEventListener("change", valider);
+    e.lcd.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { valider(); e.lcd.blur(); } });
+    e.lcd.addEventListener("blur", () => dessinerTranche(l.k));
+  }
+
+  /* ---------- master ---------- */
+  const vuMarge = document.getElementById("vuMarge"), vuMasse = document.getElementById("vuMasse");
+  vuMarge.innerHTML = vuMasse.innerHTML = "<i></i>".repeat(16);
+  function vu(el, valeur, min, max, couleurDe) {
+    const nbOn = Math.round(Math.max(0, Math.min(1, (valeur - min) / (max - min))) * 16);
+    [...el.children].forEach((led, i) => { led.className = i < nbOn ? `on ${couleurDe(min + (i + 0.5) / 16 * (max - min))}` : ""; });
+  }
+  const dEl = (delta, f, inverse) => {
+    const cls = Math.abs(delta) < 0.5 ? "z" : (delta > 0) !== Boolean(inverse) ? "p" : "m";
+    return `<span class="d ${cls}">${Math.abs(delta) < 0.5 ? "—" : signe(delta, f)}</span>`;
+  };
+
+  function rendre() {
+    const a = calcul(v), r = calcul(ref);
+    const elR = document.getElementById("mResultat");
+    elR.textContent = `${a.resultat < 0 ? "−" : ""}${keur(Math.abs(a.resultat))}`;
+    elR.classList.toggle("neg", a.resultat < 0);
+    const dR = a.resultat - r.resultat;
+    document.getElementById("mResultatS").textContent =
+      `${fmt(a.marge * 100, 1)} % du CA · ${Math.abs(dR) < 500 ? "comme la référence" : `${signe(dR, keur)} face à la référence`}`;
+
+    vu(vuMarge, a.marge * 100, -15, 15, (x) => (x < 0 ? "r" : x < 5 ? "j" : "v"));
+    vu(vuMasse, a.masseCA * 100, 40, 100, (x) => (x < 65 ? "v" : x < 75 ? "j" : "r"));
+    document.getElementById("vuMargeV").textContent = `${fmt(a.marge * 100, 1)} %`;
+    document.getElementById("vuMasseV").textContent = `${fmt(a.masseCA * 100, 1)} %`;
+
+    const L = [
+      ["Chiffre d’affaires", keur(a.ca), dEl(a.ca - r.ca, keur)],
+      ["dont production", keur(a.caProd), dEl(a.caProd - r.caProd, keur)],
+      ["Heures vendues", `${fmt(a.hVendues)} h`, dEl(a.hVendues - r.hVendues, (x) => `${fmt(x)} h`)],
+      ["CA par personne", keur(a.caParPers), dEl(a.caParPers - r.caParPers, keur)],
+      ["Salaires", keur(a.salaires), dEl(a.salaires - r.salaires, keur, true)],
+      ["Coût d’une heure vendue", `${fmt(a.coutHeure, 1)} €/h`, dEl((a.coutHeure - r.coutHeure) * 10, (x) => `${fmt(x / 10, 1)} €`, true)],
+      ["Taux de vente point mort", Number.isFinite(a.tauxPM) ? `${fmt(a.tauxPM, 1)} €/h` : "—", Number.isFinite(a.tauxPM) && Number.isFinite(r.tauxPM) ? dEl((a.tauxPM - r.tauxPM) * 10, (x) => `${fmt(x / 10, 1)} €`, true) : ""],
+      ["CA point mort", Number.isFinite(a.caPM) ? keur(a.caPM) : "—", Number.isFinite(a.caPM) && Number.isFinite(r.caPM) ? dEl(a.caPM - r.caPM, keur, true) : ""],
+      ["Un productif de plus", `${a.parProductif < 0 ? "−" : "+"}${keur(Math.abs(a.parProductif))}`, ""],
+    ];
+    document.getElementById("lignes").innerHTML = L.map(([lib, val, d]) => `<div><span>${lib}</span><span class="n">${val}</span>${d || '<span class="d z"></span>'}</div>`).join("");
+
+    /* cascade */
+    const postes = [
+      ["Achats négoce", a.achats, "var(--bus-negoce)"],
+      ["Salaires", a.salaires, "var(--bus-equipe)"],
+      ["Mgmt fees", a.fees, "var(--bus-structure)"],
+      ["Location", a.loyer, "#5d6670"],
+      ["Autres frais", a.autres, "#454c54"],
+    ];
+    const couts = postes.reduce((t, p) => t + p[1], 0);
+    const base = Math.max(a.ca, couts, 1);
+    const parts = [...postes];
+    if (a.resultat >= 0) parts.push(["Résultat", a.resultat, "var(--vert)"]);
+    let html = parts.map(([lib, x, c]) => `<div style="flex:0 0 ${(x / base) * 100}%;background:${c}" title="${lib} : ${keur(x)}">${x / base > 0.09 ? lib : ""}</div>`).join("");
+    document.getElementById("cascade").innerHTML = html;
+    document.getElementById("cascade").style.boxShadow = a.resultat < 0 ? "inset 0 0 0 2px var(--perte)" : "";
+    document.getElementById("legende").innerHTML =
+      parts.map(([lib, x, c]) => `<span><i style="background:${c}"></i>${lib} <b>${keur(x)}</b> · ${fmt((x / Math.max(a.ca, 1)) * 100, 0)} %</span>`).join("") +
+      (a.resultat < 0 ? `<span><i style="background:var(--perte)"></i>Perte <b>${keur(-a.resultat)}</b> : les coûts dépassent le CA de ${fmt((-a.resultat / Math.max(a.ca, 1)) * 100, 1)} %</span>` : "");
+
+    /* sensibilité */
+    const crans = [
+      ["prod", 1, "1 productif de plus"],
+      ["taux", 1, "Taux de vente +1 €/h"],
+      ["occ", 1, "Occupation +1 point"],
+      ["eff", 1, "Efficience +1 point"],
+      ["sal", 1, "Salaire chargé +1 k€ / pers."],
+      ["fees", 0.5, "Management fees +0,5 point"],
+      ["loyer", 10, "Location +10 k€"],
+      ["mneg", 1, "Marge négoce +1 point"],
+      ["struct", 1, "1 personne de structure en plus"],
+    ].map(([k, pas, lib]) => [lib, calcul({ ...v, [k]: v[k] + pas }).resultat - a.resultat]);
+    crans.sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]));
+    const maxAbs = Math.max(...crans.map((c) => Math.abs(c[1])), 1);
+    document.getElementById("sens").innerHTML = crans.map(([lib, d]) =>
+      `<tr><td>${lib}<div class="barre ${d < 0 ? "m" : ""}" style="width:${(Math.abs(d) / maxAbs) * 100}%"></div></td><td style="color:${d < 0 ? "var(--perte)" : "var(--vert)"}">${signe(d, keur)}</td></tr>`).join("");
+
+    sauver();
+  }
+
+  function toutDessiner() { LEVIERS.forEach((l) => dessinerTranche(l.k)); rendre(); }
+
+  /* ---------- scènes : faders motorisés ---------- */
+  const reduit = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let anim = 0;
+  function allerVers(cible, nomRef) {
+    cancelAnimationFrame(anim);
+    const depart = { ...v }, t0 = performance.now(), duree = reduit ? 0 : 650;
+    const pas = (t) => {
+      const p = duree ? Math.min(1, (t - t0) / duree) : 1;
+      const e = 1 - Math.pow(1 - p, 3);
+      for (const l of LEVIERS) v[l.k] = p < 1 ? depart[l.k] + (cible[l.k] - depart[l.k]) * e : cible[l.k];
+      toutDessiner();
+      if (p < 1) anim = requestAnimationFrame(pas);
+    };
+    anim = requestAnimationFrame(pas);
+  }
+  document.querySelectorAll("[data-scene]").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("[data-scene]").forEach((x) => x.classList.toggle("on", x === b));
+    allerVers(SCENES[b.dataset.scene]);
+  }));
+  document.getElementById("memoriser").addEventListener("click", () => {
+    ref = { ...v };
+    document.getElementById("etatRef").textContent = "réf. : réglage mémorisé";
+    toutDessiner();
+  });
+  document.getElementById("rappeler").addEventListener("click", () => allerVers({ ...ref }));
+  window.addEventListener("resize", toutDessiner);
+
+  toutDessiner();
+})();
+</script>

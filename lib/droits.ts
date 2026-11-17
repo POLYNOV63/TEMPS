@@ -106,6 +106,7 @@ export const PAGES: PageApp[] = [
   { href: "/analyse/facturation", libelle: "Facturation du mois", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/finances", libelle: "Finances", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/rentabilite", libelle: "Rentabilité", groupe: "Analyse", droit: "indicateurs" },
+  { href: "/analyse/simulateur", libelle: "Simulateur de rentabilité", groupe: "Analyse", droit: "indicateurs" }, // SIMULATEUR_RENTA
   { href: "/analyse/fiabilite-chiffrage", libelle: "Fiabilité du chiffrage", groupe: "Analyse", droit: "indicateurs" },
   { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "chargeRessources" }, // CAPACITE_DIRECTION : la Direction n'y voit que les disponibilités à venir
   { href: "/analyse/clients", libelle: "Analyse par client", groupe: "Analyse", droit: "administration" },

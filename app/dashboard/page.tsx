@@ -936,6 +936,7 @@ function TuilesDomaines({
           ["Finances", "/analyse/finances"],
           ["Facturation du mois", "/analyse/facturation"],
           ["Rentabilité", "/analyse/rentabilite"],
+          ["Simulateur de rentabilité", "/analyse/simulateur"],
         ])}
       />
     );

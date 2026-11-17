@@ -21,7 +21,7 @@ Mis à jour le 15/11/2026 (sessions 11 et 12 : fiche affaire, page Ressources, a
 - **Moins de pages** : PLG préfère de vraies fusions de pages (blocs les uns sous les autres) aux menus à onglets ; une
   ancienne adresse fusionnée devient une page de redirection (`redirect(...)`), souvent vers une ancre (`#bloc`).
 - **SQL** : scripts numérotés `supabase/NN_objet.sql`, lancés à la main dans Supabase › SQL Editor, relançables sans risque
-  (`create or replace`, `if not exists`). **Installés : 1 à 100.** Toujours dire l'ordre : SQL avant le code qui en dépend.
+  (`create or replace`, `if not exists`). **Installés : 1 à 100** (101 écrit le 17/11/2026, à lancer). Toujours dire l'ordre : SQL avant le code qui en dépend.
 - **Fonctions Edge** : code complet, collé dans Supabase › Edge Functions › Code, puis Deploy.
 - **Export IA** (`/admin/Export-IA`, `lib/exportIA.ts`, route `app/api/Export-IA`) : produit ce contexte (léger ≈ 230 Ko,
   complet ≈ 1 Mo). Ce fichier `docs/AI_PROJECT_CONTEXT.md` en est la partie « règles métier » : le tenir à jour.
@@ -257,6 +257,13 @@ bilan d'affaire et de suivi de dérive.
   horaire de structure (ADMIN). « Par activité » : chaque affaire est **répartie** entre ses activités ; colonnes **Gains
   cumulés / Pertes cumulées** (parts d'affaires gagnantes / perdantes, € et %) et graphique gains (bleu) / pertes (orange) /
   net. « Affaire par affaire » : liste simple (non regroupée), avec ligne de rapprochement = « Par activité » hors PE / PI.
+- **Simulateur de rentabilité** (`/analyse/simulateur`, droit `indicateurs`, maquette `docs/maquettes/console-rentabilite.html`) :
+  console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
+  (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres
+  actifs hors Direction (ADMIN compris) ; occupation = CBE produit ÷ capacité (consolidation de Mon bilan) ; efficience,
+  taux de vente et négoce = calcul de la Rentabilité, partagé dans `lib/rentabilite.ts`. Salaire chargé, fees, location,
+  autres frais : table `simulateur_parametres` (SQL 101), saisis dans la console, « Enregistrer comme valeurs de départ »
+  (ADMIN). Bouton MUTE pour sortir la CBE 1678 (liste `AFFAIRES_EXCLUABLES`).
 - **Fiabilité du chiffrage** (`/analyse/fiabilite-chiffrage`) : chiffré face au pointé des forfaits ; PE / PI exclues
   d'après l'imputation de la commande de base ; colonnes triables, colonne Client.
 - **Analyse par client** (`/analyse/clients`, ADMIN, SQL 100 `analyse_heures_clients(p_debut, p_fin)` security definer,

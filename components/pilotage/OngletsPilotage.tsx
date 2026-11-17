@@ -32,6 +32,7 @@ const ONGLETS = [
   { cle: "facturation", groupe: 2, court: "Facturation", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
   { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
+  { cle: "simulateur", groupe: 2, court: "Simulateur", libelle: "Simulateur de rentabilité", href: "/analyse/simulateur", droit: "indicateurs" }, // SIMULATEUR_RENTA
   { cle: "bilan", groupe: 2, court: "Fiche affaire", libelle: "Fiche affaire", href: "/affaires/bilan", droit: "voirPlanning" },
   // la charge
   { cle: "feuilles-route", groupe: 3, court: "Feuilles de route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
