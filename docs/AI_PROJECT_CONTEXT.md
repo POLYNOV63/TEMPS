@@ -254,7 +254,9 @@ bilan d'affaire et de suivi de dérive.
   part du CA. Montants cliquables (`DetailMontant.tsx`).
 - **Rentabilité** (`/analyse/rentabilite`) : forfaits **toutes commandes livrées** dans l'exercice et mois PE / PI facturés ;
   taux vendu, taux obtenu, coût (heures × coût de structure), marge, par activité et affaire par affaire. Saisie du coût
-  horaire de structure (ADMIN).
+  horaire de structure (ADMIN). « Par activité » : chaque affaire est **répartie** entre ses activités ; colonnes **Gains
+  cumulés / Pertes cumulées** (parts d'affaires gagnantes / perdantes, € et %) et graphique gains (bleu) / pertes (orange) /
+  net. « Affaire par affaire » : liste simple (non regroupée), avec ligne de rapprochement = « Par activité » hors PE / PI.
 - **Fiabilité du chiffrage** (`/analyse/fiabilite-chiffrage`) : chiffré face au pointé des forfaits ; PE / PI exclues
   d'après l'imputation de la commande de base ; colonnes triables, colonne Client.
 - **Analyse par client** (`/analyse/clients`, ADMIN, SQL 100 `analyse_heures_clients(p_debut, p_fin)` security definer,

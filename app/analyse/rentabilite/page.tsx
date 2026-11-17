@@ -65,7 +65,16 @@ type LigneRenta = {
   cout: number | null;
   auMontant: boolean;
   trajets?: number; // TRAJETS_A_PART : heures de trajet (code HT), dans le coût mais pas dans « heures passées »
+  cumul?: Cumul; // MARGES_POS_NEG : parts d'affaires gagnantes / perdantes (lignes « par activité »)
 };
+/* MARGES_POS_NEG (PLG, 17/11/2026) : dans « Par activité », chaque affaire est répartie entre ses activités ; chaque part
+   (la part Méca d'une affaire, sa part Calcul…) a sa propre marge, positive ou négative. On cumule séparément les gains
+   et les pertes, pour voir qu'une activité positive au total perd sur certaines affaires. */
+type Cumul = { pos: number; neg: number; caPos: number; caNeg: number; nPos: number; nNeg: number };
+const cumulVide = (): Cumul => ({ pos: 0, neg: 0, caPos: 0, caNeg: 0, nPos: 0, nNeg: 0 });
+const keuros = (n: number) => (Math.abs(n) >= 10000 ? `${Math.round(n / 1000).toLocaleString("fr-FR")} k€` : euros(n));
+const BLEU_GAIN = "#2f6db5"; // validés daltonisme (dataviz) : bleu = gains, orange = pertes
+const ORANGE_PERTE = "#c4501b";
 type Affaire = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
 /* RENTABILITE_ACTIVITE : couleurs des activités (celles des Indicateurs commerciaux) */
 const COULEUR_ACTIVITE: Record<string, string> = { "Méca": COULEURS_METIERS.meca, Calcul: COULEURS_METIERS.calcul, "Elec / Pneu": COULEURS_METIERS.elec, Scan: COULEURS_METIERS.scan, "Négoce": COULEURS_METIERS.negoce, Autre: COULEURS_METIERS.autre, "Non ventilé": COULEURS_METIERS.autre };
@@ -279,12 +288,26 @@ function RentabiliteContenu() {
     const affaires: Affaire[] = [];
     const parGroupe = new Map<string, LigneRenta>();
     const ajouter = (cle: string, ca: number, achats: number, hc: number, hr: number, cout: number | null, auMontant: boolean) => {
-      const l = parGroupe.get(cle) ?? { cle, libelle: cle, ca: 0, achats: 0, hc: 0, hr: 0, cout: 0, auMontant };
+      const l = parGroupe.get(cle) ?? { cle, libelle: cle, ca: 0, achats: 0, hc: 0, hr: 0, cout: 0, auMontant, cumul: cumulVide() };
       l.ca += ca;
       l.achats += achats;
       l.hc += hc;
       l.hr += hr;
       l.cout = l.cout === null || cout === null ? null : l.cout + cout;
+      // MARGES_POS_NEG : la marge de cette part d'affaire
+      if (cout !== null && (Math.abs(ca) > 0.5 || Math.abs(cout) > 0.5)) {
+        const c = l.cumul ?? (l.cumul = cumulVide());
+        const m = ca - cout;
+        if (m >= 0) {
+          c.pos += m;
+          c.caPos += ca;
+          c.nPos++;
+        } else {
+          c.neg += m;
+          c.caNeg += ca;
+          c.nNeg++;
+        }
+      }
       parGroupe.set(cle, l);
     };
 
@@ -410,6 +433,10 @@ function RentabiliteContenu() {
       trajets: tout.reduce((t, a) => t + (a.trajets ?? 0), 0),
       cout: tout.some((a) => a.cout === null) ? null : tout.reduce((t, a) => t + (a.cout ?? 0), 0),
       auMontant: false,
+      cumul: groupes.reduce((c, g) => {
+        const x = g.cumul ?? cumulVide();
+        return { pos: c.pos + x.pos, neg: c.neg + x.neg, caPos: c.caPos + x.caPos, caNeg: c.caNeg + x.caNeg, nPos: c.nPos + x.nPos, nNeg: c.nNeg + x.nNeg };
+      }, cumulVide()),
     };
     affaires.sort((x, y) => {
       const mx = marge(x);
@@ -533,7 +560,7 @@ function RentabiliteContenu() {
   const changerTri = (set: (f: (t: Tri) => Tri) => void) => (col: string) =>
     set((t) => ({ col, sens: t.col === col ? (t.sens === 1 ? -1 : 1) : col === "numero" || col === "client" || col === "type" || col === "activite" ? 1 : -1 }));
 
-  const enTetes = (premiere: string, autres: string[] = [], tri?: { etat: Tri; changer: (c: string) => void }, libelleHc = "H. chiffrées") => {
+  const enTetes = (premiere: string, autres: string[] = [], tri?: { etat: Tri; changer: (c: string) => void }, libelleHc = "H. chiffrées", enPlus?: ReactNode) => {
     const cles: Record<string, string> = { Affaire: "numero", "Activité": "activite", Client: "client", "Livrée le": "fin", Type: "type", "Mois facturés": "nbMois" };
     const cellule = (libelle: string, col: string | null, style: CSSProperties, title?: string) => (
       <th key={libelle} style={style} title={title}>
@@ -559,12 +586,116 @@ function RentabiliteContenu() {
         {cellule("Coût", "cout", th, "achats + heures passées × coût horaire de structure")}
         {cellule("Marge", "marge", th)}
         {cellule("Marge %", "mpct", th)}
+        {enPlus}
       </tr>
     );
   };
 
   const t = vue.total;
   const mTotal = marge(t);
+
+  /* MARGES_POS_NEG : les deux colonnes « Gains cumulés » / « Pertes cumulées » */
+  const cellulesCumul = (c: Cumul | undefined, gras = false) => {
+    const bord: CSSProperties = gras ? { borderTop: `2px solid ${C.ligne}` } : {};
+    if (coutExercice === null || !c || (c.nPos === 0 && c.nNeg === 0))
+      return (
+        <>
+          <td style={{ ...td, ...bord, borderLeft: `2px solid ${C.ligne}`, color: C.gris }}>—</td>
+          <td style={{ ...td, ...bord, color: C.gris }}>—</td>
+        </>
+      );
+    return (
+      <>
+        <td style={{ ...td, ...bord, borderLeft: `2px solid ${C.ligne}`, fontWeight: gras ? 800 : 700 }}>
+          {c.nPos > 0 ? <>+ {euros(c.pos)}</> : "—"}
+          {c.nPos > 0 && (
+            <div style={{ fontSize: 11, fontWeight: 400, color: C.gris }}>
+              {c.caPos > 0 ? `${pct(c.pos / c.caPos)} · ` : ""}
+              {c.nPos} part{c.nPos > 1 ? "s" : ""}
+            </div>
+          )}
+        </td>
+        <td style={{ ...td, ...bord, fontWeight: gras ? 800 : 700, color: c.nNeg > 0 ? C.rougeTexte : undefined }}>
+          {c.nNeg > 0 ? <>− {euros(-c.neg)}</> : "—"}
+          {c.nNeg > 0 && (
+            <div style={{ fontSize: 11, fontWeight: 400, color: C.gris }}>
+              {c.caNeg > 0 ? `${pct(c.neg / c.caNeg)} · ` : ""}
+              {c.nNeg} part{c.nNeg > 1 ? "s" : ""}
+            </div>
+          )}
+        </td>
+      </>
+    );
+  };
+
+  /* MARGES_POS_NEG : graphique gains / pertes par activité (barres de part et d'autre d'un axe, point = net) */
+  const lignesGraphique = vue.groupes.filter((g) => g.cumul && (g.cumul.nPos > 0 || g.cumul.nNeg > 0));
+  const echelleGraphique = Math.max(1, ...lignesGraphique.map((g) => Math.max(g.cumul!.pos, -g.cumul!.neg)));
+  const graphiqueGainsPertes =
+    coutExercice === null || lignesGraphique.length === 0 ? null : (
+      <figure style={{ margin: "18px 0 0" }} aria-label="Gains et pertes cumulés par activité">
+        <figcaption style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px", alignItems: "center", fontSize: 13, color: "#3b4046", marginBottom: 10 }}>
+          <strong style={{ fontSize: 15, color: C.encre }}>Gains et pertes, par activité</strong>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <i style={{ width: 14, height: 10, borderRadius: 2, background: ORANGE_PERTE, display: "inline-block" }} />
+            pertes (parts d’affaires à perte)
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <i style={{ width: 14, height: 10, borderRadius: 2, background: BLEU_GAIN, display: "inline-block" }} />
+            gains (parts d’affaires rentables)
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <i style={{ width: 10, height: 10, borderRadius: 999, background: C.encre, boxShadow: "0 0 0 2px #ffffff", display: "inline-block" }} />
+            net
+          </span>
+        </figcaption>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(90px, 150px) minmax(0, 1fr) minmax(120px, 190px)", rowGap: 8, columnGap: 12, alignItems: "center" }}>
+          {lignesGraphique.map((g) => {
+            const c = g.cumul!;
+            const net = c.pos + c.neg;
+            const lPerte = (-c.neg / echelleGraphique) * 50;
+            const lGain = (c.pos / echelleGraphique) * 50;
+            const xNet = 50 + (net / echelleGraphique) * 50;
+            const caNet = c.caPos + c.caNeg;
+            return (
+              <Fragment key={g.cle}>
+                <span style={{ fontWeight: 800, fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <i style={{ width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[g.cle] ?? "#9aa0a6", display: "inline-block", flex: "none" }} />
+                  {g.libelle}
+                </span>
+                <div style={{ position: "relative", height: 22 }}>
+                  <div aria-hidden="true" style={{ position: "absolute", left: "50%", top: -4, bottom: -4, width: 1, background: "#c9cdd2" }} />
+                  {c.nNeg > 0 && (
+                    <div
+                      title={`${g.libelle} : pertes ${euros(c.neg)} sur ${c.nNeg} part(s) d’affaire${c.caNeg > 0 ? ` (${pct(c.neg / c.caNeg)} de leur prix)` : ""}`}
+                      style={{ position: "absolute", right: "calc(50% + 1px)", top: 2, bottom: 2, width: `${lPerte}%`, minWidth: 2, background: ORANGE_PERTE, borderRadius: "4px 0 0 4px" }}
+                    />
+                  )}
+                  {c.nPos > 0 && (
+                    <div
+                      title={`${g.libelle} : gains + ${euros(c.pos)} sur ${c.nPos} part(s) d’affaire${c.caPos > 0 ? ` (${pct(c.pos / c.caPos)} de leur prix)` : ""}`}
+                      style={{ position: "absolute", left: "calc(50% + 1px)", top: 2, bottom: 2, width: `${lGain}%`, minWidth: 2, background: BLEU_GAIN, borderRadius: "0 4px 4px 0" }}
+                    />
+                  )}
+                  <div
+                    title={`${g.libelle} : net ${euros(net)}${caNet > 0 ? ` (${pct(net / caNet)})` : ""}`}
+                    style={{ position: "absolute", left: `calc(${xNet}% - 6px)`, top: 5, width: 12, height: 12, borderRadius: 999, background: C.encre, boxShadow: "0 0 0 2px #ffffff" }}
+                  />
+                </div>
+                <span style={{ fontSize: 13, color: "#3b4046", whiteSpace: "nowrap" }}>
+                  net <strong style={{ color: net < 0 ? C.rougeTexte : C.encre }}>{keuros(net)}</strong>
+                  {caNet > 0 && <span style={{ color: C.gris }}> · {pct(net / caNet)}</span>}
+                </span>
+              </Fragment>
+            );
+          })}
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: 12, color: C.gris }}>
+          Chaque affaire est répartie entre ses activités (comme le tableau) : la part d’une activité dans une affaire gagne ou perd de l’argent.
+          Une activité positive au total peut perdre sur certaines affaires : c’est la barre orange. Survolez une barre pour le détail.
+        </p>
+      </figure>
+    );
 
   return (
     <main style={page.fond}>
@@ -721,20 +852,38 @@ function RentabiliteContenu() {
                     Négoce ; le négoce sans heures chiffrées est à part (« Négoce au montant »), comme le scan pur.
                   </p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                    <thead>{enTetes("Activité")}</thead>
+                    <thead>
+                      {enTetes(
+                        "Activité",
+                        [],
+                        undefined,
+                        "H. chiffrées",
+                        <>
+                          <th style={{ ...th, borderLeft: `2px solid ${C.ligne}` }} title="Cumul des parts d’affaires qui gagnent de l’argent dans cette activité, et leur marge en % de leur prix">
+                            Gains cumulés
+                          </th>
+                          <th style={th} title="Cumul des parts d’affaires qui perdent de l’argent dans cette activité, et leur perte en % de leur prix">
+                            Pertes cumulées
+                          </th>
+                        </>
+                      )}
+                    </thead>
                     <tbody>
                       {vue.groupes.map((g) => (
                         <tr key={g.cle}>
                           <td style={{ ...tdG, fontWeight: 800 }}>{g.libelle}</td>
                           {ligneTableau(g)}
+                          {cellulesCumul(g.cumul)}
                         </tr>
                       ))}
                       <tr style={{ background: "#f8f9fa" }}>
                         <td style={{ ...tdG, fontWeight: 800, borderTop: `2px solid ${C.ligne}` }}>Total</td>
                         {ligneTableau(t, true)}
+                        {cellulesCumul(t.cumul, true)}
                       </tr>
                     </tbody>
                   </table>
+                  {graphiqueGainsPertes}
                   {/* RENTABILITE_V3 : les affaires dont le montant n'est pas détaillé par activité */}
                   {vue.affaires.some((a) => a.nonVentile) && (
                     <p style={{ margin: "10px 0 0", fontSize: 13, color: "#7a3e00", background: "#fff4e5", borderRadius: 8, padding: "8px 10px" }}>
@@ -758,115 +907,65 @@ function RentabiliteContenu() {
                     Forfaits livrés, affaire par affaire{seulementNonVentile ? " — montant non détaillé par activité" : ""}
                   </h2>
                   <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-                    Regroupées par activité principale (celle qui porte le plus de montant) : en tête de chaque activité, le cumul des marges positives et
-                    celui des marges négatives, en euros et en % du prix des affaires concernées. Dans chaque activité, les moins rentables d’abord. Cliquez sur une affaire pour ouvrir son bilan.
+                    Les moins rentables d’abord ; cliquez sur un titre de colonne pour trier (par activité principale, client…), sur une affaire pour ouvrir son bilan.
                   </p>
                   <table style={{ borderCollapse: "collapse", width: "100%" }}>
                     <thead>{enTetes("Affaire", ["Activité", "Client", "Livrée le"], { etat: triF, changer: changerTri(setTriF) })}</thead>
                     <tbody>
-                      {/* RENTABILITE_PAR_ACTIVITE (PLG, 17/11/2026) : les affaires regroupées par activité principale ;
-                          en tête de chaque groupe, le cumul des marges positives et celui des marges négatives */}
-                      {(() => {
-                        const liste = trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF);
-                        const ordre = ["Méca", "Calcul", "Elec / Pneu", "Scan", "Négoce", "Autre", "Non ventilé"];
-                        const rang = (g: string) => (ordre.indexOf(g) < 0 ? 99 : ordre.indexOf(g));
-                        const groupes = new Map<string, typeof liste>();
-                        for (const a of liste) groupes.set(a.activite, [...(groupes.get(a.activite) ?? []), a]);
-                        const cumul = (ls: typeof liste) => {
-                          const c = { pos: 0, neg: 0, nPos: 0, nNeg: 0, sansCout: 0, caPos: 0, caNeg: 0 }; // ca… : prix des affaires concernées (pour le % de marge)
-                          for (const a of ls) {
-                            const m = marge(a);
-                            if (m === null) c.sansCout++;
-                            else if (m >= 0) {
-                              c.pos += m;
-                              c.caPos += a.ca;
-                              c.nPos++;
-                            } else {
-                              c.neg += m;
-                              c.caNeg += a.ca;
-                              c.nNeg++;
-                            }
-                          }
-                          return c;
-                        };
-                        const bandeau = (cle: string, titre: ReactNode, ls: typeof liste, total = false) => {
-                          const c = cumul(ls);
-                          return (
-                            <tr key={`bandeau-${cle}`}>
-                              <td colSpan={13} style={{ padding: "10px 8px 6px", background: total ? "#eceef1" : "#f6f7f8", borderTop: `2px solid ${C.ligne}`, textAlign: "left" }}>
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 22px", alignItems: "baseline", fontSize: 14 }}>
-                                  <strong style={{ fontSize: 15 }}>{titre}</strong>
-                                  <span style={{ color: C.gris }}>
-                                    {ls.length} affaire{ls.length > 1 ? "s" : ""}
-                                  </span>
-                                  <span style={{ color: "#1b5e20", fontWeight: 800 }}>
-                                    Marges positives : + {euros(c.pos)}{c.caPos > 0 && <> · {pct(c.pos / c.caPos)}</>} <span style={{ fontWeight: 400 }}>({c.nPos})</span>
-                                  </span>
-                                  <span style={{ color: C.rougeTexte, fontWeight: 800 }}>
-                                    Marges négatives : − {euros(-c.neg)}{c.caNeg > 0 && <> · {pct(c.neg / c.caNeg)}</>} <span style={{ fontWeight: 400 }}>({c.nNeg})</span>
-                                  </span>
-                                  <span style={{ fontWeight: 800 }} title="Marge nette ÷ prix de toutes les affaires du groupe qui ont une marge">
-                                    Net : {euros(c.pos + c.neg)}{c.caPos + c.caNeg > 0 && <> · {pct((c.pos + c.neg) / (c.caPos + c.caNeg))}</>}
-                                  </span>
-                                  {c.sansCout > 0 && <span style={{ color: C.gris, fontSize: 12 }}>{c.sansCout} sans coût de structure</span>}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        };
-                        const ligneAffaire = (a: (typeof liste)[number]) => (
-                          <tr key={a.base}>
-                            <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
-                              <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
-                                CBE {a.base}
-                              </Link>{" "}
-                              {a.auMontant && <span style={{ fontSize: 11, fontWeight: 700, color: "#b35c00" }}>{a.imputation}</span>}
-                              {a.nonVentile && (
-                                <span
-                                  title={
-                                    a.nonVentile === "AUCUN"
-                                      ? "Montant non détaillé par activité dans le Suivi d’affaire, et aucune heure : il reste en « Non ventilé »"
-                                      : `Montant non détaillé par activité dans le Suivi d’affaire : réparti au prorata des heures ${a.nonVentile === "CHIFFRE" ? "chiffrées" : "passées"}`
-                                  }
-                                  style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", background: "#fff4e5", borderRadius: 999, padding: "0 6px" }}
-                                >
-                                  ⚠ non ventilé
-                                </span>
-                              )}
-                              <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
-                            </td>
-                            <td style={{ ...tdG, fontWeight: 700, whiteSpace: "nowrap" }}>
-                              <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[a.activite] ?? "#9aa0a6", marginRight: 6 }} />
-                              {a.activite}
-                            </td>
-                            <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
-                            <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.fin)}</td>
-                            {ligneTableau(a, false, coutHoraire(couts, a.fin))}
-                          </tr>
-                        );
-                        return (
-                          <>
-                            {[...groupes.entries()]
-                              .sort(([x], [y]) => rang(x) - rang(y) || x.localeCompare(y, "fr"))
-                              .map(([g, ls]) => (
-                                <Fragment key={g}>
-                                  {bandeau(
-                                    g,
-                                    <>
-                                      <i style={{ display: "inline-block", width: 11, height: 11, borderRadius: 3, background: COULEUR_ACTIVITE[g] ?? "#9aa0a6", marginRight: 7 }} />
-                                      {g}
-                                    </>,
-                                    ls
-                                  )}
-                                  {ls.map(ligneAffaire)}
-                                </Fragment>
-                              ))}
-                            {groupes.size > 1 && bandeau("total", "Toutes activités", liste, true)}
-                          </>
-                        );
-                      })()}
+                      {trier(vue.affaires.filter((a) => !seulementNonVentile || a.nonVentile), triF).map((a) => (
+                        <tr key={a.base}>
+                          <td style={{ ...tdG, whiteSpace: "normal", minWidth: 180 }}>
+                            <Link href={`/affaires/bilan?affaire=CBE${a.base}`} style={{ fontWeight: 800, color: C.rougeFonce }}>
+                              CBE {a.base}
+                            </Link>{" "}
+                            {a.auMontant && <span style={{ fontSize: 11, fontWeight: 700, color: "#b35c00" }}>{a.imputation}</span>}
+                            {a.nonVentile && (
+                              <span
+                                title={
+                                  a.nonVentile === "AUCUN"
+                                    ? "Montant non détaillé par activité dans le Suivi d’affaire, et aucune heure : il reste en « Non ventilé »"
+                                    : `Montant non détaillé par activité dans le Suivi d’affaire : réparti au prorata des heures ${a.nonVentile === "CHIFFRE" ? "chiffrées" : "passées"}`
+                                }
+                                style={{ fontSize: 11, fontWeight: 700, color: "#7a3e00", background: "#fff4e5", borderRadius: 999, padding: "0 6px" }}
+                              >
+                                ⚠ non ventilé
+                              </span>
+                            )}
+                            <div style={{ fontSize: 12, color: C.gris }}>{a.designation}</div>
+                          </td>
+                          <td style={{ ...tdG, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            <i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: COULEUR_ACTIVITE[a.activite] ?? "#9aa0a6", marginRight: 6 }} />
+                            {a.activite}
+                          </td>
+                          <td style={{ ...tdG, fontWeight: 400 }}>{a.client ?? "—"}</td>
+                          <td style={{ ...tdG, fontWeight: 400 }}>{formatDate(a.fin)}</td>
+                          {ligneTableau(a, false, coutHoraire(couts, a.fin))}
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
+                  {/* RAPPROCHEMENT : les forfaits de cette liste = le tableau « Par activité » sans ses lignes PE / PI */}
+                  {!seulementNonVentile &&
+                    (() => {
+                      const ca = vue.affaires.reduce((x, a) => x + a.ca, 0);
+                      const sansCout = vue.affaires.some((a) => marge(a) === null);
+                      const m = vue.affaires.reduce((x, a) => x + (marge(a) ?? 0), 0);
+                      const horsPrest = vue.groupes.filter((g) => g.cle !== "PE" && g.cle !== "PI");
+                      const caHaut = horsPrest.reduce((x, g) => x + g.ca, 0);
+                      const mHaut = horsPrest.reduce((x, g) => x + (marge(g) ?? 0), 0);
+                      const egal = Math.abs(ca - caHaut) < 1 && Math.abs(m - mHaut) < 1;
+                      return (
+                        <p style={{ margin: "10px 0 0", fontSize: 13, color: egal ? C.gris : "#7a3e00", background: egal ? undefined : "#fff4e5", borderRadius: 8, padding: egal ? 0 : "8px 10px" }}>
+                          {vue.affaires.length} forfaits : prix <strong>{euros(ca)}</strong>
+                          {!sansCout && (
+                            <>
+                              , marge <strong>{euros(m)}</strong> ({pct(m / (ca || 1))})
+                            </>
+                          )}
+                          {egal ? " = tableau « Par activité » sans les lignes PE / PI ✓" : ` ≠ tableau « Par activité » sans les lignes PE / PI (${euros(caHaut)}, marge ${euros(mHaut)}) : écart à signaler.`}
+                        </p>
+                      );
+                    })()}
                 </section>
 
                 {/* RENTABILITE_V2 : prestations au temps passé */}
