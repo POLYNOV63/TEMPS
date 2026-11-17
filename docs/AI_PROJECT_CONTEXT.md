@@ -261,8 +261,9 @@ bilan d'affaire et de suivi de dérive.
   console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
   (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres
   actifs hors Direction (ADMIN compris) ; occupation = CBE produit ÷ capacité (consolidation de Mon bilan) ; efficience,
-  taux de vente (sans négoce ni scan pur) et « vendu au montant » (négoce + scan pur) = calcul de la Rentabilité, partagé
-  dans `lib/rentabilite.ts` ; efficience = forfaits et PE / PI ensemble. Cadran à aiguille : coût d'une heure vendue face
+  taux de vente (sans négoce ni scan pur), négoce, et scan pur (bus Scan : CA net d'achats + heures pointées, retirées
+  des heures de production) = calcul de la Rentabilité, partagé dans `lib/rentabilite.ts` ; efficience = forfaits et
+  PE / PI ensemble. Cadran à aiguille : coût d'une heure vendue face
   au taux de vente et au coût de structure saisi. Salaire chargé, fees, location,
   autres frais : table `simulateur_parametres` (SQL 101), saisis dans la console, « Enregistrer comme valeurs de départ »
   (ADMIN). Bouton MUTE pour sortir la CBE 1678 (liste `AFFAIRES_EXCLUABLES`).

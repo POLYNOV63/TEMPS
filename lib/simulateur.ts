@@ -32,7 +32,7 @@ import { calculerRentabilite, type DonneesRentabilite } from "@/lib/rentabilite"
                           (SQL 101), sinon les valeurs d'exemple de la maquette.
 ================================================================ */
 
-export type Cle = "prod" | "struct" | "sal" | "heures" | "occ" | "eff" | "taux" | "neg" | "mneg" | "fees" | "loyer" | "autres";
+export type Cle = "prod" | "struct" | "sal" | "heures" | "occ" | "eff" | "taux" | "neg" | "mneg" | "scan" | "hscan" | "fees" | "loyer" | "autres";
 export type Leviers = Record<Cle, number>;
 
 export type Levier = { k: Cle; nom: string; u: string; min: number; max: number; pas: number; dec: number; aide?: string };
@@ -59,11 +59,22 @@ export const BUS: Bus[] = [
     ],
   },
   {
-    nom: "Vendu au montant",
+    nom: "Négoce",
     c: "var(--bus-negoce)",
     leviers: [
-      { k: "neg", nom: "Négoce + scan", u: "k€ / an vendus", min: 0, max: 1000, pas: 5, dec: 0, aide: "Vendu au montant : le négoce et le scan pur (affaires imputées Scan, sans heures chiffrées)" },
-      { k: "mneg", nom: "Marge au montant", u: "% du vendu", min: 0, max: 100, pas: 1, dec: 0, aide: "(vendu − achats) ÷ vendu, sur le négoce et le scan pur" },
+      { k: "neg", nom: "CA négoce", u: "k€ / an", min: 0, max: 1000, pas: 5, dec: 0 },
+      { k: "mneg", nom: "Marge négoce", u: "% du négoce", min: 0, max: 60, pas: 1, dec: 0 },
+    ],
+  },
+  /* SCAN_PUR (PLG, 17/11/2026) : le scan vendu au montant (affaires imputées Scan, sans heures chiffrées).
+     Son CA s'ajoute tel quel ; ses heures sont prises sur les heures passées sur affaires (elles ne produisent
+     pas de CA à l'heure). */
+  {
+    nom: "Scan",
+    c: "var(--bus-scan)",
+    leviers: [
+      { k: "scan", nom: "CA scan", u: "k€ / an, net d’achats", min: 0, max: 500, pas: 5, dec: 0, aide: "Scan vendu au montant (affaires imputées Scan, sans heures chiffrées), moins ses achats" },
+      { k: "hscan", nom: "Heures scan", u: "h / an pointées", min: 0, max: 4000, pas: 10, dec: 0, aide: "Heures passées sur le scan vendu au montant : elles sont retirées des heures de production" },
     ],
   },
   {
@@ -80,17 +91,20 @@ export const LEVIERS: (Levier & { c: string })[] = BUS.flatMap((b) => b.leviers.
 export const PAR_CLE = Object.fromEntries(LEVIERS.map((l) => [l.k, l])) as Record<Cle, Levier & { c: string }>;
 
 /* Valeurs d'exemple de la maquette : ce qui ne vient pas de nos chiffres tant que rien n'est saisi */
-export const EXEMPLE: Leviers = { prod: 14, struct: 3, sal: 52, heures: 1607, occ: 78, eff: 92, taux: 72, neg: 150, mneg: 20, fees: 4, loyer: 72, autres: 140 };
+export const EXEMPLE: Leviers = { prod: 14, struct: 3, sal: 52, heures: 1607, occ: 78, eff: 92, taux: 72, neg: 150, mneg: 20, scan: 0, hscan: 0, fees: 4, loyer: 72, autres: 140 };
 export const HEURES_PAYEES = 1607;
 
 /* ---------------- la formule de la console (identique à la maquette) ---------------- */
 export function calcul(x: Leviers) {
   const hPayees = x.prod * x.heures;
   const hAffaires = (hPayees * x.occ) / 100;
-  const hVendues = (hAffaires * x.eff) / 100;
+  // SCAN_PUR : les heures de scan au montant ne se vendent pas à l'heure
+  const hProduction = Math.max(0, hAffaires - x.hscan);
+  const hVendues = (hProduction * x.eff) / 100;
   const caProd = hVendues * x.taux;
   const caNeg = x.neg * 1000;
-  const ca = caProd + caNeg;
+  const caScan = x.scan * 1000;
+  const ca = caProd + caNeg + caScan;
   const achats = caNeg * (1 - x.mneg / 100);
   const salaires = (x.prod + x.struct) * x.sal * 1000;
   const fees = (ca * x.fees) / 100;
@@ -100,12 +114,12 @@ export function calcul(x: Leviers) {
   const fixes = salaires + loyer + autres;
   const f = x.fees / 100;
   const coutHeure = hVendues > 0 ? fixes / hVendues + x.taux * f : 0;
-  const tauxPM = hVendues > 0 && f < 1 ? (fixes + f * caNeg - (caNeg * x.mneg) / 100) / (hVendues * (1 - f)) : NaN;
+  const tauxPM = hVendues > 0 && f < 1 ? (fixes + f * (caNeg + caScan) - (caNeg * x.mneg) / 100 - caScan) / (hVendues * (1 - f)) : NaN;
   const margeVar = ca > 0 ? (ca - achats - fees) / ca : 0;
   const caPM = margeVar > 0 ? fixes / margeVar : NaN;
   const parProductif = ((((x.heures * x.occ) / 100) * x.eff) / 100) * x.taux * (1 - f) - x.sal * 1000;
   return {
-    hPayees, hAffaires, hVendues, caProd, caNeg, ca, achats, salaires, fees, loyer, autres, resultat, coutHeure, tauxPM, caPM, parProductif,
+    hPayees, hAffaires, hProduction, hVendues, caProd, caNeg, caScan, ca, achats, salaires, fees, loyer, autres, resultat, coutHeure, tauxPM, caPM, parProductif,
     marge: ca > 0 ? resultat / ca : 0,
     masseCA: ca > 0 ? salaires / ca : 0,
     caParPers: ca / Math.max(1, x.prod + x.struct),
@@ -242,12 +256,13 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const hrPrest = r.prestationsEx.reduce((t, p) => t + p.hr, 0);
   const NEGOCE = new Set(["Négoce", "Négoce au montant"]);
   const lignesNegoce = r.groupes.filter((g) => NEGOCE.has(g.cle));
-  // VENDU_AU_MONTANT (PLG, 17/11/2026) : le scan pur (imputé Scan, sans heures chiffrées) rejoint le négoce
+  const caNegoce = lignesNegoce.reduce((t, g) => t + g.ca, 0);
+  const achatsNegoce = lignesNegoce.reduce((t, g) => t + g.achats, 0);
+  // SCAN_PUR : le scan vendu au montant (imputé Scan, sans heures chiffrées) : CA net d'achats et heures passées
   const scanPurAff = r.affaires.filter((a) => a.auMontant && a.activite === "Scan");
-  const caNegocePur = lignesNegoce.reduce((t, g) => t + g.ca, 0);
   const caScanPur = scanPurAff.reduce((t, a) => t + a.ca, 0);
-  const caNegoce = caNegocePur + caScanPur;
-  const achatsNegoce = lignesNegoce.reduce((t, g) => t + g.achats, 0) + scanPurAff.reduce((t, a) => t + a.achats, 0);
+  const achatsScanPur = scanPurAff.reduce((t, a) => t + a.achats, 0);
+  const heuresScanPur = scanPurAff.reduce((t, a) => t + a.hr, 0);
   // production : tout sauf le négoce et les trajets, moins le scan pur vendu au montant (pas d'heures chiffrées)
   const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle) && g.cle !== "Trajets");
   const scanPur = r.affaires.filter((a) => a.auMontant && a.activite === "Scan").reduce((t, a) => t + a.ca, 0);
@@ -265,8 +280,9 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
     caProd,
     hcProd,
     caNegoce,
-    caNegocePur,
     caScanPur,
+    achatsScanPur,
+    heuresScanPur,
     nbScanPur: scanPurAff.length,
     margeNegoce: caNegoce > 0 ? ((caNegoce - achatsNegoce) / caNegoce) * 100 : null,
   };
@@ -315,11 +331,16 @@ export function construireDepart(
   } else s.taux = { reel: false, texte: "Pas d’heures vendues sur l’exercice : valeur d’exemple" };
 
   v.neg = Math.round(renta.caNegoce / 1000 / 5) * 5;
-  s.neg = { reel: true, texte: `Forfaits livrés en ${ex} : négoce ${fr(renta.caNegocePur)} € + scan pur ${fr(renta.caScanPur)} € (${renta.nbScanPur} affaire${renta.nbScanPur > 1 ? "s" : ""})` };
+  s.neg = { reel: true, texte: `Négoce des forfaits livrés en ${ex} : ${fr(renta.caNegoce)} €` };
+  const nbScan = `${renta.nbScanPur} affaire${renta.nbScanPur > 1 ? "s" : ""} de scan pur livrée${renta.nbScanPur > 1 ? "s" : ""} en ${ex}`;
+  v.scan = Math.round((renta.caScanPur - renta.achatsScanPur) / 1000 / 5) * 5;
+  s.scan = { reel: true, texte: `${nbScan} : vendu ${fr(renta.caScanPur)} € − achats ${fr(renta.achatsScanPur)} €` };
+  v.hscan = Math.round(renta.heuresScanPur / 10) * 10;
+  s.hscan = { reel: true, texte: `${nbScan} : ${fr(renta.heuresScanPur)} h pointées (hors trajets)` };
   if (renta.margeNegoce !== null) {
     v.mneg = Math.round(renta.margeNegoce);
-    s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, négoce et scan pur de la Rentabilité" };
-  } else s.mneg = { reel: false, texte: "Rien de vendu au montant sur l’exercice : valeur d’exemple" };
+    s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, lignes Négoce de la Rentabilité" };
+  } else s.mneg = { reel: false, texte: "Pas de négoce sur l’exercice : valeur d’exemple" };
 
   const saisi = parametres ? `enregistré le ${parametres.modifie_le ? new Date(parametres.modifie_le).toLocaleDateString("fr-FR") : "?"}` : null;
   if (parametres) {

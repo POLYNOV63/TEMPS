@@ -346,6 +346,7 @@ export default function ConsoleRentabilite({
   const lignes: [string, string, ReactNode][] = [
     ["Chiffre d’affaires", keur(a.ca), <Delta key="d" delta={a.ca - r.ca} f={keur} />],
     ["dont production", keur(a.caProd), <Delta key="d" delta={a.caProd - r.caProd} f={keur} />],
+    ["dont scan", keur(a.caScan), <Delta key="d" delta={a.caScan - r.caScan} f={keur} />],
     ["Heures vendues", `${fmt(a.hVendues)} h`, <Delta key="d" delta={a.hVendues - r.hVendues} f={(x) => `${fmt(x)} h`} />],
     ["CA par personne", keur(a.caParPers), <Delta key="d" delta={a.caParPers - r.caParPers} f={keur} />],
     ["Salaires", keur(a.salaires), <Delta key="d" delta={a.salaires - r.salaires} f={keur} inverse />],
@@ -360,7 +361,7 @@ export default function ConsoleRentabilite({
   ];
 
   const postes: [string, number, string][] = [
-    ["Achats (négoce, scan)", a.achats, "var(--bus-negoce)"],
+    ["Achats négoce", a.achats, "var(--bus-negoce)"],
     ["Salaires", a.salaires, "var(--bus-equipe)"],
     ["Mgmt fees", a.fees, "var(--bus-structure)"],
     ["Location", a.loyer, "#5d6670"],
@@ -379,7 +380,8 @@ export default function ConsoleRentabilite({
       ["sal", 1, "Salaire chargé +1 k€ / pers."],
       ["fees", 0.5, "Management fees +0,5 point"],
       ["loyer", 10, "Location +10 k€"],
-      ["mneg", 1, "Marge au montant +1 point"],
+      ["mneg", 1, "Marge négoce +1 point"],
+      ["scan", 10, "CA scan +10 k€"],
       ["struct", 1, "1 personne de structure en plus"],
     ] as [Cle, number, string][]
   )
@@ -623,7 +625,7 @@ export default function ConsoleRentabilite({
           <Fragment>
             <b>Heures payées</b> = productifs × heures annuelles (1 607 h = 35 h). <b>Heures passées sur affaires</b> = heures payées × taux d’occupation (le reste :
             devis, commercial, formation, NI…). <b>Heures vendues</b> = heures passées × efficience (au-dessus de 100 % : on fait mieux que le chiffré ; en dessous :
-            dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA vendu au montant</b> (négoce et scan pur) dont on garde la marge. <b>Salaires</b> = (productifs + structure) ×
+            dérive). <b>CA production</b> = heures vendues × taux de vente, + <b>CA négoce</b> dont on garde la marge, + <b>CA scan</b> (scan pur, net d’achats), dont les <b>heures</b> sont retirées des heures de production. <b>Salaires</b> = (productifs + structure) ×
             salaire chargé moyen. <b>Management fees</b> = % du CA total. <b>Résultat</b> = CA − achats négoce − salaires − fees − loyer − autres frais.{" "}
             <b>Coût d’une heure vendue</b> = (salaires + loyer + autres frais) ÷ heures vendues, + la part de fees. <b>Taux point mort</b> = taux de vente qui donne un
             résultat nul, tout le reste égal.
