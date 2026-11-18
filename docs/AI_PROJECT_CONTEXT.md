@@ -257,6 +257,11 @@ bilan d'affaire et de suivi de dérive.
   horaire de structure (ADMIN). « Par activité » : chaque affaire est **répartie** entre ses activités ; colonnes **Gains
   cumulés / Pertes cumulées** (parts d'affaires gagnantes / perdantes, € et %) et graphique gains (bleu) / pertes (orange) /
   net. « Affaire par affaire » : liste simple (non regroupée), avec ligne de rapprochement = « Par activité » hors PE / PI.
+- **Simulation PE** (`/analyse/simulation-pe`, droit `indicateurs`, `lib/simulationPE.ts`, SIMULATION_PE du 18/11/2026) : taux
+  jour par compétence (départ : tarifs du contrat cadre ramenés à la journée), km / jour remboursés et défraiement facturé ;
+  coût d’une journée = heures × coût horaire de structure + km × prix du km ; marge, taux plancher, taux pour la marge visée.
+  Rappel des notes de frais transmises sur 12 mois (par collaborateur, par site ; RLS : tout le monde pour un ADMIN seulement)
+  et taux jour moyen facturé des PE (relevé validé). Simulation gardée dans le navigateur, rien en base.
 - **Simulateur de rentabilité** (`/analyse/simulateur`, droit `indicateurs`, maquette `docs/maquettes/console-rentabilite.html`) :
   console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
   (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres
