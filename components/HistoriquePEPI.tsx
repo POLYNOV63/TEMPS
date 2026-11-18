@@ -213,7 +213,12 @@ export async function chargerCommandesPEPI(base: string): Promise<{ commandes: C
         id: a.id,
         numero: a.numero,
         statut: s?.statut ?? a.statut,
-        recue: s?.date_reception_commande ? String(s.date_reception_commande).slice(0, 7) : premierMois,
+        /* COMMANDE_AU_PREMIER_MOIS (18/11/2026) : une commande régularisée après coup (reçue après ses premiers mois facturés,
+           ex. CBE1624R5, R6, R9) compte dès son premier mois au relevé, sinon le reste de la commande paraît « dépassé » */
+        recue: (() => {
+          const r = s?.date_reception_commande ? String(s.date_reception_commande).slice(0, 7) : null;
+          return r && premierMois ? (premierMois < r ? premierMois : r) : r ?? premierMois;
+        })(),
         montant,
         heuresCmd,
         unite,
@@ -533,7 +538,7 @@ export default function HistoriquePEPI({ base, pointeParMois, montants: avecMont
       </table>
       <p style={{ fontSize: 12, color: gris, margin: "6px 0 14px" }}>
         « Écart pointé / relevé » = pointé − relevé, en cumul, sans le prévu : <span style={{ color: ROUGE }}>+ on a pointé plus que ce qui est facturé ou à facturer (travail non facturé)</span> ; <span style={{ color: "#7a3e00" }}>− on a pointé moins que ce qui est facturé ou à facturer</span>. Les heures
-        sont pointées sur le n° de base : la comparaison se fait pour toute la famille.
+        sont pointées sur le n° de base : la comparaison se fait pour toute la famille. Une commande reçue après ses premiers mois facturés (régularisation) est placée à son premier mois au relevé.
       </p>
 
       {/* commande par commande */}
