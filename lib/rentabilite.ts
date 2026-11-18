@@ -168,22 +168,27 @@ export async function chargerDonneesRentabilite(): Promise<DonneesRentabilite> {
   const pilotageCBE = (af.data ?? []) as PilotageCBE[];
   const ligneAffaire = new Map(((pl.data ?? []) as { id: string; affaire_id: string }[]).map((l) => [l.id, l.affaire_id]));
   const prestations: PrestationMois[] = [];
+  // HISTO_PAR_COMMANDE : les (commande, mois) déjà au relevé validé
+  const cleCmd = (numero: string) => String(numero ?? "").toUpperCase().replace(/^CBE/, "").replace(/\s/g, "").replace(/^0+/, "");
   const moisReleve = new Set<string>();
   for (const m of pm) {
     const a = affaires.get(ligneAffaire.get(m.ligne_id) ?? "");
     if (!a || (a.imputation !== "PE" && a.imputation !== "PI")) continue;
     const mois = String(m.mois).slice(0, 7);
-    moisReleve.add(mois);
+    moisReleve.add(`${cleCmd(a.numero)}|${mois}`);
     prestations.push({ base: (a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""), imputation: a.imputation, designation: a.designation, mois, ca: n(m.montant_fige), hFact: n(m.heures_fige) });
   }
-  // l'historique ne sert que pour les mois sans relevé validé (pas de double compte)
+  /* HISTO_PAR_COMMANDE (18/11/2026) : l'historique, ce sont les lignes du Suivi des prestations que l'import n'a pas pu
+     rattacher au relevé (commande absente du Suivi d'affaire, ex. CBE1624R5 de mars à juin 2026). Comme dans Finances, elles
+     comptent ; on ne saute que le mois d'une commande déjà au relevé validé. Avant : un mois couvert par le relevé pour
+     n'importe quelle affaire faisait disparaître tout l'historique de ce mois. */
   const designations = new Map([...affaires.values()].map((a) => [(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""), a.designation]));
   for (const h of hi) {
     const mois = String(h.mois).slice(0, 7);
     const type = String(h.type ?? "").toUpperCase();
-    if (moisReleve.has(mois) || (type !== "PE" && type !== "PI")) continue;
+    if (type !== "PE" && type !== "PI") continue;
     const base = (String(h.numero ?? "").match(/\d+/)?.[0] ?? "").replace(/^0+/, "");
-    if (!base) continue;
+    if (!base || moisReleve.has(`${cleCmd(String(h.numero ?? ""))}|${mois}`)) continue;
     prestations.push({ base, imputation: type, designation: designations.get(base) ?? null, mois, ca: n(h.montant), hFact: n(h.heures) });
   }
 
