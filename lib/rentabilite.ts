@@ -159,8 +159,8 @@ export async function chargerDonneesRentabilite(): Promise<DonneesRentabilite> {
       supabase.from("prestation_mois").select("ligne_id,mois,montant_fige,heures_fige").eq("valide", true).order("ligne_id").range(a, b)
     ),
     supabase.from("pilotage_affaires").select("id,numero,imputation,designation,statut,date_livraison").eq("type", "CBE"),
-    chargerTout<{ mois: string; type: string; numero: string; heures: number | string; montant: number | string }>((a, b) =>
-      supabase.from("prestation_historique").select("mois,type,numero,heures,montant").order("id").range(a, b)
+    chargerTout<{ mois: string; type: string; categorie: string | null; numero: string; heures: number | string; montant: number | string }>((a, b) =>
+      supabase.from("prestation_historique").select("mois,type,categorie,numero,heures,montant").order("id").range(a, b)
     ).catch(() => []),
     chargerPointeParMois(),
   ]);
@@ -185,8 +185,9 @@ export async function chargerDonneesRentabilite(): Promise<DonneesRentabilite> {
   const designations = new Map([...affaires.values()].map((a) => [(a.numero.match(/^\d+/)?.[0] ?? a.numero).replace(/^0+/, ""), a.designation]));
   for (const h of hi) {
     const mois = String(h.mois).slice(0, 7);
-    const type = String(h.type ?? "").toUpperCase();
-    if (type !== "PE" && type !== "PI") continue;
+    // HISTO_CATEGORIE : « type » est CBE / CAS, la nature PE / PI / IG est dans « categorie »
+    const type = String(h.categorie ?? "").toUpperCase();
+    if (String(h.type ?? "").toUpperCase() !== "CBE" || (type !== "PE" && type !== "PI")) continue;
     const base = (String(h.numero ?? "").match(/\d+/)?.[0] ?? "").replace(/^0+/, "");
     if (!base || moisReleve.has(`${cleCmd(String(h.numero ?? ""))}|${mois}`)) continue;
     prestations.push({ base, imputation: type, designation: designations.get(base) ?? null, mois, ca: n(h.montant), hFact: n(h.heures) });

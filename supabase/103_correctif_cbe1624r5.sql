@@ -25,7 +25,7 @@ begin
     raise exception 'La commande 1624R5 n''existe pas encore au Pilotage : synchronisez le Suivi d''affaire puis relancez ce script.';
   end if;
 
-  select count(*) into v_nb from public.prestation_historique where numero = '1624R5' and upper(type) = 'PE';
+  select count(*) into v_nb from public.prestation_historique where numero = '1624R5' and upper(type) = 'CBE' and upper(categorie) = 'PE';
   if v_nb = 0 then
     raise notice 'Rien à faire : plus de ligne 1624R5 dans l''historique.';
     return;
@@ -50,13 +50,13 @@ begin
   insert into public.prestation_mois (ligne_id, mois, hs_refacturer, montant_import, reporte, report_sortant, valide, valide_le, heures_fige, montant_fige)
   select v_ligne, h.mois, 0, sum(h.montant), false, null, true, now(), round(sum(h.heures)::numeric, 2), round(sum(h.montant)::numeric, 2)
     from public.prestation_historique h
-   where h.numero = '1624R5' and upper(h.type) = 'PE'
+   where h.numero = '1624R5' and upper(h.type) = 'CBE' and upper(h.categorie) = 'PE'
    group by h.mois
   on conflict (ligne_id, mois) do update
     set valide = true, valide_le = now(), heures_fige = excluded.heures_fige, montant_fige = excluded.montant_fige, montant_import = excluded.montant_import;
 
   -- 3. plus dans l'historique
-  delete from public.prestation_historique where numero = '1624R5' and upper(type) = 'PE';
+  delete from public.prestation_historique where numero = '1624R5' and upper(type) = 'CBE' and upper(categorie) = 'PE';
 
   raise notice 'CBE1624R5 : % ligne(s) d''historique passées au relevé.', v_nb;
 end $$;
