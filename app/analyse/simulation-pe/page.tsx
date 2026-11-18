@@ -183,7 +183,6 @@ function SimulationPEContenu() {
   if (!refs || !etat) return <p style={{ ...page.carte, padding: 16, color: C.gris }}>Chargement…</p>;
 
   const g = etat.globaux;
-  const contrat = refs.contrats.find((x) => x.id === etat.contratId) ?? null;
   const majG = (p: Partial<Globaux>) => setEtat({ ...etat, globaux: { ...g, ...p } });
   const majC = (i: number, p: Partial<Competence>) => setEtat({ ...etat, competences: etat.competences.map((c, j) => (j === i ? { ...c, ...p } : c)) });
   const lignes = etat.competences.map((c) => ({ c, r: calculer(c, g) }));
@@ -198,6 +197,10 @@ function SimulationPEContenu() {
   const td: CSSProperties = { padding: "6px 8px", borderBottom: `1px solid ${C.ligne}`, textAlign: "right", whiteSpace: "nowrap", fontSize: 14 };
   const couleurMarge = (pct: number | null) => (pct === null ? C.gris : pct < 0 ? "#b3261e" : pct * 100 < g.margeCible ? "#8a4b00" : "#1b5e20");
   const btn: CSSProperties = { ...page.btnSecondaire, minHeight: 34, fontSize: 13 };
+  // PE_CARTES : mise en forme des cartes de compétence
+  const titreBloc: CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: C.gris };
+  const ligneSaisie: CSSProperties = { display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 6, fontSize: 14 };
+  const aide: CSSProperties = { fontSize: 12, color: C.gris };
   // un taux à la journée affiché dans l'unité de la ligne (PE_UNITES)
   const dansUnite = (c: Competence, parJour: number) =>
     c.unite === "HEURE" && g.heuresJour > 0 ? `${euros(parJour / g.heuresJour, 2)} / h` : euros(parJour);
@@ -272,9 +275,10 @@ function SimulationPEContenu() {
       <section style={{ ...page.carte, padding: 16, marginTop: 16 }}>
         <h2 style={{ margin: "0 0 4px", fontSize: 19 }}>Voiture de service et carte gasoil</h2>
         <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-          Pour les compétences dont le déplacement est en « voiture » (au lieu des indemnités km) : la voiture coûte chaque jour d’utilisation sa part du coût
-          mensuel, plus le gasoil des km roulés (sans déduction du trajet domicile → Polynov), plus les heures sup du temps de trajet en plus de domicile →
-          Polynov, payées au salaire horaire chargé et majorées. Les heures sup ne se comptent pas au coût de structure : il couvre déjà la journée.
+          La règle POLYNOV : avec un <strong>prêt de voiture</strong>, on indemnise le <strong>temps au-delà du temps habituel</strong> du salarié
+          (domicile → Polynov), en heures sup ; avec sa <strong>voiture personnelle</strong>, on indemnise au barème <strong>à partir du 1er km au-delà
+          de la distance habituelle</strong>, sans payer le temps. Pour un prêt de voiture, chaque jour d’utilisation coûte sa part du coût mensuel, plus le
+          gasoil de tous les km roulés, plus ces heures sup au salaire horaire chargé majoré (pas au coût de structure, qui couvre déjà la journée).
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18, alignItems: "flex-end" }}>
           {(
@@ -300,162 +304,199 @@ function SimulationPEContenu() {
         </div>
       </section>
 
-      {/* le tableau des compétences */}
-      <section style={{ ...page.carte, padding: 16, marginTop: 16 }}>
-        <h2 style={{ margin: "0 0 4px", fontSize: 19 }}>Par compétence</h2>
-        <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-          Saisissez le taux (à la journée ou à l’heure), les km d’un trajet en précisant aller ou aller-retour (un aller-retour compte double, comme dans la note de frais) et, si vous le facturez, le défraiement par jour. Les jours vendus par an donnent la marge annuelle.
-          {contrat && <> Départ : {contrat.libelle}.</>}
-        </p>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1180 }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, textAlign: "left" }}>Compétence</th>
-                <th style={th}>Taux de vente</th>
-                <th style={th} title="Indemnités km ou voiture de service ; km d'un trajet, aller ou aller-retour (un aller-retour compte double)">Déplacement</th>
-                <th style={th} title="Défraiement facturé au client, par jour">Défraiement facturé</th>
-                <th style={th}>Vendu / jour</th>
-                <th style={th} title="Temps + déplacement (indemnités km ou voiture)">Coût / jour</th>
-                <th style={th}>Marge / jour</th>
-                <th style={th} title="Le taux en dessous duquel la journée coûte plus qu'elle ne rapporte : coût de la journée (temps + km remboursés) − défraiement facturé. Au plancher, la marge est nulle.">Taux plancher</th>
-                <th style={th} title="Taux jour qui tient la marge visée">Taux pour {nb(g.margeCible)} %</th>
-                <th style={th}>Jours / an</th>
-                <th style={th}>Marge / an</th>
-                <th style={th} />
-              </tr>
-            </thead>
-            <tbody>
-              {lignes.map(({ c, r }, i) => (
-                <tr key={i}>
-                  <td style={{ ...td, textAlign: "left" }}>
-                    <input
-                      value={c.nom}
-                      onChange={(e) => majC(i, { nom: e.target.value })}
-                      style={{ width: 150, minHeight: 34, border: "1.5px solid #b9bec5", borderRadius: 6, padding: "0 8px", fontFamily: "inherit", fontSize: 15, fontWeight: 700 }}
-                    />
-                  </td>
-                  <td style={td}>
-                    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                      <Champ valeur={c.taux} onChange={(v) => majC(i, { taux: v })} largeur={80} />
-                      <select
-                        value={c.unite}
-                        aria-label={`Unité du taux, ${c.nom}`}
-                        onChange={(e) => {
-                          // PE_UNITES : changer d'unité convertit le taux (même valeur à la journée)
-                          const u = e.target.value === "HEURE" ? "HEURE" : "JOUR";
-                          if (u === c.unite) return;
-                          const t = u === "HEURE" ? c.taux / (g.heuresJour || 1) : c.taux * g.heuresJour;
-                          majC(i, { unite: u, taux: Math.round(t * 100) / 100 });
-                        }}
-                        style={selectStyle}
-                      >
-                        <option value="JOUR">€ / jour</option>
-                        <option value="HEURE">€ / h</option>
-                      </select>
-                    </span>
-                    <div style={{ fontSize: 11, color: C.gris }}>
-                      {c.unite === "HEURE" ? `= ${euros(r.tauxJour, 2)} la journée de ${nb(g.heuresJour, 2)} h` : g.heuresJour > 0 ? `= ${euros(r.tauxJour / g.heuresJour, 2)} / h` : ""}
+      {/* PE_CARTES (PLG, 18/11/2026) : une carte par compétence, sans ascenseur horizontal */}
+      <section style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>Par compétence</h2>
+          <span style={{ fontSize: 13, color: C.gris }}>
+            Marge <span style={{ color: "#1b5e20", fontWeight: 800 }}>verte</span> : marge visée atteinte · <span style={{ color: "#8a4b00", fontWeight: 800 }}>orange</span> : en
+            dessous · <span style={{ color: "#b3261e", fontWeight: 800 }}>rouge</span> : la journée perd de l’argent
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 520px), 1fr))", gap: 14 }}>
+          {lignes.map(({ c, r }, i) => {
+            const couleur = couleurMarge(r.pct);
+            return (
+              <article key={i} style={{ ...page.carte, padding: 0, overflow: "hidden", borderTop: `5px solid ${couleur}` }}>
+                {/* en-tête : nom, marge du jour, retirer */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: `1px solid ${C.ligne}`, flexWrap: "wrap" }}>
+                  <input
+                    value={c.nom}
+                    aria-label="Nom de la compétence"
+                    onChange={(e) => majC(i, { nom: e.target.value })}
+                    style={{ flex: "1 1 160px", minWidth: 0, minHeight: 38, border: "1.5px solid transparent", borderRadius: 6, padding: "0 6px", fontFamily: "inherit", fontSize: 18, fontWeight: 800, background: "#f6f7f9" }}
+                  />
+                  <span style={{ fontWeight: 800, fontSize: 15, color: couleur, background: `${couleur}14`, border: `1px solid ${couleur}55`, borderRadius: 999, padding: "4px 12px", whiteSpace: "nowrap" }}>
+                    {r.marge >= 0 ? "+ " : "− "}
+                    {euros(Math.abs(r.marge))} / jour{r.pct !== null ? ` · ${Math.round(r.pct * 100)} %` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    title="Retirer cette compétence"
+                    aria-label={`Retirer ${c.nom}`}
+                    onClick={() => setEtat({ ...etat, competences: etat.competences.filter((_, k) => k !== i) })}
+                    style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 18, color: C.gris, minWidth: 36, minHeight: 36 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* saisies : la vente, le déplacement */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 230px), 1fr))", gap: 0 }}>
+                  <div style={{ padding: "12px 14px", display: "grid", gap: 10, alignContent: "start" }}>
+                    <div style={titreBloc}>Vente</div>
+                    <label style={ligneSaisie}>
+                      <span>Taux de vente</span>
+                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                        <Champ valeur={c.taux} onChange={(v) => majC(i, { taux: v })} largeur={80} />
+                        <select
+                          value={c.unite}
+                          aria-label={`Unité du taux, ${c.nom}`}
+                          onChange={(e) => {
+                            // PE_UNITES : changer d'unité convertit le taux (même valeur à la journée)
+                            const u = e.target.value === "HEURE" ? "HEURE" : "JOUR";
+                            if (u === c.unite) return;
+                            const t = u === "HEURE" ? c.taux / (g.heuresJour || 1) : c.taux * g.heuresJour;
+                            majC(i, { unite: u, taux: Math.round(t * 100) / 100 });
+                          }}
+                          style={selectStyle}
+                        >
+                          <option value="JOUR">€ / jour</option>
+                          <option value="HEURE">€ / h</option>
+                        </select>
+                      </span>
+                    </label>
+                    <div style={{ ...aide, marginTop: -6 }}>
+                      {c.unite === "HEURE" ? `soit ${euros(r.tauxJour, 2)} la journée de ${nb(g.heuresJour, 2)} h` : g.heuresJour > 0 ? `soit ${euros(r.tauxJour / g.heuresJour, 2)} de l’heure` : ""}
                     </div>
-                  </td>
-                  <td style={td}>
+                    <label style={ligneSaisie} title="Défraiement facturé au client, par jour (0 si non facturé)">
+                      <span>Défraiement facturé</span>
+                      <Champ valeur={c.defraiFacture} onChange={(v) => majC(i, { defraiFacture: v })} largeur={70} suffixe="€ / jour" />
+                    </label>
+                    <label style={ligneSaisie}>
+                      <span>Jours vendus</span>
+                      <Champ valeur={c.jours} onChange={(v) => majC(i, { jours: v })} largeur={70} suffixe="/ an" />
+                    </label>
+                  </div>
+
+                  <div style={{ padding: "12px 14px", display: "grid", gap: 10, alignContent: "start", background: "#fafbfc", borderLeft: `1px solid ${C.ligne}` }}>
+                    <div style={titreBloc}>Déplacement</div>
                     <select
                       value={c.deplacement}
                       aria-label={`Déplacement, ${c.nom}`}
                       onChange={(e) => majC(i, { deplacement: e.target.value === "VOITURE" ? "VOITURE" : "IK" })}
-                      style={{ ...selectStyle, marginBottom: 4 }}
+                      style={{ ...selectStyle, width: "100%" }}
                     >
-                      <option value="IK">Indemnités km</option>
-                      <option value="VOITURE">Voiture + carte gasoil</option>
+                      <option value="IK">Voiture perso (barème)</option>
+                      <option value="VOITURE">Prêt de voiture + carte gasoil</option>
                     </select>
-                    <br />
-                    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                      <Champ valeur={c.km} onChange={(v) => majC(i, { km: v })} largeur={64} suffixe="km" />
-                      <select value={c.trajet} aria-label={`Trajet, ${c.nom}`} onChange={(e) => majC(i, { trajet: e.target.value === "ALLER" ? "ALLER" : "AR" })} style={selectStyle}>
-                        <option value="AR">aller-retour</option>
-                        <option value="ALLER">aller</option>
-                      </select>
-                    </span>
-                    <div style={{ marginTop: 4 }} title="Km domicile → Polynov : déduits à chaque trajet en indemnités km (comme dans la note de frais), pas en voiture">
-                      <Champ valeur={c.kmDomicile} onChange={(v) => majC(i, { kmDomicile: v })} largeur={56} suffixe="km domicile → Polynov" />
-                    </div>
-                    {c.deplacement === "VOITURE" && (
-                      <div style={{ marginTop: 4 }}>
-                        <Champ valeur={c.minutesSup} onChange={(v) => majC(i, { minutesSup: v })} largeur={56} suffixe={`min en plus par trajet`} />
-                      </div>
-                    )}
-                    <div style={{ fontSize: 11, color: C.gris }}>
-                      {c.deplacement === "VOITURE"
-                        ? `${nb(kmParJour(c))} km roulés : voiture ${euros(r.voitureJour, 2)} + gasoil ${euros(r.gasoil, 2)} + HS ${nb(r.heuresSup, 2)} h ${euros(r.coutHS, 2)} = ${euros(r.coutKm, 2)}`
-                        : `${nb(kmIndemnises(c))} km indemnisés · ${euros(r.coutKm, 2)}`}
-                    </div>
-                  </td>
-                  <td style={td}>
-                    <Champ valeur={c.defraiFacture} onChange={(v) => majC(i, { defraiFacture: v })} largeur={70} suffixe="€" />
-                  </td>
-                  <td style={{ ...td, fontWeight: 700 }}>{euros(r.ca)}</td>
-                  <td style={td}>
-                    {euros(r.cout)}
-                    <div style={{ fontSize: 11, color: C.gris }} title="Coût du déplacement par jour selon la façon de le payer">
-                      <span style={{ fontWeight: c.deplacement === "IK" ? 800 : 400 }}>IK {euros(r.coutIK)}</span> ·{" "}
-                      <span style={{ fontWeight: c.deplacement === "VOITURE" ? 800 : 400 }}>voiture {euros(r.coutVoiture)}</span>
-                    </div>
-                  </td>
-                  <td style={{ ...td, fontWeight: 800, color: couleurMarge(r.pct) }}>
-                    {r.marge >= 0 ? "+ " : "− "}
-                    {euros(Math.abs(r.marge))}
-                    {r.pct !== null && <div style={{ fontSize: 12 }}>{Math.round(r.pct * 100)} %</div>}
-                  </td>
-                  <td style={{ ...td, color: C.gris }}>{dansUnite(c, Math.max(0, r.plancher))}</td>
-                  <td style={{ ...td, fontWeight: 700, color: r.tauxJour + 0.5 < r.conseille ? "#8a4b00" : "#1b5e20" }}>{dansUnite(c, Math.max(0, r.conseille))}</td>
-                  <td style={td}>
-                    <Champ valeur={c.jours} onChange={(v) => majC(i, { jours: v })} largeur={70} />
-                  </td>
-                  <td style={{ ...td, fontWeight: 800, color: couleurMarge(r.pct) }}>{c.jours > 0 ? `${r.margeAn >= 0 ? "+ " : "− "}${euros(Math.abs(r.margeAn))}` : "—"}</td>
-                  <td style={td}>
-                    <button
-                      type="button"
-                      title="Retirer cette compétence"
-                      onClick={() => setEtat({ ...etat, competences: etat.competences.filter((_, j) => j !== i) })}
-                      style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 16, color: C.gris }}
+                    <label style={ligneSaisie}>
+                      <span>Trajet domicile → site</span>
+                      <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                        <Champ valeur={c.km} onChange={(v) => majC(i, { km: v })} largeur={60} suffixe="km" />
+                        <select value={c.trajet} aria-label={`Trajet, ${c.nom}`} onChange={(e) => majC(i, { trajet: e.target.value === "ALLER" ? "ALLER" : "AR" })} style={selectStyle}>
+                          <option value="AR">aller-retour</option>
+                          <option value="ALLER">aller</option>
+                        </select>
+                      </span>
+                    </label>
+                    <label
+                      style={ligneSaisie}
+                      title="Distance habituelle domicile → Polynov. Voiture personnelle (barème) : seuls les km au-delà sont indemnisés, à chaque trajet. Prêt de voiture : sans effet (le gasoil est payé sur tous les km)"
                     >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ ...td, textAlign: "left", fontWeight: 800, borderTop: "2px solid #d5d9de" }} colSpan={9}>
-                  Total sur un an
-                  {tot.jours > 0 && (
-                    <span style={{ fontWeight: 400, color: C.gris }}>
-                      {" "}
-                      · vendu {euros(tot.caAn)} · km remboursés {euros(tot.defraiAn)}
-                    </span>
-                  )}
-                </td>
-                <td style={{ ...td, fontWeight: 800, borderTop: "2px solid #d5d9de" }}>{nb(tot.jours)}</td>
-                <td style={{ ...td, fontWeight: 800, borderTop: "2px solid #d5d9de", color: tot.margeAn < 0 ? "#b3261e" : "#1b5e20" }}>
-                  {tot.jours > 0 ? `${tot.margeAn >= 0 ? "+ " : "− "}${euros(Math.abs(tot.margeAn))}` : "—"}
-                  {tot.caAn > 0.5 && <div style={{ fontSize: 12 }}>{Math.round((tot.margeAn / tot.caAn) * 100)} %</div>}
-                </td>
-                <td style={{ ...td, borderTop: "2px solid #d5d9de" }} />
-              </tr>
-            </tbody>
-          </table>
+                      <span>Distance habituelle</span>
+                      <Champ valeur={c.kmDomicile} onChange={(v) => majC(i, { kmDomicile: v })} largeur={60} suffixe="km" />
+                    </label>
+                    {c.deplacement === "VOITURE" && (
+                      <label style={ligneSaisie} title="Minutes de trajet au-delà du temps habituel domicile → Polynov, par trajet : payées en heures sup">
+                        <span>Temps en plus</span>
+                        <Champ valeur={c.minutesSup} onChange={(v) => majC(i, { minutesSup: v })} largeur={60} suffixe="min / trajet" />
+                      </label>
+                    )}
+                    <div style={aide}>
+                      {c.deplacement === "VOITURE"
+                        ? `${nb(kmParJour(c))} km roulés : voiture ${euros(r.voitureJour, 2)} + gasoil ${euros(r.gasoil, 2)} + heures sup ${nb(r.heuresSup, 2)} h ${euros(r.coutHS, 2)}`
+                        : `${nb(kmIndemnises(c))} km indemnisés (au-delà de la distance habituelle) × ${nb(g.prixKm, 3)} €`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* résultats */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", borderTop: `1px solid ${C.ligne}` }}>
+                  {(
+                    [
+                      ["Vendu / jour", euros(r.ca), "Taux à la journée + défraiement facturé", undefined, undefined],
+                      [
+                        "Coût / jour",
+                        euros(r.cout),
+                        "Temps (heures × coût de structure) + déplacement",
+                        `dont déplacement ${euros(r.coutKm)} · perso ${euros(r.coutIK)} · prêt ${euros(r.coutVoiture)}`,
+                        undefined,
+                      ],
+                      [
+                        "Taux plancher",
+                        dansUnite(c, Math.max(0, r.plancher)),
+                        "En dessous, la journée perd de l’argent : coût de la journée − défraiement facturé",
+                        "marge nulle",
+                        undefined,
+                      ],
+                      [
+                        `Taux pour ${nb(g.margeCible)} %`,
+                        dansUnite(c, Math.max(0, r.conseille)),
+                        "Taux qui tient la marge visée",
+                        r.tauxJour + 0.5 < r.conseille ? "au-dessus du taux saisi" : "atteint",
+                        r.tauxJour + 0.5 < r.conseille ? "#8a4b00" : "#1b5e20",
+                      ],
+                      ["Marge / an", c.jours > 0 ? `${r.margeAn >= 0 ? "+ " : "− "}${euros(Math.abs(r.margeAn))}` : "—", "Marge / jour × jours vendus", c.jours > 0 ? `${nb(c.jours)} jours` : "saisir les jours", couleur],
+                    ] as [string, string, string, string | undefined, string | undefined][]
+                  ).map(([lib, val, titre, sous, col]) => (
+                    <div key={lib} title={titre} style={{ padding: "10px 12px", borderRight: `1px solid ${C.ligne}`, borderBottom: `1px solid ${C.ligne}`, marginRight: -1, marginBottom: -1 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".04em", textTransform: "uppercase", color: C.gris }}>{lib}</div>
+                      <div style={{ fontSize: 17, fontWeight: 800, color: col ?? C.encre, marginTop: 2 }}>{val}</div>
+                      {sous && <div style={{ fontSize: 11, color: C.gris, marginTop: 2 }}>{sous}</div>}
+                    </div>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
         </div>
-        <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
-          Vendu / jour = taux à la journée (un taux horaire × heures d’une journée) + défraiement facturé. Coût / jour = heures × coût horaire de structure + déplacement : soit les km indemnisés (km du trajet − km domicile → Polynov, un aller-retour compte double) × prix du km, soit la voiture de service (voiture + gasoil + heures sup de trajet, voir plus haut) ; sous le coût, les deux sont donnés pour comparer. <strong>Taux plancher</strong> = le taux en dessous duquel on perd de l’argent : il paie tout juste la journée (heures × coût
-          horaire de structure + km remboursés), moins ce que le défraiement facturé rembourse déjà ; vendu au plancher, la marge est nulle. Taux pour la
-          marge visée = coût ÷ (1 − marge) − défraiement facturé. Marge en <span style={{ color: "#1b5e20", fontWeight: 700 }}>vert</span> si elle atteint la marge visée,{" "}
-          <span style={{ color: "#8a4b00", fontWeight: 700 }}>orange</span> en dessous, <span style={{ color: "#b3261e", fontWeight: 700 }}>rouge</span> si la journée perd de l’argent.
-          {tauxReelJour !== null && (
-            <>
-              {" "}
-              Pour comparer : sur les 12 derniers mois, les PE ont été facturées en moyenne <strong>{euros(tauxReelJour)}</strong> la journée de {nb(g.heuresJour, 2)} h (relevé validé, heures sup comprises).
-            </>
-          )}
-        </p>
+
+        {/* total sur un an */}
+        <div style={{ ...page.carte, marginTop: 14, padding: "12px 16px", display: "flex", flexWrap: "wrap", gap: "8px 28px", alignItems: "baseline" }}>
+          <strong style={{ fontSize: 16 }}>Total sur un an</strong>
+          <span>
+            <span style={{ color: C.gris }}>jours vendus</span> <strong>{nb(tot.jours)}</strong>
+          </span>
+          <span>
+            <span style={{ color: C.gris }}>vendu</span> <strong>{euros(tot.caAn)}</strong>
+          </span>
+          <span>
+            <span style={{ color: C.gris }}>déplacements</span> <strong>{euros(tot.defraiAn)}</strong>
+          </span>
+          <span style={{ fontSize: 17, fontWeight: 800, color: tot.margeAn < 0 ? "#b3261e" : "#1b5e20" }}>
+            marge {tot.jours > 0 ? `${tot.margeAn >= 0 ? "+ " : "− "}${euros(Math.abs(tot.margeAn))}` : "—"}
+            {tot.caAn > 0.5 && ` · ${Math.round((tot.margeAn / tot.caAn) * 100)} %`}
+          </span>
+        </div>
+
+        <details style={{ marginTop: 10, fontSize: 13, color: "#3b4046" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, minHeight: 32 }}>Comment sont calculés ces chiffres ?</summary>
+          <p style={{ margin: "6px 0 0", lineHeight: 1.6 }}>
+            <strong>Vendu / jour</strong> = taux à la journée (un taux horaire × heures d’une journée) + défraiement facturé. <strong>Coût / jour</strong> = heures × coût
+            horaire de structure + déplacement : avec la <strong>voiture personnelle</strong>, les km au-delà de la distance habituelle, à chaque trajet (un aller-retour
+            compte double), au prix du barème ; avec un <strong>prêt de voiture</strong>, la part du jour de la voiture, le gasoil de tous les km roulés et les heures sup du
+            temps au-delà du temps habituel. <strong>Taux plancher</strong> = le taux en dessous duquel on perd de l’argent : il paie tout juste la journée, moins ce que le
+            défraiement facturé rembourse déjà ; vendu au plancher, la marge est nulle. <strong>Taux pour la marge visée</strong> = coût ÷ (1 − marge) − défraiement facturé.
+            {tauxReelJour !== null && (
+              <>
+                {" "}
+                Pour comparer : sur les 12 derniers mois, les PE ont été facturées en moyenne <strong>{euros(tauxReelJour)}</strong> la journée de {nb(g.heuresJour, 2)} h
+                (relevé validé, heures sup comprises).
+              </>
+            )}
+          </p>
+        </details>
       </section>
 
       {/* rappel des notes de frais */}
