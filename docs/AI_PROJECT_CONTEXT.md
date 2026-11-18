@@ -261,7 +261,9 @@ bilan d'affaire et de suivi de dérive.
   jour par compétence (départ : tarifs du contrat cadre ramenés à la journée), km / jour remboursés et défraiement facturé ;
   coût d’une journée = heures × coût horaire de structure + km × prix du km ; marge, taux plancher, taux pour la marge visée.
   Rappel des notes de frais transmises sur 12 mois (par collaborateur, par site ; RLS : tout le monde pour un ADMIN seulement)
-  et taux jour moyen facturé des PE (relevé validé). Simulation gardée dans le navigateur, rien en base.
+  et taux jour moyen facturé des PE (relevé validé). Simulation gardée dans le navigateur, rien en base. PE_UNITES (18/11) :
+  taux saisi à la journée ou à l'heure (par compétence) ; prix du km choisi dans le barème des notes de frais
+  (`nf_baremes`), la moyenne des notes ou une valeur libre ; km / jour = un trajet, aller ou aller-retour (compte double).
 - **Simulateur de rentabilité** (`/analyse/simulateur`, droit `indicateurs`, maquette `docs/maquettes/console-rentabilite.html`) :
   console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
   (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres

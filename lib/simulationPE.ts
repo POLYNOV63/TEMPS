@@ -16,20 +16,47 @@ import { coutHoraire } from "@/lib/finances";
      Polynov déduit au départ du domicile) et le taux jour moyen
      réellement facturé sur les PE (relevé validé).
    Rien n'est écrit en base : la simulation reste dans le navigateur.
+   PE_UNITES (PLG, 18/11/2026) : le taux se saisit à la journée OU à
+   l'heure (choix par compétence) ; le prix du km se choisit parmi le
+   barème des notes de frais (ou la moyenne des notes, ou une valeur
+   libre) ; les km par jour sont un aller ou un aller-retour (comme dans
+   la note : un aller-retour compte double).
 ================================================================ */
 
 export type Tarif = { nom: string; montant: number | null; unite: "HEURE" | "JOUR" | "SEMAINE" };
 export type Contrat = { id: string; client_motif: string; libelle: string; base_hebdo: number; rythme_pe: number[]; tarifs: Tarif[] };
 
+export type Unite = "JOUR" | "HEURE";
+export type Trajet = "ALLER" | "AR";
 export type Competence = {
   nom: string;
-  tauxJour: number; // € HT par jour vendu
+  taux: number; // € HT, par jour ou par heure selon `unite`
+  unite: Unite;
   jours: number; // jours vendus par an
-  kmJour: number; // km indemnisés par jour (A/R)
+  km: number; // km d'un trajet (aller), compté deux fois si `trajet` = AR
+  trajet: Trajet;
   defraiFacture: number; // € par jour facturés au client au titre du déplacement
 };
 
-export type Globaux = { heuresJour: number; coutHoraire: number; prixKm: number; margeCible: number };
+/* bareme : la puissance choisie dans le barème des notes de frais, "NOTES" (moyenne des notes) ou null (valeur libre) */
+export type Globaux = { heuresJour: number; coutHoraire: number; prixKm: number; bareme: string | null; margeCible: number };
+
+export const tauxJourDe = (c: Competence, g: Globaux) => (c.unite === "HEURE" ? c.taux * g.heuresJour : c.taux);
+export const kmParJour = (c: Competence) => c.km * (c.trajet === "AR" ? 2 : 1);
+
+/* une compétence gardée par une version précédente (tauxJour, kmJour en aller-retour) : reprise sans perte */
+export function normaliserCompetence(x: Partial<Competence> & { tauxJour?: number; kmJour?: number }): Competence {
+  const ancien = x.taux === undefined;
+  return {
+    nom: x.nom ?? "Compétence",
+    taux: n(ancien ? x.tauxJour : x.taux),
+    unite: x.unite === "HEURE" ? "HEURE" : "JOUR",
+    jours: n(x.jours),
+    km: ancien ? n(x.kmJour) / 2 : n(x.km),
+    trajet: ancien ? "AR" : x.trajet === "ALLER" ? "ALLER" : "AR",
+    defraiFacture: n(x.defraiFacture),
+  };
+}
 
 const n = (v: unknown) => {
   const x = Number(v);
@@ -52,13 +79,17 @@ export function tarifJour(t: Tarif, k: Contrat, heuresJour: number): number {
 }
 
 export function calculer(c: Competence, g: Globaux) {
-  const ca = c.tauxJour + c.defraiFacture;
+  const tauxJour = tauxJourDe(c, g);
+  const kmJour = kmParJour(c);
+  const ca = tauxJour + c.defraiFacture;
   const coutTemps = g.heuresJour * g.coutHoraire;
-  const coutKm = c.kmJour * g.prixKm;
+  const coutKm = kmJour * g.prixKm;
   const cout = coutTemps + coutKm;
   const marge = ca - cout;
   const cible = Math.min(0.95, Math.max(0, g.margeCible / 100));
   return {
+    tauxJour,
+    kmJour,
     ca,
     coutTemps,
     coutKm,
@@ -222,6 +253,7 @@ export type References = {
   contrats: Contrat[];
   coutHoraire: number | null;
   prixKmBareme: number | null; // moyenne du barème (repli si aucune note)
+  baremes: { puissance: string; prixKm: number }[]; // le barème des notes de frais (PE_UNITES)
   peFacture: { montant: number; heures: number } | null; // relevé validé des PE, 12 derniers mois
 };
 
@@ -229,7 +261,7 @@ export async function chargerReferences(debutMois: string): Promise<References> 
   const [k, co, ba, pl, af] = await Promise.all([
     supabase.from("prestation_contrats").select("id,client_motif,libelle,base_hebdo,rythme_pe,tarifs,actif").eq("actif", true).order("client_motif"),
     supabase.from("indicateurs_couts").select("annee,cout_horaire"),
-    supabase.from("nf_baremes").select("prix_km"),
+    supabase.from("nf_baremes").select("puissance,prix_km,ordre").order("ordre"),
     supabase.from("prestation_lignes").select("id,affaire_id"),
     supabase.from("pilotage_affaires").select("id,imputation").eq("imputation", "PE"),
   ]);
@@ -243,7 +275,8 @@ export async function chargerReferences(debutMois: string): Promise<References> 
   }));
   const couts = new Map(((co.data ?? []) as { annee: number; cout_horaire: number | string }[]).map((c) => [c.annee, n(c.cout_horaire)]));
   const aujourdhui = new Date().toISOString().slice(0, 10);
-  const prix = ((ba.data ?? []) as { prix_km: number | string }[]).map((b) => n(b.prix_km)).filter((x) => x > 0);
+  const baremes = ((ba.data ?? []) as { puissance: string; prix_km: number | string }[]).map((b) => ({ puissance: b.puissance, prixKm: n(b.prix_km) })).filter((b) => b.prixKm > 0);
+  const prix = baremes.map((b) => b.prixKm);
 
   let peFacture: References["peFacture"] = null;
   try {
@@ -268,6 +301,7 @@ export async function chargerReferences(debutMois: string): Promise<References> 
     contrats,
     coutHoraire: coutHoraire(couts, aujourdhui),
     prixKmBareme: prix.length ? prix.reduce((t, x) => t + x, 0) / prix.length : null,
+    baremes,
     peFacture,
   };
 }

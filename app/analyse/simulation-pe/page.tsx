@@ -10,6 +10,8 @@ import {
   chargerRappelFrais,
   chargerReferences,
   heuresJourContrat,
+  kmParJour,
+  normaliserCompetence,
   tarifJour,
   type Competence,
   type Contrat,
@@ -27,7 +29,7 @@ import {
    (rien n'est écrit en base).
 ================================================================ */
 
-const CLE_STOCKAGE = "polynov.simulationPE.v1";
+const CLE_STOCKAGE = "polynov.simulationPE.v1"; // PE_UNITES : les simulations gardées sont reprises par normaliserCompetence
 const COMPETENCES_DEFAUT = ["Etude", "Mise en plan", "Faisabilité", "AMO", "Calcul"];
 
 const euros = (v: number, d = 0) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} €`;
@@ -67,6 +69,8 @@ function Champ({ valeur, onChange, largeur = 90, suffixe }: { valeur: number; on
   );
 }
 
+const selectStyle: CSSProperties = { minHeight: 34, border: "1.5px solid #b9bec5", borderRadius: 6, padding: "0 6px", fontFamily: "inherit", fontSize: 13, background: "#ffffff" };
+
 function SimulationPEContenu() {
   const [refs, setRefs] = useState<References | null>(null);
   const [rappel, setRappel] = useState<RappelFrais | null>(null);
@@ -105,13 +109,17 @@ function SimulationPEContenu() {
         heuresJour: Math.round(hj * 100) / 100,
         coutHoraire: Math.round((r.coutHoraire ?? 0) * 100) / 100,
         prixKm: Math.round((f?.prixKmMoyen ?? r.prixKmBareme ?? 0) * 1000) / 1000,
+        bareme: f?.prixKmMoyen != null ? "NOTES" : null,
         margeCible: 25,
       },
       competences: tarifs.map((t) => ({
         nom: t.nom,
-        tauxJour: k ? Math.round(tarifJour(t, k, hj) * 100) / 100 : 0,
+        // PE_UNITES : un tarif à l'heure reste à l'heure ; à la journée ou à la semaine, il est ramené à la journée
+        unite: t.unite === "HEURE" ? ("HEURE" as const) : ("JOUR" as const),
+        taux: t.unite === "HEURE" ? (t.montant ?? 0) : k ? Math.round(tarifJour(t, k, hj) * 100) / 100 : 0,
         jours: 0,
-        kmJour: Math.round(f?.kmParJourReg ?? 0),
+        km: Math.round((f?.kmParJourReg ?? 0) / 2), // les notes donnent des km aller-retour par jour
+        trajet: "AR" as const,
         defraiFacture: 0,
       })),
     };
@@ -127,7 +135,11 @@ function SimulationPEContenu() {
     }
     const k = refs.contrats.find((x) => x.id === garde?.contratId) ?? refs.contrats.find((x) => /michelin/i.test(x.client_motif)) ?? refs.contrats[0] ?? null;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setEtat(garde && Array.isArray(garde.competences) && garde.globaux ? garde : depuisContrat(k, refs, rappel));
+    setEtat(
+      garde && Array.isArray(garde.competences) && garde.globaux
+        ? { ...garde, globaux: { ...garde.globaux, bareme: garde.globaux.bareme ?? null }, competences: garde.competences.map(normaliserCompetence) }
+        : depuisContrat(k, refs, rappel)
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, rappel]);
   useEffect(() => {
@@ -158,6 +170,9 @@ function SimulationPEContenu() {
   const td: CSSProperties = { padding: "6px 8px", borderBottom: `1px solid ${C.ligne}`, textAlign: "right", whiteSpace: "nowrap", fontSize: 14 };
   const couleurMarge = (pct: number | null) => (pct === null ? C.gris : pct < 0 ? "#b3261e" : pct * 100 < g.margeCible ? "#8a4b00" : "#1b5e20");
   const btn: CSSProperties = { ...page.btnSecondaire, minHeight: 34, fontSize: 13 };
+  // un taux à la journée affiché dans l'unité de la ligne (PE_UNITES)
+  const dansUnite = (c: Competence, parJour: number) =>
+    c.unite === "HEURE" && g.heuresJour > 0 ? `${euros(parJour / g.heuresJour, 2)} / h` : euros(parJour);
 
   return (
     <div style={{ ...page.contenu, maxWidth: 1400 }}>
@@ -179,7 +194,34 @@ function SimulationPEContenu() {
           </label>
           <label style={{ display: "grid", gap: 4 }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: C.gris, textTransform: "uppercase" }}>Prix du km remboursé</span>
-            <Champ valeur={g.prixKm} onChange={(v) => majG({ prixKm: v })} suffixe="€ / km" />
+            {/* PE_UNITES : un tarif du barème des notes de frais, la moyenne des notes, ou une valeur libre */}
+            <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <select
+                value={g.bareme ?? "LIBRE"}
+                aria-label="Prix du km : tarif du barème"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "LIBRE") return majG({ bareme: null });
+                  if (v === "NOTES") return majG({ bareme: "NOTES", prixKm: Math.round((rappel?.prixKmMoyen ?? g.prixKm) * 1000) / 1000 });
+                  const b = refs.baremes.find((x) => x.puissance === v);
+                  if (b) majG({ bareme: b.puissance, prixKm: b.prixKm });
+                }}
+                style={selectStyle}
+              >
+                {refs.baremes.map((b) => (
+                  <option key={b.puissance} value={b.puissance}>
+                    Barème {b.puissance} : {nb(b.prixKm, 3)} €/km
+                  </option>
+                ))}
+                {rappel?.prixKmMoyen != null && <option value="NOTES">Moyenne des notes : {nb(rappel.prixKmMoyen, 3)} €/km</option>}
+                <option value="LIBRE">Autre valeur…</option>
+              </select>
+              {g.bareme === null ? (
+                <Champ valeur={g.prixKm} onChange={(v) => majG({ prixKm: v })} largeur={80} suffixe="€ / km" />
+              ) : (
+                <span style={{ fontSize: 13, color: C.gris }}>{nb(g.prixKm, 3)} € / km</span>
+              )}
+            </span>
           </label>
           <label style={{ display: "grid", gap: 4 }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: C.gris, textTransform: "uppercase" }}>Marge visée</span>
@@ -209,7 +251,7 @@ function SimulationPEContenu() {
               ))}
             </>
           )}
-          <button type="button" style={btn} onClick={() => setEtat({ ...etat, competences: [...etat.competences, { nom: "Nouvelle compétence", tauxJour: 0, jours: 0, kmJour: 0, defraiFacture: 0 }] })}>
+          <button type="button" style={btn} onClick={() => setEtat({ ...etat, competences: [...etat.competences, { nom: "Nouvelle compétence", taux: 0, unite: "JOUR", jours: 0, km: 0, trajet: "AR", defraiFacture: 0 }] })}>
             + Ajouter une compétence
           </button>
         </div>
@@ -219,7 +261,7 @@ function SimulationPEContenu() {
       <section style={{ ...page.carte, padding: 16, marginTop: 16 }}>
         <h2 style={{ margin: "0 0 4px", fontSize: 19 }}>Par compétence</h2>
         <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
-          Saisissez le taux jour, les km indemnisés par jour (aller-retour) et, si vous le facturez, le défraiement par jour. Les jours vendus par an donnent la marge annuelle.
+          Saisissez le taux (à la journée ou à l’heure), les km d’un trajet en précisant aller ou aller-retour (un aller-retour compte double, comme dans la note de frais) et, si vous le facturez, le défraiement par jour. Les jours vendus par an donnent la marge annuelle.
           {contrat && <> Départ : {contrat.libelle}.</>}
         </p>
         <div style={{ overflowX: "auto" }}>
@@ -227,8 +269,8 @@ function SimulationPEContenu() {
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: "left" }}>Compétence</th>
-                <th style={th}>Taux jour</th>
-                <th style={th}>Km / jour</th>
+                <th style={th}>Taux de vente</th>
+                <th style={th} title="Km d'un trajet, aller ou aller-retour (un aller-retour compte double)">Km / jour</th>
                 <th style={th} title="Défraiement facturé au client, par jour">Défraiement facturé</th>
                 <th style={th}>Vendu / jour</th>
                 <th style={th} title="Temps + km remboursés">Coût / jour</th>
@@ -251,11 +293,39 @@ function SimulationPEContenu() {
                     />
                   </td>
                   <td style={td}>
-                    <Champ valeur={c.tauxJour} onChange={(v) => majC(i, { tauxJour: v })} suffixe="€" />
+                    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                      <Champ valeur={c.taux} onChange={(v) => majC(i, { taux: v })} largeur={80} />
+                      <select
+                        value={c.unite}
+                        aria-label={`Unité du taux, ${c.nom}`}
+                        onChange={(e) => {
+                          // PE_UNITES : changer d'unité convertit le taux (même valeur à la journée)
+                          const u = e.target.value === "HEURE" ? "HEURE" : "JOUR";
+                          if (u === c.unite) return;
+                          const t = u === "HEURE" ? c.taux / (g.heuresJour || 1) : c.taux * g.heuresJour;
+                          majC(i, { unite: u, taux: Math.round(t * 100) / 100 });
+                        }}
+                        style={selectStyle}
+                      >
+                        <option value="JOUR">€ / jour</option>
+                        <option value="HEURE">€ / h</option>
+                      </select>
+                    </span>
+                    <div style={{ fontSize: 11, color: C.gris }}>
+                      {c.unite === "HEURE" ? `= ${euros(r.tauxJour, 2)} la journée de ${nb(g.heuresJour, 2)} h` : g.heuresJour > 0 ? `= ${euros(r.tauxJour / g.heuresJour, 2)} / h` : ""}
+                    </div>
                   </td>
                   <td style={td}>
-                    <Champ valeur={c.kmJour} onChange={(v) => majC(i, { kmJour: v })} largeur={70} suffixe="km" />
-                    <div style={{ fontSize: 11, color: C.gris }}>{euros(r.coutKm, 2)} remboursés</div>
+                    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                      <Champ valeur={c.km} onChange={(v) => majC(i, { km: v })} largeur={64} suffixe="km" />
+                      <select value={c.trajet} aria-label={`Trajet, ${c.nom}`} onChange={(e) => majC(i, { trajet: e.target.value === "ALLER" ? "ALLER" : "AR" })} style={selectStyle}>
+                        <option value="AR">aller-retour</option>
+                        <option value="ALLER">aller</option>
+                      </select>
+                    </span>
+                    <div style={{ fontSize: 11, color: C.gris }}>
+                      {nb(kmParJour(c))} km indemnisés · {euros(r.coutKm, 2)}
+                    </div>
                   </td>
                   <td style={td}>
                     <Champ valeur={c.defraiFacture} onChange={(v) => majC(i, { defraiFacture: v })} largeur={70} suffixe="€" />
@@ -267,8 +337,8 @@ function SimulationPEContenu() {
                     {euros(Math.abs(r.marge))}
                     {r.pct !== null && <div style={{ fontSize: 12 }}>{Math.round(r.pct * 100)} %</div>}
                   </td>
-                  <td style={{ ...td, color: C.gris }}>{euros(Math.max(0, r.plancher))}</td>
-                  <td style={{ ...td, fontWeight: 700, color: c.tauxJour + 0.5 < r.conseille ? "#8a4b00" : "#1b5e20" }}>{euros(Math.max(0, r.conseille))}</td>
+                  <td style={{ ...td, color: C.gris }}>{dansUnite(c, Math.max(0, r.plancher))}</td>
+                  <td style={{ ...td, fontWeight: 700, color: r.tauxJour + 0.5 < r.conseille ? "#8a4b00" : "#1b5e20" }}>{dansUnite(c, Math.max(0, r.conseille))}</td>
                   <td style={td}>
                     <Champ valeur={c.jours} onChange={(v) => majC(i, { jours: v })} largeur={70} />
                   </td>
@@ -306,7 +376,7 @@ function SimulationPEContenu() {
           </table>
         </div>
         <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
-          Vendu / jour = taux jour + défraiement facturé. Coût / jour = heures × coût horaire de structure + km × prix du km. Taux plancher = coût − défraiement facturé ; taux pour la
+          Vendu / jour = taux à la journée (un taux horaire × heures d’une journée) + défraiement facturé. Coût / jour = heures × coût horaire de structure + km indemnisés (un aller-retour compte double) × prix du km. Taux plancher = coût − défraiement facturé ; taux pour la
           marge visée = coût ÷ (1 − marge) − défraiement facturé. Marge en <span style={{ color: "#1b5e20", fontWeight: 700 }}>vert</span> si elle atteint la marge visée,{" "}
           <span style={{ color: "#8a4b00", fontWeight: 700 }}>orange</span> en dessous, <span style={{ color: "#b3261e", fontWeight: 700 }}>rouge</span> si la journée perd de l’argent.
           {tauxReelJour !== null && (
@@ -342,9 +412,9 @@ function SimulationPEContenu() {
               <button
                 type="button"
                 style={{ ...btn, marginBottom: 12 }}
-                onClick={() => setEtat({ ...etat, competences: etat.competences.map((c) => ({ ...c, kmJour: Math.round(rappel.kmParJourReg ?? 0) })) })}
+                onClick={() => setEtat({ ...etat, competences: etat.competences.map((c) => ({ ...c, km: Math.round((rappel.kmParJourReg ?? 0) / 2), trajet: "AR" as const })) })}
               >
-                Mettre {nb(rappel.kmParJourReg)} km / jour sur toutes les compétences
+                Mettre {nb(rappel.kmParJourReg)} km / jour (aller-retour de {nb((rappel.kmParJourReg ?? 0) / 2)} km) sur toutes les compétences
               </button>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 460px), 1fr))", gap: 16 }}>
