@@ -28,7 +28,7 @@ import { calculerRentabilite, type DonneesRentabilite } from "@/lib/rentabilite"
        taux de vente .... DEUX TAUX (PLG) face aux compétences principales :
                           Calcul et « autres ». Mesurés : prix ÷ heures chiffrées de
                           la part Calcul des forfaits ; le reste (forfaits hors Calcul
-                          et PE / PI) pour « autres » ; sans négoce ni scan pur.
+                          et PE / PI) pour « autres » ; sans négoce ni scan.
                           Chaque taux a un PLAFOND marché : au-delà, le CA est écrêté
                           (voyant CLIP) : le client ne suit pas.
        négoce ........... lignes Négoce de la Rentabilité (vendu, achats)
@@ -76,15 +76,16 @@ export const BUS: Bus[] = [
       { k: "mneg", nom: "Marge négoce", u: "% du négoce", min: 0, max: 60, pas: 1, dec: 0 },
     ],
   },
-  /* SCAN_PUR (PLG, 17/11/2026) : le scan vendu au montant (affaires imputées Scan, sans heures chiffrées).
-     Son CA s'ajoute tel quel ; ses heures sont prises sur les heures passées sur affaires (elles ne produisent
-     pas de CA à l'heure). */
+  /* SCAN_TOUT (PLG, 18/11/2026, remplace SCAN_PUR du 17/11) : TOUT le scan des affaires livrées (ligne Scan de la
+     Rentabilité : montants Scan et Presta Scan des forfaits, et scan vendu au montant), net de ses achats.
+     Son CA s'ajoute tel quel ; ses heures pointées sont prises sur les heures passées sur affaires (elles ne
+     produisent pas de CA à l'heure) et sortent du taux de vente « autres ». */
   {
     nom: "Scan",
     c: "var(--bus-scan)",
     leviers: [
-      { k: "scan", nom: "CA scan", u: "k€ / an, net d’achats", min: 0, max: 500, pas: 5, dec: 0, aide: "Scan vendu au montant (affaires imputées Scan, sans heures chiffrées), moins ses achats" },
-      { k: "hscan", nom: "Heures scan", u: "h / an pointées", min: 0, max: 4000, pas: 10, dec: 0, aide: "Heures passées sur le scan vendu au montant : elles sont retirées des heures de production" },
+      { k: "scan", nom: "CA scan", u: "k€ / an, net d’achats", min: 0, max: 500, pas: 1, dec: 0, aide: "Tout le scan des affaires livrées (Montant Scan et Presta Scan, scan vendu au montant), moins ses achats" },
+      { k: "hscan", nom: "Heures scan", u: "h / an pointées", min: 0, max: 4000, pas: 10, dec: 0, aide: "Heures pointées sur le scan : elles sont retirées des heures de production vendues à l’heure" },
     ],
   },
   {
@@ -110,7 +111,7 @@ export function calcul(x: Leviers) {
   const hAffCalc = (x.calc * x.heures * x.occ) / 100;
   const hAffAutres = (x.prod * x.heures * x.occ) / 100;
   const hAffaires = hAffCalc + hAffAutres;
-  // SCAN_PUR : les heures de scan au montant ne se vendent pas à l'heure (prises sur les « autres »)
+  // SCAN_TOUT : les heures de scan ne se vendent pas à l'heure (prises sur les « autres »)
   const hProdAutres = Math.max(0, hAffAutres - x.hscan);
   const hProduction = hAffCalc + hProdAutres;
   const hvCalc = (hAffCalc * x.eff) / 100;
@@ -307,8 +308,13 @@ export async function enregistrerParametres(exercice: number, v: Leviers, moiId:
 export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exclues: Set<string>) {
   const r = calculerRentabilite(d, exercice, exclues);
   const forfaits = r.affaires.filter((a) => !a.auMontant);
-  const hc = forfaits.reduce((t, a) => t + a.hc, 0);
-  const hr = forfaits.reduce((t, a) => t + a.hr, 0);
+  // SCAN_TOUT : la ligne Scan de la Rentabilité (part Scan des forfaits + scan vendu au montant)
+  const lScan = r.groupes.find((g) => g.cle === "Scan");
+  const scanAuMontant = r.affaires.filter((a) => a.auMontant && a.activite === "Scan");
+  const hrScanAuMontant = scanAuMontant.reduce((t, a) => t + a.hr, 0);
+  // efficience sans le scan (il ne se vend plus à l'heure dans la console)
+  const hc = forfaits.reduce((t, a) => t + a.hc, 0) - (lScan?.hc ?? 0);
+  const hr = forfaits.reduce((t, a) => t + a.hr, 0) - Math.max(0, (lScan?.hr ?? 0) - hrScanAuMontant);
   // EFFICIENCE_PEPI (PLG, 17/11/2026) : les PE / PI comptent aussi (heures facturées ÷ heures pointées des mois facturés),
   // puisque la console applique l'efficience à toutes les heures passées sur affaires
   const hcPrest = r.prestationsEx.reduce((t, p) => t + p.hc, 0);
@@ -317,15 +323,14 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const lignesNegoce = r.groupes.filter((g) => NEGOCE.has(g.cle));
   const caNegoce = lignesNegoce.reduce((t, g) => t + g.ca, 0);
   const achatsNegoce = lignesNegoce.reduce((t, g) => t + g.achats, 0);
-  // SCAN_PUR : le scan vendu au montant (imputé Scan, sans heures chiffrées) : CA net d'achats et heures passées
-  const scanPurAff = r.affaires.filter((a) => a.auMontant && a.activite === "Scan");
-  const caScanPur = scanPurAff.reduce((t, a) => t + a.ca, 0);
-  const achatsScanPur = scanPurAff.reduce((t, a) => t + a.achats, 0);
-  const heuresScanPur = scanPurAff.reduce((t, a) => t + a.hr, 0);
-  // production : tout sauf le négoce, moins le scan pur vendu au montant (pas d'heures chiffrées) ; trajets compris (TRAJETS_PARTOUT)
-  const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle));
-  const scanPur = r.affaires.filter((a) => a.auMontant && a.activite === "Scan").reduce((t, a) => t + a.ca, 0);
-  const caProd = lignesProd.reduce((t, g) => t + g.ca, 0) - scanPur;
+  // SCAN_TOUT : CA net d'achats et heures pointées de tout le scan
+  const caScan = lScan?.ca ?? 0;
+  const achatsScan = lScan?.achats ?? 0;
+  const heuresScan = lScan?.hr ?? 0;
+  const nbScan = (lScan?.cumul?.nPos ?? 0) + (lScan?.cumul?.nNeg ?? 0); // affaires qui ont une part de scan
+  // production : tout sauf le négoce et le scan ; trajets compris (TRAJETS_PARTOUT)
+  const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle) && g.cle !== "Scan");
+  const caProd = lignesProd.reduce((t, g) => t + g.ca, 0);
   const hcProd = lignesProd.reduce((t, g) => t + g.hc, 0);
   // DEUX_TAUX : la part Calcul des forfaits d'un côté, tout le reste (dont PE / PI) de l'autre
   const lCalcul = r.groupes.find((g) => g.cle === "Calcul");
@@ -347,10 +352,10 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
     hcCalcul,
     tauxAutres: hcProd - hcCalcul > 0 ? (caProd - caCalcul) / (hcProd - hcCalcul) : null,
     caNegoce,
-    caScanPur,
-    achatsScanPur,
-    heuresScanPur,
-    nbScanPur: scanPurAff.length,
+    caScan,
+    achatsScan,
+    heuresScan,
+    nbScan,
     margeNegoce: caNegoce > 0 ? ((caNegoce - achatsNegoce) / caNegoce) * 100 : null,
   };
 }
@@ -402,17 +407,17 @@ export function construireDepart(
     v.taux = Math.round(renta.tauxAutres * 2) / 2;
     s.taux = {
       reel: true,
-      texte: `Le reste : ${fr(renta.caProd - renta.caCalcul)} € ÷ ${fr(renta.hcProd - renta.hcCalcul)} h vendues (forfaits hors Calcul et ${renta.nbPrestations} PE / PI), sans négoce ni scan pur`,
+      texte: `Le reste : ${fr(renta.caProd - renta.caCalcul)} € ÷ ${fr(renta.hcProd - renta.hcCalcul)} h vendues (forfaits hors Calcul et ${renta.nbPrestations} PE / PI), sans négoce ni scan`,
     };
   } else s.taux = { reel: false, texte: "Pas d’heures vendues sur l’exercice : valeur d’exemple" };
 
   v.neg = Math.round(renta.caNegoce / 1000 / 5) * 5;
   s.neg = { reel: true, texte: `Négoce des forfaits livrés en ${ex} : ${fr(renta.caNegoce)} €` };
-  const nbScan = `${renta.nbScanPur} affaire${renta.nbScanPur > 1 ? "s" : ""} de scan pur livrée${renta.nbScanPur > 1 ? "s" : ""} en ${ex}`;
-  v.scan = Math.round((renta.caScanPur - renta.achatsScanPur) / 1000 / 5) * 5;
-  s.scan = { reel: true, texte: `${nbScan} : vendu ${fr(renta.caScanPur)} € − achats ${fr(renta.achatsScanPur)} €` };
-  v.hscan = Math.round(renta.heuresScanPur / 10) * 10;
-  s.hscan = { reel: true, texte: `${nbScan} : ${fr(renta.heuresScanPur)} h pointées (trajets compris)` };
+  const nbScan = `Scan de ${renta.nbScan} affaire${renta.nbScan > 1 ? "s" : ""} livrée${renta.nbScan > 1 ? "s" : ""} en ${ex}`;
+  v.scan = Math.round((renta.caScan - renta.achatsScan) / 1000);
+  s.scan = { reel: true, texte: `${nbScan} : vendu ${fr(renta.caScan)} € − achats ${fr(renta.achatsScan)} €` };
+  v.hscan = Math.round(renta.heuresScan / 10) * 10;
+  s.hscan = { reel: true, texte: `${nbScan} : ${fr(renta.heuresScan)} h pointées (trajets compris)` };
   if (renta.margeNegoce !== null) {
     v.mneg = Math.round(renta.margeNegoce);
     s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, lignes Négoce de la Rentabilité" };

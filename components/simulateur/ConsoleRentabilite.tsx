@@ -667,7 +667,7 @@ export default function ConsoleRentabilite({
           <Fragment>
             <b>Heures payées</b> = productifs × heures annuelles (1 607 h = 35 h). <b>Heures passées sur affaires</b> = heures payées × taux d’occupation (le reste :
             devis, commercial, formation, NI…). <b>Heures vendues</b> = heures passées × efficience (au-dessus de 100 % : on fait mieux que le chiffré ; en dessous :
-            dérive). <b>CA production</b> = heures vendues des productifs Calcul × taux Calcul + celles des autres × taux autres, chaque taux écrêté à son <b>plafond marché</b> (voyant CLIP), + <b>CA négoce</b> dont on garde la marge, + <b>CA scan</b> (scan pur, net d’achats), dont les <b>heures</b> sont retirées des heures de production. <b>Salaires</b> = (productifs + structure) ×
+            dérive). <b>CA production</b> = heures vendues des productifs Calcul × taux Calcul + celles des autres × taux autres, chaque taux écrêté à son <b>plafond marché</b> (voyant CLIP), + <b>CA négoce</b> dont on garde la marge, + <b>CA scan</b> (tout le scan, net d’achats), dont les <b>heures</b> sont retirées des heures de production. <b>Salaires</b> = (productifs + structure) ×
             salaire chargé moyen. <b>Management fees</b> = % du CA total. <b>Résultat</b> = CA − achats négoce − salaires − fees − loyer − autres frais.{" "}
             <b>Coût d’une heure vendue</b> = (salaires + loyer + autres frais) ÷ heures vendues, + la part de fees. <b>Taux point mort</b> = taux de vente qui donne un
             résultat nul, tout le reste égal.
