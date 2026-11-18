@@ -9,7 +9,6 @@ import {
   calculer,
   chargerRappelFrais,
   chargerReferences,
-  heuresJourContrat,
   kmParJour,
   normaliserCompetence,
   tarifJour,
@@ -29,7 +28,13 @@ import {
    (rien n'est écrit en base).
 ================================================================ */
 
-const CLE_STOCKAGE = "polynov.simulationPE.v1"; // PE_UNITES : les simulations gardées sont reprises par normaliserCompetence
+/* PE_DEFAUTS (PLG, 18/11/2026) : journée de 7 h, barème 7 CV, marge visée 6 %. La clé v2 repart de ces valeurs ;
+   les compétences d'une simulation v1 sont reprises (normaliserCompetence). */
+const CLE_STOCKAGE = "polynov.simulationPE.v2";
+const CLE_ANCIENNE = "polynov.simulationPE.v1";
+const HEURES_JOUR_DEFAUT = 7;
+const MARGE_DEFAUT = 6;
+const estBareme7CV = (puissance: string) => /(^|\D)7(\D|$)/.test(puissance);
 const COMPETENCES_DEFAUT = ["Etude", "Mise en plan", "Faisabilité", "AMO", "Calcul"];
 
 const euros = (v: number, d = 0) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d })} €`;
@@ -100,18 +105,22 @@ function SimulationPEContenu() {
   }, [periode]);
 
   /* l'état de départ : la simulation gardée dans ce navigateur, sinon le contrat cadre */
+  const globauxDefaut = (r: References, f: RappelFrais | null): Globaux => {
+    const b7 = r.baremes.find((b) => estBareme7CV(b.puissance));
+    return {
+      heuresJour: HEURES_JOUR_DEFAUT,
+      coutHoraire: Math.round((r.coutHoraire ?? 0) * 100) / 100,
+      prixKm: b7 ? b7.prixKm : Math.round((f?.prixKmMoyen ?? r.prixKmBareme ?? 0) * 1000) / 1000,
+      bareme: b7 ? b7.puissance : f?.prixKmMoyen != null ? "NOTES" : null,
+      margeCible: MARGE_DEFAUT,
+    };
+  };
   const depuisContrat = (k: Contrat | null, r: References, f: RappelFrais | null): Etat => {
-    const hj = heuresJourContrat(k);
+    const hj = HEURES_JOUR_DEFAUT;
     const tarifs = k?.tarifs.length ? k.tarifs : COMPETENCES_DEFAUT.map((nom) => ({ nom, montant: null, unite: "JOUR" as const }));
     return {
       contratId: k?.id ?? null,
-      globaux: {
-        heuresJour: Math.round(hj * 100) / 100,
-        coutHoraire: Math.round((r.coutHoraire ?? 0) * 100) / 100,
-        prixKm: Math.round((f?.prixKmMoyen ?? r.prixKmBareme ?? 0) * 1000) / 1000,
-        bareme: f?.prixKmMoyen != null ? "NOTES" : null,
-        margeCible: 25,
-      },
+      globaux: globauxDefaut(r, f),
       competences: tarifs.map((t) => ({
         nom: t.nom,
         // PE_UNITES : un tarif à l'heure reste à l'heure ; à la journée ou à la semaine, il est ramené à la journée
@@ -130,6 +139,14 @@ function SimulationPEContenu() {
     try {
       const s = window.localStorage.getItem(CLE_STOCKAGE);
       if (s) garde = JSON.parse(s) as Etat;
+      else {
+        // PE_DEFAUTS : une simulation de l'ancienne version garde ses compétences, avec les nouveaux paramètres communs
+        const v1 = window.localStorage.getItem(CLE_ANCIENNE);
+        if (v1) {
+          const a = JSON.parse(v1) as Etat;
+          if (Array.isArray(a.competences)) garde = { ...a, globaux: globauxDefaut(refs, rappel) };
+        }
+      }
     } catch {
       garde = null;
     }
@@ -234,23 +251,6 @@ function SimulationPEContenu() {
           </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" }}>
-          {refs.contrats.length > 0 && (
-            <>
-              <span style={{ fontSize: 13, color: C.gris }}>Repartir des tarifs du contrat :</span>
-              {refs.contrats.map((k) => (
-                <button
-                  key={k.id}
-                  type="button"
-                  style={{ ...btn, borderColor: k.id === etat.contratId ? C.rouge : undefined }}
-                  onClick={() => {
-                    if (window.confirm(`Remplacer la simulation par les tarifs du « ${k.libelle} » ?`)) setEtat(depuisContrat(k, refs, rappel));
-                  }}
-                >
-                  {k.libelle}
-                </button>
-              ))}
-            </>
-          )}
           <button type="button" style={btn} onClick={() => setEtat({ ...etat, competences: [...etat.competences, { nom: "Nouvelle compétence", taux: 0, unite: "JOUR", jours: 0, km: 0, trajet: "AR", defraiFacture: 0 }] })}>
             + Ajouter une compétence
           </button>
@@ -275,7 +275,7 @@ function SimulationPEContenu() {
                 <th style={th}>Vendu / jour</th>
                 <th style={th} title="Temps + km remboursés">Coût / jour</th>
                 <th style={th}>Marge / jour</th>
-                <th style={th} title="Taux jour en dessous duquel la journée perd de l'argent">Taux plancher</th>
+                <th style={th} title="Le taux en dessous duquel la journée coûte plus qu'elle ne rapporte : coût de la journée (temps + km remboursés) − défraiement facturé. Au plancher, la marge est nulle.">Taux plancher</th>
                 <th style={th} title="Taux jour qui tient la marge visée">Taux pour {nb(g.margeCible)} %</th>
                 <th style={th}>Jours / an</th>
                 <th style={th}>Marge / an</th>
@@ -376,7 +376,8 @@ function SimulationPEContenu() {
           </table>
         </div>
         <p style={{ fontSize: 12, color: C.gris, margin: "8px 0 0" }}>
-          Vendu / jour = taux à la journée (un taux horaire × heures d’une journée) + défraiement facturé. Coût / jour = heures × coût horaire de structure + km indemnisés (un aller-retour compte double) × prix du km. Taux plancher = coût − défraiement facturé ; taux pour la
+          Vendu / jour = taux à la journée (un taux horaire × heures d’une journée) + défraiement facturé. Coût / jour = heures × coût horaire de structure + km indemnisés (un aller-retour compte double) × prix du km. <strong>Taux plancher</strong> = le taux en dessous duquel on perd de l’argent : il paie tout juste la journée (heures × coût
+          horaire de structure + km remboursés), moins ce que le défraiement facturé rembourse déjà ; vendu au plancher, la marge est nulle. Taux pour la
           marge visée = coût ÷ (1 − marge) − défraiement facturé. Marge en <span style={{ color: "#1b5e20", fontWeight: 700 }}>vert</span> si elle atteint la marge visée,{" "}
           <span style={{ color: "#8a4b00", fontWeight: 700 }}>orange</span> en dessous, <span style={{ color: "#b3261e", fontWeight: 700 }}>rouge</span> si la journée perd de l’argent.
           {tauxReelJour !== null && (

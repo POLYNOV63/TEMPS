@@ -264,6 +264,8 @@ bilan d'affaire et de suivi de dérive.
   et taux jour moyen facturé des PE (relevé validé). Simulation gardée dans le navigateur, rien en base. PE_UNITES (18/11) :
   taux saisi à la journée ou à l'heure (par compétence) ; prix du km choisi dans le barème des notes de frais
   (`nf_baremes`), la moyenne des notes ou une valeur libre ; km / jour = un trajet, aller ou aller-retour (compte double).
+  PE_DEFAUTS : journée de 7 h, barème 7 CV, marge visée 6 % ; plus de boutons « repartir du contrat » (le départ reste
+  le contrat Michelin).
 - **Simulateur de rentabilité** (`/analyse/simulateur`, droit `indicateurs`, maquette `docs/maquettes/console-rentabilite.html`) :
   console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
   (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres
