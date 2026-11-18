@@ -21,6 +21,13 @@ import { coutHoraire } from "@/lib/finances";
    barème des notes de frais (ou la moyenne des notes, ou une valeur
    libre) ; les km par jour sont un aller ou un aller-retour (comme dans
    la note : un aller-retour compte double).
+   PE_VOITURE (PLG, 18/11/2026) : par compétence, le déplacement est soit
+   en INDEMNITÉS KM (km × prix du km), soit en VOITURE DE SERVICE avec
+   carte gasoil : coût de la voiture par jour (coût mensuel ÷ jours
+   d'utilisation) + gasoil (km roulés × consommation × prix du litre) +
+   HEURES SUP du temps de trajet en plus de domicile → Polynov (payé au
+   salaire horaire chargé, majoré ; pas au coût de structure, qui couvre
+   déjà la journée). Les deux coûts sont toujours affichés côte à côte.
 ================================================================ */
 
 export type Tarif = { nom: string; montant: number | null; unite: "HEURE" | "JOUR" | "SEMAINE" };
@@ -28,6 +35,7 @@ export type Contrat = { id: string; client_motif: string; libelle: string; base_
 
 export type Unite = "JOUR" | "HEURE";
 export type Trajet = "ALLER" | "AR";
+export type Deplacement = "IK" | "VOITURE";
 export type Competence = {
   nom: string;
   taux: number; // € HT, par jour ou par heure selon `unite`
@@ -36,13 +44,32 @@ export type Competence = {
   km: number; // km d'un trajet (aller), compté deux fois si `trajet` = AR
   trajet: Trajet;
   defraiFacture: number; // € par jour facturés au client au titre du déplacement
+  deplacement: Deplacement; // PE_VOITURE
+  minutesSup: number; // minutes de trajet en plus de domicile → Polynov, par trajet (comptées deux fois en aller-retour)
+  kmDomicile: number; // km domicile → Polynov, déduits par trajet en indemnités km (règle de la note de frais), pas en voiture
 };
 
 /* bareme : la puissance choisie dans le barème des notes de frais, "NOTES" (moyenne des notes) ou null (valeur libre) */
-export type Globaux = { heuresJour: number; coutHoraire: number; prixKm: number; bareme: string | null; margeCible: number };
+export type Globaux = {
+  heuresJour: number;
+  coutHoraire: number;
+  prixKm: number;
+  bareme: string | null;
+  margeCible: number;
+  // PE_VOITURE : voiture de service et carte gasoil
+  voitureMois: number; // € par mois (location ou amortissement, assurance, entretien)
+  voitureJours: number; // jours d'utilisation par mois
+  conso: number; // litres aux 100 km
+  prixGasoil: number; // € le litre
+  tauxHoraireCharge: number; // salaire horaire chargé du salarié (€ / h)
+  majorationHS: number; // % de majoration des heures sup
+};
+export const VOITURE_DEFAUT = { voitureMois: 550, voitureJours: 20, conso: 6, prixGasoil: 1.75, tauxHoraireCharge: 22, majorationHS: 25 };
 
 export const tauxJourDe = (c: Competence, g: Globaux) => (c.unite === "HEURE" ? c.taux * g.heuresJour : c.taux);
-export const kmParJour = (c: Competence) => c.km * (c.trajet === "AR" ? 2 : 1);
+export const kmParJour = (c: Competence) => c.km * (c.trajet === "AR" ? 2 : 1); // km roulés
+// PE_VOITURE : en indemnités km, le trajet domicile → Polynov est déduit à chaque trajet (comme dans la note de frais)
+export const kmIndemnises = (c: Competence) => Math.max(0, c.km - c.kmDomicile) * (c.trajet === "AR" ? 2 : 1);
 
 /* une compétence gardée par une version précédente (tauxJour, kmJour en aller-retour) : reprise sans perte */
 export function normaliserCompetence(x: Partial<Competence> & { tauxJour?: number; kmJour?: number }): Competence {
@@ -55,7 +82,17 @@ export function normaliserCompetence(x: Partial<Competence> & { tauxJour?: numbe
     km: ancien ? n(x.kmJour) / 2 : n(x.km),
     trajet: ancien ? "AR" : x.trajet === "ALLER" ? "ALLER" : "AR",
     defraiFacture: n(x.defraiFacture),
+    deplacement: x.deplacement === "VOITURE" ? "VOITURE" : "IK",
+    minutesSup: n(x.minutesSup),
+    kmDomicile: n(x.kmDomicile),
   };
+}
+
+/* des paramètres communs gardés par une version précédente : les nouveaux réglages prennent leur valeur par défaut */
+export function normaliserGlobaux(g: Partial<Globaux>, defaut: Globaux): Globaux {
+  const r = { ...defaut, ...g } as Globaux;
+  for (const k of Object.keys(VOITURE_DEFAUT) as (keyof typeof VOITURE_DEFAUT)[]) if (typeof g[k] !== "number") r[k] = defaut[k];
+  return r;
 }
 
 const n = (v: unknown) => {
@@ -83,7 +120,14 @@ export function calculer(c: Competence, g: Globaux) {
   const kmJour = kmParJour(c);
   const ca = tauxJour + c.defraiFacture;
   const coutTemps = g.heuresJour * g.coutHoraire;
-  const coutKm = kmJour * g.prixKm;
+  // PE_VOITURE : les deux façons de payer le déplacement, toujours calculées ; la ligne retient celle choisie
+  const coutIK = kmIndemnises(c) * g.prixKm;
+  const voitureJour = g.voitureJours > 0 ? g.voitureMois / g.voitureJours : 0;
+  const gasoil = (kmJour * g.conso * g.prixGasoil) / 100;
+  const heuresSup = (c.minutesSup * (c.trajet === "AR" ? 2 : 1)) / 60;
+  const coutHS = heuresSup * g.tauxHoraireCharge * (1 + g.majorationHS / 100);
+  const coutVoiture = voitureJour + gasoil + coutHS;
+  const coutKm = c.deplacement === "VOITURE" ? coutVoiture : coutIK;
   const cout = coutTemps + coutKm;
   const marge = ca - cout;
   const cible = Math.min(0.95, Math.max(0, g.margeCible / 100));
@@ -93,6 +137,12 @@ export function calculer(c: Competence, g: Globaux) {
     ca,
     coutTemps,
     coutKm,
+    coutIK,
+    coutVoiture,
+    voitureJour,
+    gasoil,
+    heuresSup,
+    coutHS,
     cout,
     marge,
     pct: ca > 0.5 ? marge / ca : null,

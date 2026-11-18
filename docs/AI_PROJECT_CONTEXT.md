@@ -266,6 +266,9 @@ bilan d'affaire et de suivi de dérive.
   (`nf_baremes`), la moyenne des notes ou une valeur libre ; km / jour = un trajet, aller ou aller-retour (compte double).
   PE_DEFAUTS : journée de 7 h, barème 7 CV, marge visée 6 % ; plus de boutons « repartir du contrat » (le départ reste
   le contrat Michelin).
+  PE_VOITURE : par compétence, déplacement en indemnités km (km du trajet − km domicile → Polynov, × 2 en aller-retour,
+  × prix du km) ou en voiture de service + carte gasoil (coût mensuel ÷ jours d’utilisation + gasoil des km roulés + heures sup
+  du temps de trajet en plus, au salaire horaire chargé majoré) ; les deux coûts sont affichés côte à côte.
 - **Simulateur de rentabilité** (`/analyse/simulateur`, droit `indicateurs`, maquette `docs/maquettes/console-rentabilite.html`) :
   console de mixage (une tranche par levier, Master, scènes, référence). Curseurs au départ = nos chiffres de l'exercice
   (`lib/simulateur.ts`) : productifs = actifs inclus dans les statistiques hors ADMIN et Direction ; structure = autres
