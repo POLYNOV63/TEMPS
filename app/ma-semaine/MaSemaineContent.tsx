@@ -149,6 +149,46 @@ const HORAIRES_DEFAUT: HorairesSemaine = {
   vendredi: 5,
 };
 
+/* RYTHME_PAR_SEMAINE : le rythme d'une semaine est celui en vigueur ce lundi-là dans
+   l'historique des rythmes (Collaborateurs › changer le rythme), sinon le profil de la
+   fiche. Toute erreur de lecture remonte : on ne bâtit jamais une feuille sur un rythme
+   deviné. */
+async function horairesDeLaSemaine(
+  collaborateurId: string,
+  profilParDefaut: string | null,
+  lundi: string
+): Promise<HorairesSemaine> {
+  const { data: historique, error: erreurHistorique } = await supabase
+    .from("historique_profils_horaires")
+    .select("profil_horaire_id,date_debut,date_fin")
+    .eq("collaborateur_id", collaborateurId)
+    .lte("date_debut", lundi)
+    .or(`date_fin.is.null,date_fin.gte.${lundi}`)
+    .order("date_debut", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (erreurHistorique) throw erreurHistorique;
+
+  const profilId = historique?.profil_horaire_id ?? profilParDefaut;
+  if (!profilId) return HORAIRES_DEFAUT;
+
+  const { data: profil, error: erreurProfil } = await supabase
+    .from("profils_horaires")
+    .select("id,nom,lundi,mardi,mercredi,jeudi,vendredi")
+    .eq("id", profilId)
+    .maybeSingle();
+  if (erreurProfil) throw erreurProfil;
+  if (!profil) return HORAIRES_DEFAUT;
+
+  return {
+    lundi: Number(profil.lundi) || 0,
+    mardi: Number(profil.mardi) || 0,
+    mercredi: Number(profil.mercredi) || 0,
+    jeudi: Number(profil.jeudi) || 0,
+    vendredi: Number(profil.vendredi) || 0,
+  };
+}
+
 /* ============================================================
    CODES D'IMPUTATION
 ============================================================ */
@@ -1009,6 +1049,10 @@ export default function MaSemainePage() {
     setSemaineModifiee,
   ] = useState(false);
 
+  // RYTHME_PAR_SEMAINE : lundi de la semaine entièrement chargée (null pendant un chargement ou après un échec)
+  const semaineChargeeRef = useRef<string | null>(null);
+  const jetonChargementSemaineRef = useRef(0);
+
   // Référence synchrone utilisée par les confirmations de navigation
   // et par l'avertissement du navigateur avant fermeture/rechargement.
   const semaineModifieeRef =
@@ -1380,51 +1424,13 @@ export default function MaSemainePage() {
         semaineUrl ??
         semaine[0].date;
 
-      // Le rythme applicable est celui en vigueur pour la semaine affichée.
-      // On consulte donc l'historique avant de retomber sur le profil courant.
-      let horaires: HorairesSemaine = HORAIRES_DEFAUT;
-      let profilHoraireId = collaborateurCharge.profil_horaire_id;
-
-      const {
-        data: historiqueRythme,
-        error: erreurHistoriqueRythme,
-      } = await supabase
-        .from("historique_profils_horaires")
-        .select("profil_horaire_id,date_debut,date_fin")
-        .eq("collaborateur_id", collaborateurCharge.id)
-        .lte("date_debut", semaineACharger)
-        .or(`date_fin.is.null,date_fin.gte.${semaineACharger}`)
-        .order("date_debut", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      // Si l'historique n'est pas disponible ou ne contient pas de ligne,
-      // le profil actuellement affecté reste la source de repli.
-      if (!erreurHistoriqueRythme && historiqueRythme?.profil_horaire_id) {
-        profilHoraireId = historiqueRythme.profil_horaire_id;
-      }
-
-      if (profilHoraireId) {
-        const { data: profil, error: erreurProfil } = await supabase
-          .from("profils_horaires")
-          .select("id,nom,lundi,mardi,mercredi,jeudi,vendredi")
-          .eq("id", profilHoraireId)
-          .maybeSingle();
-
-        if (erreurProfil) {
-          throw erreurProfil;
-        }
-
-        if (profil) {
-          horaires = {
-            lundi: Number(profil.lundi) || 0,
-            mardi: Number(profil.mardi) || 0,
-            mercredi: Number(profil.mercredi) || 0,
-            jeudi: Number(profil.jeudi) || 0,
-            vendredi: Number(profil.vendredi) || 0,
-          };
-        }
-      }
+      // RYTHME_PAR_SEMAINE : premier affichage avec le rythme de la semaine ;
+      // chargerSemaineExistante le relit strictement (et bloque l'enregistrement en cas d'échec).
+      const horaires = await horairesDeLaSemaine(
+        collaborateurCharge.id,
+        collaborateurCharge.profil_horaire_id,
+        semaineACharger
+      ).catch(() => HORAIRES_DEFAUT);
 
       setHorairesProfil(horaires);
       setCollaborateur(collaborateurCharge);
@@ -1439,7 +1445,7 @@ export default function MaSemainePage() {
       await chargerSemaineExistante(
         collaborateurCharge.id,
         semaineACharger,
-        horaires
+        collaborateurCharge.profil_horaire_id
       );
 
       await chargerCumulHeuresSupplementaires(
@@ -2917,7 +2923,7 @@ export default function MaSemainePage() {
       chargerSemaineExistante(
         collaborateur.id,
         nouvelleSemaine[0].date,
-        horairesProfil
+        collaborateur.profil_horaire_id
       );
 
       chargerCumulHeuresSupplementaires(
@@ -2959,7 +2965,7 @@ export default function MaSemainePage() {
       chargerSemaineExistante(
         collaborateur.id,
         nouvelleSemaine[0].date,
-        horairesProfil
+        collaborateur.profil_horaire_id
       );
 
       chargerCumulHeuresSupplementaires(
@@ -3425,13 +3431,30 @@ export default function MaSemainePage() {
   async function chargerSemaineExistante(
     collaborateurId: string,
     semaineDebut: string,
-    horairesPourSemaine: HorairesSemaine = horairesProfil
+    profilParDefaut: string | null = collaborateur?.profil_horaire_id ?? null
   ) {
     if (!supabase) {
       return;
     }
 
+    // RYTHME_PAR_SEMAINE : tant que cette semaine n'est pas entièrement chargée
+    // (rythme compris), on ne peut pas l'enregistrer ; un chargement dépassé par
+    // un autre (clics rapides sur ◀ ▶) est ignoré.
+    // toujours le lundi (une adresse ?semaine= peut donner un autre jour)
+    semaineDebut = creerSemaine(new Date(`${semaineDebut}T00:00:00`))[0].date;
+    const jeton = ++jetonChargementSemaineRef.current;
+    const perime = () => jeton !== jetonChargementSemaineRef.current;
+    semaineChargeeRef.current = null;
+
     try {
+      const horairesPourSemaine = await horairesDeLaSemaine(
+        collaborateurId,
+        profilParDefaut,
+        semaineDebut
+      );
+      if (perime()) return;
+      setHorairesProfil(horairesPourSemaine);
+
       const {
         data: feuille,
         error: erreurFeuille,
@@ -3451,6 +3474,7 @@ export default function MaSemainePage() {
       if (erreurFeuille) {
         throw erreurFeuille;
       }
+      if (perime()) return;
 
       if (!feuille) {
         setFeuilleVerrouillee(false);
@@ -3471,6 +3495,7 @@ export default function MaSemainePage() {
           .maybeSingle();
 
         if (erreurPrecedente) throw erreurPrecedente;
+        if (perime()) return;
 
         if (precedente?.compteur_apres !== null && precedente?.compteur_apres !== undefined) {
           setCompteurBaseSemaine(Number(precedente.compteur_apres) || 0);
@@ -3484,6 +3509,7 @@ export default function MaSemainePage() {
             .maybeSingle();
 
           if (erreurDroit) throw erreurDroit;
+          if (perime()) return;
 
           setCompteurBaseSemaine(
             droit?.compteur_recuperation_initial !== null && droit?.compteur_recuperation_initial !== undefined
@@ -3505,6 +3531,7 @@ export default function MaSemainePage() {
         setSemaineModifiee(false);
         setSemaineEnregistree(false);
         setSemaineValidee(false);
+        semaineChargeeRef.current = semaineDebut;
         return;
       }
 
@@ -3566,6 +3593,7 @@ export default function MaSemainePage() {
       if (erreurImputations) {
         throw erreurImputations;
       }
+      if (perime()) return;
 
       const semaineChargee =
         creerSemaine(
@@ -3692,6 +3720,7 @@ export default function MaSemainePage() {
       setSemaineModifiee(false);
       setSemaineEnregistree(true);
       setSemaineValidee(feuilleEstValidee);
+      semaineChargeeRef.current = semaineDebut;
 
       setMessage("");
       setMessageType("");
@@ -3700,6 +3729,11 @@ export default function MaSemainePage() {
         "Erreur chargement semaine",
         error
       );
+      if (perime()) return;
+      setMessage(
+        "Impossible de charger cette semaine (rythme ou feuille). Rechargez la page avant de la modifier : elle ne peut pas être enregistrée en l'état."
+      );
+      setMessageType("DANGER");
     }
   }
 
@@ -3800,6 +3834,17 @@ export default function MaSemainePage() {
         "Cette feuille est verrouillée par l'administration. Elle ne peut plus être modifiée."
       );
       setMessageType("DANGER");
+      return;
+    }
+
+    // RYTHME_PAR_SEMAINE : jamais d'enregistrement d'une semaine pas (ou mal) chargée
+    if (semaineChargeeRef.current !== semaine[0]?.date) {
+      if (!automatique) {
+        setMessage(
+          "La semaine n'est pas encore entièrement chargée (rythme compris) : patientez un instant, ou rechargez la page si ce message persiste."
+        );
+        setMessageType("DANGER");
+      }
       return;
     }
 
