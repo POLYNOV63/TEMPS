@@ -33,6 +33,7 @@ const ONGLETS = [
   { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
   { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
   { cle: "simulateur", groupe: 2, court: "Simulateur", libelle: "Simulateur de rentabilité", href: "/analyse/simulateur", droit: "indicateurs" }, // SIMULATEUR_RENTA
+  { cle: "simulateur-cuve", groupe: 2, court: "Cuve", libelle: "Simulateur : la cuve", href: "/analyse/simulateur-cuve", droit: "indicateurs" }, // SIMULATEUR_CUVE
   { cle: "simulation-pe", groupe: 2, court: "Simulation PE", libelle: "Simulation PE (taux jour)", href: "/analyse/simulation-pe", droit: "indicateurs" }, // SIMULATION_PE
   { cle: "bilan", groupe: 2, court: "Fiche affaire", libelle: "Fiche affaire", href: "/affaires/bilan", droit: "voirPlanning" },
   // la charge

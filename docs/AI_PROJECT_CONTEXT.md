@@ -281,6 +281,10 @@ bilan d'affaire et de suivi de dérive.
   (ADMIN). Bouton MUTE pour sortir la CBE 1678 (liste `AFFAIRES_EXCLUABLES`). **Deux taux de vente** face aux
   compétences principales (`collaborateurs_predominances`) : productifs Calcul × taux Calcul, autres × taux autres ;
   chaque taux a un **plafond marché** (SQL 102) au-delà duquel le CA est écrêté (voyant CLIP).
+- **Simulateur : la cuve** (`/analyse/simulateur-cuve`, onglet « Cuve », `components/simulateur/CuveRentabilite.tsx`) : le même
+  simulateur vu comme une cuve (robinets = production, marge négoce, scan ; fuites = salaires, location, autres frais, fees ;
+  niveau d'eau = résultat ; vannes graduées tournées sur le schéma, plafonds des taux en rouge). Chargement commun aux deux
+  onglets : `components/simulateur/SimulateurContenu.tsx`. Les paramètres s'enregistrent dans la console.
 - **Fiabilité du chiffrage** (`/analyse/fiabilite-chiffrage`) : chiffré face au pointé des forfaits ; PE / PI exclues
   d'après l'imputation de la commande de base ; colonnes triables, colonne Client.
 - **Analyse par client** (`/analyse/clients`, ADMIN, SQL 100 `analyse_heures_clients(p_debut, p_fin)` security definer,
