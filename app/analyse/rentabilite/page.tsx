@@ -150,10 +150,10 @@ function RentabiliteContenu() {
         <td style={td}>{l.hc > 0 ? formatHeures(l.hc) : "—"}</td>
         <td style={td}>
           {l.hr > 0 ? formatHeures(l.hr) : "—"}
-          {(l.trajets ?? 0) > 0.01 && l.cle !== "Trajets" && <div style={{ fontSize: 11, color: C.gris }}>+ {formatHeures(l.trajets ?? 0)} de trajet</div>}
+          {(l.trajets ?? 0) > 0.01 && <div style={{ fontSize: 11, color: C.gris }}>dont {formatHeures(l.trajets ?? 0)} de trajet</div>}
         </td>
-        <td style={{ ...td, color: C.gris }}>{l.cle === "Trajets" ? <span style={{ fontSize: 11 }}>code HT</span> : l.auMontant ? <span style={{ fontSize: 11 }}>au montant</span> : parHeure(tauxVendu(l))}</td>
-        <td style={{ ...td, fontWeight: 800, color: l.cle === "Trajets" ? undefined : couleurObtenu(l, coutRef) }}>{l.cle === "Trajets" ? "—" : parHeure(tauxObtenu(l))}</td>
+        <td style={{ ...td, color: C.gris }}>{l.auMontant ? <span style={{ fontSize: 11 }}>au montant</span> : parHeure(tauxVendu(l))}</td>
+        <td style={{ ...td, fontWeight: 800, color: couleurObtenu(l, coutRef) }}>{parHeure(tauxObtenu(l))}</td>
         <td style={td}>{l.cout === null ? "—" : euros(l.cout)}</td>
         <td style={{ ...td, fontWeight: 800, color: m !== null && m < 0 ? C.rougeTexte : undefined }}>{m === null ? "—" : euros(m)}</td>
         <td style={td}>{m === null || l.ca === 0 ? "—" : pct(m / l.ca)}</td>

@@ -102,6 +102,7 @@ export default function BilanFinancierAffaire({
   correspondance,
   heuresNegoce = 0,
   heuresTrajets = 0,
+  trajetsParActivite,
 
   pointeTotal = 0,
   planifie = 0,
@@ -118,7 +119,8 @@ export default function BilanFinancierAffaire({
   correspondance?: Map<string, string>;
   /* heures pointées sur le négoce (activité Négoce), pour la marge résiduelle */
   heuresNegoce?: number;
-  heuresTrajets?: number; // TRAJETS_A_PART : heures de trajet (code HT), comprises dans pointeTotal
+  heuresTrajets?: number; // TRAJETS_PARTOUT : heures de trajet (code HT), comprises dans pointeTotal et dans realiseParActivite
+  trajetsParActivite?: Map<string, number>; // les mêmes, par activité (id), pour la coche « Compter les trajets »
   /* heures de dépassement prévu (pointé + planifié − chiffré), pour en chiffrer le coût */
   depassementPrevu?: number;
   /* MARGES_FICHE : heures pointées mois par mois (« 2026-11 »), au total, planifiées à venir, chiffrées */
@@ -143,6 +145,8 @@ export default function BilanFinancierAffaire({
   const [coutHoraire, setCoutHoraire] = useState<number | null>(null);
   const [coutAnnee, setCoutAnnee] = useState<number | null>(null);
   const [achatsRecus, setAchatsRecus] = useState<number | null>(null);
+  // TRAJETS_PARTOUT : coche « Compter les trajets » (cochée au départ) ; décochée, la marge est vue sans eux
+  const [avecTrajets, setAvecTrajets] = useState(true);
 
   useEffect(() => {
     let actif = true;
@@ -356,11 +360,15 @@ export default function BilanFinancierAffaire({
   }
 
   const somme = (f: (c: Commande) => number) => commandes.reduce((t, c) => t + f(c), 0);
+  const hTrajets = heuresTrajets > 0.05 ? heuresTrajets : 0;
+  const retirerTrajets = !avecTrajets && hTrajets > 0;
+  // le pointé compté : tout, ou sans les trajets si la coche est enlevée
+  const pointeCompte = pointeTotal - (retirerTrajets ? hTrajets : 0);
   const pointeDe = (d: Discipline) => {
     if (!realiseParActivite || !correspondance) return null;
     const ids = new Set(d.colonnes.map((c) => correspondance.get(c)).filter((x): x is string => Boolean(x)));
     if (ids.size === 0) return null;
-    return [...ids].reduce((t, id) => t + (realiseParActivite.get(id) ?? 0), 0);
+    return [...ids].reduce((t, id) => t + (realiseParActivite.get(id) ?? 0) - (retirerTrajets ? trajetsParActivite?.get(id) ?? 0 : 0), 0);
   };
   const vendu = somme((c) => c.negoce);
   const achete = somme((c) => c.achats);
@@ -371,6 +379,15 @@ export default function BilanFinancierAffaire({
       <p style={{ margin: "0 0 12px", fontSize: 13, color: gris }}>
         D’après le Suivi d’affaire BE (commande et avenants) et, pour les PE / PI, les mois clôturés du relevé. Visible selon la fonction « Montants des affaires » (Droits d’accès).
       </p>
+      {hTrajets > 0 && (
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, margin: "0 0 12px", padding: "6px 12px", border: "1px solid #e3e6ea", borderRadius: 8, background: avecTrajets ? "#fcfcfd" : "#fff8e1", fontSize: 14, cursor: "pointer" }}>
+          <input type="checkbox" checked={avecTrajets} onChange={(e) => setAvecTrajets(e.target.checked)} style={{ width: 18, height: 18 }} />
+          <span>
+            Compter les <strong>{heures(hTrajets)}</strong> de trajet (code HT) dans la marge
+            {!avecTrajets && <span style={{ color: "#8a4b00", fontWeight: 700 }}> · marge vue sans les trajets</span>}
+          </span>
+        </label>
+      )}
 
       {/* MARGE_PROJETEE : où va la marge, en € et en %, avec le pointé et le planifié */}
       {(() => {
@@ -379,10 +396,10 @@ export default function BilanFinancierAffaire({
         const toutesLivrees = commandes.length > 0 && commandes.every((c) => /livr/i.test(c.statut));
         const F = somme((c) => c.facture);
         const recette = toutesLivrees ? F : M;
-        const engage = coutHoraire !== null ? pointeTotal * coutHoraire : null;
+        const engage = coutHoraire !== null ? pointeCompte * coutHoraire : null;
         const aEngager = coutHoraire !== null ? (toutesLivrees ? 0 : planifie * coutHoraire) : null;
         const marge = engage !== null && aEngager !== null && recette > 0.5 ? recette - engage - aEngager - A : null;
-        const reste = !toutesLivrees && chiffre > pointeTotal + planifie + 0.5 ? chiffre - pointeTotal - planifie : 0;
+        const reste = !toutesLivrees && chiffre > pointeCompte + planifie + 0.5 ? chiffre - pointeCompte - planifie : 0;
         const siChiffre = marge !== null && reste > 0 && coutHoraire !== null ? marge - reste * coutHoraire : null;
         const couleur = marge === null ? gris : marge < 0 ? "#b3261e" : "#1b5e20";
         const tuile = (titre: string, valeur: string, sousT: string) => (
@@ -421,7 +438,7 @@ export default function BilanFinancierAffaire({
                   )}
                 </div>
               )}
-              {tuile("Déjà engagé", engage !== null ? euros(engage) : "—", `${heures(pointeTotal)} pointées${coutHoraire !== null ? ` × ${euros(coutHoraire)}` : ""}`)}
+              {tuile("Déjà engagé", engage !== null ? euros(engage) : "—", `${heures(pointeCompte)} pointées${retirerTrajets ? " hors trajets" : ""}${coutHoraire !== null ? ` × ${euros(coutHoraire)}` : ""}`)}
               {!toutesLivrees && tuile("Encore à engager", aEngager !== null ? euros(aEngager) : "—", `${heures(planifie)} planifiées`)}
               {A > 0.5 && tuile("Achats", euros(A), "scan, négoce")}
             </div>
@@ -654,12 +671,11 @@ export default function BilanFinancierAffaire({
             const hNeg = heuresNegoce + (toutesLivrees ? 0 : planifieNegoce);
             const avecNegoce = vendu > 0.5 || achete > 0.5 || hNeg > 0.05;
             const mNeg = vendu - achete - hNeg * C;
-            const hTotal = pointeTotal + (toutesLivrees ? 0 : planifie);
-            const hTrajets = heuresTrajets > 0.05 ? heuresTrajets : 0;
-            const hAutres = hTotal - lignes.reduce((t, x) => t + x.h, 0) - (avecNegoce ? hNeg : 0) - hTrajets;
+            const hTotal = pointeCompte + (toutesLivrees ? 0 : planifie);
+            const hAutres = hTotal - lignes.reduce((t, x) => t + x.h, 0) - (avecNegoce ? hNeg : 0);
             const nonVentile = M - lignes.reduce((t, x) => t + x.d.montant, 0) - (avecNegoce ? vendu : 0);
             const ecartFacture = toutesLivrees ? F - M : 0;
-            const total = lignes.reduce((t, x) => t + x.m, 0) + (avecNegoce ? mNeg : 0) - hTrajets * C - (Math.abs(hAutres) > 0.05 ? hAutres * C : 0) + (Math.abs(nonVentile) > 0.5 ? nonVentile : 0) + ecartFacture;
+            const total = lignes.reduce((t, x) => t + x.m, 0) + (avecNegoce ? mNeg : 0) - (Math.abs(hAutres) > 0.05 ? hAutres * C : 0) + (Math.abs(nonVentile) > 0.5 ? nonVentile : 0) + ecartFacture;
             const recette = toutesLivrees ? F : M;
             const bord: CSSProperties = { borderTop: "2px solid #d5d9de" };
             return (
@@ -698,16 +714,6 @@ export default function BilanFinancierAffaire({
                       <td style={tdN}>{hNeg > 0.05 ? heures(hNeg) : "—"}</td>
                       <td style={tdN}>—</td>
                       {marge(mNeg, vendu)}
-                    </tr>
-                  )}
-                  {hTrajets > 0 && (
-                    <tr>
-                      <td style={{ ...td, fontWeight: 800 }} colSpan={4}>
-                        Trajets <span style={{ fontSize: 12, fontWeight: 400, color: gris }}>code HT : coût de l’affaire, non vendu en heures</span>
-                      </td>
-                      <td style={tdN}>{heures(hTrajets)}</td>
-                      <td style={tdN} />
-                      {marge(-hTrajets * C, 0)}
                     </tr>
                   )}
                   {Math.abs(hAutres) > 0.05 && (

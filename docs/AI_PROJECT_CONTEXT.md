@@ -48,10 +48,10 @@ Mis à jour le 15/11/2026 (sessions 11 et 12 : fiche affaire, page Ressources, a
   pour ne pas compter deux fois la journée en cours.
 - **Coût du temps = coût horaire de structure** (`indicateurs_couts.cout_horaire`, par exercice = année de novembre, saisi
   dans Rentabilité), le même pour tout le monde.
-- **Heures de trajet** (code `HT`, `lib/trajets.ts`, décision de PLG du 16/11/2026) : pointées **sur l'affaire**. Hors
-  comparaison au chiffré (Fiche affaire, Fiabilité, Suivi des affaires, reste à planifier : « dont trajets » à part) ;
-  **comptées dans le coût et la marge** (Rentabilité et onglet Financier : ligne « Trajets » à part). Analyse de capacité,
-  heures sup, compteur et paie inchangés. PE / PI au relevé : non séparés (la source mensuelle n'a pas le code).
+- **Heures de trajet** (code `HT`, `lib/trajets.ts`, décision de PLG du 18/11/2026, remplace celle du 16/11) : pointées
+  **sur l'affaire** et **comptées partout comme les autres heures** (fiche affaire, Fiabilité, Suivi des affaires,
+  Rentabilité, simulateur, capacité, paie). Seule exception : l'onglet Financier de la fiche affaire a une coche
+  « Compter les trajets » (cochée au départ) pour voir la marge sans eux. Rentabilité affiche « dont X h de trajet ».
 - **Exercice** : du 1er novembre au 31 octobre ; il porte l'année de novembre.
 - **Capacité** : 35 h par semaine pour tout le monde dans les analyses ; quelqu'un à 37,5 h produit plus, c'est normal
   (les % peuvent dépasser 100 %).

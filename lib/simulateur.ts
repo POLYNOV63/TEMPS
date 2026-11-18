@@ -322,8 +322,8 @@ export function chiffresRentabilite(d: DonneesRentabilite, exercice: number, exc
   const caScanPur = scanPurAff.reduce((t, a) => t + a.ca, 0);
   const achatsScanPur = scanPurAff.reduce((t, a) => t + a.achats, 0);
   const heuresScanPur = scanPurAff.reduce((t, a) => t + a.hr, 0);
-  // production : tout sauf le négoce et les trajets, moins le scan pur vendu au montant (pas d'heures chiffrées)
-  const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle) && g.cle !== "Trajets");
+  // production : tout sauf le négoce, moins le scan pur vendu au montant (pas d'heures chiffrées) ; trajets compris (TRAJETS_PARTOUT)
+  const lignesProd = r.groupes.filter((g) => !NEGOCE.has(g.cle));
   const scanPur = r.affaires.filter((a) => a.auMontant && a.activite === "Scan").reduce((t, a) => t + a.ca, 0);
   const caProd = lignesProd.reduce((t, g) => t + g.ca, 0) - scanPur;
   const hcProd = lignesProd.reduce((t, g) => t + g.hc, 0);
@@ -412,7 +412,7 @@ export function construireDepart(
   v.scan = Math.round((renta.caScanPur - renta.achatsScanPur) / 1000 / 5) * 5;
   s.scan = { reel: true, texte: `${nbScan} : vendu ${fr(renta.caScanPur)} € − achats ${fr(renta.achatsScanPur)} €` };
   v.hscan = Math.round(renta.heuresScanPur / 10) * 10;
-  s.hscan = { reel: true, texte: `${nbScan} : ${fr(renta.heuresScanPur)} h pointées (hors trajets)` };
+  s.hscan = { reel: true, texte: `${nbScan} : ${fr(renta.heuresScanPur)} h pointées (trajets compris)` };
   if (renta.margeNegoce !== null) {
     v.mneg = Math.round(renta.margeNegoce);
     s.mneg = { reel: true, texte: "(vendu − achats) ÷ vendu, lignes Négoce de la Rentabilité" };

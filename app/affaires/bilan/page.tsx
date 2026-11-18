@@ -583,16 +583,18 @@ function BilanContenu() {
       for (const c of chiffrePilotage) chiffre.set(c.activite_id, (chiffre.get(c.activite_id) ?? 0) + c.heures);
     }
 
-    // TRAJETS_A_PART : les heures de trajet (code HT) restent dans le pointé total, mais hors comparaison au chiffré
+    // TRAJETS_PARTOUT : les heures de trajet (code HT) comptent comme les autres ; on garde leur total et leur
+    // répartition par activité pour la coche « Compter les trajets » de l'onglet Financier
     const realise = new Map<string, number>();
     let trajets = 0;
+    const trajetsParActivite = new Map<string, number>();
     for (const i of imputations) {
-      if (estTrajet(i.code)) {
-        trajets += i.heures;
-        continue;
-      }
       const k = i.activite_id ?? SANS_ACTIVITE;
       realise.set(k, (realise.get(k) ?? 0) + i.heures);
+      if (estTrajet(i.code)) {
+        trajets += i.heures;
+        trajetsParActivite.set(k, (trajetsParActivite.get(k) ?? 0) + i.heures);
+      }
     }
 
     // négoce et scan sont vendus au montant
@@ -644,8 +646,9 @@ function BilanContenu() {
       toutAuMontant,
       auMontant,
       horsComparaison,
-      realiseCompare: totalRealise - horsComparaison - trajets,
+      realiseCompare: totalRealise - horsComparaison,
       trajets,
+      trajetsParActivite,
       sourceChiffre,
       parActivite,
       chiffreNonRattache,
@@ -998,7 +1001,7 @@ function BilanContenu() {
                               <span style={{ fontSize: 13, borderTop: `2px solid ${C.ligne}`, paddingTop: 6 }}>
                                 <strong>{formatHeures(pointe)}</strong> + <strong>{formatHeures(planifieTotal)}</strong> / {formatHeures(bilan.totalChiffre)} · {etatTxt(bilan.totalChiffre, pointe, planifieTotal, formatHeures)}
                                 {avancement !== null && <span style={{ color: C.gris }}> · avancement estimé {Math.round(avancement)} %</span>}
-                                {bilan.trajets > 0.01 && <span style={{ color: C.gris }}> · hors {formatHeures(bilan.trajets)} de trajet</span>}
+                                {bilan.trajets > 0.01 && <span style={{ color: C.gris }}> · dont {formatHeures(bilan.trajets)} de trajet</span>}
                               </span>
                             </>
                           )}
@@ -1565,6 +1568,7 @@ function BilanContenu() {
                 pointeParMois={new Map(bilan.evolution.map((m) => [m.mois, m.heures]))}
                 pointeTotal={bilan.totalRealise}
                 heuresTrajets={bilan.trajets}
+                trajetsParActivite={bilan.trajetsParActivite}
                 planifie={planifieTotal}
                 chiffre={bilan.toutAuMontant ? 0 : bilan.totalChiffre}
                 planifieParMois={planifieMois}

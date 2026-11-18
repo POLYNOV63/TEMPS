@@ -19,7 +19,7 @@ import {
    Déplacés tels quels depuis app/analyse/rentabilite/page.tsx, pour que
    la page Rentabilité et le Simulateur de rentabilité utilisent EXACTEMENT
    le même calcul. Les règles sont décrites dans la page Rentabilité
-   (RENTABILITE_V1 à V6, TRAJETS_A_PART, MARGES_POS_NEG…).
+   (RENTABILITE_V1 à V6, TRAJETS_PARTOUT, MARGES_POS_NEG…).
 ================================================================ */
 
 export const sansAccents = (t: string | null | undefined) => (t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
@@ -34,7 +34,7 @@ export type LigneRenta = {
   hr: number;
   cout: number | null;
   auMontant: boolean;
-  trajets?: number; // TRAJETS_A_PART : heures de trajet (code HT), dans le coût mais pas dans « heures passées »
+  trajets?: number; // TRAJETS_PARTOUT : dont heures de trajet (code HT), comprises dans « heures passées »
   cumul?: Cumul; // MARGES_POS_NEG : parts d'affaires gagnantes / perdantes (lignes « par activité »)
 };
 /* MARGES_POS_NEG (PLG, 17/11/2026) : dans « Par activité », chaque affaire est répartie entre ses activités ; chaque part
@@ -144,11 +144,8 @@ export async function chargerDonneesRentabilite(): Promise<DonneesRentabilite> {
   for (const x of realise) {
     if (x.type_affaire !== "CBE") continue;
     const k = String(x.numero).replace(/^0+/, "");
-    // TRAJETS_A_PART : les trajets (code HT) sur une ligne à part, comptés dans le coût
-    if (estTrajet(x.code)) {
-      trajetsParBase.set(k, (trajetsParBase.get(k) ?? 0) + (Number(x.heures) || 0));
-      continue;
-    }
+    // TRAJETS_PARTOUT : les trajets (code HT) comptent dans les heures de leur activité ; total gardé pour information
+    if (estTrajet(x.code)) trajetsParBase.set(k, (trajetsParBase.get(k) ?? 0) + (Number(x.heures) || 0));
     const g = realiseParBase.get(k) ?? groupesVides();
     g[(x.activite_id && groupeActivite.get(x.activite_id)) || "Autre"] += Number(x.heures) || 0;
     realiseParBase.set(k, g);
@@ -309,12 +306,11 @@ export function calculerRentabilite(d: DonneesRentabilite, exercice: number, exc
       achats: a.achats,
       hc,
       hr,
-      cout: c === null ? null : a.achats + (hr + tr) * c,
+      cout: c === null ? null : a.achats + hr * c,
       auMontant: montant,
       nonVentile,
       trajets: tr,
     });
-    if (tr > 0.01) ajouter("Trajets", 0, 0, 0, tr, c === null ? null : tr * c, false);
     if (montant) {
       // négoce / scan pur : l'affaire entière dans sa ligne, heures passées comprises
       ajouter(/^scan/.test(sansAccents(a.imputation)) ? "Scan" : "Négoce au montant", a.montant, a.achats, 0, hr, c === null ? null : a.achats + hr * c, true);
@@ -355,7 +351,7 @@ export function calculerRentabilite(d: DonneesRentabilite, exercice: number, exc
     return mx / (x.ca || 1) - my / (y.ca || 1);
   });
 
-  const ordre = [...GROUPES, "Négoce au montant", "Scan", "PE", "PI", "Trajets"];
+  const ordre = [...GROUPES, "Négoce au montant", "Scan", "PE", "PI"];
   const groupes = [...parGroupe.values()].sort((x, y) => ordre.indexOf(x.cle) - ordre.indexOf(y.cle));
   const tout: LigneRenta[] = [...affaires, ...prestationsEx];
   const total: LigneRenta = {

@@ -1,5 +1,4 @@
 "use client";
-import { estTrajet } from "@/lib/trajets";
 
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
@@ -234,7 +233,6 @@ function FiabiliteContenu() {
     const realiseParBase = new Map<string, Map<string, number>>();
     for (const r of realise) {
       if (r.type_affaire !== "CBE") continue;
-      if (estTrajet(r.code)) continue; // TRAJETS_A_PART : le trajet n'est pas de l'étude, hors comparaison au chiffré
       const b = baseDe(String(r.numero));
       const m = realiseParBase.get(b) ?? new Map<string, number>();
       const k = r.activite_id ?? SANS;
@@ -363,7 +361,7 @@ function FiabiliteContenu() {
                 <p style={{ margin: "0 0 10px", fontSize: 13, color: C.gris }}>
                   <span style={{ color: "#c62828", fontWeight: 800 }}>Rouge</span> : plus de 10 % au-delà du chiffré (chiffrage trop court) ·{" "}
                   <span style={{ color: "#2e7d32", fontWeight: 800 }}>vert</span> : à ±10 % · <span style={{ color: "#1f6feb", fontWeight: 800 }}>bleu</span> :
-                  plus de 10 % en deçà (chiffrage large). Cliquez sur une activité pour voir ses affaires ; cliquez sur un titre de colonne pour trier. Les heures de trajet (code HT) ne sont pas comptées : ce n’est pas de l’étude.
+                  plus de 10 % en deçà (chiffrage large). Cliquez sur une activité pour voir ses affaires ; cliquez sur un titre de colonne pour trier. Les heures de trajet (code HT) sont comptées comme les autres.
                 </p>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 14 }}>
