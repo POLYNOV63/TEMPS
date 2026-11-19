@@ -1641,21 +1641,27 @@ export default function MaSemainePage() {
         heures,
         manquantes: Math.max(0, cible - heures),
         supplementaires: Math.max(0, heures - cible),
-        rattrapees: 0,
+        rattrapees: 0, // heures manquantes rattrapées
+        reRattrapees: 0, // heures de RE rattrapées (non débitées du compteur)
       };
     });
 
-    /* RATTRAPAGE_SEMAINE (PLG, 19/11/2026) : exception à la règle jour par jour. Un jour coché « rattrapé dans la
-       semaine » : ses heures manquantes sont prises sur les heures en plus des autres jours de la même semaine
-       (ni débit du compteur, ni heures sup pour ces heures-là). Ce qui n'est pas rattrapé reste manquant. */
+    /* RATTRAPAGE_SEMAINE (PLG, 19/11/2026) : exception à la règle jour par jour, liée à une absence. Une RE (demande
+       d'absence : il part plus tôt, arrive plus tard) cochée « rattrapée dans la semaine » : ses heures (et ce qui
+       manquerait encore ce jour-là) sont prises sur les heures en plus des autres jours de la même semaine. La part
+       rattrapée n'est ni débitée du compteur ni comptée en heures sup ; le reste suit les règles habituelles. */
     const totalSup = details.reduce((t, d) => t + d.supplementaires, 0);
     let disponible = totalSup;
     for (const d of details) {
-      if (!d.jour.rattrapage || d.manquantes <= 0.001 || disponible <= 0.001) continue;
-      const pris = Math.min(d.manquantes, disponible);
-      d.manquantes -= pris;
-      d.rattrapees = pris;
-      disponible -= pris;
+      if (!d.jour.rattrapage || disponible <= 0.001) continue;
+      const re = d.jour.absence === CODE_RE ? convertirHeures(d.jour.heuresRE) : 0;
+      const pourManque = Math.min(d.manquantes, disponible);
+      d.manquantes -= pourManque;
+      d.rattrapees = pourManque;
+      disponible -= pourManque;
+      const pourRE = Math.min(re, disponible);
+      d.reRattrapees = pourRE;
+      disponible -= pourRE;
     }
     if (totalSup > 0.001 && disponible < totalSup - 0.001) {
       const facteur = disponible / totalSup;
@@ -1671,9 +1677,11 @@ export default function MaSemainePage() {
     );
   }, [detailsJours]);
 
+  // RATTRAPAGE_SEMAINE : une RE rattrapée ne réduit plus la base de 35 h (elle n'est pas prise sur le compteur)
+  const reRattrapeesSemaine = detailsJours.reduce((t, d) => t + d.reRattrapees, 0);
   const heuresSupplementairesBase35 = Math.max(
     0,
-    totalHeuresSemaine - base35Semaine
+    totalHeuresSemaine - (base35Semaine + reRattrapeesSemaine)
   );
 
   const heuresSupplementaires = Math.max(
@@ -1693,8 +1701,8 @@ export default function MaSemainePage() {
             jour.heuresRE
           ),
         0
-      );
-    }, [semaine]);
+      ) - reRattrapeesSemaine; // RATTRAPAGE_SEMAINE : la RE rattrapée n'est pas débitée du compteur
+    }, [semaine, reRattrapeesSemaine]);
 
   /*
    * Les heures supplémentaires ne sont plus arbitrées semaine par semaine.
@@ -1864,6 +1872,7 @@ export default function MaSemainePage() {
       presence,
       ticketRestaurant: ticket,
       heuresRE: absence === CODE_RE ? jour.heuresRE : "",
+      rattrapage: absence === CODE_RE ? jour.rattrapage : false, // RATTRAPAGE_SEMAINE : liée à la RE
       heuresAbsence,
       dureeCP,
       dureeRTT: absence === CODE_RT ? jour.dureeRTT : "JOURNEE",
@@ -4724,17 +4733,20 @@ export default function MaSemainePage() {
 
   // Champs complémentaires d'une absence (mêmes règles que la feuille classique),
   // empilés pour rester dans la largeur d'une colonne de jour.
-  /* RATTRAPAGE_SEMAINE : la case « rattrapé dans la semaine », sous l'absence, pour un jour où il manque des heures */
+  /* RATTRAPAGE_SEMAINE : sous une RE (demande d'absence), la case « rattrapée dans la semaine ». Un jour coché
+     sans absence (premier essai du 19/11) garde sa case pour pouvoir la décocher. */
   const caseRattrapage = (date: string) => {
     const jour = jourParDate(date);
     if (!jour || jour.estWeekend || jour.estFerie) return null;
+    if (jour.absence !== CODE_RE && !jour.rattrapage) return null;
     const detail = detailsJours.find((d) => d.jour.date === date);
-    const manque = detail ? Math.max(0, detail.cible - detail.heures) : 0;
+    const re = jour.absence === CODE_RE ? convertirHeures(jour.heuresRE) : 0;
+    const manque = (detail ? Math.max(0, detail.cible - detail.heures) : 0) + re;
     if (manque <= 0.01 && !jour.rattrapage) return null;
-    const rattrapees = detail?.rattrapees ?? 0;
+    const rattrapees = (detail?.rattrapees ?? 0) + (detail?.reRattrapees ?? 0);
     return (
       <label
-        title="Heures manquantes ce jour-là, rattrapées par les heures faites en plus les autres jours de la semaine : ni récupération débitée du compteur, ni heures sup pour ces heures-là."
+        title="Récupération rattrapée par les heures faites en plus les autres jours de la même semaine : la part rattrapée n'est pas débitée du compteur et ne compte pas en heures sup. La demande d'absence reste l'attestation."
         style={{ display: "flex", alignItems: "flex-start", gap: 6, marginTop: 6, padding: "6px 8px", border: "1px solid #b9d7f2", background: jour.rattrapage ? "#e8f2fc" : "#ffffff", borderRadius: 8, fontSize: 12.5, cursor: "pointer" }}
       >
         <input
@@ -4744,7 +4756,7 @@ export default function MaSemainePage() {
           style={{ width: 18, height: 18, margin: 0, flex: "0 0 auto" }}
         />
         <span>
-          Rattrapé dans la semaine{manque > 0.01 ? ` (${formatHeures(manque)} h)` : ""}
+          Rattrapée dans la semaine{manque > 0.01 ? ` (${formatHeures(manque)} h)` : ""}
           {jour.rattrapage && manque > 0.01 && (
             <span style={{ display: "block", color: rattrapees >= manque - 0.01 ? "#1b5e20" : "#8a4b00", fontWeight: 700 }}>
               {rattrapees >= manque - 0.01 ? "✓ rattrapé" : `${formatHeures(manque - rattrapees)} h encore à rattraper`}
@@ -4757,7 +4769,18 @@ export default function MaSemainePage() {
 
   const detailAbsenceGrille = (date: string) => {
     const jour = jourParDate(date);
-    if (jour && !jour.absence) return caseRattrapage(date);
+    const detail = detailAbsenceGrilleBase(date);
+    const caseR = jour ? caseRattrapage(date) : null;
+    return detail || caseR ? (
+      <>
+        {detail}
+        {caseR}
+      </>
+    ) : null;
+  };
+
+  const detailAbsenceGrilleBase = (date: string) => {
+    const jour = jourParDate(date);
 
     if (!jour || !jour.absence || jour.estFerie) return null;
 
