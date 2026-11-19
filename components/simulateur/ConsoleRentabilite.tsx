@@ -382,7 +382,7 @@ export default function ConsoleRentabilite({
   const lignes: [string, string, ReactNode][] = [
     ["Chiffre d’affaires", keur(a.ca), <Delta key="d" delta={a.ca - r.ca} f={keur} />],
     ...(caReel !== null
-      ? ([["CA réel de l’exercice (Finances)", keur(caReel), <span key="d" className={s.d}>simulé {a.ca - caReel >= 0 ? "+" : "−"}{keur(Math.abs(a.ca - caReel))}</span>]] as [string, string, ReactNode][])
+      ? ([["🎯 Cible : CA réel (fixe)", keur(caReel), <span key="d" className={s.d}>{Math.abs(a.ca - caReel) < 500 ? "atteinte ✓" : `simulé ${a.ca - caReel >= 0 ? "+" : "−"}${keur(Math.abs(a.ca - caReel))}`}</span>]] as [string, string, ReactNode][])
       : []),
     ["dont production", keur(a.caProd), <Delta key="d" delta={a.caProd - r.caProd} f={keur} />],
     ["dont négoce", keur(a.caNeg), <Delta key="d" delta={a.caNeg - r.caNeg} f={keur} />],

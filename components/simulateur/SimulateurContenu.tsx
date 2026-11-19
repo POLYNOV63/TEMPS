@@ -154,7 +154,7 @@ export default function SimulateurContenu({ vue = "console" }: { vue?: "console"
           title={`Comme la page Finances : forfaits livrés ${keur(caReel.forfaits)} + relevé PE / PI validé ${keur(caReel.releve)} + historique des prestations ${keur(caReel.historique)}${Math.abs(caReel.ajustements) > 500 ? ` + ajustements ${keur(caReel.ajustements)}` : ""}`}
           style={{ marginLeft: "auto" }}
         >
-          CA réel de l’exercice (Finances) : <strong>{keur(caReel.total)}</strong>
+          🎯 Cible, CA réel de l’exercice (Finances, fixe) : <strong>{keur(caReel.total)}</strong>
         </span>
       )}
     </div>
