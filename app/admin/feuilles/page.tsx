@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import EnTetePage from "@/components/EnTetePage";
 import CarteBilanRH from "@/components/rh/BilanRHEnvoi";
+import ExportHebdoExcel from "@/components/rh/ExportHebdoExcel"; // EXPORT_DANS_FEUILLES
 import { peut } from "@/lib/droits";
 
 /* ===============================================================
@@ -114,6 +115,7 @@ export default function FeuillesPage() {
   const [reouvertureEnCours, setReouvertureEnCours] = useState<string | null>(null);
   const [peutAdministrer, setPeutAdministrer] = useState(false);
   const [voitBilanRH, setVoitBilanRH] = useState(false);
+  const [peutExporter, setPeutExporter] = useState(false); // EXPORT_DANS_FEUILLES
   const [nbSemaines, setNbSemaines] = useState(NB_SEMAINES_INITIAL);
   const [futuresOuvertes, setFuturesOuvertes] = useState(false);
 
@@ -145,6 +147,7 @@ export default function FeuillesPage() {
 
       setPeutAdministrer(peut(moi?.role, "administrerFeuilles"));
       setVoitBilanRH(peut(moi?.role, "bilanRH"));
+      setPeutExporter(peut(moi?.role, "exporterExcel"));
 
       const [collaborateursResult, feuillesResult] = await Promise.all([
         supabase.from("collaborateurs").select("*").order("nom", { ascending: true }).order("prenom", { ascending: true }),
@@ -311,6 +314,8 @@ export default function FeuillesPage() {
 
         {/* BILAN_RH_RAPPEL : le bilan RH du mois et le rappel de fin de mois */}
         {voitBilanRH && <CarteBilanRH />}
+        {/* EXPORT_DANS_FEUILLES (19/11/2026) : l'export Excel des feuilles d'heures, aussi en bas du Bilan RH mensuel */}
+        {peutExporter && <ExportHebdoExcel />}
 
         {erreur && (
           <div style={styles.errorCard}>
