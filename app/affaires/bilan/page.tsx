@@ -720,7 +720,7 @@ function BilanContenu() {
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
   // HEURES_HISTORIQUE : une prestation suivie dans l'historique (CBE1487, intergroupe) se lit aussi comme une PE / PI
   const prestation =
-    affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI" || Boolean(PRESTATIONS_HISTORIQUE[affaire.numero.match(/^d+/)?.[0]?.replace(/^0+/, "") ?? ""]));
+    affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI" || Boolean(PRESTATIONS_HISTORIQUE[affaire.numero.match(/^\d+/)?.[0]?.replace(/^0+/, "") ?? ""]));
   const ongletVu: "AFFAIRE" | "ARGENT" = ongletFiche === "ARGENT" && voitMontants && affaire?.type === "CBE" ? "ARGENT" : "AFFAIRE";
 
   // planifié à venir
