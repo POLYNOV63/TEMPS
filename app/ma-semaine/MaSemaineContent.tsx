@@ -160,35 +160,46 @@ async function horairesDeLaSemaine(
   profilParDefaut: string | null,
   lundi: string
 ): Promise<HorairesSemaine> {
+  /* RYTHME_PAR_JOUR (19/11/2026) : le rythme est relu JOUR PAR JOUR. Un changement de profil en cours de semaine
+     (ex. à partir du mercredi 18/11) s'applique dès ce jour-là ; les jours d'avant gardent l'ancien rythme. */
+  const jourISO = (k: number) => {
+    const d = new Date(`${lundi}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + k);
+    return d.toISOString().slice(0, 10);
+  };
+  const dates = [0, 1, 2, 3, 4].map(jourISO);
+
   const { data: historique, error: erreurHistorique } = await supabase
     .from("historique_profils_horaires")
     .select("profil_horaire_id,date_debut,date_fin")
     .eq("collaborateur_id", collaborateurId)
-    .lte("date_debut", lundi)
+    .lte("date_debut", dates[4])
     .or(`date_fin.is.null,date_fin.gte.${lundi}`)
-    .order("date_debut", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("date_debut", { ascending: false });
   if (erreurHistorique) throw erreurHistorique;
 
-  const profilId = historique?.profil_horaire_id ?? profilParDefaut;
-  if (!profilId) return HORAIRES_DEFAUT;
+  const periodes = (historique ?? []) as { profil_horaire_id: string | null; date_debut: string; date_fin: string | null }[];
+  const profilDuJour = dates.map((date) => {
+    const p = periodes.find((x) => String(x.date_debut).slice(0, 10) <= date && (!x.date_fin || String(x.date_fin).slice(0, 10) >= date));
+    return p?.profil_horaire_id ?? profilParDefaut;
+  });
+  const ids = [...new Set(profilDuJour.filter((x): x is string => Boolean(x)))];
+  if (ids.length === 0) return HORAIRES_DEFAUT;
 
-  const { data: profil, error: erreurProfil } = await supabase
+  const { data: profils, error: erreurProfil } = await supabase
     .from("profils_horaires")
     .select("id,nom,lundi,mardi,mercredi,jeudi,vendredi")
-    .eq("id", profilId)
-    .maybeSingle();
+    .in("id", ids);
   if (erreurProfil) throw erreurProfil;
-  if (!profil) return HORAIRES_DEFAUT;
+  const parId = new Map(((profils ?? []) as { id: string; lundi: number | string; mardi: number | string; mercredi: number | string; jeudi: number | string; vendredi: number | string }[]).map((p) => [p.id, p]));
 
-  return {
-    lundi: Number(profil.lundi) || 0,
-    mardi: Number(profil.mardi) || 0,
-    mercredi: Number(profil.mercredi) || 0,
-    jeudi: Number(profil.jeudi) || 0,
-    vendredi: Number(profil.vendredi) || 0,
-  };
+  const CLES = ["lundi", "mardi", "mercredi", "jeudi", "vendredi"] as const;
+  const horaires = { ...HORAIRES_DEFAUT };
+  CLES.forEach((cle, i) => {
+    const p = profilDuJour[i] ? parId.get(profilDuJour[i] as string) : undefined;
+    horaires[cle] = p ? Number(p[cle]) || 0 : HORAIRES_DEFAUT[cle];
+  });
+  return horaires;
 }
 
 /* ============================================================

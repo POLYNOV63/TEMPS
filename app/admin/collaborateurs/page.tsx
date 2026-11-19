@@ -537,8 +537,10 @@ export default function CollaborateursPage() {
         if (error) throw error;
       } else {
         if (historiqueActif) {
-          const fin = new Date(`${dateDebut}T00:00:00`);
-          fin.setDate(fin.getDate() - 1);
+          // RYTHME_PAR_JOUR : la veille du nouveau rythme, calculée en UTC (en heure locale, toISOString reculait
+          // d'un jour : un rythme au 18/11 fermait l'ancien au 16/11, et le 17/11 restait sans rythme)
+          const fin = new Date(`${dateDebut}T00:00:00Z`);
+          fin.setUTCDate(fin.getUTCDate() - 1);
           const dateFinHistorique = fin.toISOString().slice(0, 10);
 
           if (dateFinHistorique < historiqueActif.date_debut) {
