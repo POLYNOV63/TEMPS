@@ -109,6 +109,10 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
 - Une feuille = une semaine. Lundi à vendredi affichés ; le week-end est masqué et n'est enregistré que s'il est renseigné.
 - **Rythme** : horaires du jour = profil horaire en vigueur à la date de la semaine (`historique_profils_horaires`), à défaut
   le profil du collaborateur, à défaut 7,5 / 7,5 / 7,5 / 7,5 / 5 h.
+- **Rattrapé dans la semaine** (RATTRAPAGE_SEMAINE, 19/11/2026, SQL 105 : `feuilles_heures_jours.rattrapage`) : seule exception
+  à la règle jour par jour des heures sup / manquantes. Un jour coché (case sous « Absence » quand il manque des heures) voit ses
+  heures manquantes prises sur les heures en plus des autres jours de la semaine : ni RE débitée, ni heures sup pour ces heures-là.
+  Grille seulement (pas la feuille simplifiée).
 - **Jours fériés** français calculés par la date (non saisissables) ; code technique FE (hors bilan). Aucune imputation un
   jour férié.
 - **Absences** (codes `codes_imputation`, catégories ABSENCE / HORS_BILAN) : RE (récupération, en heures, débitées du
