@@ -321,6 +321,7 @@ export default function ConsoleRentabilite({
   message,
   estAdmin,
   onEnregistrer,
+  caReel = null,
 }: {
   depart: Depart;
   versionDepart: string; // change quand l'exercice (ou le mute) change : curseurs et référence repartent des chiffres
@@ -329,6 +330,7 @@ export default function ConsoleRentabilite({
   message?: ReactNode;
   estAdmin: boolean;
   onEnregistrer: (v: Leviers) => Promise<string | null>;
+  caReel?: number | null; // CA_REEL_EXERCICE : CA réalisé de l'exercice (Finances), la cible
 }) {
   const [v, setV] = useState<Leviers>(depart.valeurs);
   const [ref, setRef] = useState<Leviers>(depart.valeurs);
@@ -379,7 +381,11 @@ export default function ConsoleRentabilite({
 
   const lignes: [string, string, ReactNode][] = [
     ["Chiffre d’affaires", keur(a.ca), <Delta key="d" delta={a.ca - r.ca} f={keur} />],
+    ...(caReel !== null
+      ? ([["CA réel de l’exercice (Finances)", keur(caReel), <span key="d" className={s.d}>simulé {a.ca - caReel >= 0 ? "+" : "−"}{keur(Math.abs(a.ca - caReel))}</span>]] as [string, string, ReactNode][])
+      : []),
     ["dont production", keur(a.caProd), <Delta key="d" delta={a.caProd - r.caProd} f={keur} />],
+    ["dont négoce", keur(a.caNeg), <Delta key="d" delta={a.caNeg - r.caNeg} f={keur} />],
     ["dont scan", keur(a.caScan), <Delta key="d" delta={a.caScan - r.caScan} f={keur} />],
     ["Taux de vente moyen", `${fmt(a.tauxMoyen, 1)} €/h`, <Delta key="d" delta={(a.tauxMoyen - r.tauxMoyen) * 10} f={(x) => `${fmt(x / 10, 1)} €`} />],
     ...(a.caEcrete > 0.5

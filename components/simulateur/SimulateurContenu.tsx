@@ -16,6 +16,7 @@ import {
   enregistrerParametres,
   type Parametres,
 } from "@/lib/simulateur";
+import { caExercice, chargerSourcesCA, type SourcesCA } from "@/lib/caExercice";
 
 /* ===============================================================
    SIMULATEUR : CHARGEMENT COMMUN (SIMULATEUR_RENTA, SIMULATEUR_CUVE)
@@ -44,6 +45,17 @@ export default function SimulateurContenu({ vue = "console" }: { vue?: "console"
   const [parametres, setParametres] = useState<{ ex: number; v: Parametres | null } | null>(null);
   const [muets, setMuets] = useState<Set<string>>(new Set()); // « exercice:base » sorties par MUTE
   const [erreur, setErreur] = useState("");
+  // CA_REEL_EXERCICE : le CA réalisé de l'exercice (règles de Finances), la cible pour « coller » à l'exercice passé
+  const [sourcesCA, setSourcesCA] = useState<SourcesCA | null>(null);
+  useEffect(() => {
+    let actif = true;
+    chargerSourcesCA()
+      .then((x) => actif && setSourcesCA(x))
+      .catch(() => actif && setSourcesCA(null));
+    return () => {
+      actif = false;
+    };
+  }, []);
 
   // une fois : la rentabilité (toutes les affaires), les effectifs, qui je suis
   useEffect(() => {
@@ -97,6 +109,9 @@ export default function SimulateurContenu({ vue = "console" }: { vue?: "console"
     if (dernier.current?.version !== version) dernier.current = { depart, version, libelle: `réf. : nos chiffres ${exercice}-${exercice + 1}${exclues.size ? " (mute)" : ""}` };
   }
 
+  const caReel = useMemo(() => (renta && sourcesCA ? caExercice(renta.lignesFin, sourcesCA, exercice) : null), [renta, sourcesCA, exercice]);
+  const keur = (x: number) => `${Math.round(x / 1000).toLocaleString("fr-FR")} k€`;
+
   const entete = (
     <div className={s.exercice}>
       <span className={s.lbl}>Exercice</span>
@@ -133,6 +148,15 @@ export default function SimulateurContenu({ vue = "console" }: { vue?: "console"
           </button>
         );
       })}
+      {caReel && (
+        <span
+          className={s.lbl}
+          title={`Comme la page Finances : forfaits livrés ${keur(caReel.forfaits)} + relevé PE / PI validé ${keur(caReel.releve)} + historique des prestations ${keur(caReel.historique)}${Math.abs(caReel.ajustements) > 500 ? ` + ajustements ${keur(caReel.ajustements)}` : ""}`}
+          style={{ marginLeft: "auto" }}
+        >
+          CA réel de l’exercice (Finances) : <strong>{keur(caReel.total)}</strong>
+        </span>
+      )}
     </div>
   );
 
@@ -157,6 +181,7 @@ export default function SimulateurContenu({ vue = "console" }: { vue?: "console"
       entete={entete}
       message={message}
       estAdmin={Boolean(moi?.estAdmin)}
+      caReel={caReel?.total ?? null}
       onEnregistrer={async (v) => {
         const err = await enregistrerParametres(exercice, v, moi?.id ?? null);
         if (!err) setParametres({ ex: exercice, v: await chargerParametres(exercice) });
