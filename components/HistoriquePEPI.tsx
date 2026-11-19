@@ -81,16 +81,28 @@ export async function chargerCommandesPEPI(base: string): Promise<{ commandes: C
     const lignes = ((pl ?? []) as { id: string; affaire_id: string; unite: "JOUR" | "HEURE"; taux: number | string | null; base_horaire: number | string | null; actif: boolean | null }[]).map(
       (l): LigneP => ({ id: l.id, affaire_id: l.affaire_id, unite: l.unite, taux: l.taux === null ? null : n(l.taux), base_horaire: n(l.base_horaire) || null, actif: l.actif !== false })
     );
-    if (lignes.length === 0) return { commandes: [], message: "Aucune ligne au relevé PE / PI pour cette affaire." };
+    /* FACTURE_HISTORIQUE (19/11/2026) : les mois facturés gardés dans l'historique du Suivi des prestations (lignes que
+       l'import n'a pas pu rattacher au relevé, ex. l'intergroupe CBE1487) comptent comme facturés, pour leur commande */
+    const cleCmd = (v: string) => String(v ?? "").toUpperCase().replace(/^CBE/, "").replace(/\s/g, "").replace(/^0+/, "");
+    const { data: hiData } = await supabase.from("prestation_historique").select("mois,type,numero,heures,montant").eq("type", "CBE").ilike("numero", `%${b}%`);
+    const historique = ((hiData ?? []) as { mois: string; numero: string; heures: number | string | null; montant: number | string | null }[]).filter(
+      (h) => (String(h.numero).match(/\d+/)?.[0] ?? "").replace(/^0+/, "") === b
+    );
+    if (lignes.length === 0 && historique.length === 0) return { commandes: [], message: "Aucune ligne au relevé PE / PI pour cette affaire." };
     const ids = lignes.map((l) => l.id);
+    const avecLignes = ids.length > 0;
 
     const [pm, sa, sl] = await Promise.all([
-      chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; heures_fige: number | string | null; montant_fige: number | string | null }>((x, y) =>
-        supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige,montant_fige").in("ligne_id", ids).order("mois").range(x, y)
-      ),
-      chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((x, y) =>
-        supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).order("jour").range(x, y)
-      ),
+      avecLignes
+        ? chargerTout<{ ligne_id: string; mois: string; valide: boolean | null; heures_fige: number | string | null; montant_fige: number | string | null }>((x, y) =>
+            supabase.from("prestation_mois").select("ligne_id,mois,valide,heures_fige,montant_fige").in("ligne_id", ids).order("mois").range(x, y)
+          )
+        : Promise.resolve([] as { ligne_id: string; mois: string; valide: boolean | null; heures_fige: number | string | null; montant_fige: number | string | null }[]),
+      avecLignes
+        ? chargerTout<{ ligne_id: string; jour: string; heures: number | string | null }>((x, y) =>
+            supabase.from("prestation_saisies").select("ligne_id,jour,heures").in("ligne_id", ids).order("jour").range(x, y)
+          )
+        : Promise.resolve([] as { ligne_id: string; jour: string; heures: number | string | null }[]),
       supabase.from("suivi_lignes").select("id,numero_affaire,genre,statut,heures_total,date_reception_commande").eq("base_affaire", b).in("genre", ["BASE", "AVENANT"]),
     ]);
     const etats = new Map(pm.map((x) => [`${x.ligne_id}|${String(x.mois).slice(0, 7)}`, x]));
@@ -171,6 +183,20 @@ export async function chargerCommandesPEPI(base: string): Promise<{ commandes: C
           c.montant += mt;
           mois.set(k, c);
         }
+      }
+      // FACTURE_HISTORIQUE : les mois de l'historique de cette commande (ou, si aucune commande de la famille ne porte ce
+      // n°, de la première), sauf un mois déjà au relevé validé pour elle
+      const numerosFamille = new Set(famille.map((x) => cleCmd(x.numero)));
+      for (const h of historique) {
+        const k = cleCmd(h.numero);
+        const pourMoi = k === cleCmd(a.numero) || (!numerosFamille.has(k) && a.id === famille[0].id);
+        if (!pourMoi) continue;
+        const m = String(h.mois).slice(0, 7);
+        if (ls.some((l) => etats.get(`${l.id}|${m}`)?.valide)) continue;
+        const c = mois.get(`${m}|FACTURE`) ?? { heures: 0, montant: 0, etat: "FACTURE" as Etat };
+        c.heures += n(h.heures);
+        c.montant += n(h.montant);
+        mois.set(`${m}|FACTURE`, c);
       }
       const s = suivi.find((x) => String(x.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "").replace(/^0+/, "") === a.numero.toUpperCase().replace(/^0+/, ""));
       const montant = s ? montants.get(s.id) ?? 0 : 0;

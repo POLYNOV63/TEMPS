@@ -4,6 +4,7 @@ import { couleurMetier } from "@/lib/couleurs";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import RechercheAffaire from "@/components/RechercheAffaire";
 import { estTrajet } from "@/lib/trajets";
+import { PRESTATIONS_HISTORIQUE } from "@/lib/rentabilite";
 import type { EntreeAffaire } from "@/lib/rechercheAffaires";
 import Link from "next/link";
 import EnTetePage from "@/components/EnTetePage";
@@ -717,7 +718,9 @@ function BilanContenu() {
   const livree = comptees.length > 0 && comptees.every((l) => l.statut === "Livrée");
   const dateLivraison = livree ? comptees.map((l) => l.date_livraison).filter(Boolean).sort().slice(-1)[0] ?? null : null;
   const maxMois = Math.max(1, ...bilan.evolution.map((m) => m.heures));
-  const prestation = affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI");
+  // HEURES_HISTORIQUE : une prestation suivie dans l'historique (CBE1487, intergroupe) se lit aussi comme une PE / PI
+  const prestation =
+    affaire?.type === "CBE" && (base?.imputation === "PE" || base?.imputation === "PI" || Boolean(PRESTATIONS_HISTORIQUE[affaire.numero.match(/^d+/)?.[0]?.replace(/^0+/, "") ?? ""]));
   const ongletVu: "AFFAIRE" | "ARGENT" = ongletFiche === "ARGENT" && voitMontants && affaire?.type === "CBE" ? "ARGENT" : "AFFAIRE";
 
   // planifié à venir
