@@ -44,9 +44,14 @@ export type Cumul = { pos: number; neg: number; caPos: number; caNeg: number; nP
 export const cumulVide = (): Cumul => ({ pos: 0, neg: 0, caPos: 0, caNeg: 0, nPos: 0, nNeg: 0 });
 /* AFFAIRES_EXCLUABLES (PLG, 17/11/2026) : affaires qu'on peut retirer de l'analyse d'un exercice par une coche
    (affaire hors norme qui fausse la lecture). Pour en ajouter une : une ligne ici. */
+/* HEURES_HISTORIQUE (PLG, 19/11/2026) : prestations suivies seulement dans l'historique du Suivi des prestations, dont le
+   pointé n'est pas en phase avec le facturé (c'est normal) : leur vendu ET leurs heures viennent de l'historique, avec la
+   nature indiquée (CBE1487, TMUA : intergroupe, compté en PI, chiffré à 33,11 €/h). Pour en ajouter une : une ligne ici. */
+export const PRESTATIONS_HISTORIQUE: Record<string, "PE" | "PI"> = { "1487": "PI" };
+
 export const AFFAIRES_EXCLUABLES: { exercice: number; base: string }[] = [{ exercice: 2025, base: "1678" }];
 export type AffaireRenta = LigneRenta & { base: string; designation: string | null; client: string | null; fin: string; imputation: string | null; nonVentile: "CHIFFRE" | "PASSE" | "AUCUN" | null; activite: string };
-type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string> };
+type Prestation = { base: string; imputation: string; designation: string | null; ca: number; hFact: number; mois: Set<string>; heuresHistorique?: boolean };
 export type PrestationRenta = LigneRenta & { base: string; designation: string | null; imputation: string; nbMois: number };
 
 export const tauxVendu = (l: LigneRenta) => (!l.auMontant && l.hc > 0 ? (l.ca - l.achats) / l.hc : null);
@@ -54,7 +59,7 @@ export const tauxObtenu = (l: LigneRenta) => (l.hr > 0 ? (l.ca - l.achats) / l.h
 export const marge = (l: LigneRenta) => (l.cout === null ? null : l.ca - l.cout);
 
 export type PilotageCBE = { numero: string; statut: string; date_livraison: string | null; imputation: string | null; designation: string | null };
-export type PrestationMois = { base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number };
+export type PrestationMois = { base: string; imputation: string; designation: string | null; mois: string; ca: number; hFact: number; heuresHistorique?: boolean };
 
 export type DonneesRentabilite = {
   lignesFin: LigneFin[];
@@ -186,11 +191,12 @@ export async function chargerDonneesRentabilite(): Promise<DonneesRentabilite> {
   for (const h of hi) {
     const mois = String(h.mois).slice(0, 7);
     // HISTO_CATEGORIE : « type » est CBE / CAS, la nature PE / PI / IG est dans « categorie »
-    const type = String(h.categorie ?? "").toUpperCase();
-    if (String(h.type ?? "").toUpperCase() !== "CBE" || (type !== "PE" && type !== "PI")) continue;
     const base = (String(h.numero ?? "").match(/\d+/)?.[0] ?? "").replace(/^0+/, "");
+    const force = PRESTATIONS_HISTORIQUE[base]; // HEURES_HISTORIQUE
+    const type = force ?? String(h.categorie ?? "").toUpperCase();
+    if (String(h.type ?? "").toUpperCase() !== "CBE" || (type !== "PE" && type !== "PI")) continue;
     if (!base || moisReleve.has(`${cleCmd(String(h.numero ?? ""))}|${mois}`)) continue;
-    prestations.push({ base, imputation: type, designation: designations.get(base) ?? null, mois, ca: n(h.montant), hFact: n(h.heures) });
+    prestations.push({ base, imputation: type, designation: designations.get(base) ?? null, mois, ca: n(h.montant), hFact: n(h.heures), heuresHistorique: Boolean(force) });
   }
 
   return { lignesFin, realiseParBase, trajetsParBase, couts, estAdmin: Boolean(moi?.estAdmin), pilotageCBE, prestations, pointeExercice };
@@ -336,7 +342,7 @@ export function calculerRentabilite(d: DonneesRentabilite, exercice: number, exc
   const parPrest = new Map<string, Prestation>();
   for (const p of prestations) {
     if (!moisEx.has(p.mois) || exclues.has(p.base)) continue;
-    const x = parPrest.get(p.base) ?? { base: p.base, imputation: p.imputation, designation: p.designation, ca: 0, hFact: 0, mois: new Set<string>() };
+    const x = parPrest.get(p.base) ?? { base: p.base, imputation: p.imputation, designation: p.designation, ca: 0, hFact: 0, mois: new Set<string>(), heuresHistorique: p.heuresHistorique };
     x.ca += p.ca;
     x.hFact += p.hFact;
     x.mois.add(p.mois);
@@ -346,7 +352,8 @@ export function calculerRentabilite(d: DonneesRentabilite, exercice: number, exc
   const prestationsEx: PrestationRenta[] = [...parPrest.values()].map((p) => {
     // seulement les heures pointées des mois facturés (pas celles d'un mois pas encore validé)
     const pm = pointeExercice.get(p.base);
-    const hr = [...p.mois].reduce((t, m) => t + (pm?.get(m) ?? 0), 0);
+    // HEURES_HISTORIQUE : les heures de l'historique, pas celles des feuilles
+    const hr = p.heuresHistorique ? p.hFact : [...p.mois].reduce((t, m) => t + (pm?.get(m) ?? 0), 0);
     return { cle: p.base, libelle: `CBE ${p.base}`, base: p.base, designation: p.designation, imputation: p.imputation, nbMois: p.mois.size, ca: p.ca, achats: 0, hc: p.hFact, hr, cout: cEx === null ? null : hr * cEx, auMontant: false };
   });
   for (const p of prestationsEx) ajouter(p.imputation, p.ca, 0, p.hc, p.hr, p.cout, false);
