@@ -181,7 +181,10 @@ async function horairesDeLaSemaine(
   const periodes = (historique ?? []) as { profil_horaire_id: string | null; date_debut: string; date_fin: string | null }[];
   const profilDuJour = dates.map((date) => {
     const p = periodes.find((x) => String(x.date_debut).slice(0, 10) <= date && (!x.date_fin || String(x.date_fin).slice(0, 10) >= date));
-    return p?.profil_horaire_id ?? profilParDefaut;
+    if (p) return p.profil_horaire_id ?? profilParDefaut;
+    // un jour dans un trou entre deux périodes (ancien rythme clos trop tôt) : le dernier rythme terminé avant lui
+    const avant = periodes.find((x) => x.date_fin && String(x.date_fin).slice(0, 10) < date);
+    return avant?.profil_horaire_id ?? profilParDefaut;
   });
   const ids = [...new Set(profilDuJour.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return HORAIRES_DEFAUT;
