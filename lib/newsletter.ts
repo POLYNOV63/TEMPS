@@ -6,7 +6,7 @@ import { chargerDonneesRentabilite, type DonneesRentabilite } from "@/lib/rentab
 import { chargerSourcesCA, type SourcesCA } from "@/lib/caExercice";
 import type { Collab } from "@/lib/pilotageCalculs";
 import { chargerDormantes } from "@/lib/dormantes";
-import { categorieDevis, numeroDevis } from "@/lib/suiviDevis";
+import { categorieDevis, numeroDevis, type CategorieDevis } from "@/lib/suiviDevis";
 
 /* ===============================================================
    NEWSLETTER DU MOIS (NEWSLETTER, PLG, 20/11/2026)
@@ -159,7 +159,8 @@ export type PrestationEnCours = Delai & {
 /* NEWSLETTER_DEVIS : un devis ouvert (en rédaction) ou envoyé (en attente de réponse), comme au Suivi des devis */
 export type DevisEnCours = {
   numero: string; // DBE…
-  categorie: "OUVERT" | "ENVOYE";
+  categorie: CategorieDevis; // NEWSLETTER_DEVIS_MOIS : tous les statuts
+  commande: string | null; // « CBE1604 » si le devis est devenu une commande
   client: string;
   designation: string;
   redacteur: string;
@@ -212,7 +213,6 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   // le mois en chiffres
   const recues = d.suivi.filter((l) => commande(l) && l.statut !== "Commande annulée" && dans(l.date_reception_commande));
   const livrees = d.suivi.filter((l) => commande(l) && l.statut === "Livrée" && dans(l.date_livraison));
-  const devis = d.suivi.filter((l) => (l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue && dans(l.date_ouverture)).length;
 
   // CA facturé du mois, règles de Finances (forfaits livrés, relevé validé, historique, ajustements)
   const moisCourant = aujourdhui.slice(0, 7);
@@ -392,13 +392,15 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   for (const [numero, ls] of parDevis) {
     const cmd = (g: string) => ls.find((x) => x.genre === g && x.statut !== "Devis perdu");
     const l = cmd("BASE") ?? cmd("AVENANT") ?? ls.find((x) => x.genre === "DEVIS") ?? ls[0];
-    const cat = categorieDevis(l.statut, l.genre, false);
-    if (cat !== "OUVERT" && cat !== "ENVOYE") continue;
     const ouverture = ls.map((x) => x.date_ouverture).filter((x): x is string => Boolean(x)).sort()[0]?.slice(0, 10) ?? null;
+    if (!dans(ouverture)) continue; // NEWSLETTER_DEVIS_MOIS : les devis ouverts pendant le mois, quel que soit leur statut
     const envoi = (l.date_envoi ?? ls.map((x) => x.date_envoi).filter((x): x is string => Boolean(x)).sort()[0] ?? null)?.slice(0, 10) ?? null;
+    const chiffreDevis = ls.some((x) => montantDe(x.cle) > 0 || (Number(x.heures_total) || 0) > 0);
+    const cat = categorieDevis(l.statut, l.genre, Boolean(envoi) && chiffreDevis);
     devisEnCours.push({
       numero,
       categorie: cat,
+      commande: cat === "REMPORTE" && l.numero_affaire ? (/^cbe/i.test(l.numero_affaire) ? l.numero_affaire.toUpperCase() : `CBE${l.numero_affaire}`) : null,
       client: (l.client_id ? d.clients.get(l.client_id) : undefined) ?? "",
       designation: l.designation ?? "",
       redacteur: l.redacteur_id ? nomCourt(collabs.get(l.redacteur_id)) : "",
@@ -408,13 +410,8 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       heures: ls.reduce((t, x) => t + (Number(x.heures_total) || 0), 0),
     });
   }
-  // les envoyés d'abord (les plus anciens en tête), puis ceux en rédaction
-  devisEnCours.sort(
-    (x, y) =>
-      (x.categorie === "ENVOYE" ? 0 : 1) - (y.categorie === "ENVOYE" ? 0 : 1) ||
-      (x.categorie === "ENVOYE" ? (x.envoi ?? "").localeCompare(y.envoi ?? "") : (x.ouverture ?? "").localeCompare(y.ouverture ?? "")) ||
-      x.numero.localeCompare(y.numero, "fr", { numeric: true })
-  );
+  // par date d'ouverture, puis n° de devis
+  devisEnCours.sort((x, y) => (x.ouverture ?? "").localeCompare(y.ouverture ?? "") || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
 
   // bilan par activité : les affaires en cours qui ont des heures chiffrées dans l'activité
   const parActivite: BilanActivite[] = GROUPES_NEWSLETTER.map((gr) => {
@@ -465,7 +462,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     mois,
     commandes: { nombre: recues.length, montant: recues.reduce((t, l) => t + montantDe(l.cle), 0) },
     livrees: { nombre: livrees.length, montant: livrees.reduce((t, l) => t + montantDe(l.cle), 0) },
-    devis,
+    devis: devisEnCours.length, // NEWSLETTER_DEVIS_MOIS : même compte que la liste des devis du mois
     ca,
     exercice: {
       libelle: `${anneeEx}-${anneeEx + 1}`,

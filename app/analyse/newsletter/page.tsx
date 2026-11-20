@@ -388,7 +388,7 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
             ]
           : cles.includes("pepi")
             ? ["PE / PI du relevé en cours (hors dormantes). Équipe = personnes au planning, du début du mois aux 4 prochaines semaines."]
-            : ["Devis du Suivi des devis : ouverts (en rédaction) ou envoyés (en attente de réponse). Les plus anciens envois en tête."]
+            : ["Devis ouverts pendant le mois (date d’ouverture du Suivi des devis), avec leur statut d’aujourd’hui."]
       }
     >
       {blocs}
@@ -507,12 +507,24 @@ function sectionsAffaires(n: Newsletter): Section[] {
       );
     },
   };
-  /* NEWSLETTER_DEVIS : les devis ouverts (en rédaction) ou envoyés (en attente de réponse) */
-  const nbEnvoyes = n.devisEnCours.filter((x) => x.categorie === "ENVOYE").length;
+  /* NEWSLETTER_DEVIS_MOIS : les devis ouverts pendant le mois, quel que soit leur statut (affiché) */
+  const STATUTS_DEVIS: Record<string, { texte: string; fond: string; encre: string }> = {
+    OUVERT: { texte: "En rédaction", fond: "#eef0f3", encre: GRIS },
+    ENVOYE: { texte: "Envoyé", fond: "#34506b", encre: "#ffffff" },
+    INTENTION: { texte: "Intention", fond: ORANGE, encre: "#ffffff" },
+    REMPORTE: { texte: "Commandé", fond: VERT, encre: "#ffffff" },
+    PERDU: { texte: "Perdu", fond: ROUGE_ALERTE, encre: "#ffffff" },
+    ANNULE: { texte: "Annulé", fond: "#c9ced6", encre: "#ffffff" },
+    AUTRE: { texte: "Autre", fond: "#eef0f3", encre: GRIS },
+  };
+  const compte = (c: string) => n.devisEnCours.filter((x) => x.categorie === c).length;
   const devis: Section = {
     cle: "devis",
-    titre: "Devis en cours",
-    droite: `${nbEnvoyes} envoyés · ${n.devisEnCours.length - nbEnvoyes} en rédaction`,
+    titre: "Devis ouverts dans le mois",
+    droite: (["OUVERT", "ENVOYE", "INTENTION", "REMPORTE", "PERDU", "ANNULE"] as const)
+      .filter((c) => compte(c) > 0)
+      .map((c) => `${compte(c)} ${STATUTS_DEVIS[c].texte.toLowerCase()}`)
+      .join(" · "),
     colonnes: [
       { x: 90, texte: "DEVIS · RÉDACTEUR" },
       { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
@@ -523,12 +535,13 @@ function sectionsAffaires(n: Newsletter): Section[] {
     ligne: (i, yy) => {
       const v = n.devisEnCours[i];
       const envoye = v.categorie === "ENVOYE";
+      const st = STATUTS_DEVIS[v.categorie] ?? STATUTS_DEVIS.AUTRE;
       const tete = couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 26);
       return (
         <>
-          <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={envoye ? "#34506b" : "#eef0f3"} />
-          <text x={136} y={yy + 27} fill={envoye ? "#ffffff" : GRIS} fontSize={14} fontWeight={800} textAnchor="middle">
-            {envoye ? "Envoyé" : "En rédaction"}
+          <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={st.fond} />
+          <text x={136} y={yy + 27} fill={st.encre} fontSize={14} fontWeight={800} textAnchor="middle">
+            {st.texte}
           </text>
           <text x={194} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
             {tete}
@@ -541,12 +554,13 @@ function sectionsAffaires(n: Newsletter): Section[] {
           <text x={194} y={yy + 51} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
             {v.redacteur || "rédacteur non renseigné"}
             {v.ouverture && <tspan fill={GRIS}>{` · ouvert le ${dateFR(v.ouverture)}`}</tspan>}
+            {v.commande && <tspan fill={VERT} fontWeight={700}>{` · commande ${v.commande}`}</tspan>}
           </text>
           <text x={800} y={yy + 28} fill={v.heures > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
             {v.heures > 0.5 ? heures(v.heures) : "—"}
           </text>
-          <text x={LARGEUR - 90} y={yy + 28} fill={envoye ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
-            {envoye ? dateFR(v.envoi) : "—"}
+          <text x={LARGEUR - 90} y={yy + 28} fill={v.envoi ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+            {dateFR(v.envoi)}
           </text>
           {envoye && v.attente > 0 && (
             <text x={LARGEUR - 90} y={yy + 51} fill={v.attente > 30 ? ORANGE : GRIS} fontSize={15} fontWeight={700} textAnchor="end">
