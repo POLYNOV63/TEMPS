@@ -108,6 +108,7 @@ export const PAGES: PageApp[] = [
   { href: "/analyse/rentabilite", libelle: "Rentabilité", groupe: "Analyse", droit: "indicateurs" },
   { href: "/analyse/simulateur", libelle: "Simulateur de rentabilité", groupe: "Analyse", droit: "indicateurs" }, // SIMULATEUR_RENTA
   { href: "/analyse/simulateur-cuve", libelle: "Simulateur : la cuve", groupe: "Analyse", droit: "indicateurs" }, // SIMULATEUR_CUVE
+  { href: "/analyse/newsletter", libelle: "Newsletter du mois (image)", groupe: "Analyse", droit: "indicateurs" }, // NEWSLETTER
   { href: "/analyse/simulation-pe", libelle: "Simulation PE (taux jour)", groupe: "Analyse", droit: "indicateurs" }, // SIMULATION_PE
   { href: "/analyse/fiabilite-chiffrage", libelle: "Fiabilité du chiffrage", groupe: "Analyse", droit: "indicateurs" },
   { href: "/admin/bilans", libelle: "Analyse de capacité", groupe: "Analyse", droit: "chargeRessources" }, // CAPACITE_DIRECTION : la Direction n'y voit que les disponibilités à venir
