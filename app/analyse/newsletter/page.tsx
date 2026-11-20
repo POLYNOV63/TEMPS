@@ -321,12 +321,38 @@ const H_BANDEAU_2 = 130;
 const H_ENTETE = 46;
 const BAS_UTILE = HAUTEUR - 112; // au-dessus du pied
 const H_CHAPITRE = 82; // le bandeau de couleur d'un paragraphe
-const H_LIGNE_AFF = 66;
-const H_LIGNE_PRE = 60;
 
 type Colonne = { x: number; texte: string; ancre?: "start" | "end" };
 type Chapitre = { titre: string; couleur: string; resume: string };
-type Section = { cle: string; titre: string; droite: string; colonnes: Colonne[]; hLigne: number; nb: number; ligne: (i: number, yy: number) => ReactNode; chapitre?: Chapitre; paragraphe: string };
+/* DESCRIPTION_LISIBLE : la hauteur de chaque ligne dépend de sa description (1 ou 2 lignes de texte) */
+type Section = { cle: string; titre: string; droite: string; colonnes: Colonne[]; hauteur: (i: number) => number; nb: number; ligne: (i: number, yy: number) => ReactNode; chapitre?: Chapitre; paragraphe: string };
+
+/* coupe un texte en lignes de n caractères au plus (aux espaces), au plus max lignes (la dernière finit par « … » si besoin) */
+function lignesTexte(t: string, n: number, max: number): string[] {
+  const mots = t.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const res: string[] = [];
+  let cour = "";
+  for (const m of mots) {
+    const essai = cour ? `${cour} ${m}` : m;
+    if (essai.length <= n) cour = essai;
+    else {
+      if (cour) res.push(cour);
+      cour = m.length > n ? m.slice(0, n) : m;
+    }
+  }
+  if (cour) res.push(cour);
+  if (res.length > max) {
+    const garde = res.slice(0, max);
+    garde[max - 1] = couper(`${garde[max - 1]} ${res[max]}`, n);
+    if (!garde[max - 1].endsWith("…")) garde[max - 1] = `${couper(garde[max - 1], n - 1)}…`;
+    return garde;
+  }
+  return res;
+}
+const H_TETE = 34; // la ligne « client · n° »
+const H_TEXTE = 20; // une ligne de description
+const H_PIED_LIGNE = 28; // la ligne équipe / rédacteur
+const hauteurAvec = (nbDesc: number) => Math.max(60, H_TETE + nbDesc * H_TEXTE + H_PIED_LIGNE);
 type Morceau = { section: Section; debut: number; fin: number; suite: boolean };
 
 /* répartit les sections sur des pages : une section continue sur la page suivante (« suite ») */
@@ -343,15 +369,20 @@ function paginer(sections: Section[]): Morceau[][] {
     let i = 0;
     while (i < s.nb) {
       const chap = i === 0 && s.chapitre ? H_CHAPITRE : 0;
-      const place = Math.floor((BAS_UTILE - y - chap - 22 - H_ENTETE - 6) / s.hLigne);
-      if (place < Math.min(3, s.nb - i)) {
-        if (courante.length === 0) break; // page vide trop petite : ne peut pas arriver, garde-fou
-        nouvellePage();
-        continue;
+      const dispo = BAS_UTILE - y - chap - 22 - H_ENTETE - 6;
+      let k = 0;
+      let h = 0;
+      while (i + k < s.nb && h + s.hauteur(i + k) <= dispo) h += s.hauteur(i + k++);
+      if (k < Math.min(3, s.nb - i)) {
+        if (courante.length === 0) {
+          if (k === 0) break; // garde-fou
+        } else {
+          nouvellePage();
+          continue;
+        }
       }
-      const k = Math.min(place, s.nb - i);
       courante.push({ section: s, debut: i, fin: i + k, suite: i > 0 });
-      y += chap + 22 + H_ENTETE + 6 + k * s.hLigne + 76;
+      y += chap + 22 + H_ENTETE + 6 + h + 76;
       i += k;
     }
   }
@@ -394,16 +425,19 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
     );
     const y0 = y + 14;
     const k = m.fin - m.debut;
+    const hs = Array.from({ length: k }, (_, j) => s.hauteur(m.debut + j));
+    const hTotal = hs.reduce((a, b) => a + b, 0);
+    const ys = hs.map((_, j) => y0 + H_ENTETE + hs.slice(0, j).reduce((a, b) => a + b, 0));
     blocs.push(
       <g key={`${s.cle}-${m.debut}`}>
-        <rect x={MARGE} y={y0} width={LARG} height={H_ENTETE + 6 + k * s.hLigne} rx={18} fill="#ffffff" stroke="#e3e6ea" />
+        <rect x={MARGE} y={y0} width={LARG} height={H_ENTETE + 6 + hTotal} rx={18} fill="#ffffff" stroke="#e3e6ea" />
         {s.colonnes.map((c) => (
           <text key={c.texte} x={c.x} y={y0 + 31} fill={GRIS} fontSize={16} fontWeight={700} textAnchor={c.ancre ?? "start"}>
             {c.texte}
           </text>
         ))}
         {Array.from({ length: k }, (_, j) => {
-          const yy = y0 + H_ENTETE + j * s.hLigne;
+          const yy = ys[j];
           return (
             <g key={j}>
               <line x1={90} x2={LARGEUR - 90} y1={yy} y2={yy} stroke="#eceef1" />
@@ -413,7 +447,7 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
         })}
       </g>
     );
-    y = y0 + H_ENTETE + 6 + k * s.hLigne + 76 + 8;
+    y = y0 + H_ENTETE + 6 + hTotal + 76 + 8;
   }
   const paragraphes = [...new Set(morceaux.map((m) => m.section.paragraphe))];
   return (
@@ -440,6 +474,22 @@ function sectionsAffaires(n: Newsletter): Section[] {
   const xBarre = 640;
   const lBarre = 150;
 
+  /* DESCRIPTION_LISIBLE : ligne 1 « client · n° », puis la description sur 1 ou 2 lignes, puis l'équipe (ou le rédacteur) */
+  const descAff = (a: AffaireEnCours) => lignesTexte(a.designation, 66, 2);
+  const descPre = (p: PrestationEnCours) => lignesTexte(p.designation, 78, 2);
+  const descDev = (v: DevisEnCours) => lignesTexte(v.designation, 64, 2);
+  const descLiv = (x: AffaireLivree) => lignesTexte(x.designation, 78, 2);
+  const Desc = ({ x, yy, lignes }: { x: number; yy: number; lignes: string[] }) => (
+    <>
+      {lignes.map((t, k) => (
+        <text key={k} x={x} y={yy + H_TETE + 13 + k * H_TEXTE} fill={GRIS} fontSize={16}>
+          {t}
+        </text>
+      ))}
+    </>
+  );
+  const yPied = (yy: number, nb: number) => yy + H_TETE + nb * H_TEXTE + 18;
+
   const ligneAffaire = (a: AffaireEnCours, yy: number) => {
     const pc = a.avancement === null ? null : Math.round(a.avancement * 100);
     const plein = a.avancement === null ? 0 : Math.min(1, a.avancement);
@@ -447,22 +497,17 @@ function sectionsAffaires(n: Newsletter): Section[] {
     const dl = libDelai(a);
     const nAct = a.activites.length;
     const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
-    const tete = couper(`${a.client ? `${a.client} · ` : ""}${a.numero}`, 26);
-    const reste = Math.max(6, 50 - tete.length - nAct * 2);
+    const desc = descAff(a);
     return (
       <>
         {a.activites.map((x, k) => (
-          <Pastille key={x.groupe} x={90 + k * 24} y={yy + 22} groupe={x.groupe} />
+          <Pastille key={x.groupe} x={90 + k * 24} y={yy + 21} groupe={x.groupe} />
         ))}
-        <text x={xTexte} y={yy + 29} fill={ENCRE} fontSize={20} fontWeight={800}>
-          {tete}
-          {a.designation && (
-            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-              {`  ${couper(a.designation, reste)}`}
-            </tspan>
-          )}
+        <text x={xTexte} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+          {couper(`${a.client ? `${a.client} · ` : ""}${a.numero}`, 44 - nAct * 2)}
         </text>
-        <text x={90} y={yy + 54} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={a.equipe.length ? undefined : "italic"}>
+        <Desc x={90} yy={yy} lignes={desc} />
+        <text x={90} y={yPied(yy, desc.length)} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={a.equipe.length ? undefined : "italic"}>
           {a.intention && (
             <tspan fill={ORANGE} fontWeight={700} fontStyle="normal">
               {"Intention de commande · "}
@@ -489,18 +534,14 @@ function sectionsAffaires(n: Newsletter): Section[] {
   };
 
   const lignePrestation = (p: PrestationEnCours, yy: number) => {
-    const tete = couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 26);
+    const desc = descPre(p);
     return (
       <>
         <text x={90} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
-          {tete}
-          {p.designation && (
-            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-              {`  ${couper(p.designation, Math.max(6, 54 - tete.length))}`}
-            </tspan>
-          )}
+          {couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 52)}
         </text>
-        <text x={90} y={yy + 51} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={p.equipe.length ? undefined : "italic"}>
+        <Desc x={90} yy={yy} lignes={desc} />
+        <text x={90} y={yPied(yy, desc.length)} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={p.equipe.length ? undefined : "italic"}>
           {equipeTexte(p.equipe, 64)}
         </text>
         <text x={800} y={yy + 28} fill={p.heuresMois > 0 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
@@ -520,7 +561,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
 
   const ligneDevis = (v: DevisEnCours, yy: number) => {
     const envoye = v.categorie === "ENVOYE";
-    const tete = couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 26);
+    const desc = descDev(v);
     return (
       <>
         <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={envoye ? "#34506b" : "#eef0f3"} />
@@ -528,14 +569,10 @@ function sectionsAffaires(n: Newsletter): Section[] {
           {envoye ? "Envoyé" : "En rédaction"}
         </text>
         <text x={194} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
-          {tete}
-          {v.designation && (
-            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-              {`  ${couper(v.designation, Math.max(6, 46 - tete.length))}`}
-            </tspan>
-          )}
+          {couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 44)}
         </text>
-        <text x={194} y={yy + 51} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
+        <Desc x={194} yy={yy} lignes={desc} />
+        <text x={194} y={yPied(yy, desc.length)} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
           {v.redacteur || "rédacteur non renseigné"}
           {v.ouverture && <tspan fill={GRIS}>{` · ouvert le ${dateFR(v.ouverture)}`}</tspan>}
         </text>
@@ -557,18 +594,16 @@ function sectionsAffaires(n: Newsletter): Section[] {
   const ligneLivree = (x: AffaireLivree, yy: number) => {
     const nAct = x.activites.length;
     const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
-    const tete = couper(`${x.client ? `${x.client} · ` : ""}${x.numero}`, 28);
+    const desc = descLiv(x);
     return (
       <>
         {x.activites.map((g, k) => (
-          <Pastille key={g} x={90 + k * 24} y={yy + 22} groupe={g} />
+          <Pastille key={g} x={90 + k * 24} y={yy + 21} groupe={g} />
         ))}
         <text x={xTexte} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
-          {tete}
+          {couper(`${x.client ? `${x.client} · ` : ""}${x.numero}`, 52 - nAct * 2)}
         </text>
-        <text x={90} y={yy + 51} fill={GRIS} fontSize={16}>
-          {couper(x.designation || "—", 70)}
-        </text>
+        <Desc x={90} yy={yy} lignes={desc} />
         <text x={800} y={yy + 28} fill={x.chiffre > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
           {x.chiffre > 0.5 ? heures(x.chiffre) : "—"}
         </text>
@@ -602,7 +637,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
           { x: 800, texte: "HEURES DU MOIS", ancre: "end" },
           { x: LARGEUR - 90, texte: "FIN PRÉVUE", ancre: "end" },
         ],
-        hLigne: H_LIGNE_PRE,
+        hauteur: (i) => hauteurAvec(descPre(prestations[i]).length),
         nb: prestations.length,
         ligne: (i, yy) => lignePrestation(prestations[i], yy),
       });
@@ -619,7 +654,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
           { x: xBarre, texte: "AVANCEMENT" },
           { x: LARGEUR - 90, texte: "LIVRAISON", ancre: "end" },
         ],
-        hLigne: H_LIGNE_AFF,
+        hauteur: (i) => Math.max(66, hauteurAvec(descAff(affaires[i]).length)),
         nb: affaires.length,
         ligne: (i, yy) => ligneAffaire(affaires[i], yy),
       });
@@ -635,7 +670,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
           { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
           { x: LARGEUR - 90, texte: "ENVOYÉ LE", ancre: "end" },
         ],
-        hLigne: H_LIGNE_PRE,
+        hauteur: (i) => hauteurAvec(descDev(devis[i]).length),
         nb: devis.length,
         ligne: (i, yy) => ligneDevis(devis[i], yy),
       });
@@ -651,7 +686,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
           { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
           { x: LARGEUR - 90, texte: "LIVRÉE LE", ancre: "end" },
         ],
-        hLigne: H_LIGNE_PRE,
+        hauteur: (i) => Math.max(60, H_TETE + descLiv(livrees[i]).length * H_TEXTE + 12),
         nb: livrees.length,
         ligne: (i, yy) => ligneLivree(livrees[i], yy),
       });

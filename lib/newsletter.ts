@@ -32,6 +32,7 @@ import { categorieDevis, numeroDevis, type CategorieDevis } from "@/lib/suiviDev
 ================================================================ */
 
 type LigneSuivi = {
+  id: string;
   cle: string;
   genre: string;
   statut: string | null;
@@ -72,6 +73,7 @@ export type DonneesNewsletter = {
   annuaire: Collab[];
   previsionnel: Map<string, number>; // NEWSLETTER_CA : AAAA-MM -> € (prévisionnel saisi dans Finances)
   pepiPrevues: { mois: string; montant: number }[]; // NEWSLETTER_PROJETE : PE / PI pas encore clôturées (comme l'attendu de Finances)
+  achats: Map<string, number>; // NEGOCE_ACHATS : suivi_lignes.id -> « Montant achats » du Suivi d'affaire BE (> 0 seulement)
   clients: Map<string, string>; // NEWSLETTER_DEVIS : suivi_clients id -> nom abrégé
   dormantes: Set<string>; // NEWSLETTER_PORTEFEUILLE : PE / PI dormantes (ids pilotage_affaires), écartées comme dans le Suivi des affaires
 };
@@ -93,12 +95,12 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     x.setUTCMonth(x.getUTCMonth() + k);
     moisPEPI.push(x.toISOString().slice(0, 7));
   }
-  const [renta, suivi, sources, affaires, affectations, annuaire, prev, pepi, cl] = await Promise.all([
+  const [renta, suivi, sources, affaires, affectations, annuaire, prev, pepi, cl, ach] = await Promise.all([
     chargerDonneesRentabilite(),
     chargerTout<LigneSuivi>((a, b) =>
       supabase
         .from("suivi_lignes")
-        .select("cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison,numero_devis,base_devis,designation,client_id,redacteur_id,date_envoi,heures_total,imputation")
+        .select("id,cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison,numero_devis,base_devis,designation,client_id,redacteur_id,date_envoi,heures_total,imputation")
         .order("cle")
         .range(a, b)
     ),
@@ -115,13 +117,17 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)).catch(
       () => [] as { id: string; nom_abrege: string }[]
     ),
+    chargerTout<{ ligne_id: string; montant_achats: number | string | null }>((a, b) =>
+      supabase.from("suivi_lignes_montants").select("ligne_id,montant_achats").gt("montant_achats", 0).order("ligne_id").range(a, b)
+    ).catch(() => [] as { ligne_id: string; montant_achats: number | string | null }[]),
   ]);
+  const achats = new Map(ach.map((x) => [x.ligne_id, Number(x.montant_achats) || 0]));
   const clients = new Map(cl.map((c) => [c.id, c.nom_abrege]));
   const pepiPrevues: DonneesNewsletter["pepiPrevues"] = [];
   for (const [m, liste] of pepi) for (const x of liste) if (!x.cloture && x.montant > 0.004) pepiPrevues.push({ mois: m, montant: x.montant });
   const previsionnel = new Map(((prev.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0]));
   const dormantes = new Set((await chargerDormantes(affaires).catch(() => new Map<string, unknown>())).keys());
-  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues, clients, dormantes };
+  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues, achats, clients, dormantes };
 }
 
 /* les activités montrées (le négoce et le non ventilé n'ont pas d'équipe) */
@@ -316,6 +322,12 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const b = sansZeros(l.base_affaire);
     if (b) lignesFamille.set(b, [...(lignesFamille.get(b) ?? []), l]);
   }
+  /* NEGOCE_ACHATS : une affaire (ou un devis) est du négoce quand une de ses lignes a un « Montant achats » dans le Suivi d'affaire BE */
+  const aDesAchats = (ls: LigneSuivi[]) => ls.some((l) => (fin.get(l.cle)?.m.achats ?? 0) > 0.004 || (d.achats.get(l.id) ?? 0) > 0.004);
+  const familleLignes = (imp: string | null | undefined, ls: LigneSuivi[]): Famille => {
+    const f = familleDe(imp);
+    return f === "PE" || f === "PI" ? f : f === "NEGOCE" || aDesAchats(ls) ? "NEGOCE" : "FORFAIT";
+  };
   const groupesChiffres = (ls: LigneSuivi[]) => {
     const parGroupe = new Map<Groupe, number>();
     for (const l of ls) {
@@ -358,7 +370,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       .filter((x): x is string => Boolean(x));
     const basePil = ouvertes.find((a) => baseDe(a.numero) === b && !a.numero.toUpperCase().includes("R")) ?? ouvertes[0];
     enCours.push({
-      famille: familleDe(basePil.imputation ?? laBase?.imputation) === "NEGOCE" ? "NEGOCE" : "FORFAIT",
+      famille: familleLignes(basePil.imputation ?? laBase?.imputation, ls) === "NEGOCE" ? "NEGOCE" : "FORFAIT",
       base: b,
       numero: `CBE ${b}`,
       client: fb?.client ?? "",
@@ -404,7 +416,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       .sort((x, y) => y.chiffre - x.chiffre);
     const estimees = ls.map((l) => fin.get(l.cle)?.date_estimee).filter((x): x is string => Boolean(x));
     enCours.push({
-      famille: familleDe(l0.imputation ?? fin.get(l0.cle)?.imputation),
+      famille: familleLignes(l0.imputation ?? fin.get(l0.cle)?.imputation, ls),
       base: b || cle.slice(2),
       numero: b ? `CBE ${b}` : cle.slice(2).toUpperCase().startsWith("DBE") ? cle.slice(2) : `DBE ${cle.slice(2)}`,
       client: (l0.client_id ? d.clients.get(l0.client_id) : undefined) ?? fin.get(l0.cle)?.client ?? "",
@@ -441,7 +453,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const cat = categorieDevis(l.statut, l.genre, Boolean(envoi) && chiffreDevis);
     if (cat !== "OUVERT" && cat !== "ENVOYE") continue; // NEWSLETTER_PARAGRAPHES : seulement les devis ouverts ou envoyés
     devisEnCours.push({
-      famille: familleDe(l.imputation),
+      famille: familleLignes(l.imputation, ls),
       numero,
       categorie: cat,
       commande: null,
@@ -512,7 +524,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   const livreesMois: AffaireLivree[] = livrees
     .map((l) => {
       const fl = fin.get(l.cle);
-      const famille = familleDe(l.imputation ?? fl?.imputation);
+      const famille = familleLignes(l.imputation ?? fl?.imputation, [l]);
       const parGroupe = groupesChiffres([l]);
       const num = String(l.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "");
       return {
