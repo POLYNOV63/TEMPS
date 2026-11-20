@@ -58,6 +58,7 @@ export type DonneesNewsletter = {
   affaires: AffairePlanning[];
   affectations: AffectationCourte[];
   annuaire: Collab[];
+  previsionnel: Map<string, number>; // NEWSLETTER_CA : AAAA-MM -> € (prévisionnel saisi dans Finances)
 };
 
 const jourISO = (d: Date) => d.toISOString().slice(0, 10);
@@ -70,7 +71,7 @@ const ecartJours = (a: string, b: string) => Math.round((Date.parse(`${a}T00:00:
 
 export async function chargerNewsletter(): Promise<DonneesNewsletter> {
   const depuis = plusJours(jourISO(new Date()), -400);
-  const [renta, suivi, sources, affaires, affectations, annuaire] = await Promise.all([
+  const [renta, suivi, sources, affaires, affectations, annuaire, prev] = await Promise.all([
     chargerDonneesRentabilite(),
     chargerTout<LigneSuivi>((a, b) =>
       supabase
@@ -87,8 +88,10 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
       supabase.from("pilotage_affectations").select("affaire_id,collaborateur_id,date_debut,date_fin").gte("date_fin", depuis).order("id").range(a, b)
     ).catch(() => [] as AffectationCourte[]),
     chargerAnnuaire({ inactifs: true }).catch(() => chargerAnnuaire()),
+    supabase.from("finances_previsionnel").select("mois,montant"),
   ]);
-  return { renta, suivi, sources, affaires, affectations, annuaire };
+  const previsionnel = new Map(((prev.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0]));
+  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel };
 }
 
 /* les activités montrées (le négoce et le non ventilé n'ont pas d'équipe) */
@@ -130,6 +133,14 @@ export type Newsletter = {
   livrees: { nombre: number; montant: number };
   devis: number;
   ca: number;
+  /* NEWSLETTER_CA (20/11/2026) : CA prévu (prévisionnel de Finances), mois précédent, cumul de l'exercice (novembre → mois choisi) */
+  caPrevu: number | null;
+  moisPrecedent: string;
+  caPrecedent: number;
+  caPrevuPrecedent: number | null;
+  exercice: string; // « 2025-2026 »
+  cumulRealise: number;
+  cumulPrevu: number | null;
   enCours: AffaireEnCours[];
   nbEnCours: number;
   montantEnCours: number;
@@ -162,13 +173,20 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
 
   // CA facturé du mois, règles de Finances (forfaits livrés, relevé validé, historique, ajustements)
   const viaReleve = new Set(d.sources.releve.map((r) => r.base));
-  const ca =
-    mouvementsExcel(d.renta.lignesFin, (b) => viaReleve.has(sansZeros(b)))
-      .filter((m) => dans(m.date))
-      .reduce((t, m) => t + m.montant, 0) +
-    d.sources.releve.filter((r) => r.mois === mois).reduce((t, r) => t + r.montant, 0) +
-    d.sources.historique.filter((h) => h.mois === mois).reduce((t, h) => t + h.montant, 0) +
-    d.sources.ajustements.filter((a) => a.mois === mois).reduce((t, a) => t + a.montant, 0);
+  const mouvements = mouvementsExcel(d.renta.lignesFin, (b) => viaReleve.has(sansZeros(b)));
+  const caDe = (m: string) =>
+    mouvements.filter((x) => String(x.date ?? "").slice(0, 7) === m).reduce((t, x) => t + x.montant, 0) +
+    d.sources.releve.filter((r) => r.mois === m).reduce((t, r) => t + r.montant, 0) +
+    d.sources.historique.filter((h) => h.mois === m).reduce((t, h) => t + h.montant, 0) +
+    d.sources.ajustements.filter((a) => a.mois === m).reduce((t, a) => t + a.montant, 0);
+  const ca = caDe(mois);
+  const decaleMois = (m: string, k: number) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + k, 1)).toISOString().slice(0, 7);
+  const moisPrecedent = decaleMois(mois, -1);
+  const anneeEx = Number(mois.slice(5, 7)) >= 11 ? Number(mois.slice(0, 4)) : Number(mois.slice(0, 4)) - 1;
+  const moisExercice: string[] = [];
+  for (let m = `${anneeEx}-11`; m <= mois; m = decaleMois(m, 1)) moisExercice.push(m);
+  const prevuDe = (m: string) => (d.previsionnel.has(m) ? (d.previsionnel.get(m) ?? 0) : null);
+  const prevusEx = moisExercice.map(prevuDe);
 
   // planning : affaires par n° de base ; équipe = affectations qui touchent la période (début du mois → 4 semaines après aujourd'hui)
   const debutPeriode = `${mois}-01`;
@@ -312,6 +330,13 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     livrees: { nombre: livrees.length, montant: livrees.reduce((t, l) => t + montantDe(l.cle), 0) },
     devis,
     ca,
+    caPrevu: prevuDe(mois),
+    moisPrecedent,
+    caPrecedent: caDe(moisPrecedent),
+    caPrevuPrecedent: prevuDe(moisPrecedent),
+    exercice: `${anneeEx}-${anneeEx + 1}`,
+    cumulRealise: moisExercice.reduce((t, m) => t + caDe(m), 0),
+    cumulPrevu: prevusEx.some((v) => v !== null) ? prevusEx.reduce<number>((t, v) => t + (v ?? 0), 0) : null,
     enCours,
     nbEnCours: enCours.length,
     montantEnCours: enCours.reduce((t, a) => t + a.montant, 0),

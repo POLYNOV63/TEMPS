@@ -134,33 +134,29 @@ function Feuille({ n, numero, sousTitre, hBandeau, pied, refSvg, children }: { n
 /* ---------------- Image 1 : le mois ---------------- */
 function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: ChargeActivite[]; semaines: string[]; refSvg: React.Ref<SVGSVGElement> }) {
   const blocs: ReactNode[] = [];
-  let y = 300;
+  let y = 270;
+  const nomMois = (m: string) => MOIS[Number(m.slice(5, 7)) - 1];
 
-  const tuiles = [
-    { titre: "Commandes reçues", valeur: String(n.commandes.nombre), sous: keur(n.commandes.montant), couleur: "#1b5e20" },
-    { titre: "Affaires livrées", valeur: String(n.livrees.nombre), sous: keur(n.livrees.montant), couleur: "#34506b" },
-    { titre: "CA facturé", valeur: keur(n.ca), sous: "forfaits livrés + PE / PI", couleur: ROUGE },
-    { titre: "Devis ouverts", valeur: String(n.devis), sous: "nouveaux chiffrages", couleur: "#6b58a8" },
-  ];
-  blocs.push(<Titre key="t-chiffres" y={y} texte="Le mois en chiffres" />);
-  {
-    const y0 = y + 30;
-    const w = (LARG - 3 * 20) / 4;
+  /* NEWSLETTER_CA : deux rangées de 3 tuiles (les faits du mois, puis le chiffre d'affaires) */
+  const rangee = (cle: string, titre: string, droite: string | undefined, tuiles: { titre: string; valeur: string; sous: string; couleur: string }[]) => {
+    blocs.push(<Titre key={`t-${cle}`} y={y} texte={titre} droite={droite} />);
+    const y0 = y + 28;
+    const w = (LARG - (tuiles.length - 1) * 20) / tuiles.length;
     blocs.push(
-      <g key="tuiles">
+      <g key={cle}>
         {tuiles.map((t, i) => {
           const x = MARGE + i * (w + 20);
           return (
             <g key={t.titre}>
-              <rect x={x} y={y0} width={w} height={210} rx={18} fill="#ffffff" stroke="#e3e6ea" />
+              <rect x={x} y={y0} width={w} height={160} rx={18} fill="#ffffff" stroke="#e3e6ea" />
               <rect x={x} y={y0} width={w} height={8} rx={4} fill={t.couleur} />
-              <text x={x + 22} y={y0 + 54} fill={GRIS} fontSize={21} fontWeight={700}>
+              <text x={x + 24} y={y0 + 46} fill={GRIS} fontSize={22} fontWeight={700}>
                 {t.titre}
               </text>
-              <text x={x + 22} y={y0 + 134} fill={t.couleur} fontSize={t.valeur.length > 7 ? 46 : 60} fontWeight={800}>
+              <text x={x + 24} y={y0 + 106} fill={t.couleur} fontSize={t.valeur.length > 8 ? 44 : 54} fontWeight={800}>
                 {t.valeur}
               </text>
-              <text x={x + 22} y={y0 + 178} fill={GRIS} fontSize={20}>
+              <text x={x + 24} y={y0 + 140} fill={GRIS} fontSize={19}>
                 {t.sous}
               </text>
             </g>
@@ -168,8 +164,30 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
         })}
       </g>
     );
-    y = y0 + 210 + 100;
-  }
+    y = y0 + 160 + 76;
+  };
+
+  rangee("chiffres", "Le mois en chiffres", undefined, [
+    { titre: "Commandes reçues", valeur: String(n.commandes.nombre), sous: keur(n.commandes.montant), couleur: "#1b5e20" },
+    { titre: "Affaires livrées", valeur: String(n.livrees.nombre), sous: keur(n.livrees.montant), couleur: "#34506b" },
+    { titre: "Devis ouverts", valeur: String(n.devis), sous: "nouveaux chiffrages", couleur: "#6b58a8" },
+  ]);
+  const pcCumul = n.cumulPrevu && n.cumulPrevu > 0.5 ? Math.round((n.cumulRealise / n.cumulPrevu) * 100) : null;
+  rangee("ca", "Le chiffre d’affaires", `exercice ${n.exercice}`, [
+    { titre: `CA prévu en ${nomMois(n.mois)}`, valeur: n.caPrevu === null ? "—" : keur(n.caPrevu), sous: `facturé à ce jour : ${keur(n.ca)}`, couleur: ROUGE },
+    {
+      titre: `CA de ${nomMois(n.moisPrecedent)}`,
+      valeur: keur(n.caPrecedent),
+      sous: n.caPrevuPrecedent === null ? "facturé" : `facturé · prévu ${keur(n.caPrevuPrecedent)}`,
+      couleur: "#8a1c1c",
+    },
+    {
+      titre: `Cumul nov. → ${nomMois(n.mois).slice(0, 4)}${nomMois(n.mois).length > 4 ? "." : ""}`,
+      valeur: keur(n.cumulRealise),
+      sous: n.cumulPrevu === null ? "facturé" : `prévu ${keur(n.cumulPrevu)}${pcCumul === null ? "" : ` · ${pcCumul} %`}`,
+      couleur: "#5c0f0f",
+    },
+  ]);
 
   if (n.parActivite.length > 0) {
     blocs.push(<Titre key="t-act" y={y} texte="Les activités" droite={`${n.nbEnCours} affaires en cours au forfait`} />);
@@ -184,21 +202,21 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
           const pc = a.chiffre > 0.5 ? Math.round((a.pointe / a.chiffre) * 100) : null;
           return (
             <g key={a.groupe}>
-              <rect x={x} y={y0} width={w} height={190} rx={18} fill="#ffffff" stroke="#e3e6ea" />
-              <rect x={x} y={y0} width={8} height={190} rx={4} fill={coul} />
-              <text x={x + 26} y={y0 + 48} fill={coul} fontSize={27} fontWeight={800}>
+              <rect x={x} y={y0} width={w} height={160} rx={18} fill="#ffffff" stroke="#e3e6ea" />
+              <rect x={x} y={y0} width={8} height={160} rx={4} fill={coul} />
+              <text x={x + 26} y={y0 + 42} fill={coul} fontSize={26} fontWeight={800}>
                 {a.groupe}
               </text>
-              <text x={x + 26} y={y0 + 104} fill={ENCRE} fontSize={44} fontWeight={800}>
+              <text x={x + 26} y={y0 + 92} fill={ENCRE} fontSize={42} fontWeight={800}>
                 {a.nb}
                 <tspan fontSize={21} fontWeight={600} fill={GRIS}>
                   {a.nb > 1 ? " affaires" : " affaire"}
                 </tspan>
               </text>
-              <text x={x + 26} y={y0 + 142} fill={GRIS} fontSize={19}>
+              <text x={x + 26} y={y0 + 122} fill={GRIS} fontSize={19}>
                 {heures(a.reste)} restant à faire
               </text>
-              <text x={x + 26} y={y0 + 170} fill={GRIS} fontSize={19}>
+              <text x={x + 26} y={y0 + 146} fill={GRIS} fontSize={19}>
                 {pc === null ? "" : `${pc} % du chiffré pointé`}
               </text>
             </g>
@@ -206,7 +224,7 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
         })}
       </g>
     );
-    y = y0 + 190 + 100;
+    y = y0 + 160 + 76;
   }
 
   if (charge.length > 0 && semaines.length > 0) {
@@ -215,7 +233,7 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
     const xCases = MARGE + 190;
     const ecart = 14;
     const lCase = (LARGEUR - MARGE - 24 - xCases - (semaines.length - 1) * ecart) / semaines.length;
-    const hRang = 84;
+    const hRang = 70;
     const hCadre = 56 + charge.length * hRang + 14;
     blocs.push(
       <g key="charge">
@@ -229,16 +247,16 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
           const yy = y0 + 56 + i * hRang;
           return (
             <g key={a.libelle}>
-              <circle cx={MARGE + 36} cy={yy + 34} r={11} fill={a.couleur} />
-              <text x={MARGE + 58} y={yy + 43} fill={ENCRE} fontSize={27} fontWeight={800}>
+              <circle cx={MARGE + 36} cy={yy + 31} r={11} fill={a.couleur} />
+              <text x={MARGE + 58} y={yy + 40} fill={ENCRE} fontSize={27} fontWeight={800}>
                 {a.libelle}
               </text>
               {a.pc.map((pc, w) => {
                 const x = xCases + w * (lCase + ecart);
                 return (
                   <g key={w}>
-                    <rect x={x} y={yy + 6} width={lCase} height={58} rx={12} fill={couleurCharge(pc)} />
-                    <text x={x + lCase / 2} y={yy + 45} fill={pc === null ? GRIS : "#ffffff"} fontSize={26} fontWeight={800} textAnchor="middle">
+                    <rect x={x} y={yy + 6} width={lCase} height={54} rx={12} fill={couleurCharge(pc)} />
+                    <text x={x + lCase / 2} y={yy + 42} fill={pc === null ? GRIS : "#ffffff"} fontSize={26} fontWeight={800} textAnchor="middle">
                       {pc === null ? "—" : `${pc} %`}
                     </text>
                   </g>
@@ -257,7 +275,7 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
   }
 
   return (
-    <Feuille n={n} numero={1} sousTitre="Le mois" hBandeau={210} refSvg={refSvg} pied={["CA facturé : règles de la page Finances. Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
+    <Feuille n={n} numero={1} sousTitre="Le mois" hBandeau={190} refSvg={refSvg} pied={["CA facturé : règles de la page Finances (forfaits livrés, PE / PI des mois clôturés) ; CA prévu : prévisionnel saisi dans Finances.", "Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
       {blocs}
     </Feuille>
   );
