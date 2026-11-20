@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { chargerAnnuaire, chargerTout } from "@/lib/pilotageDonnees";
-import { GROUPE_DISCIPLINE, mouvementsExcel, type Discipline, type Groupe } from "@/lib/finances";
+import { GROUPE_DISCIPLINE, mouvementsAttendus, mouvementsExcel, type Discipline, type Groupe } from "@/lib/finances";
+import { chargerPrestationsMois } from "@/lib/facturationMois";
 import { chargerDonneesRentabilite, type DonneesRentabilite } from "@/lib/rentabilite";
 import { chargerSourcesCA, type SourcesCA } from "@/lib/caExercice";
 import type { Collab } from "@/lib/pilotageCalculs";
@@ -59,6 +60,7 @@ export type DonneesNewsletter = {
   affectations: AffectationCourte[];
   annuaire: Collab[];
   previsionnel: Map<string, number>; // NEWSLETTER_CA : AAAA-MM -> € (prévisionnel saisi dans Finances)
+  pepiPrevues: { mois: string; montant: number }[]; // NEWSLETTER_PROJETE : PE / PI pas encore clôturées (comme l'attendu de Finances)
 };
 
 const jourISO = (d: Date) => d.toISOString().slice(0, 10);
@@ -71,7 +73,14 @@ const ecartJours = (a: string, b: string) => Math.round((Date.parse(`${a}T00:00:
 
 export async function chargerNewsletter(): Promise<DonneesNewsletter> {
   const depuis = plusJours(jourISO(new Date()), -400);
-  const [renta, suivi, sources, affaires, affectations, annuaire, prev] = await Promise.all([
+  const moisPEPI: string[] = [];
+  for (let k = -12; k <= 18; k++) {
+    const x = new Date();
+    x.setUTCDate(1);
+    x.setUTCMonth(x.getUTCMonth() + k);
+    moisPEPI.push(x.toISOString().slice(0, 7));
+  }
+  const [renta, suivi, sources, affaires, affectations, annuaire, prev, pepi] = await Promise.all([
     chargerDonneesRentabilite(),
     chargerTout<LigneSuivi>((a, b) =>
       supabase
@@ -89,9 +98,12 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     ).catch(() => [] as AffectationCourte[]),
     chargerAnnuaire({ inactifs: true }).catch(() => chargerAnnuaire()),
     supabase.from("finances_previsionnel").select("mois,montant"),
+    chargerPrestationsMois(moisPEPI).catch(() => new Map<string, { montant: number; cloture: boolean }[]>()),
   ]);
+  const pepiPrevues: DonneesNewsletter["pepiPrevues"] = [];
+  for (const [m, liste] of pepi) for (const x of liste) if (!x.cloture && x.montant > 0.004) pepiPrevues.push({ mois: m, montant: x.montant });
   const previsionnel = new Map(((prev.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0]));
-  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel };
+  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues };
 }
 
 /* les activités montrées (le négoce et le non ventilé n'ont pas d'équipe) */
@@ -133,14 +145,11 @@ export type Newsletter = {
   livrees: { nombre: number; montant: number };
   devis: number;
   ca: number;
-  /* NEWSLETTER_CA (20/11/2026) : CA prévu (prévisionnel de Finances), mois précédent, cumul de l'exercice (novembre → mois choisi) */
-  caPrevu: number | null;
-  moisPrecedent: string;
-  caPrecedent: number;
-  caPrevuPrecedent: number | null;
-  exercice: string; // « 2025-2026 »
-  cumulRealise: number;
-  cumulPrevu: number | null;
+  /* NEWSLETTER_PROJETE (20/11/2026) : CA de l'exercice en cours (facturé, projeté, prévu) ; CA projeté du mois choisi et du suivant.
+     Projeté = facturé + attendu, comme l'atterrissage de Finances (forfaits non livrés au mois de leur délai estimé, en retard sur
+     le mois en courant ; PE / PI pas encore clôturées). Prévu = prévisionnel saisi dans Finances. */
+  exercice: { libelle: string; facture: number; projete: number; prevu: number | null };
+  projections: { mois: string; facture: number; projete: number; prevu: number | null }[];
   enCours: AffaireEnCours[];
   nbEnCours: number;
   montantEnCours: number;
@@ -172,21 +181,29 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   const devis = d.suivi.filter((l) => (l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT") && !l.disparue && dans(l.date_ouverture)).length;
 
   // CA facturé du mois, règles de Finances (forfaits livrés, relevé validé, historique, ajustements)
+  const moisCourant = aujourdhui.slice(0, 7);
   const viaReleve = new Set(d.sources.releve.map((r) => r.base));
   const mouvements = mouvementsExcel(d.renta.lignesFin, (b) => viaReleve.has(sansZeros(b)));
   const caDe = (m: string) =>
     mouvements.filter((x) => String(x.date ?? "").slice(0, 7) === m).reduce((t, x) => t + x.montant, 0) +
     d.sources.releve.filter((r) => r.mois === m).reduce((t, r) => t + r.montant, 0) +
-    d.sources.historique.filter((h) => h.mois === m).reduce((t, h) => t + h.montant, 0) +
+    (m < moisCourant ? d.sources.historique.filter((h) => h.mois === m).reduce((t, h) => t + h.montant, 0) : 0) +
     d.sources.ajustements.filter((a) => a.mois === m).reduce((t, a) => t + a.montant, 0);
   const ca = caDe(mois);
   const decaleMois = (m: string, k: number) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + k, 1)).toISOString().slice(0, 7);
-  const moisPrecedent = decaleMois(mois, -1);
-  const anneeEx = Number(mois.slice(5, 7)) >= 11 ? Number(mois.slice(0, 4)) : Number(mois.slice(0, 4)) - 1;
-  const moisExercice: string[] = [];
-  for (let m = `${anneeEx}-11`; m <= mois; m = decaleMois(m, 1)) moisExercice.push(m);
+  const attendus = mouvementsAttendus(d.renta.lignesFin, aujourdhui).mouvements;
+  const attenduDe = (m: string) =>
+    attendus.filter((x) => String(x.date ?? "").slice(0, 7) === m).reduce((t, x) => t + x.montant, 0) +
+    d.pepiPrevues.filter((p) => p.mois === m).reduce((t, p) => t + p.montant, 0);
   const prevuDe = (m: string) => (d.previsionnel.has(m) ? (d.previsionnel.get(m) ?? 0) : null);
-  const prevusEx = moisExercice.map(prevuDe);
+  const projection = (m: string) => {
+    const facture = caDe(m);
+    return { mois: m, facture, projete: facture + attenduDe(m), prevu: prevuDe(m) };
+  };
+  // l'exercice EN COURS (novembre → octobre, d'après aujourd'hui), ses 12 mois
+  const anneeEx = Number(moisCourant.slice(5, 7)) >= 11 ? Number(moisCourant.slice(0, 4)) : Number(moisCourant.slice(0, 4)) - 1;
+  const moisEx = Array.from({ length: 12 }, (_, k) => decaleMois(`${anneeEx}-11`, k)).map(projection);
+  const prevusEx = moisEx.map((x) => x.prevu);
 
   // planning : affaires par n° de base ; équipe = affectations qui touchent la période (début du mois → 4 semaines après aujourd'hui)
   const debutPeriode = `${mois}-01`;
@@ -330,13 +347,13 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     livrees: { nombre: livrees.length, montant: livrees.reduce((t, l) => t + montantDe(l.cle), 0) },
     devis,
     ca,
-    caPrevu: prevuDe(mois),
-    moisPrecedent,
-    caPrecedent: caDe(moisPrecedent),
-    caPrevuPrecedent: prevuDe(moisPrecedent),
-    exercice: `${anneeEx}-${anneeEx + 1}`,
-    cumulRealise: moisExercice.reduce((t, m) => t + caDe(m), 0),
-    cumulPrevu: prevusEx.some((v) => v !== null) ? prevusEx.reduce<number>((t, v) => t + (v ?? 0), 0) : null,
+    exercice: {
+      libelle: `${anneeEx}-${anneeEx + 1}`,
+      facture: moisEx.reduce((t, x) => t + x.facture, 0),
+      projete: moisEx.reduce((t, x) => t + x.projete, 0),
+      prevu: prevusEx.some((v) => v !== null) ? prevusEx.reduce<number>((t, v) => t + (v ?? 0), 0) : null,
+    },
+    projections: [projection(mois), projection(decaleMois(mois, 1))],
     enCours,
     nbEnCours: enCours.length,
     montantEnCours: enCours.reduce((t, a) => t + a.montant, 0),

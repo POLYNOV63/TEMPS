@@ -138,7 +138,7 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
   const nomMois = (m: string) => MOIS[Number(m.slice(5, 7)) - 1];
 
   /* NEWSLETTER_CA : deux rangées de 3 tuiles (les faits du mois, puis le chiffre d'affaires) */
-  const rangee = (cle: string, titre: string, droite: string | undefined, tuiles: { titre: string; valeur: string; sous: string; couleur: string }[]) => {
+  const rangee = (cle: string, titre: string, droite: string | undefined, tuiles: { titre: string; valeur: string; sous: string; sous2?: string; couleur: string }[]) => {
     blocs.push(<Titre key={`t-${cle}`} y={y} texte={titre} droite={droite} />);
     const y0 = y + 28;
     const w = (LARG - (tuiles.length - 1) * 20) / tuiles.length;
@@ -153,12 +153,17 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
               <text x={x + 24} y={y0 + 46} fill={GRIS} fontSize={22} fontWeight={700}>
                 {t.titre}
               </text>
-              <text x={x + 24} y={y0 + 106} fill={t.couleur} fontSize={t.valeur.length > 8 ? 44 : 54} fontWeight={800}>
+              <text x={x + 24} y={y0 + (t.sous2 ? 98 : 106)} fill={t.couleur} fontSize={t.valeur.length > 8 ? 42 : t.sous2 ? 48 : 54} fontWeight={800}>
                 {t.valeur}
               </text>
-              <text x={x + 24} y={y0 + 140} fill={GRIS} fontSize={19}>
+              <text x={x + 24} y={y0 + (t.sous2 ? 126 : 140)} fill={GRIS} fontSize={18}>
                 {t.sous}
               </text>
+              {t.sous2 && (
+                <text x={x + 24} y={y0 + 149} fill={ENCRE} fontSize={18} fontWeight={700}>
+                  {t.sous2}
+                </text>
+              )}
             </g>
           );
         })}
@@ -172,21 +177,24 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
     { titre: "Affaires livrées", valeur: String(n.livrees.nombre), sous: keur(n.livrees.montant), couleur: "#34506b" },
     { titre: "Devis ouverts", valeur: String(n.devis), sous: "nouveaux chiffrages", couleur: "#6b58a8" },
   ]);
-  const pcCumul = n.cumulPrevu && n.cumulPrevu > 0.5 ? Math.round((n.cumulRealise / n.cumulPrevu) * 100) : null;
-  rangee("ca", "Le chiffre d’affaires", `exercice ${n.exercice}`, [
-    { titre: `CA prévu en ${nomMois(n.mois)}`, valeur: n.caPrevu === null ? "—" : keur(n.caPrevu), sous: `facturé à ce jour : ${keur(n.ca)}`, couleur: ROUGE },
+  /* NEWSLETTER_PROJETE : CA de l'exercice en cours, puis CA projeté du mois choisi et du suivant */
+  const pc = (a: number, b: number | null) => (b && b > 0.5 ? ` · ${Math.round((a / b) * 100)} %` : "");
+  const ex = n.exercice;
+  rangee("ca", "Le chiffre d’affaires", "projeté = facturé + attendu", [
     {
-      titre: `CA de ${nomMois(n.moisPrecedent)}`,
-      valeur: keur(n.caPrecedent),
-      sous: n.caPrevuPrecedent === null ? "facturé" : `facturé · prévu ${keur(n.caPrevuPrecedent)}`,
-      couleur: "#8a1c1c",
-    },
-    {
-      titre: `Cumul nov. → ${nomMois(n.mois).slice(0, 4)}${nomMois(n.mois).length > 4 ? "." : ""}`,
-      valeur: keur(n.cumulRealise),
-      sous: n.cumulPrevu === null ? "facturé" : `prévu ${keur(n.cumulPrevu)}${pcCumul === null ? "" : ` · ${pcCumul} %`}`,
+      titre: `CA ${ex.libelle}`,
+      valeur: keur(ex.facture),
+      sous: `facturé · projeté ${keur(ex.projete)}`,
+      sous2: ex.prevu === null ? undefined : `prévu ${keur(ex.prevu)}${pc(ex.projete, ex.prevu)}`,
       couleur: "#5c0f0f",
     },
+    ...n.projections.map((p, k) => ({
+      titre: `CA projeté · ${nomMois(p.mois)}`,
+      valeur: keur(p.projete),
+      sous: `dont facturé ${keur(p.facture)}`,
+      sous2: p.prevu === null ? undefined : `prévu ${keur(p.prevu)}${pc(p.projete, p.prevu)}`,
+      couleur: k === 0 ? ROUGE : "#8a1c1c",
+    })),
   ]);
 
   if (n.parActivite.length > 0) {
@@ -275,7 +283,7 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
   }
 
   return (
-    <Feuille n={n} numero={1} sousTitre="Le mois" hBandeau={190} refSvg={refSvg} pied={["CA facturé : règles de la page Finances (forfaits livrés, PE / PI des mois clôturés) ; CA prévu : prévisionnel saisi dans Finances.", "Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
+    <Feuille n={n} numero={1} sousTitre="Le mois" hBandeau={190} refSvg={refSvg} pied={["Facturé : règles de Finances. Attendu : forfaits au mois de leur délai estimé, PE / PI non clôturées. Prévu : prévisionnel de Finances.", "Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
       {blocs}
     </Feuille>
   );
