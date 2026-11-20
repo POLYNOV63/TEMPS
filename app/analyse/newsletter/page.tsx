@@ -377,16 +377,18 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
       n={n}
       numero={numero}
       total={total}
-      sousTitre={cles.length === 1 && cles[0] === "pepi" ? "Les prestations" : "Les affaires"}
+      sousTitre={cles.includes("forfaits") ? "Les affaires" : cles.includes("pepi") ? "Les prestations" : "Les devis"}
       hBandeau={H_BANDEAU_2}
       refSvg={refSvg}
       pied={
         cles.includes("forfaits")
           ? [
-              "Affaires du Suivi des affaires (forfaits en cours ou en intention, une ligne par famille). Avancement = heures pointées ÷ chiffrées.",
+              "Affaires du Suivi des affaires et intentions de commande du Suivi d’affaire BE. Avancement = heures pointées ÷ chiffrées.",
               "Équipe = personnes au planning, du début du mois aux 4 prochaines semaines. Délai : échéance du planning face à l’initiale.",
             ]
-          : ["PE / PI du relevé en cours (hors dormantes). Équipe = personnes au planning, du début du mois aux 4 prochaines semaines."]
+          : cles.includes("pepi")
+            ? ["PE / PI du relevé en cours (hors dormantes). Équipe = personnes au planning, du début du mois aux 4 prochaines semaines."]
+            : ["Devis du Suivi des devis : ouverts (en rédaction) ou envoyés (en attente de réponse). Les plus anciens envois en tête."]
       }
     >
       {blocs}
@@ -400,7 +402,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
   const forfaits: Section = {
     cle: "forfaits",
     titre: "Affaires en cours",
-    droite: `${n.nbEnCours} affaires au forfait${n.nbRetard > 0 ? ` · ${n.nbRetard} en retard` : ""}`,
+    droite: `${n.nbEnCours} affaires${n.nbIntentions > 0 ? ` dont ${n.nbIntentions} en intention` : ""}${n.nbRetard > 0 ? ` · ${n.nbRetard} en retard` : ""}`,
     colonnes: [
       { x: 90, texte: "AFFAIRE · ÉQUIPE" },
       { x: xBarre, texte: "AVANCEMENT" },
@@ -416,7 +418,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
       const dl = libDelai(a);
       const nAct = a.activites.length;
       const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
-      const tete = couper(`${a.client ? `${a.client} · ` : ""}CBE ${a.base}`, 26);
+      const tete = couper(`${a.client ? `${a.client} · ` : ""}${a.numero}`, 26);
       const reste = Math.max(6, 50 - tete.length - nAct * 2);
       return (
         <>
@@ -505,7 +507,57 @@ function sectionsAffaires(n: Newsletter): Section[] {
       );
     },
   };
-  return [forfaits, pepi].filter((s) => s.nb > 0);
+  /* NEWSLETTER_DEVIS : les devis ouverts (en rédaction) ou envoyés (en attente de réponse) */
+  const nbEnvoyes = n.devisEnCours.filter((x) => x.categorie === "ENVOYE").length;
+  const devis: Section = {
+    cle: "devis",
+    titre: "Devis en cours",
+    droite: `${nbEnvoyes} envoyés · ${n.devisEnCours.length - nbEnvoyes} en rédaction`,
+    colonnes: [
+      { x: 90, texte: "DEVIS · RÉDACTEUR" },
+      { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
+      { x: LARGEUR - 90, texte: "ENVOYÉ LE", ancre: "end" },
+    ],
+    hLigne: H_LIGNE_PRE,
+    nb: n.devisEnCours.length,
+    ligne: (i, yy) => {
+      const v = n.devisEnCours[i];
+      const envoye = v.categorie === "ENVOYE";
+      const tete = couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 26);
+      return (
+        <>
+          <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={envoye ? "#34506b" : "#eef0f3"} />
+          <text x={136} y={yy + 27} fill={envoye ? "#ffffff" : GRIS} fontSize={14} fontWeight={800} textAnchor="middle">
+            {envoye ? "Envoyé" : "En rédaction"}
+          </text>
+          <text x={194} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+            {tete}
+            {v.designation && (
+              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+                {`  ${couper(v.designation, Math.max(6, 46 - tete.length))}`}
+              </tspan>
+            )}
+          </text>
+          <text x={194} y={yy + 51} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
+            {v.redacteur || "rédacteur non renseigné"}
+            {v.ouverture && <tspan fill={GRIS}>{` · ouvert le ${dateFR(v.ouverture)}`}</tspan>}
+          </text>
+          <text x={800} y={yy + 28} fill={v.heures > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+            {v.heures > 0.5 ? heures(v.heures) : "—"}
+          </text>
+          <text x={LARGEUR - 90} y={yy + 28} fill={envoye ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+            {envoye ? dateFR(v.envoi) : "—"}
+          </text>
+          {envoye && v.attente > 0 && (
+            <text x={LARGEUR - 90} y={yy + 51} fill={v.attente > 30 ? ORANGE : GRIS} fontSize={15} fontWeight={700} textAnchor="end">
+              en attente depuis {v.attente} j
+            </text>
+          )}
+        </>
+      );
+    },
+  };
+  return [forfaits, pepi, devis].filter((s) => s.nb > 0);
 }
 
 /* ---------------- Export PNG ---------------- */

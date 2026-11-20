@@ -6,6 +6,7 @@ import { chargerDonneesRentabilite, type DonneesRentabilite } from "@/lib/rentab
 import { chargerSourcesCA, type SourcesCA } from "@/lib/caExercice";
 import type { Collab } from "@/lib/pilotageCalculs";
 import { chargerDormantes } from "@/lib/dormantes";
+import { categorieDevis, numeroDevis } from "@/lib/suiviDevis";
 
 /* ===============================================================
    NEWSLETTER DU MOIS (NEWSLETTER, PLG, 20/11/2026)
@@ -40,6 +41,14 @@ type LigneSuivi = {
   date_ouverture: string | null;
   date_reception_commande: string | null;
   date_livraison: string | null;
+  // NEWSLETTER_DEVIS : pour les devis en cours et les intentions de commande
+  numero_devis: string | null;
+  base_devis: string | null;
+  designation: string | null;
+  client_id: string | null;
+  redacteur_id: string | null;
+  date_envoi: string | null;
+  heures_total: number | string | null;
 };
 
 type AffairePlanning = {
@@ -62,6 +71,7 @@ export type DonneesNewsletter = {
   annuaire: Collab[];
   previsionnel: Map<string, number>; // NEWSLETTER_CA : AAAA-MM -> € (prévisionnel saisi dans Finances)
   pepiPrevues: { mois: string; montant: number }[]; // NEWSLETTER_PROJETE : PE / PI pas encore clôturées (comme l'attendu de Finances)
+  clients: Map<string, string>; // NEWSLETTER_DEVIS : suivi_clients id -> nom abrégé
   dormantes: Set<string>; // NEWSLETTER_PORTEFEUILLE : PE / PI dormantes (ids pilotage_affaires), écartées comme dans le Suivi des affaires
 };
 
@@ -82,12 +92,12 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     x.setUTCMonth(x.getUTCMonth() + k);
     moisPEPI.push(x.toISOString().slice(0, 7));
   }
-  const [renta, suivi, sources, affaires, affectations, annuaire, prev, pepi] = await Promise.all([
+  const [renta, suivi, sources, affaires, affectations, annuaire, prev, pepi, cl] = await Promise.all([
     chargerDonneesRentabilite(),
     chargerTout<LigneSuivi>((a, b) =>
       supabase
         .from("suivi_lignes")
-        .select("cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison")
+        .select("cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison,numero_devis,base_devis,designation,client_id,redacteur_id,date_envoi,heures_total")
         .order("cle")
         .range(a, b)
     ),
@@ -101,12 +111,16 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     chargerAnnuaire({ inactifs: true }).catch(() => chargerAnnuaire()),
     supabase.from("finances_previsionnel").select("mois,montant"),
     chargerPrestationsMois(moisPEPI).catch(() => new Map<string, { montant: number; cloture: boolean }[]>()),
+    chargerTout<{ id: string; nom_abrege: string }>((a, b) => supabase.from("suivi_clients").select("id,nom_abrege").order("id").range(a, b)).catch(
+      () => [] as { id: string; nom_abrege: string }[]
+    ),
   ]);
+  const clients = new Map(cl.map((c) => [c.id, c.nom_abrege]));
   const pepiPrevues: DonneesNewsletter["pepiPrevues"] = [];
   for (const [m, liste] of pepi) for (const x of liste) if (!x.cloture && x.montant > 0.004) pepiPrevues.push({ mois: m, montant: x.montant });
   const previsionnel = new Map(((prev.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0]));
   const dormantes = new Set((await chargerDormantes(affaires).catch(() => new Map<string, unknown>())).keys());
-  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues, dormantes };
+  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues, clients, dormantes };
 }
 
 /* les activités montrées (le négoce et le non ventilé n'ont pas d'équipe) */
@@ -120,6 +134,7 @@ export type Delai = {
 
 export type AffaireEnCours = Delai & {
   base: string;
+  numero: string; // « CBE 1587 », ou « DBE 2345 » pour une intention sans n° de commande
   client: string;
   designation: string;
   montant: number;
@@ -141,6 +156,19 @@ export type PrestationEnCours = Delai & {
   equipe: string[];
 };
 
+/* NEWSLETTER_DEVIS : un devis ouvert (en rédaction) ou envoyé (en attente de réponse), comme au Suivi des devis */
+export type DevisEnCours = {
+  numero: string; // DBE…
+  categorie: "OUVERT" | "ENVOYE";
+  client: string;
+  designation: string;
+  redacteur: string;
+  ouverture: string | null;
+  envoi: string | null;
+  attente: number; // jours depuis l'envoi (devis envoyé), 0 sinon
+  heures: number; // heures chiffrées
+};
+
 export type BilanActivite = { groupe: Groupe; nb: number; chiffre: number; pointe: number; reste: number };
 
 export type Newsletter = {
@@ -156,6 +184,8 @@ export type Newsletter = {
   projections: { mois: string; facture: number; projete: number; prevu: number | null }[];
   enCours: AffaireEnCours[];
   nbEnCours: number;
+  nbIntentions: number;
+  devisEnCours: DevisEnCours[];
   montantEnCours: number;
   nbRetard: number;
   parActivite: BilanActivite[];
@@ -289,6 +319,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const basePil = ouvertes.find((a) => baseDe(a.numero) === b && !a.numero.toUpperCase().includes("R")) ?? ouvertes[0];
     enCours.push({
       base: b,
+      numero: `CBE ${b}`,
       client: fb?.client ?? "",
       designation: fb?.designation || basePil.designation || "",
       montant,
@@ -301,8 +332,89 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       ...delaiDe(b, estimees),
     });
   }
+  /* NEWSLETTER_DEVIS : les intentions de commande du Suivi d'affaire BE qui ne sont pas (encore) au planning, avec ou sans
+     n° de commande : une ligne par affaire (n° de base), sinon par devis */
+  const dejaLa = new Set(enCours.map((a) => a.base));
+  const intentionsExcel = new Map<string, LigneSuivi[]>();
+  for (const l of d.suivi) {
+    if (l.disparue || l.statut !== "Intention de commande" || !(l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT")) continue;
+    const b = l.numero_affaire ? sansZeros(l.base_affaire) : "";
+    const cle = b ? b : `D:${numeroDevis(l.base_devis) ?? numeroDevis(l.numero_devis) ?? l.cle}`;
+    if (b && dejaLa.has(b)) continue;
+    intentionsExcel.set(cle, [...(intentionsExcel.get(cle) ?? []), l]);
+  }
+  for (const [cle, ls] of intentionsExcel) {
+    const b = cle.startsWith("D:") ? "" : cle;
+    const l0 = ls.find((l) => l.genre === "BASE") ?? ls[0];
+    const chiffre = ls.reduce((t, l) => t + (fin.get(l.cle)?.heures_total ?? (Number(l.heures_total) || 0)), 0);
+    const g = b ? d.renta.realiseParBase.get(b) : undefined;
+    const pointe = b ? (g ? Object.values(g).reduce((t, x) => t + x, 0) : 0) + (d.renta.trajetsParBase.get(b) ?? 0) : 0;
+    const parGroupe = new Map<Groupe, number>();
+    for (const l of ls) {
+      const h = fin.get(l.cle)?.heures;
+      if (!h) continue;
+      for (const [disc, v] of Object.entries(h) as [Discipline, number][]) {
+        const gr = GROUPE_DISCIPLINE[disc];
+        if (v > 0) parGroupe.set(gr, (parGroupe.get(gr) ?? 0) + v);
+      }
+    }
+    const activites = GROUPES_NEWSLETTER.filter((gr) => (parGroupe.get(gr) ?? 0) > 0.5)
+      .map((gr) => ({ groupe: gr, chiffre: parGroupe.get(gr) ?? 0, pointe: g?.[gr] ?? 0 }))
+      .sort((x, y) => y.chiffre - x.chiffre);
+    const estimees = ls.map((l) => fin.get(l.cle)?.date_estimee).filter((x): x is string => Boolean(x));
+    enCours.push({
+      base: b || cle.slice(2),
+      numero: b ? `CBE ${b}` : cle.slice(2).toUpperCase().startsWith("DBE") ? cle.slice(2) : `DBE ${cle.slice(2)}`,
+      client: (l0.client_id ? d.clients.get(l0.client_id) : undefined) ?? fin.get(l0.cle)?.client ?? "",
+      designation: l0.designation ?? fin.get(l0.cle)?.designation ?? "",
+      montant: ls.reduce((t, l) => t + montantDe(l.cle), 0),
+      chiffre,
+      pointe,
+      avancement: chiffre > 0.5 && b ? pointe / chiffre : null,
+      activites,
+      equipe: b ? equipeDe(b) : [],
+      intention: true,
+      ...delaiDe(b, estimees),
+    });
+  }
   // tri : par client, puis n° d'affaire
-  enCours.sort((x, y) => (x.client || "~").localeCompare(y.client || "~", "fr") || Number(x.base) - Number(y.base));
+  enCours.sort((x, y) => (x.client || "~").localeCompare(y.client || "~", "fr") || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+
+  /* NEWSLETTER_DEVIS : les devis ouverts ou envoyés (mêmes règles que le Suivi des devis : un devis = un n° DBE, son statut
+     est celui de la commande s'il y en a une, sinon celui du devis) */
+  const parDevis = new Map<string, LigneSuivi[]>();
+  for (const l of d.suivi) {
+    if (l.disparue || !(l.genre === "DEVIS" || l.genre === "BASE" || l.genre === "AVENANT")) continue;
+    const num = numeroDevis(l.base_devis) ?? numeroDevis(l.numero_devis);
+    if (num) parDevis.set(num, [...(parDevis.get(num) ?? []), l]);
+  }
+  const devisEnCours: DevisEnCours[] = [];
+  for (const [numero, ls] of parDevis) {
+    const cmd = (g: string) => ls.find((x) => x.genre === g && x.statut !== "Devis perdu");
+    const l = cmd("BASE") ?? cmd("AVENANT") ?? ls.find((x) => x.genre === "DEVIS") ?? ls[0];
+    const cat = categorieDevis(l.statut, l.genre, false);
+    if (cat !== "OUVERT" && cat !== "ENVOYE") continue;
+    const ouverture = ls.map((x) => x.date_ouverture).filter((x): x is string => Boolean(x)).sort()[0]?.slice(0, 10) ?? null;
+    const envoi = (l.date_envoi ?? ls.map((x) => x.date_envoi).filter((x): x is string => Boolean(x)).sort()[0] ?? null)?.slice(0, 10) ?? null;
+    devisEnCours.push({
+      numero,
+      categorie: cat,
+      client: (l.client_id ? d.clients.get(l.client_id) : undefined) ?? "",
+      designation: l.designation ?? "",
+      redacteur: l.redacteur_id ? nomCourt(collabs.get(l.redacteur_id)) : "",
+      ouverture,
+      envoi,
+      attente: cat === "ENVOYE" && envoi ? Math.max(0, ecartJours(aujourdhui, envoi)) : 0,
+      heures: ls.reduce((t, x) => t + (Number(x.heures_total) || 0), 0),
+    });
+  }
+  // les envoyés d'abord (les plus anciens en tête), puis ceux en rédaction
+  devisEnCours.sort(
+    (x, y) =>
+      (x.categorie === "ENVOYE" ? 0 : 1) - (y.categorie === "ENVOYE" ? 0 : 1) ||
+      (x.categorie === "ENVOYE" ? (x.envoi ?? "").localeCompare(y.envoi ?? "") : (x.ouverture ?? "").localeCompare(y.ouverture ?? "")) ||
+      x.numero.localeCompare(y.numero, "fr", { numeric: true })
+  );
 
   // bilan par activité : les affaires en cours qui ont des heures chiffrées dans l'activité
   const parActivite: BilanActivite[] = GROUPES_NEWSLETTER.map((gr) => {
@@ -364,6 +476,8 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     projections: [projection(mois), projection(decaleMois(mois, 1))],
     enCours,
     nbEnCours: enCours.length,
+    nbIntentions: enCours.filter((a) => a.intention).length,
+    devisEnCours,
     montantEnCours: enCours.reduce((t, a) => t + a.montant, 0),
     nbRetard: enCours.filter((a) => a.retard > 0).length,
     parActivite,
