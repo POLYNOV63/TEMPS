@@ -558,7 +558,7 @@ function PortefeuilleContenu() {
       const devisNum = affaire.type === "CBE" ? devisParCbe.get((affaire.numero.match(/^\d+/)?.[0] ?? "").replace(/^0+/, "")) : undefined;
       // RECHERCHE_AFFAIRES : la même recherche que la Fiche affaire (plusieurs mots, trigramme du responsable ou du rédacteur)
       if (q) {
-        const base = (affaire.numero.match(/^d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
+        const base = (affaire.numero.match(/^\d+/)?.[0] ?? affaire.numero).replace(/^0+/, "");
         const texte = texteRecherche({
           type: affaire.type,
           numero: affaire.numero,
