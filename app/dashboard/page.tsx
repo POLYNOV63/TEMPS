@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
+import { FAMILLES_NAV } from "@/lib/navigation";
 import { normaliserRole, pageAutorisee, peut } from "@/lib/droits";
 import { useRouter } from "next/navigation";
 import FeuilleDeRouteDashboard from "@/components/FeuilleDeRouteDashboard";
@@ -871,9 +872,12 @@ function TuilesDomaines({
   // DROITS_ROLES : chaque tuile ouvre la première page de son domaine ouverte à ce rôle ; sans page ouverte, pas de tuile
   useDroitsRoles();
   const premiere = (liste: string[]) => liste.find((u) => pageAutorisee(role, u)) ?? null;
-  const uPilotage = premiere(["/pilotage", "/pilotage/devis", "/pilotage/affaires", "/pilotage/prestations", "/pilotage/planning-ressources"]);
+  /* NAVIGATION_UNIQUE : Pilotage, Finance et Analyses reprennent la liste du bandeau (lib/navigation.ts) */
+  const famille = (cle: "pilotage" | "finance" | "analyses") => FAMILLES_NAV.find((x) => x.cle === cle)!.pages.map((p) => [p.libelle, p.href] as [string, string]);
+  const ouvertesDe = (cle: "pilotage" | "finance" | "analyses") => famille(cle).filter(([, url]) => pageAutorisee(role, url));
+  const uPilotage = ouvertesDe("pilotage")[0]?.[1] ?? null;
   const uRH = premiere(["/admin/feuilles", "/admin/Valid_RH", "/admin/suivi-rh", "/admin/suivi-notes-frais", "/admin/bilan-rh"]);
-  const uFinance = premiere(["/analyse/finances", "/analyse/facturation", "/analyse/rentabilite"]);
+  const uFinance = ouvertesDe("finance")[0]?.[1] ?? null;
   /* SOUS_MENUS_TUILES : sous chaque tuile, les liens directs vers ses pages ouvertes au rôle */
   const liens = (liste: [string, string][]) =>
     liste.filter(([, url]) => role === "ADMIN" || pageAutorisee(role, url)).map(([libelle, url]) => ({ libelle, url }));
@@ -887,14 +891,7 @@ function TuilesDomaines({
         description="Affaires, devis, planning, ressources et charge"
         url={uPilotage}
         aller={aller}
-        raccourcis={liens([
-          ["Suivi des affaires", "/pilotage"],
-          ["Suivi des devis", "/pilotage/devis"],
-          ["Planning des affaires", "/pilotage/affaires"],
-          ["Ressources", "/pilotage/planning-ressources"],
-          ["Relevé PE / PI", "/pilotage/prestations"],
-          ["Fiche affaire", "/affaires/bilan"],
-        ])}
+        raccourcis={liens(famille("pilotage"))}
       />
     );
   if (uRH)
@@ -911,7 +908,7 @@ function TuilesDomaines({
           ["Validation RH", "/admin/Valid_RH"],
           ["Absences et compteurs", "/admin/suivi-rh"],
           ["Notes de frais", "/admin/suivi-notes-frais"],
-          ["Bilan RH et export", "/admin/bilan-rh"],
+          ["Bilan RH mensuel", "/admin/bilan-rh"],
         ])}
         badges={
           rh
@@ -932,39 +929,23 @@ function TuilesDomaines({
         description="CA de l’exercice, attendu, atterrissage face au prévisionnel"
         url={uFinance}
         aller={aller}
-        raccourcis={liens([
-          ["Finances", "/analyse/finances"],
-          ["Facturation du mois", "/analyse/facturation"],
-          ["Rentabilité", "/analyse/rentabilite"],
-          ["Simulateur de rentabilité", "/analyse/simulateur"],
-          ["Newsletter du mois", "/analyse/newsletter"],
-        ])}
+        raccourcis={liens(famille("finance"))}
       />
     );
-  /* TUILE_ANALYSES : ADMIN seulement en pratique (charge, disponibilités et équipe sont dans la page Ressources, tuile Pilotage) */
-  if (role === "ADMIN" || role === "DIRECTION") {
-    const pagesAnalyse =
-      role === "ADMIN"
-        ? [
-            { libelle: "Capacité", url: "/admin/bilans" },
-            { libelle: "Fiabilité du chiffrage", url: "/analyse/fiabilite-chiffrage" },
-            { libelle: "Par client", url: "/analyse/clients" },
-          ]
-        : []; // la Direction passe par « Ressources » (tuile Pilotage)
-    const ouvertes = pagesAnalyse.filter((x) => role === "ADMIN" || pageAutorisee(role, x.url.split("#")[0]));
-    if (ouvertes.length > 0)
-      tuiles.push(
-        <TuileDomaine
-          key="analyses"
-          icone="📊"
-          titre="Analyses"
-          description={role === "ADMIN" ? "Capacité, fiabilité du chiffrage, clients" : ""}
-          url={ouvertes[0].url}
-          aller={aller}
-          raccourcis={ouvertes}
-        />
-      );
-  }
+  /* TUILE_ANALYSES : les pages de la famille Analyses du bandeau ouvertes au rôle */
+  const analyses = liens(famille("analyses"));
+  if (analyses.length > 0)
+    tuiles.push(
+      <TuileDomaine
+        key="analyses"
+        icone="📊"
+        titre="Analyses"
+        description="Capacité, fiabilité du chiffrage, clients"
+        url={analyses[0].url}
+        aller={aller}
+        raccourcis={analyses}
+      />
+    );
   return <div style={stylesV2.grilleTuiles}>{tuiles}</div>;
 }
 

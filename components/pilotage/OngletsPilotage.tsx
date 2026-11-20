@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { C } from "@/components/pilotage/ui";
-import { pageAutorisee, type Droit } from "@/lib/droits";
+import { pageAutorisee } from "@/lib/droits";
+import { FAMILLES_NAV, type CleNav } from "@/lib/navigation";
 import { useDroitsRoles } from "@/lib/droitsRoles";
 import { chargerMoi } from "@/lib/pilotageDonnees";
 
@@ -21,31 +22,10 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    que les éléments figés des pages se placent dessous.
 ================================================================ */
 
-const ONGLETS = [
-  // les affaires et leur planning
-  { cle: "portefeuille", groupe: 1, court: "Suivi des affaires", libelle: "Suivi des affaires", href: "/pilotage", droit: "voirPlanning" },
-  { cle: "devis", groupe: 1, court: "Suivi des devis", libelle: "Suivi des devis", href: "/pilotage/devis", droit: "suiviDevis" }, // SUIVI_DEVIS
-  { cle: "affaires", groupe: 1, court: "Planning affaires", libelle: "Planning des affaires", href: "/pilotage/affaires", droit: "voirPlanning" },
-  { cle: "prestations", groupe: 1, court: "Relevé PE / PI", libelle: "Relevé PE / PI", href: "/pilotage/prestations", droit: "relevePrestations" },
-  { cle: "ressources-planning", groupe: 1, court: "Ressources", libelle: "Ressources : planning, charge, équipe", href: "/pilotage/planning-ressources", droit: "voirPlanning" },
-  // la facturation et les chiffres
-  { cle: "facturation", groupe: 2, court: "Facturation", libelle: "Facturation du mois", href: "/analyse/facturation", droit: "indicateurs" },
-  { cle: "finances", groupe: 2, court: "Finances", libelle: "Finances", href: "/analyse/finances", droit: "indicateurs" },
-  { cle: "rentabilite", groupe: 2, court: "Rentabilité", libelle: "Rentabilité", href: "/analyse/rentabilite", droit: "indicateurs" },
-  { cle: "simulateur", groupe: 2, court: "Simulateur", libelle: "Simulateur de rentabilité", href: "/analyse/simulateur", droit: "indicateurs" }, // SIMULATEUR_RENTA
-  { cle: "simulateur-cuve", groupe: 2, court: "Cuve", libelle: "Simulateur : la cuve", href: "/analyse/simulateur-cuve", droit: "indicateurs" }, // SIMULATEUR_CUVE
-  { cle: "simulation-pe", groupe: 2, court: "Simulation PE", libelle: "Simulation PE (taux jour)", href: "/analyse/simulation-pe", droit: "indicateurs" }, // SIMULATION_PE
-  { cle: "newsletter", groupe: 2, court: "Newsletter", libelle: "Newsletter du mois (image)", href: "/analyse/newsletter", droit: "indicateurs" }, // NEWSLETTER
-  { cle: "bilan", groupe: 2, court: "Fiche affaire", libelle: "Fiche affaire", href: "/affaires/bilan", droit: "voirPlanning" },
-  // la charge
-  { cle: "feuilles-route", groupe: 3, court: "Feuilles de route", libelle: "Feuilles de route", href: "/ma-feuille-de-route", droit: "piloterBE" },
-  // en dernier : l'équipe et la capacité
-  { cle: "capacite", groupe: 4, court: "Capacité", libelle: "Analyse de capacité", href: "/admin/bilans", droit: "chargeRessources" }, // CAPACITE_DIRECTION
-  { cle: "clients", groupe: 4, court: "Clients", libelle: "Analyse par client", href: "/analyse/clients", droit: "administration" },
-  { cle: "fiabilite", groupe: 4, court: "Fiabilité chiffrage", libelle: "Fiabilité du chiffrage", href: "/analyse/fiabilite-chiffrage", droit: "indicateurs" },
-] as const satisfies readonly { cle: string; groupe: number; court: string; libelle: string; href: string; droit: Droit }[];
+// NAVIGATION_UNIQUE : la liste vient de lib/navigation.ts (la même que les tuiles du tableau de bord)
+const ONGLETS = FAMILLES_NAV.flatMap((f) => f.pages.map((p) => ({ ...p, groupe: f.cle, famille: f.titre })));
 
-export type OngletActif = (typeof ONGLETS)[number]["cle"];
+export type OngletActif = CleNav;
 
 export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
   const [role, setRole] = useState<string | null | undefined>(undefined);
@@ -93,10 +73,15 @@ export default function OngletsPilotage({ actif }: { actif: OngletActif }) {
     >
       {visibles.map((o, i) => {
         const a = o.cle === actif;
-        const nouveauGroupe = i > 0 && visibles[i - 1].groupe !== o.groupe;
+        const nouveauGroupe = i === 0 || visibles[i - 1].groupe !== o.groupe;
         return (
           <span key={o.cle} style={{ display: "inline-flex", alignItems: "stretch" }}>
-            {nouveauGroupe && <span aria-hidden="true" style={{ width: 1, margin: "10px 6px", background: "#d5d9de" }} />}
+            {nouveauGroupe && i > 0 && <span aria-hidden="true" style={{ width: 1, margin: "10px 6px 10px 8px", background: "#d5d9de" }} />}
+            {nouveauGroupe && (
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "0 6px 0 4px", fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: "uppercase", color: C.rouge }}>
+                {o.famille}
+              </span>
+            )}
             <Link
               href={o.href}
               aria-current={a ? "page" : undefined}
