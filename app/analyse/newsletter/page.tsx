@@ -8,7 +8,19 @@ import { C, page } from "@/components/pilotage/ui";
 import { COULEURS_PE, COULEURS_PI, couleurMetier } from "@/lib/couleurs";
 import { useDisponibilitesActivites } from "@/lib/disponibilitesActivites";
 import { aISO, lundiDe, numeroSemaine } from "@/lib/pilotagePlanning";
-import { calculerNewsletter, chargerNewsletter, type DonneesNewsletter, type Delai, type Newsletter } from "@/lib/newsletter";
+import {
+  calculerNewsletter,
+  chargerNewsletter,
+  FAMILLES,
+  type AffaireEnCours,
+  type AffaireLivree,
+  type DevisEnCours,
+  type DonneesNewsletter,
+  type Delai,
+  type Famille,
+  type Newsletter,
+  type PrestationEnCours,
+} from "@/lib/newsletter";
 
 /* ===============================================================
    ANALYSE - NEWSLETTER DU MOIS (NEWSLETTER, PLG, 20/11/2026)
@@ -175,7 +187,7 @@ function ImageMois({ n, charge, semaines, total, noteCharge, refSvg }: { n: News
   rangee("chiffres", "Le mois en chiffres", undefined, [
     { titre: "Commandes reçues", valeur: String(n.commandes.nombre), sous: keur(n.commandes.montant), couleur: "#1b5e20" },
     { titre: "Affaires livrées", valeur: String(n.livrees.nombre), sous: keur(n.livrees.montant), couleur: "#34506b" },
-    { titre: "Devis ouverts", valeur: String(n.devis), sous: "nouveaux chiffrages", couleur: "#6b58a8" },
+    { titre: "Devis ouverts", valeur: String(n.devis), sous: "du mois, en rédaction ou envoyés", couleur: "#6b58a8" },
   ]);
   /* NEWSLETTER_PROJETE : CA de l'exercice en cours, puis CA projeté du mois choisi et du suivant */
   const pc = (a: number, b: number | null) => (b && b > 0.5 ? ` · ${Math.round((a / b) * 100)} %` : "");
@@ -198,7 +210,7 @@ function ImageMois({ n, charge, semaines, total, noteCharge, refSvg }: { n: News
   ]);
 
   if (n.parActivite.length > 0) {
-    blocs.push(<Titre key="t-act" y={y} texte="Les activités" droite={`${n.nbEnCours} affaires en cours au forfait`} />);
+    blocs.push(<Titre key="t-act" y={y} texte="Les activités" droite={`${n.enCours.filter((a) => a.famille === "FORFAIT").length} affaires en cours au forfait`} />);
     const y0 = y + 30;
     const k = n.parActivite.length;
     const w = (LARG - (k - 1) * 20) / k;
@@ -300,17 +312,21 @@ function ImageMois({ n, charge, semaines, total, noteCharge, refSvg }: { n: News
   );
 }
 
-/* ---------------- Images suivantes : les affaires (NEWSLETTER_PORTEFEUILLE) ----------------
-   Toutes les affaires du Suivi des affaires (forfaits en cours ou en intention, une ligne par famille) puis toutes les
-   PE / PI du relevé en cours (hors dormantes), en lignes compactes, réparties sur autant de pages A4 que nécessaire. */
+/* ---------------- Images suivantes : les paragraphes (NEWSLETTER_PARAGRAPHES) ----------------
+   Un paragraphe par famille d'affaires, dans l'ordre Forfait, PI, Négoce, PE. Dans chacun : les affaires en cours (forfait et
+   négoce : activités, équipe, avancement, livraison ; PE / PI : relevé en cours hors dormantes), les intentions de commande, les
+   devis ouverts ou envoyés ouverts dans le mois, et (hors PE / PI) les affaires livrées dans le mois. Lignes compactes,
+   réparties sur autant de pages A4 que nécessaire. */
 const H_BANDEAU_2 = 130;
 const H_ENTETE = 46;
 const BAS_UTILE = HAUTEUR - 112; // au-dessus du pied
+const H_CHAPITRE = 82; // le bandeau de couleur d'un paragraphe
 const H_LIGNE_AFF = 66;
 const H_LIGNE_PRE = 60;
 
 type Colonne = { x: number; texte: string; ancre?: "start" | "end" };
-type Section = { cle: string; titre: string; droite: string; colonnes: Colonne[]; hLigne: number; nb: number; ligne: (i: number, yy: number) => ReactNode };
+type Chapitre = { titre: string; couleur: string; resume: string };
+type Section = { cle: string; titre: string; droite: string; colonnes: Colonne[]; hLigne: number; nb: number; ligne: (i: number, yy: number) => ReactNode; chapitre?: Chapitre; paragraphe: string };
 type Morceau = { section: Section; debut: number; fin: number; suite: boolean };
 
 /* répartit les sections sur des pages : une section continue sur la page suivante (« suite ») */
@@ -326,7 +342,8 @@ function paginer(sections: Section[]): Morceau[][] {
   for (const s of sections) {
     let i = 0;
     while (i < s.nb) {
-      const place = Math.floor((BAS_UTILE - y - 22 - H_ENTETE - 6) / s.hLigne);
+      const chap = i === 0 && s.chapitre ? H_CHAPITRE : 0;
+      const place = Math.floor((BAS_UTILE - y - chap - 22 - H_ENTETE - 6) / s.hLigne);
       if (place < Math.min(3, s.nb - i)) {
         if (courante.length === 0) break; // page vide trop petite : ne peut pas arriver, garde-fou
         nouvellePage();
@@ -334,7 +351,7 @@ function paginer(sections: Section[]): Morceau[][] {
       }
       const k = Math.min(place, s.nb - i);
       courante.push({ section: s, debut: i, fin: i + k, suite: i > 0 });
-      y += 22 + H_ENTETE + 6 + k * s.hLigne + 84;
+      y += chap + 22 + H_ENTETE + 6 + k * s.hLigne + 76;
       i += k;
     }
   }
@@ -347,8 +364,35 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
   let y = H_BANDEAU_2 + 76;
   for (const m of morceaux) {
     const s = m.section;
-    blocs.push(<Titre key={`t-${s.cle}-${m.debut}`} y={y} texte={m.suite ? `${s.titre} (suite)` : s.titre} droite={m.suite ? undefined : s.droite} />);
-    const y0 = y + 22;
+    if (m.debut === 0 && s.chapitre) {
+      const c = s.chapitre;
+      blocs.push(
+        <g key={`chap-${s.cle}`}>
+          <rect x={MARGE} y={y - 40} width={LARG} height={54} rx={14} fill={c.couleur} />
+          <text x={MARGE + 24} y={y - 4} fill="#ffffff" fontSize={30} fontWeight={800} letterSpacing={1}>
+            {c.titre}
+          </text>
+          <text x={LARGEUR - MARGE - 24} y={y - 5} fill="#ffffff" fontSize={20} fontWeight={700} textAnchor="end" opacity={0.95}>
+            {c.resume}
+          </text>
+        </g>
+      );
+      y += H_CHAPITRE;
+    }
+    const titre = m.suite ? `${s.paragraphe} · ${s.titre} (suite)` : s.titre;
+    blocs.push(
+      <g key={`t-${s.cle}-${m.debut}`}>
+        <text x={MARGE} y={y} fill={ENCRE} fontSize={24} fontWeight={800}>
+          {titre}
+        </text>
+        {!m.suite && s.droite && (
+          <text x={LARGEUR - MARGE} y={y} fill={GRIS} fontSize={18} textAnchor="end">
+            {s.droite}
+          </text>
+        )}
+      </g>
+    );
+    const y0 = y + 14;
     const k = m.fin - m.debut;
     blocs.push(
       <g key={`${s.cle}-${m.debut}`}>
@@ -369,210 +413,263 @@ function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; mor
         })}
       </g>
     );
-    y = y0 + H_ENTETE + 6 + k * s.hLigne + 84;
+    y = y0 + H_ENTETE + 6 + k * s.hLigne + 76 + 8;
   }
-  const cles = [...new Set(morceaux.map((m) => m.section.cle))];
+  const paragraphes = [...new Set(morceaux.map((m) => m.section.paragraphe))];
   return (
     <Feuille
       n={n}
       numero={numero}
       total={total}
-      sousTitre={cles.includes("forfaits") ? "Les affaires" : cles.includes("pepi") ? "Les prestations" : "Les devis"}
+      sousTitre={paragraphes.join(" · ")}
       hBandeau={H_BANDEAU_2}
       refSvg={refSvg}
-      pied={
-        cles.includes("forfaits")
-          ? [
-              "Affaires du Suivi des affaires et intentions de commande du Suivi d’affaire BE. Avancement = heures pointées ÷ chiffrées.",
-              "Équipe = personnes au planning, du début du mois aux 4 prochaines semaines. Délai : échéance du planning face à l’initiale.",
-            ]
-          : cles.includes("pepi")
-            ? ["PE / PI du relevé en cours (hors dormantes). Équipe = personnes au planning, du début du mois aux 4 prochaines semaines."]
-            : ["Devis ouverts pendant le mois (date d’ouverture du Suivi des devis), avec leur statut d’aujourd’hui."]
-      }
+      pied={[
+        "En cours : Suivi des affaires et intentions de commande ; PE / PI du relevé en cours (hors dormantes). Avancement = pointé ÷ chiffré.",
+        "Devis : ouverts ou envoyés, ouverts dans le mois. Livrées : date de livraison dans le mois. Équipe : planning, du début du mois à 4 semaines.",
+      ]}
     >
       {blocs}
     </Feuille>
   );
 }
 
+const COULEURS_FAMILLE: Record<Famille, string> = { FORFAIT: ROUGE, PI: COULEURS_PI.fond, NEGOCE: "#6b58a8", PE: COULEURS_PE.fond };
+
 function sectionsAffaires(n: Newsletter): Section[] {
   const xBarre = 640;
   const lBarre = 150;
-  const forfaits: Section = {
-    cle: "forfaits",
-    titre: "Affaires en cours",
-    droite: `${n.nbEnCours} affaires${n.nbIntentions > 0 ? ` dont ${n.nbIntentions} en intention` : ""}${n.nbRetard > 0 ? ` · ${n.nbRetard} en retard` : ""}`,
-    colonnes: [
-      { x: 90, texte: "AFFAIRE · ÉQUIPE" },
-      { x: xBarre, texte: "AVANCEMENT" },
-      { x: LARGEUR - 90, texte: "LIVRAISON", ancre: "end" },
-    ],
-    hLigne: H_LIGNE_AFF,
-    nb: n.enCours.length,
-    ligne: (i, yy) => {
-      const a = n.enCours[i];
-      const pc = a.avancement === null ? null : Math.round(a.avancement * 100);
-      const plein = a.avancement === null ? 0 : Math.min(1, a.avancement);
-      const couleur = pc === null ? "#c9ced6" : pc > 100 ? ROUGE_ALERTE : pc >= 80 ? ORANGE : VERT;
-      const dl = libDelai(a);
-      const nAct = a.activites.length;
-      const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
-      const tete = couper(`${a.client ? `${a.client} · ` : ""}${a.numero}`, 26);
-      const reste = Math.max(6, 50 - tete.length - nAct * 2);
-      return (
-        <>
-          {a.activites.map((x, k) => (
-            <Pastille key={x.groupe} x={90 + k * 24} y={yy + 22} groupe={x.groupe} />
-          ))}
-          <text x={xTexte} y={yy + 29} fill={ENCRE} fontSize={20} fontWeight={800}>
-            {tete}
-            {a.designation && (
-              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-                {`  ${couper(a.designation, reste)}`}
-              </tspan>
-            )}
-          </text>
-          <text x={90} y={yy + 54} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={a.equipe.length ? undefined : "italic"}>
-            {a.intention && (
-              <tspan fill={ORANGE} fontWeight={700} fontStyle="normal">
-                {"Intention de commande · "}
-              </tspan>
-            )}
-            {equipeTexte(a.equipe, a.intention ? 42 : 62)}
-          </text>
-          <rect x={xBarre} y={yy + 15} width={lBarre} height={16} rx={8} fill="#eef0f3" />
-          <rect x={xBarre} y={yy + 15} width={Math.max(plein > 0 ? 16 : 0, lBarre * plein)} height={16} rx={8} fill={couleur} />
-          <text x={xBarre + lBarre + 10} y={yy + 29} fill={couleur} fontSize={18} fontWeight={800}>
-            {pc === null ? "—" : `${pc} %`}
-          </text>
-          <text x={xBarre} y={yy + 54} fill={GRIS} fontSize={15}>
-            {a.chiffre > 0.5 ? `${heures(a.pointe)} / ${heures(a.chiffre)}` : "pas d’heures chiffrées"}
-          </text>
-          <text x={LARGEUR - 90} y={yy + 29} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
-            {dateFR(a.livraison)}
-          </text>
-          <text x={LARGEUR - 90} y={yy + 54} fill={dl.couleur} fontSize={15} fontWeight={700} textAnchor="end">
-            {dl.texte}
-          </text>
-        </>
-      );
-    },
-  };
-  const nbPE = n.prestations.filter((p) => p.imputation === "PE").length;
-  const pepi: Section = {
-    cle: "pepi",
-    titre: "Prestations PE / PI",
-    droite: `${nbPE} PE · ${n.prestations.length - nbPE} PI en cours`,
-    colonnes: [
-      { x: 90, texte: "PRESTATION · ÉQUIPE" },
-      { x: 800, texte: "HEURES DU MOIS", ancre: "end" },
-      { x: LARGEUR - 90, texte: "FIN PRÉVUE", ancre: "end" },
-    ],
-    hLigne: H_LIGNE_PRE,
-    nb: n.prestations.length,
-    ligne: (i, yy) => {
-      const p = n.prestations[i];
-      const coul = p.imputation === "PE" ? COULEURS_PE.fond : COULEURS_PI.fond;
-      const tete = couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 26);
-      return (
-        <>
-          <rect x={90} y={yy + 10} width={40} height={24} rx={6} fill={coul} />
-          <text x={110} y={yy + 27} fill="#ffffff" fontSize={15} fontWeight={800} textAnchor="middle">
-            {p.imputation}
-          </text>
-          <text x={142} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
-            {tete}
-            {p.designation && (
-              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-                {`  ${couper(p.designation, Math.max(6, 50 - tete.length))}`}
-              </tspan>
-            )}
-          </text>
-          <text x={142} y={yy + 51} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={p.equipe.length ? undefined : "italic"}>
-            {equipeTexte(p.equipe, 60)}
-          </text>
-          <text x={800} y={yy + 28} fill={p.heuresMois > 0 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
-            {p.heuresMois > 0 ? heures(p.heuresMois) : "—"}
-          </text>
-          <text x={LARGEUR - 90} y={yy + 28} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
-            {dateFR(p.livraison)}
-          </text>
-          {p.retard > 0 && (
-            <text x={LARGEUR - 90} y={yy + 51} fill={ROUGE_ALERTE} fontSize={15} fontWeight={700} textAnchor="end">
-              échue depuis {p.retard} j
-            </text>
+
+  const ligneAffaire = (a: AffaireEnCours, yy: number) => {
+    const pc = a.avancement === null ? null : Math.round(a.avancement * 100);
+    const plein = a.avancement === null ? 0 : Math.min(1, a.avancement);
+    const couleur = pc === null ? "#c9ced6" : pc > 100 ? ROUGE_ALERTE : pc >= 80 ? ORANGE : VERT;
+    const dl = libDelai(a);
+    const nAct = a.activites.length;
+    const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
+    const tete = couper(`${a.client ? `${a.client} · ` : ""}${a.numero}`, 26);
+    const reste = Math.max(6, 50 - tete.length - nAct * 2);
+    return (
+      <>
+        {a.activites.map((x, k) => (
+          <Pastille key={x.groupe} x={90 + k * 24} y={yy + 22} groupe={x.groupe} />
+        ))}
+        <text x={xTexte} y={yy + 29} fill={ENCRE} fontSize={20} fontWeight={800}>
+          {tete}
+          {a.designation && (
+            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+              {`  ${couper(a.designation, reste)}`}
+            </tspan>
           )}
-        </>
-      );
-    },
-  };
-  /* NEWSLETTER_DEVIS_MOIS : les devis ouverts pendant le mois, quel que soit leur statut (affiché) */
-  const STATUTS_DEVIS: Record<string, { texte: string; fond: string; encre: string }> = {
-    OUVERT: { texte: "En rédaction", fond: "#eef0f3", encre: GRIS },
-    ENVOYE: { texte: "Envoyé", fond: "#34506b", encre: "#ffffff" },
-    INTENTION: { texte: "Intention", fond: ORANGE, encre: "#ffffff" },
-    REMPORTE: { texte: "Commandé", fond: VERT, encre: "#ffffff" },
-    PERDU: { texte: "Perdu", fond: ROUGE_ALERTE, encre: "#ffffff" },
-    ANNULE: { texte: "Annulé", fond: "#c9ced6", encre: "#ffffff" },
-    AUTRE: { texte: "Autre", fond: "#eef0f3", encre: GRIS },
-  };
-  const compte = (c: string) => n.devisEnCours.filter((x) => x.categorie === c).length;
-  const devis: Section = {
-    cle: "devis",
-    titre: "Devis ouverts dans le mois",
-    droite: (["OUVERT", "ENVOYE", "INTENTION", "REMPORTE", "PERDU", "ANNULE"] as const)
-      .filter((c) => compte(c) > 0)
-      .map((c) => `${compte(c)} ${STATUTS_DEVIS[c].texte.toLowerCase()}`)
-      .join(" · "),
-    colonnes: [
-      { x: 90, texte: "DEVIS · RÉDACTEUR" },
-      { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
-      { x: LARGEUR - 90, texte: "ENVOYÉ LE", ancre: "end" },
-    ],
-    hLigne: H_LIGNE_PRE,
-    nb: n.devisEnCours.length,
-    ligne: (i, yy) => {
-      const v = n.devisEnCours[i];
-      const envoye = v.categorie === "ENVOYE";
-      const st = STATUTS_DEVIS[v.categorie] ?? STATUTS_DEVIS.AUTRE;
-      const tete = couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 26);
-      return (
-        <>
-          <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={st.fond} />
-          <text x={136} y={yy + 27} fill={st.encre} fontSize={14} fontWeight={800} textAnchor="middle">
-            {st.texte}
-          </text>
-          <text x={194} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
-            {tete}
-            {v.designation && (
-              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
-                {`  ${couper(v.designation, Math.max(6, 46 - tete.length))}`}
-              </tspan>
-            )}
-          </text>
-          <text x={194} y={yy + 51} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
-            {v.redacteur || "rédacteur non renseigné"}
-            {v.ouverture && <tspan fill={GRIS}>{` · ouvert le ${dateFR(v.ouverture)}`}</tspan>}
-            {v.commande && <tspan fill={VERT} fontWeight={700}>{` · commande ${v.commande}`}</tspan>}
-          </text>
-          <text x={800} y={yy + 28} fill={v.heures > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
-            {v.heures > 0.5 ? heures(v.heures) : "—"}
-          </text>
-          <text x={LARGEUR - 90} y={yy + 28} fill={v.envoi ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
-            {dateFR(v.envoi)}
-          </text>
-          {envoye && v.attente > 0 && (
-            <text x={LARGEUR - 90} y={yy + 51} fill={v.attente > 30 ? ORANGE : GRIS} fontSize={15} fontWeight={700} textAnchor="end">
-              en attente depuis {v.attente} j
-            </text>
+        </text>
+        <text x={90} y={yy + 54} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={a.equipe.length ? undefined : "italic"}>
+          {a.intention && (
+            <tspan fill={ORANGE} fontWeight={700} fontStyle="normal">
+              {"Intention de commande · "}
+            </tspan>
           )}
-        </>
-      );
-    },
+          {equipeTexte(a.equipe, a.intention ? 42 : 62)}
+        </text>
+        <rect x={xBarre} y={yy + 15} width={lBarre} height={16} rx={8} fill="#eef0f3" />
+        <rect x={xBarre} y={yy + 15} width={Math.max(plein > 0 ? 16 : 0, lBarre * plein)} height={16} rx={8} fill={couleur} />
+        <text x={xBarre + lBarre + 10} y={yy + 29} fill={couleur} fontSize={18} fontWeight={800}>
+          {pc === null ? "—" : `${pc} %`}
+        </text>
+        <text x={xBarre} y={yy + 54} fill={GRIS} fontSize={15}>
+          {a.chiffre > 0.5 ? `${heures(a.pointe)} / ${heures(a.chiffre)}` : "pas d’heures chiffrées"}
+        </text>
+        <text x={LARGEUR - 90} y={yy + 29} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
+          {dateFR(a.livraison)}
+        </text>
+        <text x={LARGEUR - 90} y={yy + 54} fill={dl.couleur} fontSize={15} fontWeight={700} textAnchor="end">
+          {dl.texte}
+        </text>
+      </>
+    );
   };
-  return [forfaits, pepi, devis].filter((s) => s.nb > 0);
+
+  const lignePrestation = (p: PrestationEnCours, yy: number) => {
+    const tete = couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 26);
+    return (
+      <>
+        <text x={90} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+          {tete}
+          {p.designation && (
+            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+              {`  ${couper(p.designation, Math.max(6, 54 - tete.length))}`}
+            </tspan>
+          )}
+        </text>
+        <text x={90} y={yy + 51} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={p.equipe.length ? undefined : "italic"}>
+          {equipeTexte(p.equipe, 64)}
+        </text>
+        <text x={800} y={yy + 28} fill={p.heuresMois > 0 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+          {p.heuresMois > 0 ? heures(p.heuresMois) : "—"}
+        </text>
+        <text x={LARGEUR - 90} y={yy + 28} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
+          {dateFR(p.livraison)}
+        </text>
+        {p.retard > 0 && (
+          <text x={LARGEUR - 90} y={yy + 51} fill={ROUGE_ALERTE} fontSize={15} fontWeight={700} textAnchor="end">
+            échue depuis {p.retard} j
+          </text>
+        )}
+      </>
+    );
+  };
+
+  const ligneDevis = (v: DevisEnCours, yy: number) => {
+    const envoye = v.categorie === "ENVOYE";
+    const tete = couper(`${v.client ? `${v.client} · ` : ""}DBE ${v.numero}`, 26);
+    return (
+      <>
+        <rect x={90} y={yy + 10} width={92} height={24} rx={6} fill={envoye ? "#34506b" : "#eef0f3"} />
+        <text x={136} y={yy + 27} fill={envoye ? "#ffffff" : GRIS} fontSize={14} fontWeight={800} textAnchor="middle">
+          {envoye ? "Envoyé" : "En rédaction"}
+        </text>
+        <text x={194} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+          {tete}
+          {v.designation && (
+            <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+              {`  ${couper(v.designation, Math.max(6, 46 - tete.length))}`}
+            </tspan>
+          )}
+        </text>
+        <text x={194} y={yy + 51} fill={v.redacteur ? ENCRE : GRIS_CLAIR} fontSize={16}>
+          {v.redacteur || "rédacteur non renseigné"}
+          {v.ouverture && <tspan fill={GRIS}>{` · ouvert le ${dateFR(v.ouverture)}`}</tspan>}
+        </text>
+        <text x={800} y={yy + 28} fill={v.heures > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+          {v.heures > 0.5 ? heures(v.heures) : "—"}
+        </text>
+        <text x={LARGEUR - 90} y={yy + 28} fill={envoye ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+          {envoye ? dateFR(v.envoi) : "—"}
+        </text>
+        {envoye && v.attente > 0 && (
+          <text x={LARGEUR - 90} y={yy + 51} fill={v.attente > 30 ? ORANGE : GRIS} fontSize={15} fontWeight={700} textAnchor="end">
+            en attente depuis {v.attente} j
+          </text>
+        )}
+      </>
+    );
+  };
+
+  const ligneLivree = (x: AffaireLivree, yy: number) => {
+    const nAct = x.activites.length;
+    const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
+    const tete = couper(`${x.client ? `${x.client} · ` : ""}${x.numero}`, 28);
+    return (
+      <>
+        {x.activites.map((g, k) => (
+          <Pastille key={g} x={90 + k * 24} y={yy + 22} groupe={g} />
+        ))}
+        <text x={xTexte} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+          {tete}
+        </text>
+        <text x={90} y={yy + 51} fill={GRIS} fontSize={16}>
+          {couper(x.designation || "—", 70)}
+        </text>
+        <text x={800} y={yy + 28} fill={x.chiffre > 0.5 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+          {x.chiffre > 0.5 ? heures(x.chiffre) : "—"}
+        </text>
+        <text x={LARGEUR - 90} y={yy + 28} fill={VERT} fontSize={19} fontWeight={800} textAnchor="end">
+          {dateFR(x.livraison)}
+        </text>
+      </>
+    );
+  };
+
+  const sections: Section[] = [];
+  for (const fam of FAMILLES) {
+    const paragraphe = fam.titre;
+    const pepi = fam.cle === "PE" || fam.cle === "PI";
+    const affaires = n.enCours.filter((a) => a.famille === fam.cle);
+    const prestations = pepi ? n.prestations.filter((p) => p.imputation === fam.cle) : [];
+    const devis = n.devisEnCours.filter((v) => v.famille === fam.cle);
+    const livrees = pepi ? [] : n.livreesMois.filter((x) => x.famille === fam.cle);
+    const nbInt = affaires.filter((a) => a.intention).length;
+    const nbRetard = affaires.filter((a) => a.retard > 0).length;
+    const propres: Section[] = [];
+
+    if (prestations.length > 0)
+      propres.push({
+        cle: `${fam.cle}-releve`,
+        paragraphe,
+        titre: "En cours",
+        droite: `${prestations.length} au relevé`,
+        colonnes: [
+          { x: 90, texte: "PRESTATION · ÉQUIPE" },
+          { x: 800, texte: "HEURES DU MOIS", ancre: "end" },
+          { x: LARGEUR - 90, texte: "FIN PRÉVUE", ancre: "end" },
+        ],
+        hLigne: H_LIGNE_PRE,
+        nb: prestations.length,
+        ligne: (i, yy) => lignePrestation(prestations[i], yy),
+      });
+    if (affaires.length > 0)
+      propres.push({
+        cle: `${fam.cle}-encours`,
+        paragraphe,
+        titre: pepi ? "Intentions de commande" : "En cours",
+        droite: pepi
+          ? `${affaires.length} pas encore au relevé`
+          : `${affaires.length} affaire${affaires.length > 1 ? "s" : ""}${nbInt > 0 ? ` dont ${nbInt} en intention` : ""}${nbRetard > 0 ? ` · ${nbRetard} en retard` : ""}`,
+        colonnes: [
+          { x: 90, texte: "AFFAIRE · ÉQUIPE" },
+          { x: xBarre, texte: "AVANCEMENT" },
+          { x: LARGEUR - 90, texte: "LIVRAISON", ancre: "end" },
+        ],
+        hLigne: H_LIGNE_AFF,
+        nb: affaires.length,
+        ligne: (i, yy) => ligneAffaire(affaires[i], yy),
+      });
+    if (devis.length > 0) {
+      const nbEnv = devis.filter((v) => v.categorie === "ENVOYE").length;
+      propres.push({
+        cle: `${fam.cle}-devis`,
+        paragraphe,
+        titre: `Devis ouverts en ${libMois(n.mois)}`,
+        droite: [nbEnv > 0 ? `${nbEnv} envoyé${nbEnv > 1 ? "s" : ""}` : "", devis.length - nbEnv > 0 ? `${devis.length - nbEnv} en rédaction` : ""].filter(Boolean).join(" · "),
+        colonnes: [
+          { x: 90, texte: "DEVIS · RÉDACTEUR" },
+          { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
+          { x: LARGEUR - 90, texte: "ENVOYÉ LE", ancre: "end" },
+        ],
+        hLigne: H_LIGNE_PRE,
+        nb: devis.length,
+        ligne: (i, yy) => ligneDevis(devis[i], yy),
+      });
+    }
+    if (livrees.length > 0)
+      propres.push({
+        cle: `${fam.cle}-livrees`,
+        paragraphe,
+        titre: `Livrées en ${libMois(n.mois)}`,
+        droite: `${livrees.length} commande${livrees.length > 1 ? "s" : ""}`,
+        colonnes: [
+          { x: 90, texte: "AFFAIRE" },
+          { x: 800, texte: "HEURES CHIFFRÉES", ancre: "end" },
+          { x: LARGEUR - 90, texte: "LIVRÉE LE", ancre: "end" },
+        ],
+        hLigne: H_LIGNE_PRE,
+        nb: livrees.length,
+        ligne: (i, yy) => ligneLivree(livrees[i], yy),
+      });
+
+    if (propres.length === 0) continue;
+    const resume = [
+      prestations.length + affaires.length > 0 ? `${prestations.length + affaires.length} en cours` : "",
+      devis.length > 0 ? `${devis.length} devis` : "",
+      livrees.length > 0 ? `${livrees.length} livrée${livrees.length > 1 ? "s" : ""}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    propres[0].chapitre = { titre: paragraphe.toUpperCase(), couleur: COULEURS_FAMILLE[fam.cle], resume };
+    sections.push(...propres);
+  }
+  return sections;
 }
+
 
 /* ---------------- Export PNG ---------------- */
 async function enregistrerPNG(svg: SVGSVGElement, nom: string) {

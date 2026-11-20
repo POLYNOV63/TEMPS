@@ -49,6 +49,7 @@ type LigneSuivi = {
   redacteur_id: string | null;
   date_envoi: string | null;
   heures_total: number | string | null;
+  imputation: string | null;
 };
 
 type AffairePlanning = {
@@ -97,7 +98,7 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
     chargerTout<LigneSuivi>((a, b) =>
       supabase
         .from("suivi_lignes")
-        .select("cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison,numero_devis,base_devis,designation,client_id,redacteur_id,date_envoi,heures_total")
+        .select("cle,genre,statut,base_affaire,numero_affaire,disparue,date_ouverture,date_reception_commande,date_livraison,numero_devis,base_devis,designation,client_id,redacteur_id,date_envoi,heures_total,imputation")
         .order("cle")
         .range(a, b)
     ),
@@ -132,7 +133,21 @@ export type Delai = {
   decalage: number; // jours de décalage face à l'échéance initiale (> 0 : repoussée)
 };
 
+/* NEWSLETTER_PARAGRAPHES : la newsletter est rangée par famille d'affaires, dans cet ordre */
+export type Famille = "FORFAIT" | "PI" | "NEGOCE" | "PE";
+export const FAMILLES: { cle: Famille; titre: string }[] = [
+  { cle: "FORFAIT", titre: "Forfait" },
+  { cle: "PI", titre: "PI" },
+  { cle: "NEGOCE", titre: "Négoce" },
+  { cle: "PE", titre: "PE" },
+];
+export const familleDe = (imp: string | null | undefined): Famille => {
+  const s = String(imp ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+  return s === "PE" ? "PE" : s === "PI" ? "PI" : s.startsWith("NEGOCE") ? "NEGOCE" : "FORFAIT";
+};
+
 export type AffaireEnCours = Delai & {
+  famille: Famille;
   base: string;
   numero: string; // « CBE 1587 », ou « DBE 2345 » pour une intention sans n° de commande
   client: string;
@@ -158,6 +173,7 @@ export type PrestationEnCours = Delai & {
 
 /* NEWSLETTER_DEVIS : un devis ouvert (en rédaction) ou envoyé (en attente de réponse), comme au Suivi des devis */
 export type DevisEnCours = {
+  famille: Famille;
   numero: string; // DBE…
   categorie: CategorieDevis; // NEWSLETTER_DEVIS_MOIS : tous les statuts
   commande: string | null; // « CBE1604 » si le devis est devenu une commande
@@ -168,6 +184,17 @@ export type DevisEnCours = {
   envoi: string | null;
   attente: number; // jours depuis l'envoi (devis envoyé), 0 sinon
   heures: number; // heures chiffrées
+};
+
+/* NEWSLETTER_PARAGRAPHES : une commande (base ou avenant) livrée dans le mois, hors PE / PI */
+export type AffaireLivree = {
+  famille: Famille;
+  numero: string; // « CBE 1587 » ou « CBE 1587-A1 »
+  client: string;
+  designation: string;
+  livraison: string;
+  chiffre: number;
+  activites: Groupe[];
 };
 
 export type BilanActivite = { groupe: Groupe; nb: number; chiffre: number; pointe: number; reste: number };
@@ -187,6 +214,7 @@ export type Newsletter = {
   nbEnCours: number;
   nbIntentions: number;
   devisEnCours: DevisEnCours[];
+  livreesMois: AffaireLivree[];
   montantEnCours: number;
   nbRetard: number;
   parActivite: BilanActivite[];
@@ -288,6 +316,18 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const b = sansZeros(l.base_affaire);
     if (b) lignesFamille.set(b, [...(lignesFamille.get(b) ?? []), l]);
   }
+  const groupesChiffres = (ls: LigneSuivi[]) => {
+    const parGroupe = new Map<Groupe, number>();
+    for (const l of ls) {
+      const h = fin.get(l.cle)?.heures;
+      if (!h) continue;
+      for (const [disc, v] of Object.entries(h) as [Discipline, number][]) {
+        const gr = GROUPE_DISCIPLINE[disc];
+        if (v > 0) parGroupe.set(gr, (parGroupe.get(gr) ?? 0) + v);
+      }
+    }
+    return parGroupe;
+  };
   const enCours: AffaireEnCours[] = [];
   for (const [b, as] of planningParBase) {
     const ouvertes = as.filter((a) => !estPEPI(a.imputation) && (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE"));
@@ -318,6 +358,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       .filter((x): x is string => Boolean(x));
     const basePil = ouvertes.find((a) => baseDe(a.numero) === b && !a.numero.toUpperCase().includes("R")) ?? ouvertes[0];
     enCours.push({
+      famille: familleDe(basePil.imputation ?? laBase?.imputation) === "NEGOCE" ? "NEGOCE" : "FORFAIT",
       base: b,
       numero: `CBE ${b}`,
       client: fb?.client ?? "",
@@ -363,6 +404,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       .sort((x, y) => y.chiffre - x.chiffre);
     const estimees = ls.map((l) => fin.get(l.cle)?.date_estimee).filter((x): x is string => Boolean(x));
     enCours.push({
+      famille: familleDe(l0.imputation ?? fin.get(l0.cle)?.imputation),
       base: b || cle.slice(2),
       numero: b ? `CBE ${b}` : cle.slice(2).toUpperCase().startsWith("DBE") ? cle.slice(2) : `DBE ${cle.slice(2)}`,
       client: (l0.client_id ? d.clients.get(l0.client_id) : undefined) ?? fin.get(l0.cle)?.client ?? "",
@@ -397,10 +439,12 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const envoi = (l.date_envoi ?? ls.map((x) => x.date_envoi).filter((x): x is string => Boolean(x)).sort()[0] ?? null)?.slice(0, 10) ?? null;
     const chiffreDevis = ls.some((x) => montantDe(x.cle) > 0 || (Number(x.heures_total) || 0) > 0);
     const cat = categorieDevis(l.statut, l.genre, Boolean(envoi) && chiffreDevis);
+    if (cat !== "OUVERT" && cat !== "ENVOYE") continue; // NEWSLETTER_PARAGRAPHES : seulement les devis ouverts ou envoyés
     devisEnCours.push({
+      famille: familleDe(l.imputation),
       numero,
       categorie: cat,
-      commande: cat === "REMPORTE" && l.numero_affaire ? (/^cbe/i.test(l.numero_affaire) ? l.numero_affaire.toUpperCase() : `CBE${l.numero_affaire}`) : null,
+      commande: null,
       client: (l.client_id ? d.clients.get(l.client_id) : undefined) ?? "",
       designation: l.designation ?? "",
       redacteur: l.redacteur_id ? nomCourt(collabs.get(l.redacteur_id)) : "",
@@ -415,7 +459,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
 
   // bilan par activité : les affaires en cours qui ont des heures chiffrées dans l'activité
   const parActivite: BilanActivite[] = GROUPES_NEWSLETTER.map((gr) => {
-    const ls = enCours.flatMap((a) => a.activites.filter((x) => x.groupe === gr));
+    const ls = enCours.filter((a) => a.famille === "FORFAIT").flatMap((a) => a.activites.filter((x) => x.groupe === gr));
     return {
       groupe: gr,
       nb: ls.length,
@@ -458,6 +502,32 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   });
   prestations.sort((x, y) => x.imputation.localeCompare(y.imputation) || (x.client || "~").localeCompare(y.client || "~", "fr") || Number(x.base) - Number(y.base));
 
+  // une intention PE / PI déjà suivie au relevé n'est montrée qu'une fois (dans les prestations)
+  for (let i = enCours.length - 1; i >= 0; i--) {
+    const a = enCours[i];
+    if ((a.famille === "PE" || a.famille === "PI") && basesPEPI.has(a.base)) enCours.splice(i, 1);
+  }
+
+  /* NEWSLETTER_PARAGRAPHES : les commandes livrées dans le mois (date de livraison), hors PE / PI */
+  const livreesMois: AffaireLivree[] = livrees
+    .map((l) => {
+      const fl = fin.get(l.cle);
+      const famille = familleDe(l.imputation ?? fl?.imputation);
+      const parGroupe = groupesChiffres([l]);
+      const num = String(l.numero_affaire ?? "").toUpperCase().replace(/^CBE\s*/, "");
+      return {
+        famille,
+        numero: `CBE ${num}`,
+        client: (l.client_id ? d.clients.get(l.client_id) : undefined) ?? fl?.client ?? "",
+        designation: l.designation ?? fl?.designation ?? "",
+        livraison: String(l.date_livraison).slice(0, 10),
+        chiffre: fl?.heures_total ?? (Number(l.heures_total) || 0),
+        activites: GROUPES_NEWSLETTER.filter((gr) => (parGroupe.get(gr) ?? 0) > 0.5),
+      };
+    })
+    .filter((x) => x.famille !== "PE" && x.famille !== "PI")
+    .sort((x, y) => x.livraison.localeCompare(y.livraison) || x.numero.localeCompare(y.numero, "fr", { numeric: true }));
+
   return {
     mois,
     commandes: { nombre: recues.length, montant: recues.reduce((t, l) => t + montantDe(l.cle), 0) },
@@ -475,6 +545,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     nbEnCours: enCours.length,
     nbIntentions: enCours.filter((a) => a.intention).length,
     devisEnCours,
+    livreesMois,
     montantEnCours: enCours.reduce((t, a) => t + a.montant, 0),
     nbRetard: enCours.filter((a) => a.retard > 0).length,
     parActivite,
