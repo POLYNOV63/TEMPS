@@ -313,7 +313,7 @@ function ImageMois({ n, charge, semaines, total, noteCharge, refSvg }: { n: News
 }
 
 /* ---------------- Images suivantes : les paragraphes (NEWSLETTER_PARAGRAPHES) ----------------
-   Un paragraphe par famille d'affaires, dans l'ordre Forfait, PI, Négoce, PE. Dans chacun : les affaires en cours (forfait et
+   Un paragraphe par famille d affaires, dans l ordre 1 - Forfait, 2 - Négoce, 3 - PI, 4 - PE. Dans chacun : les affaires en cours (forfait et
    négoce : activités, équipe, avancement, livraison ; PE / PI : relevé en cours hors dormantes), les intentions de commande, les
    devis ouverts ou envoyés ouverts dans le mois, et (hors PE / PI) les affaires livrées dans le mois. Lignes compactes,
    réparties sur autant de pages A4 que nécessaire. */
@@ -580,7 +580,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
   };
 
   const sections: Section[] = [];
-  for (const fam of FAMILLES) {
+  for (const [rang, fam] of FAMILLES.entries()) {
     const paragraphe = fam.titre;
     const pepi = fam.cle === "PE" || fam.cle === "PI";
     const affaires = n.enCours.filter((a) => a.famille === fam.cle);
@@ -664,7 +664,7 @@ function sectionsAffaires(n: Newsletter): Section[] {
     ]
       .filter(Boolean)
       .join(" · ");
-    propres[0].chapitre = { titre: paragraphe.toUpperCase(), couleur: COULEURS_FAMILLE[fam.cle], resume };
+    propres[0].chapitre = { titre: `${rang + 1} - ${paragraphe}`, couleur: COULEURS_FAMILLE[fam.cle], resume };
     sections.push(...propres);
   }
   return sections;

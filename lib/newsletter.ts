@@ -134,11 +134,11 @@ export type Delai = {
 };
 
 /* NEWSLETTER_PARAGRAPHES : la newsletter est rangée par famille d'affaires, dans cet ordre */
-export type Famille = "FORFAIT" | "PI" | "NEGOCE" | "PE";
+export type Famille = "FORFAIT" | "NEGOCE" | "PI" | "PE";
 export const FAMILLES: { cle: Famille; titre: string }[] = [
   { cle: "FORFAIT", titre: "Forfait" },
-  { cle: "PI", titre: "PI" },
   { cle: "NEGOCE", titre: "Négoce" },
+  { cle: "PI", titre: "PI" },
   { cle: "PE", titre: "PE" },
 ];
 export const familleDe = (imp: string | null | undefined): Famille => {
