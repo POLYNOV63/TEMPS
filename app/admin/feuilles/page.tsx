@@ -166,7 +166,7 @@ export default function FeuillesPage() {
         setErreur("Impossible de charger les feuilles de temps.");
       }
 
-      setCollaborateurs(collaborateursResult.data ?? []);
+      setCollaborateurs((collaborateursResult.data ?? []).filter(/* STAGIAIRES (SQL 108) : planning seulement, ni feuilles d'heures ni RH */ (x: { stagiaire?: boolean | null }) => x.stagiaire !== true));
       setFeuilles(feuillesResult.data ?? []);
       setChargement(false);
     }

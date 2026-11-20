@@ -1024,19 +1024,18 @@ export default function ExportHebdoExcel() {
        */
 
       const {
-        data: collaborateurs,
+        data: collaborateursTous,
         error: erreurCollaborateurs,
       } = await supabase
         .from("collaborateurs")
-        .select(
-          "id, prenom, nom, trigramme, actif, profil_horaire_id"
-        )
+        .select("*")
         .eq("actif", true)
         .order("nom");
 
       if (erreurCollaborateurs) {
         throw erreurCollaborateurs;
       }
+      const collaborateurs = (collaborateursTous ?? []).filter(/* STAGIAIRES (SQL 108) : planning seulement, ni feuilles d'heures ni RH */ (x: { stagiaire?: boolean | null }) => x.stagiaire !== true);
 
       /*
        * ============================================================

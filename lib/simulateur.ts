@@ -168,7 +168,7 @@ type Effectifs = { productifs: Personne[]; calcul: Personne[]; autres: Personne[
 
 export async function chargerEffectifs(): Promise<Effectifs> {
   const lignes = await chargerTout<{ id: string; prenom: string | null; nom: string | null; trigramme: string | null; role: string | null; actif: boolean | null; inclus_statistiques: boolean | null }>((a, b) =>
-    supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques").order("id").range(a, b)
+    supabase.from("collaborateurs").select("*").order("id").range(a, b)
   );
   const res: Effectifs = { productifs: [], calcul: [], autres: [], structure: [] };
   // DEUX_TAUX : compétence(s) principale(s) de chacun (fiche collaborateur) ; Calcul si l'une d'elles est le Calcul
@@ -183,6 +183,7 @@ export async function chargerEffectifs(): Promise<Effectifs> {
   for (const c of lignes) {
     const role = String(c.role ?? "").toUpperCase();
     if (c.actif === false || role === "DIRECTION") continue; // la Direction ne compte pas (visiteurs de l'application)
+    if ((c as { stagiaire?: boolean | null }).stagiaire === true) continue; // STAGIAIRES : ni productifs ni structure
     const nom = c.trigramme || `${c.prenom ?? ""} ${c.nom ?? ""}`.trim();
     if (c.inclus_statistiques === true && role !== "ADMIN") {
       res.productifs.push({ id: c.id, nom });

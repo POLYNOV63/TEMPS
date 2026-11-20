@@ -173,6 +173,9 @@ Droits utiles (réglages d'origine, modifiables dans Droits d'accès) : `voirPla
 - **Collaborateurs** : fiche, activités principales et d'appoint (`collaborateurs_predominances`), niveau N1 / N2 / N3
   (`collaborateurs_niveaux`, SQL 86 ; jamais affiché nominativement hors ADMIN), « inclus dans les statistiques »
   (`inclus_statistiques` : l'encadrement AMA, PLG en est exclu), dates d'entrée et de sortie.
+  **Stagiaires** (SQL 108, `collaborateurs.stagiaire`, coche « Stagiaire » à la création) : fiche pour le planning seulement,
+  e-mail facultatif ; pas de feuilles d'heures, de relance ni de droits RH (exclus de Feuilles d'heures, Bilan RH, Absences
+  et compteurs, export hebdo, badge du tableau de bord) ; `inclus_statistiques = false` (hors capacité) ; hors simulateur.
 
 ## Suivi d'affaire BE (classeur Excel) : il fait foi
 

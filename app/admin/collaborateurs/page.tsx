@@ -33,6 +33,7 @@ type Collaborateur = {
   actif: boolean;
   compteur_recuperation?: number | null;
   inclus_statistiques?: boolean | null;
+  stagiaire?: boolean | null; // STAGIAIRES (SQL 108) : planning seulement
   date_sortie?: string | null; // DATE_SORTIE
   saisie_simplifiee?: boolean | null; // FEUILLE_SIMPLIFIEE
 };
@@ -150,6 +151,8 @@ export default function CollaborateursPage() {
   const [email, setEmail] = useState("");
   const [trigramme, setTrigramme] = useState("");
   const [role, setRole] = useState("COLLABORATEUR");
+  // STAGIAIRES : une fiche pour le planning seulement (pas de compte, pas de feuilles d'heures, pas de RH, hors statistiques)
+  const [stagiaire, setStagiaire] = useState(false);
   const [dateEntree, setDateEntree] = useState("");
   const [actionSuppression, setActionSuppression] = useState<string | null>(null);
 
@@ -334,20 +337,20 @@ export default function CollaborateursPage() {
   async function ajouterCollaborateur() {
     setErreur("");
 
-    if (!prenom || !nom || !email || !trigramme) {
-      setErreur("Veuillez renseigner le prénom, le nom, l'email et le trigramme.");
+    if (!prenom || !nom || !trigramme || (!email && !stagiaire)) {
+      setErreur(stagiaire ? "Veuillez renseigner le prénom, le nom et le trigramme." : "Veuillez renseigner le prénom, le nom, l'email et le trigramme.");
       return;
     }
 
     const emailNormalise = email.trim().toLowerCase();
     const trigrammeNormalise = trigramme.trim().toUpperCase();
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalise)) {
+    if (emailNormalise && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNormalise)) {
       setErreur("L'adresse email n'est pas valide.");
       return;
     }
 
-    if (collaborateurs.some((c) => (c.email || "").trim().toLowerCase() === emailNormalise)) {
+    if (emailNormalise && collaborateurs.some((c) => (c.email || "").trim().toLowerCase() === emailNormalise)) {
       setErreur("Un collaborateur existe déjà avec cette adresse email.");
       return;
     }
@@ -358,7 +361,7 @@ export default function CollaborateursPage() {
     }
 
     /* ---------- Accès Direction : ni rythme, ni droits RH, ni statistiques ---------- */
-    if (estDirection(role)) {
+    if (estDirection(role) && !stagiaire) {
       const { error: erreurDirection } = await supabase.from("collaborateurs").insert({
         prenom,
         nom,
@@ -430,13 +433,15 @@ export default function CollaborateursPage() {
         .insert({
           prenom,
           nom,
-          email: emailNormalise,
+          email: emailNormalise || null,
           trigramme: trigrammeNormalise,
-          role,
+          role: stagiaire ? "COLLABORATEUR" : role,
           profil_horaire_id: profil.id,
           rythme: nomRythme,
           date_entree: dateEntree,
           actif: true,
+          // STAGIAIRES : hors statistiques et capacité de l'équipe, ni feuilles d'heures ni RH
+          ...(stagiaire ? { stagiaire: true, inclus_statistiques: false } : {}),
         })
         .select()
         .single();
@@ -447,7 +452,11 @@ export default function CollaborateursPage() {
       // On ne laisse pas de profil horaire orphelin.
       if (profilCree && profil) await supabase.from("profils_horaires").delete().eq("id", profil.id);
 
-      setErreur("Impossible de créer le collaborateur.");
+      setErreur(
+        stagiaire && erreurCollaborateur?.message
+          ? `Impossible de créer le stagiaire : ${erreurCollaborateur.message}${/stagiaire|email/i.test(erreurCollaborateur.message) ? " (le script SQL 108 a-t-il été lancé ?)" : ""}`
+          : "Impossible de créer le collaborateur."
+      );
       return;
     }
 
@@ -474,6 +483,9 @@ export default function CollaborateursPage() {
 
     fermerModalAjout();
     await chargerDonnees();
+
+    // STAGIAIRES : pas de droits RH à saisir, il est prêt pour le planning
+    if (stagiaire) return;
 
     // Son espace est activé à sa première connexion Microsoft. On enchaîne sur
     // ses droits RH (congés, RTT, compteur), à saisir dans le Suivi RH.
@@ -841,6 +853,7 @@ export default function CollaborateursPage() {
     setEmail("");
     setTrigramme("");
     setRole(roleInitial);
+    setStagiaire(false);
     setDateEntree(new Date().toISOString().split("T")[0]);
 
     setBaseSelectionnee("");
@@ -1139,7 +1152,16 @@ export default function CollaborateursPage() {
                           </span>
                         )}
 
-                        {c.inclus_statistiques === false && (
+                        {c.stagiaire === true && (
+                          <span
+                            title="Stagiaire : au planning seulement (pas de feuilles d'heures, pas de RH, hors statistiques)"
+                            style={{ background: "#eef4fb", color: "#1f4e79", border: "1px solid #9fb6cf", padding: "3px 8px", borderRadius: 4, fontSize: 13, fontWeight: 700 }}
+                          >
+                            Stagiaire
+                          </span>
+                        )}
+
+                        {c.inclus_statistiques === false && c.stagiaire !== true && (
                           <span
                             title="Exclu des statistiques de productivité de l'équipe"
                             style={{
@@ -1162,7 +1184,7 @@ export default function CollaborateursPage() {
                           marginTop: 5,
                         }}
                       >
-                        {c.email}
+                        {c.email || (c.stagiaire ? "pas de compte (planning seulement)" : "")}
                       </div>
                     </div>
 
@@ -1718,7 +1740,18 @@ export default function CollaborateursPage() {
       {modalAjout && (
         <div style={overlayStyle}>
           <div style={modalStyle}>
-            <h2 style={{ marginTop: 0 }}>{estDirection(role) ? "Nouvel accès Direction" : "Nouveau collaborateur"}</h2>
+            <h2 style={{ marginTop: 0 }}>{stagiaire ? "Nouveau stagiaire" : estDirection(role) ? "Nouvel accès Direction" : "Nouveau collaborateur"}</h2>
+
+            {/* STAGIAIRES : la coche change le formulaire (e-mail facultatif, pas de rôle) */}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", marginBottom: 12, border: "1.5px solid #c9d9ec", background: "#f3f8fd", borderRadius: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={stagiaire} onChange={(e) => setStagiaire(e.target.checked)} style={{ width: 20, height: 20, marginTop: 2 }} />
+              <span>
+                <strong>Stagiaire</strong>
+                <span style={{ display: "block", fontSize: 13, color: "#555" }}>
+                  Pour l’affecter au planning seulement : pas de compte ni de feuilles d’heures, pas de relance, pas de droits RH ; hors statistiques et capacité de l’équipe.
+                </span>
+              </span>
+            </label>
 
             <div style={gridStyle}>
               <Champ
@@ -1739,14 +1772,16 @@ export default function CollaborateursPage() {
                 onChange={(v) => setTrigramme(v.toUpperCase())}
               />
 
-              <Champ
-                label="Email"
-                value={email}
-                onChange={setEmail}
-                type="email"
-              />
+              {!stagiaire && (
+                <Champ
+                  label="Email"
+                  value={email}
+                  onChange={setEmail}
+                  type="email"
+                />
+              )}
 
-              {!estDirection(role) && (
+              {(!estDirection(role) || stagiaire) && (
                 <Champ
                   label="Date d'entrée"
                   value={dateEntree}
@@ -1757,7 +1792,9 @@ export default function CollaborateursPage() {
             </div>
 
             <div style={{ marginTop: 10, fontSize: 13, color: "#666", lineHeight: 1.45 }}>
-              {estDirection(role) ? (
+              {stagiaire ? (
+                <>Le rythme horaire sert à placer ses journées au planning (capacité de la personne).</>
+              ) : estDirection(role) ? (
                 <>
                   L’adresse est celle avec laquelle la personne se connectera par le bouton Microsoft.
                   {email && estExterne(email) && (
@@ -1775,21 +1812,25 @@ export default function CollaborateursPage() {
               )}
             </div>
 
-            <label style={labelStyle}>Rôle</label>
+            {!stagiaire && (
+              <>
+                <label style={labelStyle}>Rôle</label>
 
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              style={inputStyle}
-            >
-              {ROLES.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  style={inputStyle}
+                >
+                  {ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
-            {estDirection(role) ? (
+            {estDirection(role) && !stagiaire ? (
               <div style={{ marginTop: 16, padding: 14, background: "#f6f3fb", borderRadius: 8, fontSize: 14, color: "#3d2b66", lineHeight: 1.5 }}>
                 <strong>Consultation seule.</strong> Pas de base horaire, pas de feuille d’heures, pas de droits RH : la fiche n’entre dans aucune
                 statistique ni dans la charge de l’équipe.

@@ -141,7 +141,7 @@ function SuiviRHContenu() {
     (async () => {
       try {
         const [co, dr, de, fe, rg] = await Promise.all([
-          supabase.from("collaborateurs").select("id,prenom,nom,trigramme,role,actif,inclus_statistiques,date_entree").order("nom"),
+          supabase.from("collaborateurs").select("*").order("nom"), // STAGIAIRES : filtrés plus bas
           supabase.from("rh_droits").select("*").eq("exercice", exercice),
           chargerTout<Demande>((a, b) =>
             supabase.from("rh_demandes").select("id,collaborateur_id,type_demande,date_debut,date_fin,duree_jours,heures_re,statut,created_at").gte("date_debut", `${exercice - 1}-01-01`).lte("date_debut", `${exercice + 2}-12-31`) /* CP_PERIODE_LEGALE : de quoi couvrir la période CP de chacun */.order("date_debut").range(a, b)
@@ -159,7 +159,7 @@ function SuiviRHContenu() {
         if (co.error) throw new Error(co.error.message);
         if (dr.error) throw new Error(dr.error.message);
         if (!actif) return;
-        setCollabs(((co.data ?? []) as Collab[]).filter((c) => (c.role ?? "").toUpperCase() !== "DIRECTION"));
+        setCollabs(((co.data ?? []) as (Collab & { stagiaire?: boolean | null })[]).filter((c) => (c.role ?? "").toUpperCase() !== "DIRECTION" && c.stagiaire !== true)); // STAGIAIRES : pas de droits RH
         setDroits((dr.data ?? []) as Droit[]);
         setDemandes(de);
         setFeuilles(fe);

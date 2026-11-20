@@ -257,15 +257,16 @@ export default function BilanRHPage() {
           return;
         }
 
-        const { data: collaborateurs, error: erreurCollaborateurs } =
+        const { data: collaborateursTous, error: erreurCollaborateurs } =
           await supabase
             .from("collaborateurs")
-            .select("id, prenom, nom, trigramme, actif, date_entree, date_sortie")
+            .select("*")
             .eq("actif", true)
             .order("nom", { ascending: true })
             .order("prenom", { ascending: true });
 
         if (erreurCollaborateurs) throw erreurCollaborateurs;
+        const collaborateurs = (collaborateursTous ?? []).filter(/* STAGIAIRES (SQL 108) : planning seulement, ni feuilles d'heures ni RH */ (x: { stagiaire?: boolean | null }) => x.stagiaire !== true);
 
         const premierJourSemaineCloture = periode.semaineCloture;
         const { data: feuilles, error: erreurFeuilles } = await supabase

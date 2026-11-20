@@ -263,13 +263,14 @@ export default function DashboardPage() {
 
         if (roleUtilisateur === "ADMIN") {
           /* ADMIN : feuilles de toute l'équipe */
-          const { data: collaborateursActifs, error: erreurCollaborateurs } = await supabase
+          const { data: collaborateursTous, error: erreurCollaborateurs } = await supabase
             .from("collaborateurs")
-            .select("id, prenom, nom, actif, role, trigramme")
+            .select("*")
             .eq("actif", true)
             .order("nom", { ascending: true });
 
           if (erreurCollaborateurs) throw erreurCollaborateurs;
+          const collaborateursActifs = (collaborateursTous ?? []).filter(/* STAGIAIRES (SQL 108) : planning seulement, ni feuilles d'heures ni RH */ (x: { stagiaire?: boolean | null }) => x.stagiaire !== true);
 
           const { data: feuillesCourantes, error: erreurFeuilles } = await supabase
             .from("feuilles_heures")
