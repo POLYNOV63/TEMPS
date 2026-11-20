@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import EnTetePage from "@/components/EnTetePage";
 import GardeAcces from "@/components/GardeAcces";
+import OngletsPilotage from "@/components/pilotage/OngletsPilotage";
 import { C, page } from "@/components/pilotage/ui";
 import { calculerNewsletter, chargerNewsletter, type DonneesNewsletter, type Newsletter } from "@/lib/newsletter";
 
@@ -232,6 +233,7 @@ export default function PageNewsletter() {
     <GardeAcces droit="indicateurs">
       <main style={page.fond}>
         <EnTetePage section="Analyse" />
+        <OngletsPilotage actif="newsletter" />
         <NewsletterContenu />
       </main>
     </GardeAcces>
