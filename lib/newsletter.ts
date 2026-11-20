@@ -5,6 +5,7 @@ import { chargerPrestationsMois } from "@/lib/facturationMois";
 import { chargerDonneesRentabilite, type DonneesRentabilite } from "@/lib/rentabilite";
 import { chargerSourcesCA, type SourcesCA } from "@/lib/caExercice";
 import type { Collab } from "@/lib/pilotageCalculs";
+import { chargerDormantes } from "@/lib/dormantes";
 
 /* ===============================================================
    NEWSLETTER DU MOIS (NEWSLETTER, PLG, 20/11/2026)
@@ -61,6 +62,7 @@ export type DonneesNewsletter = {
   annuaire: Collab[];
   previsionnel: Map<string, number>; // NEWSLETTER_CA : AAAA-MM -> € (prévisionnel saisi dans Finances)
   pepiPrevues: { mois: string; montant: number }[]; // NEWSLETTER_PROJETE : PE / PI pas encore clôturées (comme l'attendu de Finances)
+  dormantes: Set<string>; // NEWSLETTER_PORTEFEUILLE : PE / PI dormantes (ids pilotage_affaires), écartées comme dans le Suivi des affaires
 };
 
 const jourISO = (d: Date) => d.toISOString().slice(0, 10);
@@ -103,7 +105,8 @@ export async function chargerNewsletter(): Promise<DonneesNewsletter> {
   const pepiPrevues: DonneesNewsletter["pepiPrevues"] = [];
   for (const [m, liste] of pepi) for (const x of liste) if (!x.cloture && x.montant > 0.004) pepiPrevues.push({ mois: m, montant: x.montant });
   const previsionnel = new Map(((prev.data ?? []) as { mois: string; montant: number | string }[]).map((p) => [String(p.mois).slice(0, 7), Number(p.montant) || 0]));
-  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues };
+  const dormantes = new Set((await chargerDormantes(affaires).catch(() => new Map<string, unknown>())).keys());
+  return { renta, suivi, sources, affaires, affectations, annuaire, previsionnel, pepiPrevues, dormantes };
 }
 
 /* les activités montrées (le négoce et le non ventilé n'ont pas d'équipe) */
@@ -125,6 +128,7 @@ export type AffaireEnCours = Delai & {
   avancement: number | null; // 0..1+
   activites: { groupe: Groupe; chiffre: number; pointe: number }[];
   equipe: string[];
+  intention: boolean; // toute la famille est en « Intention de commande »
 };
 
 export type PrestationEnCours = Delai & {
@@ -245,28 +249,29 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     };
   };
 
-  // affaires en cours : familles de forfaits avec au moins une commande ouverte
-  const familles = new Map<string, LigneSuivi[]>();
+  /* NEWSLETTER_PORTEFEUILLE (20/11/2026) : les affaires en cours sont celles du Suivi des affaires (portefeuille,
+     /pilotage) : commandes CBE au forfait (hors PE / PI) « en cours » ou « intention de commande », une ligne par famille
+     (commande de base + avenants). Client, désignation, heures chiffrées et activités : Suivi d'affaire BE. */
+  const lignesFamille = new Map<string, LigneSuivi[]>();
   for (const l of d.suivi) {
-    if (!commande(l)) continue;
+    if (!commande(l) || l.statut === "Commande annulée") continue;
     const b = sansZeros(l.base_affaire);
-    if (!b) continue;
-    familles.set(b, [...(familles.get(b) ?? []), l]);
+    if (b) lignesFamille.set(b, [...(lignesFamille.get(b) ?? []), l]);
   }
   const enCours: AffaireEnCours[] = [];
-  for (const [b, ls] of familles) {
-    const actives = ls.filter((l) => l.statut !== "Commande annulée");
-    if (!actives.some((l) => !FERMES.has(l.statut ?? ""))) continue;
-    const laBase = actives.find((l) => l.genre === "BASE") ?? actives[0];
-    const fb = fin.get(laBase.cle);
-    if (estPEPI(fb?.imputation) || actives.some((l) => estPEPI(fin.get(l.cle)?.imputation))) continue;
-    const montant = actives.reduce((t, l) => t + montantDe(l.cle), 0);
-    const chiffre = actives.reduce((t, l) => t + (fin.get(l.cle)?.heures_total ?? 0), 0);
+  for (const [b, as] of planningParBase) {
+    const ouvertes = as.filter((a) => !estPEPI(a.imputation) && (a.statut === "EN_COURS" || a.statut === "EN_ATTENTE"));
+    if (ouvertes.length === 0 || as.some((a) => estPEPI(a.imputation))) continue;
+    const ls = lignesFamille.get(b) ?? [];
+    const laBase = ls.find((l) => l.genre === "BASE") ?? ls[0];
+    const fb = laBase ? fin.get(laBase.cle) : undefined;
+    const montant = ls.reduce((t, l) => t + montantDe(l.cle), 0);
+    const chiffre = ls.reduce((t, l) => t + (fin.get(l.cle)?.heures_total ?? 0), 0);
     const g = d.renta.realiseParBase.get(b);
     const pointe = (g ? Object.values(g).reduce((t, x) => t + x, 0) : 0) + (d.renta.trajetsParBase.get(b) ?? 0);
     // heures chiffrées par activité (groupes de Finances)
     const parGroupe = new Map<Groupe, number>();
-    for (const l of actives) {
+    for (const l of ls) {
       const h = fin.get(l.cle)?.heures;
       if (!h) continue;
       for (const [disc, v] of Object.entries(h) as [Discipline, number][]) {
@@ -277,24 +282,27 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     const activites = GROUPES_NEWSLETTER.filter((gr) => (parGroupe.get(gr) ?? 0) > 0.5)
       .map((gr) => ({ groupe: gr, chiffre: parGroupe.get(gr) ?? 0, pointe: g?.[gr] ?? 0 }))
       .sort((x, y) => y.chiffre - x.chiffre);
-    const estimees = actives
+    const estimees = ls
       .filter((l) => !FERMES.has(l.statut ?? ""))
       .map((l) => fin.get(l.cle)?.date_estimee)
       .filter((x): x is string => Boolean(x));
+    const basePil = ouvertes.find((a) => baseDe(a.numero) === b && !a.numero.toUpperCase().includes("R")) ?? ouvertes[0];
     enCours.push({
       base: b,
       client: fb?.client ?? "",
-      designation: fb?.designation ?? "",
+      designation: fb?.designation || basePil.designation || "",
       montant,
       chiffre,
       pointe,
       avancement: chiffre > 0.5 ? pointe / chiffre : null,
       activites,
       equipe: equipeDe(b),
+      intention: ouvertes.every((a) => a.statut === "EN_ATTENTE"),
       ...delaiDe(b, estimees),
     });
   }
-  enCours.sort((x, y) => y.montant - x.montant);
+  // tri : par client, puis n° d'affaire
+  enCours.sort((x, y) => (x.client || "~").localeCompare(y.client || "~", "fr") || Number(x.base) - Number(y.base));
 
   // bilan par activité : les affaires en cours qui ont des heures chiffrées dans l'activité
   const parActivite: BilanActivite[] = GROUPES_NEWSLETTER.map((gr) => {
@@ -308,7 +316,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     };
   }).filter((x) => x.nb > 0);
 
-  // prestations PE / PI : en cours au planning, ou facturées dans le mois
+  // prestations PE / PI : celles du relevé (Suivi des affaires, onglet PE / PI) en cours et non dormantes, ou facturées dans le mois
   const caMois = new Map<string, { ca: number; h: number; imp: string }>();
   for (const p of d.renta.prestations) {
     if (p.mois !== mois) continue;
@@ -321,7 +329,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
   for (const l of d.renta.lignesFin)
     if (l.genre === "BASE" && l.base_affaire) clientDeBase.set(sansZeros(l.base_affaire), { client: l.client ?? "", designation: l.designation ?? "" });
   const basesPEPI = new Set<string>();
-  for (const [b, as] of planningParBase) if (as.some((a) => estPEPI(a.imputation) && a.statut === "EN_COURS")) basesPEPI.add(b);
+  for (const [b, as] of planningParBase) if (as.some((a) => estPEPI(a.imputation) && a.statut === "EN_COURS" && !d.dormantes.has(a.id))) basesPEPI.add(b);
   for (const b of caMois.keys()) basesPEPI.add(b);
   const prestations: PrestationEnCours[] = [...basesPEPI].map((b) => {
     const as = (planningParBase.get(b) ?? []).filter((a) => estPEPI(a.imputation));
@@ -339,7 +347,7 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
       ...delaiDe(b, []),
     };
   });
-  prestations.sort((x, y) => y.caMois - x.caMois || y.equipe.length - x.equipe.length);
+  prestations.sort((x, y) => x.imputation.localeCompare(y.imputation) || (x.client || "~").localeCompare(y.client || "~", "fr") || Number(x.base) - Number(y.base));
 
   return {
     mois,

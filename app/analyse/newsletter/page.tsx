@@ -89,9 +89,9 @@ function Pastille({ x, y, groupe }: { x: number; y: number; groupe: string }) {
 }
 
 /* le cadre commun : fond, bandeau, pied */
-function Feuille({ n, numero, sousTitre, hBandeau, pied, refSvg, children }: { n: Newsletter; numero: number; sousTitre: string; hBandeau: number; pied: string[]; refSvg: React.Ref<SVGSVGElement>; children: ReactNode }) {
+function Feuille({ n, numero, total, sousTitre, hBandeau, pied, refSvg, children }: { n: Newsletter; numero: number; total: number; sousTitre: string; hBandeau: number; pied: string[]; refSvg: React.Ref<SVGSVGElement>; children: ReactNode }) {
   const aujourdhui = new Date().toLocaleDateString("fr-FR");
-  const lignes = [...pied, `POLYNOV-TEMPS, le ${aujourdhui} · ${numero} / 2`];
+  const lignes = [...pied, `POLYNOV-TEMPS, le ${aujourdhui} · ${numero} / ${total}`];
   return (
     <svg ref={refSvg} xmlns="http://www.w3.org/2000/svg" width={LARGEUR} height={HAUTEUR} viewBox={`0 0 ${LARGEUR} ${HAUTEUR}`} fontFamily={POLICE} style={{ width: "100%", height: "auto", display: "block" }}>
       <rect width={LARGEUR} height={HAUTEUR} fill="#f6f7f9" />
@@ -132,7 +132,7 @@ function Feuille({ n, numero, sousTitre, hBandeau, pied, refSvg, children }: { n
 }
 
 /* ---------------- Image 1 : le mois ---------------- */
-function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: ChargeActivite[]; semaines: string[]; refSvg: React.Ref<SVGSVGElement> }) {
+function ImageMois({ n, charge, semaines, total, refSvg }: { n: Newsletter; charge: ChargeActivite[]; semaines: string[]; total: number; refSvg: React.Ref<SVGSVGElement> }) {
   const blocs: ReactNode[] = [];
   let y = 270;
   const nomMois = (m: string) => MOIS[Number(m.slice(5, 7)) - 1];
@@ -283,163 +283,218 @@ function ImageMois({ n, charge, semaines, refSvg }: { n: Newsletter; charge: Cha
   }
 
   return (
-    <Feuille n={n} numero={1} sousTitre="Le mois" hBandeau={190} refSvg={refSvg} pied={["Facturé : règles de Finances. Attendu : forfaits au mois de leur délai estimé, PE / PI non clôturées. Prévu : prévisionnel de Finances.", "Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
+    <Feuille n={n} numero={1} total={total} sousTitre="Le mois" hBandeau={190} refSvg={refSvg} pied={["Facturé : règles de Finances. Attendu : forfaits au mois de leur délai estimé, PE / PI non clôturées. Prévu : prévisionnel de Finances.", "Activités : affaires au forfait en cours ayant des heures chiffrées dans l’activité."]}>
       {blocs}
     </Feuille>
   );
 }
 
-/* ---------------- Image 2 : les affaires ---------------- */
+/* ---------------- Images suivantes : les affaires (NEWSLETTER_PORTEFEUILLE) ----------------
+   Toutes les affaires du Suivi des affaires (forfaits en cours ou en intention, une ligne par famille) puis toutes les
+   PE / PI du relevé en cours (hors dormantes), en lignes compactes, réparties sur autant de pages A4 que nécessaire. */
 const H_BANDEAU_2 = 130;
-const H_LIGNE_AFF = 98;
-const H_LIGNE_PRE = 78;
-const H_ENTETE = 50;
-const BAS_UTILE = HAUTEUR - 120; // au-dessus du pied
+const H_ENTETE = 46;
+const BAS_UTILE = HAUTEUR - 112; // au-dessus du pied
+const H_LIGNE_AFF = 66;
+const H_LIGNE_PRE = 60;
 
-function ImageAffaires({ n, refSvg }: { n: Newsletter; refSvg: React.Ref<SVGSVGElement> }) {
-  // nombre de lignes : jusqu'à 4 prestations, les affaires remplissent le reste
-  const yTitre1 = H_BANDEAU_2 + 76;
-  const fixe = yTitre1 + 22 + H_ENTETE + 6 + (n.prestations.length > 0 ? 84 + 22 + H_ENTETE + 6 : 0);
-  const nbPre = Math.min(n.prestations.length, 4);
-  const nbAff = Math.max(0, Math.min(n.enCours.length, Math.floor((BAS_UTILE - fixe - nbPre * H_LIGNE_PRE) / H_LIGNE_AFF)));
-  const affaires = n.enCours.slice(0, nbAff);
-  const prestations = n.prestations.slice(0, nbPre);
-  const xBarre = 590;
-  const lBarre = 220;
+type Colonne = { x: number; texte: string; ancre?: "start" | "end" };
+type Section = { cle: string; titre: string; droite: string; colonnes: Colonne[]; hLigne: number; nb: number; ligne: (i: number, yy: number) => ReactNode };
+type Morceau = { section: Section; debut: number; fin: number; suite: boolean };
+
+/* répartit les sections sur des pages : une section continue sur la page suivante (« suite ») */
+function paginer(sections: Section[]): Morceau[][] {
+  const pages: Morceau[][] = [];
+  let courante: Morceau[] = [];
+  let y = H_BANDEAU_2 + 76;
+  const nouvellePage = () => {
+    if (courante.length) pages.push(courante);
+    courante = [];
+    y = H_BANDEAU_2 + 76;
+  };
+  for (const s of sections) {
+    let i = 0;
+    while (i < s.nb) {
+      const place = Math.floor((BAS_UTILE - y - 22 - H_ENTETE - 6) / s.hLigne);
+      if (place < Math.min(3, s.nb - i)) {
+        if (courante.length === 0) break; // page vide trop petite : ne peut pas arriver, garde-fou
+        nouvellePage();
+        continue;
+      }
+      const k = Math.min(place, s.nb - i);
+      courante.push({ section: s, debut: i, fin: i + k, suite: i > 0 });
+      y += 22 + H_ENTETE + 6 + k * s.hLigne + 84;
+      i += k;
+    }
+  }
+  if (courante.length) pages.push(courante);
+  return pages;
+}
+
+function ImageListe({ n, morceaux, numero, total, refSvg }: { n: Newsletter; morceaux: Morceau[]; numero: number; total: number; refSvg: React.Ref<SVGSVGElement> }) {
   const blocs: ReactNode[] = [];
-
-  let y = yTitre1;
-  blocs.push(<Titre key="t-encours" y={y} texte="Affaires en cours" droite={`${n.nbEnCours} affaires au forfait${n.nbRetard > 0 ? ` · ${n.nbRetard} en retard` : ""}`} />);
-  {
+  let y = H_BANDEAU_2 + 76;
+  for (const m of morceaux) {
+    const s = m.section;
+    blocs.push(<Titre key={`t-${s.cle}-${m.debut}`} y={y} texte={m.suite ? `${s.titre} (suite)` : s.titre} droite={m.suite ? undefined : s.droite} />);
     const y0 = y + 22;
+    const k = m.fin - m.debut;
     blocs.push(
-      <g key="encours">
-        <rect x={MARGE} y={y0} width={LARG} height={affaires.length * H_LIGNE_AFF + H_ENTETE + 6} rx={18} fill="#ffffff" stroke="#e3e6ea" />
-        <text x={90} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700}>
-          AFFAIRE · ACTIVITÉS · ÉQUIPE
-        </text>
-        <text x={xBarre} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700}>
-          AVANCEMENT
-        </text>
-        <text x={LARGEUR - 90} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700} textAnchor="end">
-          LIVRAISON
-        </text>
-        {affaires.map((a, i) => {
-          const yy = y0 + H_ENTETE + i * H_LIGNE_AFF;
-          const pc = a.avancement === null ? null : Math.round(a.avancement * 100);
-          const plein = a.avancement === null ? 0 : Math.min(1, a.avancement);
-          const couleur = pc === null ? "#c9ced6" : pc > 100 ? ROUGE_ALERTE : pc >= 80 ? ORANGE : VERT;
-          const dl = libDelai(a);
-          const xEquipe = 90 + a.activites.length * 26 + (a.activites.length ? 8 : 0);
+      <g key={`${s.cle}-${m.debut}`}>
+        <rect x={MARGE} y={y0} width={LARG} height={H_ENTETE + 6 + k * s.hLigne} rx={18} fill="#ffffff" stroke="#e3e6ea" />
+        {s.colonnes.map((c) => (
+          <text key={c.texte} x={c.x} y={y0 + 31} fill={GRIS} fontSize={16} fontWeight={700} textAnchor={c.ancre ?? "start"}>
+            {c.texte}
+          </text>
+        ))}
+        {Array.from({ length: k }, (_, j) => {
+          const yy = y0 + H_ENTETE + j * s.hLigne;
           return (
-            <g key={a.base}>
-              {i > 0 && <line x1={90} x2={LARGEUR - 90} y1={yy} y2={yy} stroke="#eceef1" />}
-              <text x={90} y={yy + 30} fill={ENCRE} fontSize={23} fontWeight={800}>
-                {couper(`${a.client ? `${a.client} · ` : ""}CBE ${a.base}`, 34)}
-              </text>
-              <text x={90} y={yy + 56} fill={GRIS} fontSize={19}>
-                {couper(a.designation, 44)}
-              </text>
-              {a.activites.map((x, k) => (
-                <Pastille key={x.groupe} x={90 + k * 26} y={yy + 79} groupe={x.groupe} />
-              ))}
-              <text x={xEquipe} y={yy + 85} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={18} fontStyle={a.equipe.length ? undefined : "italic"}>
-                {equipeTexte(a.equipe, 46 - a.activites.length * 3)}
-              </text>
-              <rect x={xBarre} y={yy + 26} width={lBarre} height={20} rx={10} fill="#eef0f3" />
-              <rect x={xBarre} y={yy + 26} width={Math.max(plein > 0 ? 20 : 0, lBarre * plein)} height={20} rx={10} fill={couleur} />
-              <text x={xBarre + lBarre + 12} y={yy + 43} fill={couleur} fontSize={21} fontWeight={800}>
-                {pc === null ? "—" : `${pc} %`}
-              </text>
-              <text x={xBarre} y={yy + 74} fill={GRIS} fontSize={17}>
-                {a.chiffre > 0.5 ? `${heures(a.pointe)} pointées sur ${heures(a.chiffre)}` : "pas d’heures chiffrées"}
-              </text>
-              <text x={LARGEUR - 90} y={yy + 42} fill={ENCRE} fontSize={21} fontWeight={700} textAnchor="end">
-                {dateFR(a.livraison)}
-              </text>
-              <text x={LARGEUR - 90} y={yy + 70} fill={dl.couleur} fontSize={17} fontWeight={700} textAnchor="end">
-                {dl.texte}
-              </text>
+            <g key={j}>
+              <line x1={90} x2={LARGEUR - 90} y1={yy} y2={yy} stroke="#eceef1" />
+              {s.ligne(m.debut + j, yy)}
             </g>
           );
         })}
       </g>
     );
-    y = y0 + affaires.length * H_LIGNE_AFF + H_ENTETE + 6 + 84;
+    y = y0 + H_ENTETE + 6 + k * s.hLigne + 84;
   }
-
-  if (prestations.length > 0) {
-    const nbPE = n.prestations.filter((p) => p.imputation === "PE").length;
-    blocs.push(<Titre key="t-pepi" y={y} texte="Prestations PE / PI" droite={`${nbPE} PE · ${n.prestations.length - nbPE} PI`} />);
-    const y0 = y + 22;
-    blocs.push(
-      <g key="pepi">
-        <rect x={MARGE} y={y0} width={LARG} height={prestations.length * H_LIGNE_PRE + H_ENTETE + 6} rx={18} fill="#ffffff" stroke="#e3e6ea" />
-        <text x={90} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700}>
-          PRESTATION · ÉQUIPE
-        </text>
-        <text x={790} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700} textAnchor="end">
-          HEURES DU MOIS
-        </text>
-        <text x={LARGEUR - 90} y={y0 + 34} fill={GRIS} fontSize={17} fontWeight={700} textAnchor="end">
-          FIN PRÉVUE
-        </text>
-        {prestations.map((p, i) => {
-          const yy = y0 + H_ENTETE + i * H_LIGNE_PRE;
-          const coul = p.imputation === "PE" ? COULEURS_PE.fond : COULEURS_PI.fond;
-          return (
-            <g key={p.base}>
-              {i > 0 && <line x1={90} x2={LARGEUR - 90} y1={yy} y2={yy} stroke="#eceef1" />}
-              <rect x={90} y={yy + 11} width={44} height={26} rx={6} fill={coul} />
-              <text x={112} y={yy + 30} fill="#ffffff" fontSize={16} fontWeight={800} textAnchor="middle">
-                {p.imputation}
-              </text>
-              <text x={146} y={yy + 31} fill={ENCRE} fontSize={22} fontWeight={800}>
-                {couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 22)}
-                <tspan fontSize={19} fontWeight={400} fill={GRIS}>
-                  {p.designation ? `  ${couper(p.designation, 30)}` : ""}
-                </tspan>
-              </text>
-              <text x={90} y={yy + 62} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={18} fontStyle={p.equipe.length ? undefined : "italic"}>
-                {equipeTexte(p.equipe, 60)}
-              </text>
-              <text x={790} y={yy + 42} fill={p.heuresMois > 0 ? ENCRE : GRIS_CLAIR} fontSize={21} fontWeight={700} textAnchor="end">
-                {p.heuresMois > 0 ? heures(p.heuresMois) : "—"}
-              </text>
-              <text x={LARGEUR - 90} y={yy + 34} fill={ENCRE} fontSize={21} fontWeight={700} textAnchor="end">
-                {dateFR(p.livraison)}
-              </text>
-              {p.retard > 0 && (
-                <text x={LARGEUR - 90} y={yy + 60} fill={ROUGE_ALERTE} fontSize={17} fontWeight={700} textAnchor="end">
-                  échue depuis {p.retard} j
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </g>
-    );
-  }
-
-  const reste = [
-    n.enCours.length > nbAff ? `${nbAff} affaires sur ${n.nbEnCours} (les plus importantes)` : "",
-    n.prestations.length > nbPre ? `${nbPre} prestations sur ${n.prestations.length}` : "",
-  ].filter(Boolean);
+  const cles = [...new Set(morceaux.map((m) => m.section.cle))];
   return (
     <Feuille
       n={n}
-      numero={2}
-      sousTitre="Les affaires"
+      numero={numero}
+      total={total}
+      sousTitre={cles.length === 1 && cles[0] === "pepi" ? "Les prestations" : "Les affaires"}
       hBandeau={H_BANDEAU_2}
       refSvg={refSvg}
-      pied={[
-        "Avancement = heures pointées ÷ heures chiffrées (commande et avenants). Équipe = personnes au planning, du début du mois",
-        `aux 4 prochaines semaines. Délai : échéance du planning face à l’échéance initiale.${reste.length ? ` Montré : ${reste.join(", ")}.` : ""}`,
-      ]}
+      pied={
+        cles.includes("forfaits")
+          ? [
+              "Affaires du Suivi des affaires (forfaits en cours ou en intention, une ligne par famille). Avancement = heures pointées ÷ chiffrées.",
+              "Équipe = personnes au planning, du début du mois aux 4 prochaines semaines. Délai : échéance du planning face à l’initiale.",
+            ]
+          : ["PE / PI du relevé en cours (hors dormantes). Équipe = personnes au planning, du début du mois aux 4 prochaines semaines."]
+      }
     >
       {blocs}
     </Feuille>
   );
+}
+
+function sectionsAffaires(n: Newsletter): Section[] {
+  const xBarre = 640;
+  const lBarre = 150;
+  const forfaits: Section = {
+    cle: "forfaits",
+    titre: "Affaires en cours",
+    droite: `${n.nbEnCours} affaires au forfait${n.nbRetard > 0 ? ` · ${n.nbRetard} en retard` : ""}`,
+    colonnes: [
+      { x: 90, texte: "AFFAIRE · ÉQUIPE" },
+      { x: xBarre, texte: "AVANCEMENT" },
+      { x: LARGEUR - 90, texte: "LIVRAISON", ancre: "end" },
+    ],
+    hLigne: H_LIGNE_AFF,
+    nb: n.enCours.length,
+    ligne: (i, yy) => {
+      const a = n.enCours[i];
+      const pc = a.avancement === null ? null : Math.round(a.avancement * 100);
+      const plein = a.avancement === null ? 0 : Math.min(1, a.avancement);
+      const couleur = pc === null ? "#c9ced6" : pc > 100 ? ROUGE_ALERTE : pc >= 80 ? ORANGE : VERT;
+      const dl = libDelai(a);
+      const nAct = a.activites.length;
+      const xTexte = 90 + nAct * 24 + (nAct ? 6 : 0);
+      const tete = couper(`${a.client ? `${a.client} · ` : ""}CBE ${a.base}`, 26);
+      const reste = Math.max(6, 50 - tete.length - nAct * 2);
+      return (
+        <>
+          {a.activites.map((x, k) => (
+            <Pastille key={x.groupe} x={90 + k * 24} y={yy + 22} groupe={x.groupe} />
+          ))}
+          <text x={xTexte} y={yy + 29} fill={ENCRE} fontSize={20} fontWeight={800}>
+            {tete}
+            {a.designation && (
+              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+                {`  ${couper(a.designation, reste)}`}
+              </tspan>
+            )}
+          </text>
+          <text x={90} y={yy + 54} fill={a.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={a.equipe.length ? undefined : "italic"}>
+            {a.intention && (
+              <tspan fill={ORANGE} fontWeight={700} fontStyle="normal">
+                {"Intention de commande · "}
+              </tspan>
+            )}
+            {equipeTexte(a.equipe, a.intention ? 42 : 62)}
+          </text>
+          <rect x={xBarre} y={yy + 15} width={lBarre} height={16} rx={8} fill="#eef0f3" />
+          <rect x={xBarre} y={yy + 15} width={Math.max(plein > 0 ? 16 : 0, lBarre * plein)} height={16} rx={8} fill={couleur} />
+          <text x={xBarre + lBarre + 10} y={yy + 29} fill={couleur} fontSize={18} fontWeight={800}>
+            {pc === null ? "—" : `${pc} %`}
+          </text>
+          <text x={xBarre} y={yy + 54} fill={GRIS} fontSize={15}>
+            {a.chiffre > 0.5 ? `${heures(a.pointe)} / ${heures(a.chiffre)}` : "pas d’heures chiffrées"}
+          </text>
+          <text x={LARGEUR - 90} y={yy + 29} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
+            {dateFR(a.livraison)}
+          </text>
+          <text x={LARGEUR - 90} y={yy + 54} fill={dl.couleur} fontSize={15} fontWeight={700} textAnchor="end">
+            {dl.texte}
+          </text>
+        </>
+      );
+    },
+  };
+  const nbPE = n.prestations.filter((p) => p.imputation === "PE").length;
+  const pepi: Section = {
+    cle: "pepi",
+    titre: "Prestations PE / PI",
+    droite: `${nbPE} PE · ${n.prestations.length - nbPE} PI en cours`,
+    colonnes: [
+      { x: 90, texte: "PRESTATION · ÉQUIPE" },
+      { x: 800, texte: "HEURES DU MOIS", ancre: "end" },
+      { x: LARGEUR - 90, texte: "FIN PRÉVUE", ancre: "end" },
+    ],
+    hLigne: H_LIGNE_PRE,
+    nb: n.prestations.length,
+    ligne: (i, yy) => {
+      const p = n.prestations[i];
+      const coul = p.imputation === "PE" ? COULEURS_PE.fond : COULEURS_PI.fond;
+      const tete = couper(`${p.client ? `${p.client} · ` : ""}CBE ${p.base}`, 26);
+      return (
+        <>
+          <rect x={90} y={yy + 10} width={40} height={24} rx={6} fill={coul} />
+          <text x={110} y={yy + 27} fill="#ffffff" fontSize={15} fontWeight={800} textAnchor="middle">
+            {p.imputation}
+          </text>
+          <text x={142} y={yy + 28} fill={ENCRE} fontSize={20} fontWeight={800}>
+            {tete}
+            {p.designation && (
+              <tspan fontSize={17} fontWeight={400} fill={GRIS}>
+                {`  ${couper(p.designation, Math.max(6, 50 - tete.length))}`}
+              </tspan>
+            )}
+          </text>
+          <text x={142} y={yy + 51} fill={p.equipe.length ? ENCRE : GRIS_CLAIR} fontSize={16} fontStyle={p.equipe.length ? undefined : "italic"}>
+            {equipeTexte(p.equipe, 60)}
+          </text>
+          <text x={800} y={yy + 28} fill={p.heuresMois > 0 ? ENCRE : GRIS_CLAIR} fontSize={19} fontWeight={700} textAnchor="end">
+            {p.heuresMois > 0 ? heures(p.heuresMois) : "—"}
+          </text>
+          <text x={LARGEUR - 90} y={yy + 28} fill={ENCRE} fontSize={19} fontWeight={700} textAnchor="end">
+            {dateFR(p.livraison)}
+          </text>
+          {p.retard > 0 && (
+            <text x={LARGEUR - 90} y={yy + 51} fill={ROUGE_ALERTE} fontSize={15} fontWeight={700} textAnchor="end">
+              échue depuis {p.retard} j
+            </text>
+          )}
+        </>
+      );
+    },
+  };
+  return [forfaits, pepi].filter((s) => s.nb > 0);
 }
 
 /* ---------------- Export PNG ---------------- */
@@ -474,8 +529,7 @@ function NewsletterContenu() {
   const [erreur, setErreur] = useState("");
   const [mois, setMois] = useState(() => decaler(new Date().toISOString().slice(0, 7), -1)); // le mois écoulé
   const [export_, setExport] = useState(false);
-  const refMois = useRef<SVGSVGElement>(null);
-  const refAffaires = useRef<SVGSVGElement>(null);
+  const refs = useRef<(SVGSVGElement | null)[]>([]);
   const lundi = useMemo(() => lundiDe(aISO(new Date())), []);
   const dispos = useDisponibilitesActivites(lundi, NB_SEMAINES);
 
@@ -490,6 +544,8 @@ function NewsletterContenu() {
   }, []);
 
   const n = useMemo(() => (donnees ? calculerNewsletter(donnees, mois) : null), [donnees, mois]);
+  const pagesListe = useMemo(() => (n ? paginer(sectionsAffaires(n)) : []), [n]);
+  const total = 1 + pagesListe.length;
   const charge: ChargeActivite[] = useMemo(
     () =>
       dispos.chargement
@@ -500,12 +556,12 @@ function NewsletterContenu() {
     [dispos.chargement, dispos.donnees]
   );
 
-  async function telecharger(quoi: ("mois" | "affaires")[]) {
+  async function telecharger(indices: number[]) {
     setExport(true);
     try {
-      for (const q of quoi) {
-        const svg = q === "mois" ? refMois.current : refAffaires.current;
-        if (svg) await enregistrerPNG(svg, `Newsletter_POLYNOV_${mois}_${q === "mois" ? "1_le-mois" : "2_les-affaires"}.png`);
+      for (const i of indices) {
+        const svg = refs.current[i];
+        if (svg) await enregistrerPNG(svg, `Newsletter_POLYNOV_${mois}_${i + 1}.png`);
       }
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -517,13 +573,15 @@ function NewsletterContenu() {
   const btn: CSSProperties = { minHeight: 38, minWidth: 38, border: "1.5px solid #b9bec5", background: "#ffffff", borderRadius: 8, color: C.rougeFonce, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", padding: "0 12px" };
   const btnPlein: CSSProperties = { ...btn, background: C.rouge, color: "#ffffff", border: "none" };
   const pret = Boolean(n) && !dispos.chargement;
+  const titres = ["Le mois", ...pagesListe.map((p) => (p.some((m) => m.section.cle === "forfaits") ? "Les affaires" : "Les prestations PE / PI"))];
 
   return (
     <div style={{ ...page.contenu, maxWidth: 1000 }}>
       <h1 style={page.titre}>Newsletter du mois</h1>
       <p style={page.sousTitre}>
-        Deux images au format A4 : « Le mois » (chiffres, activités, charge des 4 prochaines semaines) et « Les affaires » (affaires en cours et prestations
-        PE / PI : équipe, avancement, délai). Choisissez le mois, puis téléchargez.
+        Des pages A4 : « Le mois » (chiffres, chiffre d’affaires, activités, charge des 4 prochaines semaines), puis toutes les affaires du Suivi des
+        affaires et toutes les PE / PI du relevé en cours (équipe, avancement, délai), sur autant de pages que nécessaire. Choisissez le mois, puis
+        téléchargez.
       </p>
       <div style={{ ...page.carte, padding: 12, margin: "14px 0", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
         <button type="button" style={btn} onClick={() => setMois((m) => decaler(m, -1))} aria-label="Mois précédent">
@@ -533,29 +591,46 @@ function NewsletterContenu() {
         <button type="button" style={btn} onClick={() => setMois((m) => decaler(m, 1))} aria-label="Mois suivant">
           ▶
         </button>
-        <button type="button" style={{ ...btnPlein, marginLeft: "auto" }} disabled={!pret || export_} onClick={() => void telecharger(["mois", "affaires"])}>
-          {export_ ? "Préparation…" : "⬇ Télécharger les 2 images (PNG)"}
+        <button type="button" style={{ ...btnPlein, marginLeft: "auto" }} disabled={!pret || export_} onClick={() => void telecharger(Array.from({ length: total }, (_, i) => i))}>
+          {export_ ? "Préparation…" : `⬇ Télécharger les ${total} pages (PNG)`}
         </button>
       </div>
       {(erreur || dispos.erreur) && <p style={{ color: C.rougeTexte }}>{erreur || dispos.erreur}</p>}
       {!pret && !erreur && <p style={{ color: C.gris }}>Lecture des chiffres…</p>}
       {n && pret && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
-          {(
-            [
-              ["mois", "1 · Le mois"],
-              ["affaires", "2 · Les affaires"],
-            ] as const
-          ).map(([q, titre]) => (
-            <div key={q}>
+          {titres.map((titre, i) => (
+            <div key={i}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "0 0 6px" }}>
-                <strong>{titre}</strong>
-                <button type="button" style={btn} disabled={export_} onClick={() => void telecharger([q])}>
+                <strong>
+                  {i + 1} · {titre}
+                </strong>
+                <button type="button" style={btn} disabled={export_} onClick={() => void telecharger([i])}>
                   ⬇ PNG
                 </button>
               </div>
               <div style={{ ...page.carte, padding: 0, overflow: "hidden" }}>
-                {q === "mois" ? <ImageMois n={n} charge={charge} semaines={dispos.semaines} refSvg={refMois} /> : <ImageAffaires n={n} refSvg={refAffaires} />}
+                {i === 0 ? (
+                  <ImageMois
+                    n={n}
+                    charge={charge}
+                    semaines={dispos.semaines}
+                    total={total}
+                    refSvg={(el) => {
+                      refs.current[0] = el;
+                    }}
+                  />
+                ) : (
+                  <ImageListe
+                    n={n}
+                    morceaux={pagesListe[i - 1]}
+                    numero={i + 1}
+                    total={total}
+                    refSvg={(el) => {
+                      refs.current[i] = el;
+                    }}
+                  />
+                )}
               </div>
             </div>
           ))}
