@@ -20,12 +20,12 @@ import type { Collab } from "@/lib/pilotageCalculs";
    - les prestations PE / PI en cours : facturé du mois (relevé validé ou
      historique), heures, fin prévue ;
    - qui travaille sur chaque affaire : les personnes au planning (affectations
-     qui touchent la période, du début du mois à 8 semaines après aujourd'hui) ;
+     qui touchent la période, du début du mois à 4 semaines après aujourd'hui) ;
    - les activités de chaque affaire (heures chiffrées) et un bilan par
      activité : affaires en cours, chiffré, pointé, reste à faire ;
    - le délai : livraison prévue (échéance du planning, sinon « Délai estimé »
      du Suivi), retard si elle est passée, décalage face à l'échéance initiale.
-   La charge (8 semaines) est lue par la page (useDisponibilitesActivites).
+   La charge (4 semaines, NEWSLETTER_A4) est lue par la page (useDisponibilitesActivites).
 ================================================================ */
 
 type LigneSuivi = {
@@ -170,10 +170,10 @@ export function calculerNewsletter(d: DonneesNewsletter, mois: string): Newslett
     d.sources.historique.filter((h) => h.mois === mois).reduce((t, h) => t + h.montant, 0) +
     d.sources.ajustements.filter((a) => a.mois === mois).reduce((t, a) => t + a.montant, 0);
 
-  // planning : affaires par n° de base ; équipe = affectations qui touchent la période (début du mois → 8 semaines après aujourd'hui)
+  // planning : affaires par n° de base ; équipe = affectations qui touchent la période (début du mois → 4 semaines après aujourd'hui)
   const debutPeriode = `${mois}-01`;
   const finMois = jourISO(new Date(Date.UTC(Number(mois.slice(0, 4)), Number(mois.slice(5, 7)), 0)));
-  const horizon = plusJours(aujourdhui, 56);
+  const horizon = plusJours(aujourdhui, 28);
   const finPeriode = finMois > horizon ? finMois : horizon;
   const planningParBase = new Map<string, AffairePlanning[]>();
   const baseAffaire = new Map<string, string>();
