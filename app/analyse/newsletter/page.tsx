@@ -132,7 +132,7 @@ function Feuille({ n, numero, total, sousTitre, hBandeau, pied, refSvg, children
 }
 
 /* ---------------- Image 1 : le mois ---------------- */
-function ImageMois({ n, charge, semaines, total, refSvg }: { n: Newsletter; charge: ChargeActivite[]; semaines: string[]; total: number; refSvg: React.Ref<SVGSVGElement> }) {
+function ImageMois({ n, charge, semaines, total, noteCharge, refSvg }: { n: Newsletter; charge: ChargeActivite[]; semaines: string[]; total: number; noteCharge: string; refSvg: React.Ref<SVGSVGElement> }) {
   const blocs: ReactNode[] = [];
   let y = 270;
   const nomMois = (m: string) => MOIS[Number(m.slice(5, 7)) - 1];
@@ -169,7 +169,7 @@ function ImageMois({ n, charge, semaines, total, refSvg }: { n: Newsletter; char
         })}
       </g>
     );
-    y = y0 + 160 + 76;
+    y = y0 + 160 + 58;
   };
 
   rangee("chiffres", "Le mois en chiffres", undefined, [
@@ -232,16 +232,27 @@ function ImageMois({ n, charge, semaines, total, refSvg }: { n: Newsletter; char
         })}
       </g>
     );
-    y = y0 + 160 + 76;
+    y = y0 + 160 + 58;
   }
 
-  if (charge.length > 0 && semaines.length > 0) {
+  /* NEWSLETTER_CHARGE : toujours sur la page 1, hauteur des rangs ajustée à la place restante au-dessus du pied */
+  if (charge.length === 0 || semaines.length === 0) {
+    blocs.push(<Titre key="t-charge" y={y} texte="La charge à venir" droite="heures planifiées ÷ capacité" />);
+    blocs.push(
+      <text key="charge-vide" x={MARGE} y={y + 70} fill={GRIS} fontSize={22}>
+        {noteCharge}
+      </text>
+    );
+  } else {
     blocs.push(<Titre key="t-charge" y={y} texte="La charge à venir" droite="heures planifiées ÷ capacité" />);
     const y0 = y + 30;
-    const xCases = MARGE + 190;
+    const xCases = MARGE + 230;
     const ecart = 14;
     const lCase = (LARGEUR - MARGE - 24 - xCases - (semaines.length - 1) * ecart) / semaines.length;
-    const hRang = 70;
+    const basCadre = HAUTEUR - 30 - 3 * 24 - 50; // pied (3 lignes) et légende en dessous
+    const hRang = Math.max(34, Math.min(70, Math.floor((basCadre - y0 - 56 - 14) / charge.length)));
+    const hCase = hRang - 14;
+    const fCase = Math.min(26, Math.round(hCase * 0.48));
     const hCadre = 56 + charge.length * hRang + 14;
     blocs.push(
       <g key="charge">
@@ -255,16 +266,16 @@ function ImageMois({ n, charge, semaines, total, refSvg }: { n: Newsletter; char
           const yy = y0 + 56 + i * hRang;
           return (
             <g key={a.libelle}>
-              <circle cx={MARGE + 36} cy={yy + 31} r={11} fill={a.couleur} />
-              <text x={MARGE + 58} y={yy + 40} fill={ENCRE} fontSize={27} fontWeight={800}>
+              <circle cx={MARGE + 36} cy={yy + 6 + hCase / 2} r={11} fill={a.couleur} />
+              <text x={MARGE + 58} y={yy + 6 + hCase / 2 + fCase * 0.36} fill={ENCRE} fontSize={Math.min(27, fCase + 1)} fontWeight={800}>
                 {a.libelle}
               </text>
               {a.pc.map((pc, w) => {
                 const x = xCases + w * (lCase + ecart);
                 return (
                   <g key={w}>
-                    <rect x={x} y={yy + 6} width={lCase} height={54} rx={12} fill={couleurCharge(pc)} />
-                    <text x={x + lCase / 2} y={yy + 42} fill={pc === null ? GRIS : "#ffffff"} fontSize={26} fontWeight={800} textAnchor="middle">
+                    <rect x={x} y={yy + 6} width={lCase} height={hCase} rx={12} fill={couleurCharge(pc)} />
+                    <text x={x + lCase / 2} y={yy + 6 + hCase / 2 + fCase * 0.36} fill={pc === null ? GRIS : "#ffffff"} fontSize={fCase} fontWeight={800} textAnchor="middle">
                       {pc === null ? "—" : `${pc} %`}
                     </text>
                   </g>
@@ -616,6 +627,13 @@ function NewsletterContenu() {
                     charge={charge}
                     semaines={dispos.semaines}
                     total={total}
+                    noteCharge={
+                      dispos.erreur
+                        ? `Charge non disponible : ${dispos.erreur}`
+                        : dispos.chargement
+                          ? "Chargement du planning…"
+                          : "Aucune activité avec des personnes affectées (activité principale des collaborateurs)."
+                    }
                     refSvg={(el) => {
                       refs.current[0] = el;
                     }}
