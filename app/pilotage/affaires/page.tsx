@@ -1,5 +1,5 @@
 "use client";
-import { COULEURS_PE, COULEURS_PI } from "@/lib/couleurs";
+import { COULEURS_PE, COULEURS_PI, couleurMetier } from "@/lib/couleurs";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as MouseReact, type PointerEvent as PointerReact, type ReactNode } from "react";
 import Link from "next/link";
@@ -78,7 +78,7 @@ import { chargerMoi } from "@/lib/pilotageDonnees";
    « ✓ Livrée » range l'affaire, avec ses barres, dans « Affaires livrées »
    en bas du planning (la charge passée reste visible sur l'année). Ce bouton
    n'existe que pour les affaires déclarées à la main : une affaire venue
-   d'Excel (repère « XLS ») suit le statut du classeur.
+   d'Excel suit le statut du classeur (plus de repère « XLS » : à sa place, les pastilles des activités chiffrées).
 
    Toute commande en cours ou en intention apparaît d'office, PE / PI
    comprises (pour une PE / PI : ses avenants R1, R2… s'il y en a, sinon la
@@ -1744,11 +1744,28 @@ function PlanningAffairesContenu() {
                   ) : null;
                 })()}
                 {affaire.imputation && <span style={{ fontSize: 11, fontWeight: 800, color: C.gris }}>{affaire.imputation}</span>}
-                {(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
-                  <span title="Statut, dates et chiffré suivis depuis le Suivi d’affaire BE (Excel)" style={{ marginLeft: "auto", fontSize: 10, fontWeight: 800, color: "#1d6f42", border: "1px solid #9cc9ae", borderRadius: 4, padding: "0 4px" }}>
-                    XLS
-                  </span>
-                )}
+                {/* VIGNETTES_ACTIVITES (19/11/2026, à la place de « XLS ») : une pastille par activité chiffrée, de sa
+                    couleur de métier, avec son initiale ; la plus chiffrée d'abord */}
+                {(() => {
+                  const acts = [...(besoinsParAffaire.get(affaire.id)?.values() ?? [])].filter((x) => x.chiffre > 0.05).sort((x, y) => y.chiffre - x.chiffre);
+                  if (acts.length === 0) return null;
+                  return (
+                    <span
+                      title={acts.map((x) => `${x.nom} : ${formatHeures(x.chiffre)} chiffrées`).join("\n")}
+                      style={{ marginLeft: "auto", display: "inline-flex", gap: 2, flex: "0 0 auto" }}
+                    >
+                      {acts.map((x) => (
+                        <span
+                          key={x.nom}
+                          aria-label={x.nom}
+                          style={{ width: 15, height: 15, borderRadius: 999, background: couleurMetier(x.nom), color: "#ffffff", fontSize: 9, fontWeight: 800, lineHeight: "15px", textAlign: "center" }}
+                        >
+                          {x.nom.trim().charAt(0).toUpperCase()}
+                        </span>
+                      ))}
+                    </span>
+                  );
+                })()}
                 {/* Livrée / Reprendre : seulement pour les affaires déclarées à la main.
                     Une affaire venue d'Excel suit le statut du classeur (Excel fait foi). */}
                 {peutAgir && affaire.type !== "DBE" && !(affaire as Affaire & { suivi_maj_le?: string | null }).suivi_maj_le && (
